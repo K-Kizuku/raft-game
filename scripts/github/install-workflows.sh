@@ -103,18 +103,39 @@ fi
 
 branch="human/install-workflows-$(date +%Y%m%d-%H%M%S)"
 orig="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
+pushed=0
+
+# 途中（コミット・push・gh pr create）で失敗したら、元のブランチに戻し、
+# 後片付けの方法を表示する。
+on_exit() {
+  local status=$?
+  [ "$status" -ne 0 ] || return 0
+  if git checkout --quiet "$orig"; then
+    echo "install-workflows: 失敗した（終了コード $status）。元のブランチ $orig に戻った" >&2
+  else
+    echo "install-workflows: 失敗した（終了コード $status）。元のブランチ $orig に戻れなかった" >&2
+  fi
+  echo "install-workflows: 後片付けをするには、次を実行する:" >&2
+  echo "  git branch -D $branch" >&2
+  if [ "$pushed" -eq 1 ]; then
+    echo "  git push origin --delete $branch" >&2
+  fi
+  return "$status"
+}
 
 git switch --quiet --no-track -c "$branch" "$ref"
+trap on_exit EXIT
 mkdir -p "$DST_DIR"
 for name in "${changed[@]}"; do
   git show "$ref:$SRC_DIR/$name" >"$DST_DIR/$name"
   git add -- "$DST_DIR/$name"
 done
 
-list="$(printf -- '- `%s`\n' "${changed[@]}")"
+list="$(printf -- "- \`%s\`\n" "${changed[@]}")"
 git commit --quiet -m "ci: $SRC_DIR のワークフローを $DST_DIR に取り込む" \
   -m "$list"
 git push --quiet -u origin "$branch"
+pushed=1
 
 body="\`$SRC_DIR/\` のワークフローを \`$DST_DIR/\` に取り込む（\`scripts/github/install-workflows.sh\` で作成）。
 
@@ -122,5 +143,6 @@ $list"
 gh pr create --base "$base" --head "$branch" \
   --title "ci: ワークフローを取り込む ($branch)" --body "$body"
 
+trap - EXIT
 git checkout --quiet "$orig" || echo "install-workflows: 元のブランチ $orig に戻れなかった" >&2
 echo "作成したブランチ: $branch"

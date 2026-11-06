@@ -20,11 +20,15 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 # テストを AI エージェントの環境で実行しても、既定では人として動かす。
 unset AGENT_ROLE
 
-# 偽の gh: 引数をログに書く。
+# 偽の gh: 引数をログに書く。FAKE_GH_FAIL=1 のときは失敗する。
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$FAKE_GH_LOG"
+if [ "${FAKE_GH_FAIL:-0}" = "1" ]; then
+  echo "fake gh: failed" >&2
+  exit 1
+fi
 EOF
 chmod +x "$tmp/bin/gh"
 export PATH="$tmp/bin:$PATH"
@@ -109,6 +113,54 @@ check "--dry-run はブランチを作らない" test "$(git for-each-ref --form
 check "--dry-run は push しない" test "$(remote_branches)" = "main"
 check "--dry-run は gh を呼ばない" test ! -s "$FAKE_GH_LOG"
 check "--dry-run は作業ツリーを変えない" test -z "$(git status --porcelain)"
+
+# 失敗のテストで作ったブランチを消す（ブランチ名は秒単位なので、次の実行と重ならないようにする）。
+cleanup_human_branches() {
+  local b
+  for b in $(git for-each-ref --format='%(refname:short)' 'refs/heads/human/*'); do
+    git branch --quiet -D "$b"
+  done
+  for b in $(remote_branches | grep '^human/' || true); do
+    git -C "$tmp/origin.git" update-ref -d "refs/heads/$b"
+  done
+}
+
+# --- push が失敗したら、元のブランチに戻り、後片付けの方法を出す ---
+hook="$tmp/origin.git/hooks/pre-receive"
+printf '#!/bin/sh\necho "rejected by test" >&2\nexit 1\n' >"$hook"
+chmod +x "$hook"
+if bash "$script" >"$tmp/out" 2>&1; then
+  fail "push が失敗したら終了コードが 0 以外"
+else
+  pass "push が失敗したら終了コードが 0 以外"
+fi
+rm "$hook"
+check "push が失敗したら元のブランチに戻る" test "$(git symbolic-ref --short HEAD)" = "$branch_before"
+check "push が失敗したら git branch -D の方法を出す" \
+  grep -q "git branch -D human/install-workflows-" "$tmp/out"
+check "push が失敗したら git push origin --delete は出さない" \
+  bash -c "! grep -q 'git push origin --delete' '$tmp/out'"
+check "push が失敗したら gh を呼ばない" test ! -s "$FAKE_GH_LOG"
+check "push が失敗しても作業ツリーは汚れない" test -z "$(git status --porcelain)"
+cleanup_human_branches
+sleep 1
+
+# --- gh pr create が失敗したら、元のブランチに戻り、後片付けの方法を出す ---
+if FAKE_GH_FAIL=1 bash "$script" >"$tmp/out" 2>&1; then
+  fail "gh pr create が失敗したら終了コードが 0 以外"
+else
+  pass "gh pr create が失敗したら終了コードが 0 以外"
+fi
+check "gh pr create が失敗したら元のブランチに戻る" \
+  test "$(git symbolic-ref --short HEAD)" = "$branch_before"
+check "gh pr create が失敗したら git branch -D の方法を出す" \
+  grep -q "git branch -D human/install-workflows-" "$tmp/out"
+check "gh pr create が失敗したら git push origin --delete の方法を出す" \
+  grep -q "git push origin --delete human/install-workflows-" "$tmp/out"
+check "gh pr create が失敗しても作業ツリーは汚れない" test -z "$(git status --porcelain)"
+cleanup_human_branches
+: >"$FAKE_GH_LOG"
+sleep 1
 
 # --- 差分あり: コピーしてコミットし、push して gh pr create を呼ぶ ---
 if bash "$script" >"$tmp/out" 2>&1; then

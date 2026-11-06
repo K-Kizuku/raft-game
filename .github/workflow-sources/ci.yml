@@ -112,7 +112,9 @@ jobs:
           for mod in tools/*/go.mod; do
             dir="$(dirname "$mod")"
             echo "::group::$dir"
-            unformatted="$(gofmt -l "$dir")"
+            # gofmt もそのモジュールの Go の版のものを使う。
+            gofmt="$(go -C "$dir" env GOROOT)/bin/gofmt"
+            unformatted="$("$gofmt" -l "$dir")"
             if [ -n "$unformatted" ]; then
               echo "::error::gofmt の差分がある: $unformatted"
               status=1
