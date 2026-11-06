@@ -1,0 +1,90 @@
+# Merge Gate（#3）
+#
+# PR の HEAD の commit に、コミットステータス `merge-gate` を付ける。判定は `agentctl gate`（tools/agentctl）。
+#
+# このファイルは取り込み元。AI は .github/workflows/ を書かないので、
+# 人が scripts/github/install-workflows.sh で .github/workflows/ に取り込む（#2 の「ワークフローの取り込み」）。
+#
+# セキュリティ:
+# - main のコードだけを使う。PR の HEAD はチェックアウトも実行もしない（PR が Merge Gate 自身を書き換えて合格させることを防ぐ）
+# - イベントの値は env: 経由で渡し、run: に ${{ }} で直接埋め込まない
+# - ジョブの名前を `merge-gate` にしない（check run の名前が必須のステータス `merge-gate` と紛れないように）
+name: merge-gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 判定する PR の番号
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+  checks: read
+
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    name: merge-gate-evaluate
+    # issue_comment は PR のコメントのときだけ実行する。
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: main をチェックアウトする
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/agentctl/go.mod
+          cache: false
+
+      - name: Merge Gate を判定する
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # go run は対象の終了コードを 1 にまとめてしまうので、先にビルドする（ビルドの失敗は内部エラー）。
+          go -C tools/agentctl build -o "$RUNNER_TEMP/agentctl" .
+
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            target=(--sha "$RUN_SHA")
+          else
+            target=(--pr "$PR_NUMBER")
+          fi
+
+          set +e
+          "$RUNNER_TEMP/agentctl" gate \
+            --repo "$REPO" "${target[@]}" \
+            --config "$GITHUB_WORKSPACE/.agents/config.json" \
+            --set-status --comment --target-url "$RUN_URL"
+          code=$?
+          set -e
+
+          # pass=0・fail=1・pending=2 の結果は、コミットステータスで伝える。内部エラー（3 など）のときだけ失敗させる。
+          case "$code" in
+            0|1|2) echo "merge-gate: exit $code" ;;
+            *) echo "::error::agentctl gate の内部エラー（exit $code）"; exit 1 ;;
+          esac

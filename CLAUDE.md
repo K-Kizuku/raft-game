@@ -40,6 +40,19 @@ bash scripts/github/tests/run.sh                         # install-workflows.sh 
 
 - ワークフローは `.github/workflow-sources/` に書き、`.github/workflows/` には書かない（人が `scripts/github/install-workflows.sh` で取り込む）
 
+Merge Gate（`tools/agentctl`、#3）。`go -C` を使うとカレントディレクトリが `tools/agentctl` になるので、ファイルは `"$PWD/…"` のように絶対パスで渡す（`--config` は省略すると親のディレクトリへたどって `.agents/config.json` を探す）。終了コードは pass=0・fail=1・pending=2・内部エラー=3。
+
+```bash
+go -C tools/agentctl test -race ./...                                              # テスト
+go -C tools/agentctl run . gate --repo K-Kizuku/raft-game --pr 12 --json           # GitHub の状態で判定（GITHUB_TOKEN か GH_TOKEN が必要）
+go -C tools/agentctl run . gate --repo K-Kizuku/raft-game --pr 12 --json \
+  --input "$PWD/tools/agentctl/internal/gate/testdata/pass.json"                   # スナップショットで判定（GitHub に接続しない）
+go -C tools/agentctl run . review validate "$PWD/review.json"                     # レビュー記録を検証する
+go -C tools/agentctl run . review render "$PWD/review.json"                       # PR のコメントの本文（目印＋表＋JSON）を出す
+```
+
+- `--set-status`（コミットステータス `merge-gate` を付ける）と `--comment`（Merge Gate のコメントを更新する）は、ワークフロー `merge-gate` だけが使う。ローカルでは付けない
+
 ## コストガード（ADR-0018）の注意点
 
 - **署名の確認（G3）は無効にしない。** sessionId の署名を確かめる前に Durable Object を呼ばない。管理用 API の切り替えの対象にもしない
