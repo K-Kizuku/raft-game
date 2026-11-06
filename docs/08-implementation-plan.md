@@ -62,7 +62,7 @@ flowchart LR
 | T-005 | CI（`.github/workflows/ci.yml`）: Go の vet・`golangci-lint`（`forbidigo` で `time.Now` などを `internal/sim` 以下で禁止）・test、web の lint・typecheck・test | — | 2h |
 | T-006 | `CLAUDE.md` / `CONTRIBUTING` の規約を実際の構成に合わせて更新 | — | 0.5h |
 | T-007 | **スパイク: `cf` とコンテナの確認**。最小の Worker ＋ Durable Object（SQLite）＋ Go のコンテナ（`durable_object` 方式、WS のエコー）を `cf deploy` し、次を測って ADR-0016 に書く: コンテナの起動時間、`lite` での CPU の余裕（8 倍速・復元の速さ）、`limits.cpuMs` の適切な値、`cf dev` での動作 | ADR-0016, R-02 | 4h |
-| T-008 | **並列開発の環境**: `scripts/dev-slot.sh`（`DEV_SLOT` の割り当て）、`Makefile` のポートの計算、`cf` の `--persist-to` を作業ディレクトリの中に、Docker の名前に作業ディレクトリ名を付ける、`make clean-docker` | ADR-0019 | 2h |
+| T-008 | **並列開発の環境**: `Makefile` のポートの計算（`DEV_SLOT` を割り当てる `scripts/dev-slot.sh` は #5 で済み）、`cf` の `--persist-to` を作業ディレクトリの中に、Docker の名前に作業ディレクトリ名を付ける、`make clean-docker` | ADR-0019 | 2h |
 | T-009 | CI にシークレットの検査（公開リポジトリのため）と、`LICENSE`・`NOTICE` の確認を入れる | ADR-0020 | 1h |
 
 ### M1 シミュレーションのコア（`server/internal/...`）
@@ -194,12 +194,8 @@ cd web && pnpm exec cf auth login
 ## 5. 開発の進め方
 
 - タスクは GitHub の Issue で管理する。この文書のタスクを Issue に転記し、以後の進み具合は Issue で追う
-- ブランチ: `main` は常にデプロイできる状態。作業は `feat/…` `fix/…` ブランチで行い、PR でマージする
-- **並列開発**（[ADR-0019](./adr/0019-parallel-local-development.md)）:
-  - AI エージェントごとに `git worktree` で作業ディレクトリを分け、`DEV_SLOT` を割り当てる（`scripts/dev-slot.sh`）
-  - ポート・`cf` のローカルの状態（`--persist-to`）・Docker のイメージ名とコンテナ名は、作業ディレクトリごとに分ける。固定のポートや名前を使わない
-  - テストは並列に実行して安全にする（Go は `t.TempDir()` とポート `:0`）
-  - 本番・デモ用の環境へのデプロイ、ゾーンの設定の変更、Cloudflare のシークレットの更新は CI だけが行う。エージェントは直接行わない
+- ブランチ: `main` は常にデプロイできる状態。AI エージェントの作業は `agent/issue-<n>` ブランチで行い、PR と Merge Gate を通してマージする
+- **並列開発**: AI エージェントの役割・Issue の書き方・状態・スケジューリング・レビュー・Merge Gate・運用は [docs/agents/](./agents/README.md)（[ADR-0021](./adr/0021-hootl-agent-development.md)）に、ローカル環境（ポート・`DEV_SLOT`・`cf` の状態・Docker）の分け方は [ADR-0019](./adr/0019-parallel-local-development.md) にまとめている
 - PR には、関係する要件 ID（FR-…）またはタスク ID（T-…）を書く
 - 仕様を変える場合は、**先にドキュメント（または ADR）を更新**し、同じ PR でコードを変える
 - 新しい技術的な判断をしたら ADR を追加する（[adr/README.md](./adr/README.md)）

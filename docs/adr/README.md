@@ -37,6 +37,7 @@
 | [0018](./0018-cost-guard.md) | コストガード — 意図しない課金の増加を、アプリ側の上限で防ぐ | Accepted | 中（個別の仕組みは管理用 API で無効にできる） |
 | [0019](./0019-parallel-local-development.md) | AI エージェントの並列開発のため、ローカル環境を作業ディレクトリ単位で分ける | Accepted | 容易 |
 | [0020](./0020-public-repository-apache-license.md) | リポジトリを公開し、ライセンスは Apache-2.0 にする | Accepted | 中 |
+| [0021](./0021-hootl-agent-development.md) | AI エージェントの開発は、ローカル PC の Codex CLI と Claude Code で行い、Rulesets・必須のチェック・hooks で強制する | Accepted | 中 |
 
 ## 判断を差し替える手順
 
