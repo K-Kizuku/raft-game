@@ -75,8 +75,8 @@ func Recover(snap *snapshot.Snapshot, cfg *config.Config, trusted func(login str
 		h, warns := state.ReadHistory(is, trusted)
 		res.Warnings = append(res.Warnings, warns...)
 		hasBranch := snap.HasBranch(branch)
-		open := snap.OpenPullsFor(n, branch)
-		merged := snap.MergedPullsFor(n, branch)
+		open := snap.OpenPullsFor(n, branch, trusted)
+		merged := snap.MergedPullsFor(n, branch, trusted)
 
 		// エージェントの作業の対象ではない Issue（ラベルも記録もブランチも PR もない）は見ない。
 		if len(labels) == 0 && len(h.Records) == 0 && !hasBranch && len(open) == 0 {
@@ -116,8 +116,15 @@ func Recover(snap *snapshot.Snapshot, cfg *config.Config, trusted func(login str
 			continue
 		}
 		if len(merged) > 0 && cur != state.Merged {
-			add(Action{Action: ActionSetState, To: string(state.Merged), PR: merged[0].Number,
-				Reason: fmt.Sprintf("PR #%d がマージ済み", merged[0].Number)})
+			if state.CanTransition(cur, state.Merged) {
+				add(Action{Action: ActionSetState, To: string(state.Merged), PR: merged[0].Number,
+					Reason: fmt.Sprintf("PR #%d がマージ済み", merged[0].Number)})
+			} else {
+				// 遷移表では merged に行けない（例: 人が in-review のままマージした）。set-state を出しても拒否されるので人に任せる。
+				add(Action{Action: ActionEscalate, PR: merged[0].Number, Labels: []string{state.NeedsHumanLabel},
+					Reason: fmt.Sprintf("PR #%d がマージ済みだが、状態が %s なので merged に遷移できない（merged へは %s からだけ）",
+						merged[0].Number, cur, state.ReadyToMerge)})
+			}
 			continue
 		}
 		if is.State != "open" {

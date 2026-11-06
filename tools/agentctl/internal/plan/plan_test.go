@@ -55,7 +55,7 @@ func nums(items []Item) []int {
 
 func mustPlan(t *testing.T, s *snapshot.Snapshot, c *config.Config) *Result {
 	t.Helper()
-	res, err := Plan(s, c)
+	res, err := Plan(s, c, trusted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestPlanDependencies(t *testing.T) {
 		s := &snapshot.Snapshot{Issues: []snapshot.Issue{
 			iss(1, "ready", nil, "a"), iss(2, "backlog", []int{4}, "b"), iss(3, "backlog", []int{2}, "c"), iss(4, "backlog", []int{3}, "d"),
 		}}
-		_, err := Plan(s, cfg(2))
+		_, err := Plan(s, cfg(2), trusted)
 		var ce *CycleError
 		if !errors.As(err, &ce) {
 			t.Fatalf("err = %v", err)
@@ -118,7 +118,7 @@ func TestPlanDependencies(t *testing.T) {
 		}
 		// 自分自身への依存も循環。
 		s = &snapshot.Snapshot{Issues: []snapshot.Issue{iss(5, "ready", []int{5}, "a")}}
-		if _, err := Plan(s, cfg(2)); !errors.As(err, &ce) {
+		if _, err := Plan(s, cfg(2), trusted); !errors.As(err, &ce) {
 			t.Errorf("自己ループ: err = %v", err)
 		}
 	})
@@ -131,7 +131,7 @@ func TestPlanDependencies(t *testing.T) {
 	})
 	t.Run("依存先が存在しない", func(t *testing.T) {
 		s := &snapshot.Snapshot{Issues: []snapshot.Issue{iss(2, "ready", []int{77}, "a/**")}}
-		if _, err := Plan(s, cfg(2)); err == nil || !strings.Contains(err.Error(), "#77") {
+		if _, err := Plan(s, cfg(2), trusted); err == nil || !strings.Contains(err.Error(), "#77") {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -139,7 +139,9 @@ func TestPlanDependencies(t *testing.T) {
 		s := &snapshot.Snapshot{
 			Issues:   []snapshot.Issue{iss(2, "ready", nil, "a/**"), iss(3, "ready", nil, "b/**"), iss(4, "ready", nil, "c/**")},
 			Branches: []string{"agent/issue-2"},
-			Pulls:    []snapshot.Pull{{Number: 50, State: "open", HeadRef: "x", Body: "Closes #3"}, {Number: 51, State: "closed", HeadRef: "agent/issue-4"}},
+			Pulls: []snapshot.Pull{{Number: 50, State: "open", Author: "K-Kizuku", HeadRef: "x", Body: "Closes #3"}, {Number: 51, State: "closed", Author: "K-Kizuku", HeadRef: "agent/issue-4"},
+				// 信頼しない作者の PR は、Issue との関係を数えない。
+				{Number: 52, State: "open", Author: "someone", HeadRef: "agent/issue-4", Body: "Closes #4"}},
 		}
 		res := mustPlan(t, s, cfg(3))
 		if !reflect.DeepEqual(nums(res.Ready), []int{4}) || !reflect.DeepEqual(nums(res.BlockedByDeps), []int{2, 3}) {
@@ -156,17 +158,27 @@ func TestPlanCapacity(t *testing.T) {
 		}}
 	}
 	for _, tt := range []struct {
-		max, capacity int
-		ready         []int
+		max, capacity   int
+		ready, deferred []int
 	}{
-		{1, 0, []int{}},     // in-progress が 1 つ → 容量 0
-		{2, 1, []int{1}},    // 容量 1
-		{3, 2, []int{1, 2}}, // 容量 2
+		{1, 0, []int{}, []int{1, 2, 3}}, // in-progress が 1 つ → 容量 0
+		{2, 1, []int{1}, []int{2, 3}},   // 容量 1
+		{3, 2, []int{1, 2}, []int{3}},   // 容量 2
+		{4, 3, []int{1, 2, 3}, []int{}}, // すべて選べる
 	} {
 		t.Run(fmt.Sprint(tt.max), func(t *testing.T) {
 			res := mustPlan(t, base(), cfg(tt.max))
 			if res.Capacity != tt.capacity || !reflect.DeepEqual(nums(res.Ready), tt.ready) {
 				t.Errorf("capacity = %d, ready = %v", res.Capacity, nums(res.Ready))
+			}
+			// 容量で外れたものは deferred に、理由つきで入る。
+			if !reflect.DeepEqual(nums(res.Deferred), tt.deferred) {
+				t.Errorf("deferred = %v, want %v", nums(res.Deferred), tt.deferred)
+			}
+			for _, it := range res.Deferred {
+				if len(it.Reasons) != 1 || !strings.Contains(it.Reasons[0], "容量") {
+					t.Errorf("#%d の理由 = %q", it.Number, it.Reasons)
+				}
 			}
 			if !reflect.DeepEqual(nums(res.Active), []int{10, 11}) {
 				t.Errorf("active = %v", nums(res.Active))
@@ -335,7 +347,7 @@ func recoverOne(t *testing.T, s *snapshot.Snapshot, n int) *Action {
 
 func TestRecover(t *testing.T) {
 	pull := func(n int, issue int, open bool) snapshot.Pull {
-		p := snapshot.Pull{Number: n, State: "open", HeadRef: fmt.Sprintf("agent/issue-%d", issue), HeadSHA: sha1, Body: fmt.Sprintf("Closes #%d", issue)}
+		p := snapshot.Pull{Number: n, State: "open", Author: "K-Kizuku", HeadRef: fmt.Sprintf("agent/issue-%d", issue), HeadSHA: sha1, Body: fmt.Sprintf("Closes #%d", issue)}
 		if !open {
 			p.State, p.Merged = "closed", true
 		}
@@ -376,8 +388,19 @@ func TestRecover(t *testing.T) {
 			is.State, is.StateReason = "closed", "completed"
 			return is
 		}()}, Pulls: []snapshot.Pull{pull(20, 4, false)}}, ActionSetState, "merged", 20},
+		// merged へは ready-to-merge からだけ。ほかの状態のままマージされたら（例: 人が手でマージした）人に任せる。
+		{"PR がマージ済みだが in-review のまま", &snapshot.Snapshot{Issues: []snapshot.Issue{func() snapshot.Issue {
+			is := iss(4, "in-review", nil, "a")
+			is.State, is.StateReason = "closed", "completed"
+			return is
+		}()}, Pulls: []snapshot.Pull{pull(20, 4, false)}}, ActionEscalate, "", 20},
+		{"PR がマージ済みだが ci-pending で開いたまま", &snapshot.Snapshot{Issues: []snapshot.Issue{iss(4, "ci-pending", nil, "a")},
+			Pulls: []snapshot.Pull{pull(20, 4, false)}}, ActionEscalate, "", 20},
 		{"開いた PR が 2 つ", &snapshot.Snapshot{Issues: []snapshot.Issue{iss(4, "in-review", nil, "a")},
-			Pulls: []snapshot.Pull{pull(20, 4, true), {Number: 21, State: "open", HeadRef: "other", HeadSHA: sha1, Body: "Fixes #4"}}}, ActionEscalate, "", 0},
+			Pulls: []snapshot.Pull{pull(20, 4, true), {Number: 21, State: "open", Author: "K-Kizuku", HeadRef: "other", HeadSHA: sha1, Body: "Fixes #4"}}}, ActionEscalate, "", 0},
+		{"信頼しない作者の PR は数えない", &snapshot.Snapshot{Issues: []snapshot.Issue{withClaim(iss(4, "in-progress", nil, "a"))}, Branches: []string{"agent/issue-4"},
+			Pulls: []snapshot.Pull{{Number: 21, State: "open", Author: "someone", HeadRef: "agent/issue-4", HeadSHA: sha1, Body: "Closes #4"},
+				{Number: 22, State: "closed", Merged: true, Author: "someone", HeadRef: "x", HeadSHA: sha1, Body: "Closes #4"}}}, ActionResumeWorker, "", 0},
 		{"status:* が 2 つ", &snapshot.Snapshot{Issues: []snapshot.Issue{func() snapshot.Issue {
 			is := iss(4, "ready", nil, "a")
 			is.Labels = append(is.Labels, "status:in-progress")
@@ -400,12 +423,15 @@ func TestRecover(t *testing.T) {
 			if a.Action == ActionEscalate && !reflect.DeepEqual(a.Labels, []string{"needs-human"}) {
 				t.Errorf("labels = %v", a.Labels)
 			}
+			if a.Action == ActionEscalate && a.PR != 0 && !strings.Contains(a.Reason, "merged に遷移できない") {
+				t.Errorf("reason = %q", a.Reason)
+			}
 		})
 	}
 }
 
 func TestRecoverNoAction(t *testing.T) {
-	p := snapshot.Pull{Number: 20, State: "open", HeadRef: "agent/issue-4", HeadSHA: sha1, Body: "Closes #4",
+	p := snapshot.Pull{Number: 20, State: "open", Author: "K-Kizuku", HeadRef: "agent/issue-4", HeadSHA: sha1, Body: "Closes #4",
 		Comments: []snapshot.Comment{reviewComment(20, sha1)}}
 	s := &snapshot.Snapshot{
 		Issues: []snapshot.Issue{

@@ -112,11 +112,12 @@ func TestPlanCommand(t *testing.T) {
 		return o
 	}
 	// max_workers 2 − in-progress 1 = 1。#5 を選び、#6 は依存待ち、#7 は #4 と競合。
+	// #5 には第三者の PR #31（Closes #5）があるが、作者を信頼しないので数えない。
 	if res.Capacity != 1 || !reflect.DeepEqual(ns(res.Ready), []int{5}) || !reflect.DeepEqual(ns(res.BlockedByDeps), []int{6}) ||
-		!reflect.DeepEqual(ns(res.Conflicts), []int{7}) || !reflect.DeepEqual(ns(res.Active), []int{4, 8}) {
+		!reflect.DeepEqual(ns(res.Conflicts), []int{7}) || !reflect.DeepEqual(ns(res.Active), []int{4, 8}) || len(res.Deferred) != 0 {
 		t.Errorf("plan = %s", out)
 	}
-	for _, key := range []string{`"ready"`, `"blocked_by_deps"`, `"conflicts"`, `"active"`, `"capacity"`} {
+	for _, key := range []string{`"ready"`, `"blocked_by_deps"`, `"conflicts"`, `"deferred"`, `"active"`, `"capacity"`} {
 		if !strings.Contains(out, key) {
 			t.Errorf("%s がない", key)
 		}
@@ -344,6 +345,14 @@ func TestClaimCommand(t *testing.T) {
 	}
 	if r := commentBody(t, ops[0]); r.From != "in-progress" || r.To != "in-progress" || r.Attempt != 2 || r.Session != "s-new" {
 		t.Errorf("resume: record = %+v", r)
+	}
+	// 同じ session での --resume も、冪等の判定をせずに記録を付ける（recover の resume-worker の session をそのまま渡す）。
+	ops = checkDryRunMatches(t, 0, append([]string{"claim", "4", "--worker", "issue-4", "--session", session4, "--resume"}, base...)...)
+	if len(ops) != 1 {
+		t.Fatalf("同じ session の resume: ops = %+v", ops)
+	}
+	if r := commentBody(t, ops[0]); r.Attempt != 2 || r.Session != session4 || r.Reason != "再開" {
+		t.Errorf("同じ session の resume: record = %+v", r)
 	}
 	if code, _, _ := runCmd(t, append([]string{"claim", "5", "--dry-run"}, base...)...); code != 3 {
 		t.Errorf("--worker なし: exit = %d", code)

@@ -229,16 +229,24 @@ func TestTransition(t *testing.T) {
 	})
 	t.Run("merged は PR がマージ済みのときだけ", func(t *testing.T) {
 		s := mk("status:ready-to-merge")
-		s.Pulls = []snapshot.Pull{{Number: 30, State: "open", HeadRef: "agent/issue-7", Body: "Closes #7"}}
+		s.Pulls = []snapshot.Pull{{Number: 30, State: "open", Author: "K-Kizuku", HeadRef: "agent/issue-7", Body: "Closes #7"}}
 		if _, err := Transition(s, env(), 7, Merged, TransitionOpts{}); err == nil {
 			t.Error("マージされていないのに merged にした")
 		}
 		if _, err := Transition(s, env(), 7, Merged, TransitionOpts{PR: 30}); err == nil {
 			t.Error("--pr がマージされていないのに merged にした")
 		}
-		s.Pulls = append(s.Pulls, snapshot.Pull{Number: 31, State: "closed", Merged: true, HeadRef: "other", Body: "Closes #8"})
+		s.Pulls = append(s.Pulls, snapshot.Pull{Number: 31, State: "closed", Merged: true, Author: "K-Kizuku", HeadRef: "other", Body: "Closes #8"})
 		if _, err := Transition(s, env(), 7, Merged, TransitionOpts{PR: 31}); err == nil {
 			t.Error("関係のない PR で merged にした")
+		}
+		// 信頼しない作者のマージ済みの PR では merged にしない。
+		s.Pulls = append(s.Pulls, snapshot.Pull{Number: 32, State: "closed", Merged: true, Author: "someone", HeadRef: "x", Body: "Closes #7"})
+		if _, err := Transition(s, env(), 7, Merged, TransitionOpts{PR: 32}); err == nil {
+			t.Error("信頼しない作者の PR で merged にした")
+		}
+		if _, err := Transition(s, env(), 7, Merged, TransitionOpts{}); err == nil {
+			t.Error("信頼しない作者の PR だけで merged にした")
 		}
 		s.Pulls[0].State, s.Pulls[0].Merged = "closed", true
 		res, err := Transition(s, env(), 7, Merged, TransitionOpts{})
@@ -302,8 +310,15 @@ func TestClaim(t *testing.T) {
 	})
 	t.Run("PR あり", func(t *testing.T) {
 		s := snap(readyIssue(12))
-		s.Pulls = []snapshot.Pull{{Number: 40, State: "open", HeadRef: "someone/fix", Body: "Fixes #12"}}
+		s.Pulls = []snapshot.Pull{{Number: 40, State: "open", Author: "K-Kizuku", HeadRef: "someone/fix", Body: "Fixes #12"}}
 		pre(t, s, false)
+	})
+	t.Run("信頼しない作者の PR は数えない", func(t *testing.T) {
+		s := snap(readyIssue(12))
+		s.Pulls = []snapshot.Pull{{Number: 40, State: "open", Author: "someone", HeadRef: "agent/issue-12", Body: "Closes #12"}}
+		if _, err := Claim(s, env(), 12, "issue-12", "sess", false); err != nil {
+			t.Errorf("err = %v（第三者の PR で着手を妨げない）", err)
+		}
 	})
 	t.Run("依存が未完了", func(t *testing.T) {
 		pre(t, snap(readyIssue(12, 3), snapshot.Issue{Number: 3, State: "open", Labels: []string{"status:in-review"}, Body: body()}), false)
@@ -357,11 +372,37 @@ func TestClaim(t *testing.T) {
 		if r := commentRecord(t, res.Ops[0]); r.From != InProgress || r.To != InProgress || r.Attempt != 2 || r.Session != "new" {
 			t.Errorf("record = %+v", r)
 		}
-		s.Pulls = []snapshot.Pull{{Number: 41, State: "open", HeadRef: "agent/issue-12"}}
+		s.Pulls = []snapshot.Pull{{Number: 41, State: "open", Author: "K-Kizuku", HeadRef: "agent/issue-12"}}
 		pre(t, s, true) // PR がある
 		s.Pulls = nil
 		s.Issues[0].Labels = []string{"status:ready"}
 		pre(t, s, true) // in-progress でない
+	})
+	t.Run("同じ session での --resume", func(t *testing.T) {
+		// recover の resume-worker が出す最新の session をそのまま渡す。冪等の判定はせず、記録を付ける。
+		is := readyIssue(12)
+		is.Labels = []string{"status:in-progress"}
+		is.Comments = []snapshot.Comment{recComment("K-Kizuku", Record{From: Ready, To: InProgress, Worker: "issue-12", Session: "sess", Attempt: 1})}
+		s := snap(is)
+		pre(t, s, true) // ブランチがない（同じ session でも前提を確かめる）
+		s.Branches = []string{"agent/issue-12"}
+		res, err := Claim(s, env(), 12, "issue-12", "sess", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Ops) != 1 {
+			t.Fatalf("ops = %+v（記録を付ける）", res.Ops)
+		}
+		if r := commentRecord(t, res.Ops[0]); r.From != InProgress || r.To != InProgress || r.Attempt != 2 || r.Session != "sess" || r.Reason != "再開" {
+			t.Errorf("record = %+v", r)
+		}
+		s.Pulls = []snapshot.Pull{{Number: 41, State: "open", Author: "K-Kizuku", HeadRef: "agent/issue-12"}}
+		pre(t, s, true) // PR がある（同じ session でも拒否する）
+		// --resume なしなら、同じ session の 2 回目は何もしない（冪等）。
+		s.Pulls = nil
+		if res, err := Claim(s, env(), 12, "issue-12", "sess", false); err != nil || len(res.Ops) != 0 {
+			t.Errorf("冪等: res = %+v, err = %v", res, err)
+		}
 	})
 }
 

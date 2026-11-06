@@ -31,8 +31,10 @@ type Result struct {
 	Ready         []Item `json:"ready"`
 	BlockedByDeps []Item `json:"blocked_by_deps"`
 	Conflicts     []Item `json:"conflicts"`
-	Active        []Item `json:"active"`
-	Capacity      int    `json:"capacity"`
+	// Deferred は、着手の条件を満たし、競合もないが、容量（capacity）の上限で今回は選ばなかったもの。
+	Deferred []Item `json:"deferred"`
+	Active   []Item `json:"active"`
+	Capacity int    `json:"capacity"`
 	// Warnings は全体の警告（JSON には含めず、標準エラーに出す）。
 	Warnings []string `json:"-"`
 }
@@ -168,12 +170,13 @@ func (g *Graph) item(n int) Item {
 }
 
 // Plan は、着手してよい Issue を選ぶ。
-func Plan(snap *snapshot.Snapshot, cfg *config.Config) (*Result, error) {
+// trusted は、Issue との関係（開いた PR がある）を数える PR の作者かを返す。
+func Plan(snap *snapshot.Snapshot, cfg *config.Config, trusted func(login string) bool) (*Result, error) {
 	g, err := Build(snap)
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{Ready: []Item{}, BlockedByDeps: []Item{}, Conflicts: []Item{}, Active: []Item{}}
+	res := &Result{Ready: []Item{}, BlockedByDeps: []Item{}, Conflicts: []Item{}, Deferred: []Item{}, Active: []Item{}}
 
 	busy := 0
 	type locked struct {
@@ -202,7 +205,7 @@ func Plan(snap *snapshot.Snapshot, cfg *config.Config) (*Result, error) {
 		if st != state.Ready {
 			continue
 		}
-		reasons, err := state.Startable(snap, nd.is, cfg.BranchPrefix)
+		reasons, err := state.Startable(snap, nd.is, cfg.BranchPrefix, trusted)
 		if err != nil {
 			return nil, err
 		}
@@ -252,6 +255,8 @@ func Plan(snap *snapshot.Snapshot, cfg *config.Config) (*Result, error) {
 			continue
 		}
 		if len(selected) >= res.Capacity {
+			it.Reasons = append(it.Reasons, fmt.Sprintf("容量（capacity %d）の上限に達したので、今回は選ばない", res.Capacity))
+			res.Deferred = append(res.Deferred, it)
 			continue
 		}
 		if check(selected, "同時に選ぶ") {

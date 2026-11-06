@@ -6,8 +6,9 @@
 //	{
 //	  "issues":   [{"number", "title", "state", "state_reason", "labels", "body",
 //	                "comments": [{"author", "body", "created_at"}]}],
-//	  "pulls":    [{"number", "state", "merged", "head_ref", "head_sha", "body", "labels",
+//	  "pulls":    [{"number", "state", "merged", "author", "head_ref", "head_sha", "body", "labels",
 //	                "comments": [...]}],   // comments は省略できる（in-review のレビュー記録の確認に使う）
+//	                                       // author（PR の作者）が信頼する作者でない PR は、Issue との関係を数えない
 //	  "branches": ["agent/issue-12", ...],
 //	  "statuses": {"<sha>": {"merge-gate": "success"}}
 //	}
@@ -55,6 +56,7 @@ type Pull struct {
 	Number   int       `json:"number"`
 	State    string    `json:"state"` // open | closed
 	Merged   bool      `json:"merged"`
+	Author   string    `json:"author"`
 	HeadRef  string    `json:"head_ref"`
 	HeadSHA  string    `json:"head_sha"`
 	Body     string    `json:"body"`
@@ -193,7 +195,12 @@ func (s *Snapshot) HasBranch(name string) bool {
 func BranchFor(prefix string, n int) string { return prefix + strconv.Itoa(n) }
 
 // RelatesTo は、PR が Issue n を閉じる（本文に `Closes #n` がある）か、作業ブランチ branch から出ているかを返す。
-func (p *Pull) RelatesTo(n int, branch string) bool {
+// 公開リポジトリでは誰でも PR を開けるので、作者が信頼する作者（trusted）でない PR は関係しないとみなす
+// （trusted が nil なら、どの PR も関係しない）。
+func (p *Pull) RelatesTo(n int, branch string, trusted func(login string) bool) bool {
+	if trusted == nil || !trusted(p.Author) {
+		return false
+	}
 	if p.HeadRef == branch {
 		return true
 	}
@@ -205,22 +212,22 @@ func (p *Pull) RelatesTo(n int, branch string) bool {
 	return false
 }
 
-// OpenPullsFor は、Issue n に関係する開いた PR を返す。
-func (s *Snapshot) OpenPullsFor(n int, branch string) []*Pull {
+// OpenPullsFor は、Issue n に関係する開いた PR（作者が trusted のもの）を返す。
+func (s *Snapshot) OpenPullsFor(n int, branch string, trusted func(login string) bool) []*Pull {
 	var out []*Pull
 	for i := range s.Pulls {
-		if p := &s.Pulls[i]; p.State == "open" && p.RelatesTo(n, branch) {
+		if p := &s.Pulls[i]; p.State == "open" && p.RelatesTo(n, branch, trusted) {
 			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// MergedPullsFor は、Issue n に関係するマージ済みの PR を返す。
-func (s *Snapshot) MergedPullsFor(n int, branch string) []*Pull {
+// MergedPullsFor は、Issue n に関係するマージ済みの PR（作者が trusted のもの）を返す。
+func (s *Snapshot) MergedPullsFor(n int, branch string, trusted func(login string) bool) []*Pull {
 	var out []*Pull
 	for i := range s.Pulls {
-		if p := &s.Pulls[i]; p.Merged && p.RelatesTo(n, branch) {
+		if p := &s.Pulls[i]; p.Merged && p.RelatesTo(n, branch, trusted) {
 			out = append(out, p)
 		}
 	}

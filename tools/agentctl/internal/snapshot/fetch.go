@@ -29,10 +29,11 @@ type restIssue struct {
 }
 
 type restPull struct {
-	Number   int     `json:"number"`
-	State    string  `json:"state"`
-	MergedAt *string `json:"merged_at"`
-	Body     *string `json:"body"`
+	Number   int      `json:"number"`
+	State    string   `json:"state"`
+	MergedAt *string  `json:"merged_at"`
+	Body     *string  `json:"body"`
+	User     restUser `json:"user"`
 	Head     struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
@@ -124,7 +125,7 @@ func Fetch(ctx context.Context, c *github.Client, repo, branchPrefix string) (*S
 	}
 	for _, rpull := range pulls {
 		p := Pull{
-			Number: rpull.Number, State: rpull.State, Merged: rpull.MergedAt != nil,
+			Number: rpull.Number, State: rpull.State, Merged: rpull.MergedAt != nil, Author: rpull.User.Login,
 			HeadRef: rpull.Head.Ref, HeadSHA: rpull.Head.SHA, Body: str(rpull.Body), Labels: names(rpull.Labels),
 		}
 		if p.State == "open" {

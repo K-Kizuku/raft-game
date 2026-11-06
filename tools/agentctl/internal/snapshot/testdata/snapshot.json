@@ -80,6 +80,7 @@
       "number": 29,
       "state": "closed",
       "merged": true,
+      "author": "github-actions[bot]",
       "head_ref": "agent/issue-3",
       "head_sha": "2222222222222222222222222222222222222222",
       "body": "Closes #3\n",
@@ -89,9 +90,21 @@
       "number": 30,
       "state": "open",
       "merged": false,
+      "author": "K-Kizuku",
       "head_ref": "agent/issue-8",
       "head_sha": "1111111111111111111111111111111111111111",
       "body": "Closes #8\n",
+      "labels": [],
+      "comments": []
+    },
+    {
+      "number": 31,
+      "state": "open",
+      "merged": false,
+      "author": "someone",
+      "head_ref": "someone/patch",
+      "head_sha": "3333333333333333333333333333333333333333",
+      "body": "第三者の PR（作者を信頼しないので、#5 との関係は数えない）\n\nCloses #5\n",
       "labels": [],
       "comments": []
     }

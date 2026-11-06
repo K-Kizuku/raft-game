@@ -53,16 +53,26 @@ func TestHelpers(t *testing.T) {
 			{Number: 6, State: "open", Body: "## 依存 Issue\n- #99\n"},
 		},
 		Pulls: []Pull{
-			{Number: 10, State: "open", HeadRef: "agent/issue-3"},
-			{Number: 11, State: "open", HeadRef: "x", Body: "```\nCloses #3\n```\nResolves #4"},
-			{Number: 12, State: "closed", Merged: true, HeadRef: "y", Body: "fixes #3"},
+			{Number: 10, State: "open", Author: "K-Kizuku", HeadRef: "agent/issue-3"},
+			{Number: 11, State: "open", Author: "K-Kizuku", HeadRef: "x", Body: "```\nCloses #3\n```\nResolves #4"},
+			{Number: 12, State: "closed", Merged: true, Author: "bot", HeadRef: "y", Body: "fixes #3"},
+			// 信頼しない作者の PR は、Closes #3 でもブランチ名が同じでも数えない。
+			{Number: 13, State: "open", Author: "someone", HeadRef: "agent/issue-3", Body: "Closes #3"},
+			{Number: 14, State: "closed", Merged: true, Author: "", HeadRef: "z", Body: "Closes #3"},
 		},
 	}
-	if got := s.OpenPullsFor(3, "agent/issue-3"); len(got) != 1 || got[0].Number != 10 {
-		t.Errorf("open = %+v（コードブロックの中の Closes は数えない）", got)
+	trusted := func(l string) bool { return l == "K-Kizuku" || l == "bot" }
+	if got := s.OpenPullsFor(3, "agent/issue-3", trusted); len(got) != 1 || got[0].Number != 10 {
+		t.Errorf("open = %+v（コードブロックの中の Closes と、信頼しない作者の PR は数えない）", got)
 	}
-	if got := s.MergedPullsFor(3, "agent/issue-3"); len(got) != 1 || got[0].Number != 12 {
+	if got := s.MergedPullsFor(3, "agent/issue-3", trusted); len(got) != 1 || got[0].Number != 12 {
 		t.Errorf("merged = %+v", got)
+	}
+	if got := s.OpenPullsFor(4, "agent/issue-4", trusted); len(got) != 1 || got[0].Number != 11 {
+		t.Errorf("open #4 = %+v", got)
+	}
+	if got := s.OpenPullsFor(3, "agent/issue-3", nil); len(got) != 0 {
+		t.Errorf("trusted が nil: open = %+v", got)
 	}
 	reasons, err := s.UnmetDeps(s.Issue(3))
 	if err != nil || len(reasons) != 2 || !strings.Contains(reasons[0], "#2") || !strings.Contains(reasons[1], "#4") {
@@ -96,7 +106,7 @@ func TestFetch(t *testing.T) {
 		case rp + "/issues/20/comments":
 			_, _ = w.Write([]byte(`[]`))
 		case rp + "/pulls":
-			_, _ = w.Write([]byte(`[{"number":20,"state":"open","merged_at":null,"body":"Closes #12","head":{"ref":"agent/issue-12","sha":"aaa"},"labels":[]},
+			_, _ = w.Write([]byte(`[{"number":20,"state":"open","merged_at":null,"body":"Closes #12","user":{"login":"github-actions[bot]"},"head":{"ref":"agent/issue-12","sha":"aaa"},"labels":[]},
 				{"number":21,"state":"closed","merged_at":"2026-11-01T00:00:00Z","body":"Closes #3","head":{"ref":"agent/issue-3","sha":"bbb"},"labels":[]}]`))
 		case rp + "/commits/aaa/status":
 			_, _ = w.Write([]byte(`{"statuses":[{"context":"merge-gate","state":"success"},{"context":"merge-gate","state":"pending"}]}`))
@@ -128,8 +138,11 @@ func TestFetch(t *testing.T) {
 	if is := s.Issue(5); len(is.Comments) != 1 {
 		t.Errorf("#5 = %+v（状態のラベルが残る閉じた Issue のコメントは読む）", is)
 	}
-	if p := s.Pull(21); !p.Merged || p.State != "closed" {
+	if p := s.Pull(21); !p.Merged || p.State != "closed" || p.Author != "" {
 		t.Errorf("#21 = %+v", p)
+	}
+	if p := s.Pull(20); p.Author != "github-actions[bot]" {
+		t.Errorf("#20 の作者 = %q", p.Author)
 	}
 	if s.Status("aaa", "merge-gate") != "success" || !s.HasBranch("agent/issue-12") {
 		t.Errorf("statuses = %v, branches = %v", s.Statuses, s.Branches)

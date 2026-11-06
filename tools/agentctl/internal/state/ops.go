@@ -21,8 +21,16 @@ type Env struct {
 	RetryLimit   int
 	Now          time.Time
 	Actor        string
-	// Trusted は、状態の記録を信頼するコメントの作者かを返す。
+	// Trusted は、状態の記録を信頼するコメントの作者か（PR なら、Issue との関係を数える作者か）を返す。
 	Trusted func(login string) bool
+}
+
+// trusted は Trusted を返す（nil なら、誰も信頼しない）。
+func (e *Env) trusted() func(login string) bool {
+	if e.Trusted == nil {
+		return func(string) bool { return false }
+	}
+	return e.Trusted
 }
 
 // Result は、行う予定の API の操作と、その説明。
@@ -90,11 +98,7 @@ func (e *Env) load(snap *snapshot.Snapshot, n int) (*snapshot.Issue, History, []
 	if is == nil {
 		return nil, History{}, nil, fmt.Errorf("state: Issue #%d がスナップショットにない", n)
 	}
-	trusted := e.Trusted
-	if trusted == nil {
-		trusted = func(string) bool { return false }
-	}
-	h, warns := ReadHistory(is, trusted)
+	h, warns := ReadHistory(is, e.trusted())
 	return is, h, warns, nil
 }
 
@@ -138,11 +142,11 @@ func Transition(snap *snapshot.Snapshot, e Env, n int, to Status, o TransitionOp
 	if to == Merged {
 		if pr > 0 {
 			p := snap.Pull(pr)
-			if !p.Merged || !p.RelatesTo(n, branch) {
-				return nil, reject("state: PR #%d は #%d に関係するマージ済みの PR ではない", pr, n)
+			if !p.Merged || !p.RelatesTo(n, branch, e.trusted()) {
+				return nil, reject("state: PR #%d は #%d に関係する（信頼する作者の）マージ済みの PR ではない", pr, n)
 			}
 		} else {
-			merged := snap.MergedPullsFor(n, branch)
+			merged := snap.MergedPullsFor(n, branch, e.trusted())
 			if len(merged) == 0 {
 				return nil, reject("state: #%d に関係するマージ済みの PR がないので merged にできない", n)
 			}
@@ -158,8 +162,8 @@ func Transition(snap *snapshot.Snapshot, e Env, n int, to Status, o TransitionOp
 }
 
 // startable は、Issue n に新しく着手してよいか（依存が完了し、ブランチと開いた PR がない）を確かめる。
-// 依存先が存在しないときは、拒否ではなくエラーを返す。
-func startable(snap *snapshot.Snapshot, is *snapshot.Issue, branch string) ([]string, error) {
+// PR は、作者が trusted のものだけを数える。依存先が存在しないときは、拒否ではなくエラーを返す。
+func startable(snap *snapshot.Snapshot, is *snapshot.Issue, branch string, trusted func(login string) bool) ([]string, error) {
 	reasons, err := snap.UnmetDeps(is)
 	if err != nil {
 		return nil, err
@@ -167,15 +171,16 @@ func startable(snap *snapshot.Snapshot, is *snapshot.Issue, branch string) ([]st
 	if snap.HasBranch(branch) {
 		reasons = append(reasons, fmt.Sprintf("ブランチ %s がある", branch))
 	}
-	for _, p := range snap.OpenPullsFor(is.Number, branch) {
+	for _, p := range snap.OpenPullsFor(is.Number, branch, trusted) {
 		reasons = append(reasons, fmt.Sprintf("開いた PR #%d がある", p.Number))
 	}
 	return reasons, nil
 }
 
 // Startable は、plan と claim で共通の「着手してよい」の確認（状態を除く）。満たさない理由を返す。
-func Startable(snap *snapshot.Snapshot, is *snapshot.Issue, branchPrefix string) ([]string, error) {
-	return startable(snap, is, snapshot.BranchFor(branchPrefix, is.Number))
+// trusted は、Issue との関係を数える PR の作者かを返す。
+func Startable(snap *snapshot.Snapshot, is *snapshot.Issue, branchPrefix string, trusted func(login string) bool) ([]string, error) {
+	return startable(snap, is, snapshot.BranchFor(branchPrefix, is.Number), trusted)
 }
 
 // Claim は着手の宣言の操作を組み立てる（agentctl claim）。
@@ -191,14 +196,12 @@ func Claim(snap *snapshot.Snapshot, e Env, n int, worker, session string, resume
 	if err != nil {
 		return nil, precondition("%v", err)
 	}
-	// 同じ worker と session での 2 回目は、何もせず成功する。
-	if c := h.LatestClaim(); cur == InProgress && c != nil && c.Worker == worker && c.Session == session {
-		return &Result{Warnings: warns, Message: fmt.Sprintf("#%d: %s（session %q）が着手済み（attempt %d）。何もしない", n, worker, session, c.Attempt)}, nil
-	}
 	branch := snapshot.BranchFor(e.BranchPrefix, n)
 	r := e.newRecord(cur, InProgress)
 	r.Worker, r.Branch, r.Session, r.Attempt = worker, branch, session, h.MaxAttempt()+1
 
+	// --resume は、同じ session でも冪等の判定をせず、前提を確かめてから attempt を 1 増やした記録を付ける
+	// （recover の resume-worker が出す最新の session をそのまま渡すのが自然な使い方のため）。
 	if resume {
 		if cur != InProgress {
 			return nil, precondition("state: #%d は %s なので再開できない（in-progress のときだけ）", n, cur)
@@ -206,7 +209,7 @@ func Claim(snap *snapshot.Snapshot, e Env, n int, worker, session string, resume
 		if !snap.HasBranch(branch) {
 			return nil, precondition("state: #%d のブランチ %s がないので再開できない", n, branch)
 		}
-		if ps := snap.OpenPullsFor(n, branch); len(ps) > 0 {
+		if ps := snap.OpenPullsFor(n, branch, e.trusted()); len(ps) > 0 {
 			return nil, precondition("state: #%d には開いた PR #%d があるので再開できない", n, ps[0].Number)
 		}
 		r.Reason = "再開"
@@ -214,10 +217,14 @@ func Claim(snap *snapshot.Snapshot, e Env, n int, worker, session string, resume
 			Message: fmt.Sprintf("#%d: %s が再開（attempt %d）", n, worker, r.Attempt)}, nil
 	}
 
+	// 同じ worker と session での 2 回目は、何もせず成功する。
+	if c := h.LatestClaim(); cur == InProgress && c != nil && c.Worker == worker && c.Session == session {
+		return &Result{Warnings: warns, Message: fmt.Sprintf("#%d: %s（session %q）が着手済み（attempt %d）。何もしない", n, worker, session, c.Attempt)}, nil
+	}
 	if cur != Ready {
 		return nil, precondition("state: #%d は %s なので着手できない（ready のときだけ）", n, cur)
 	}
-	reasons, err := startable(snap, is, branch)
+	reasons, err := startable(snap, is, branch, e.trusted())
 	if err != nil {
 		return nil, err
 	}

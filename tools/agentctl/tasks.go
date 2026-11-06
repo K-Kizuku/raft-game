@@ -51,13 +51,15 @@ var subUsage = map[string]string{
   条件: status:ready、依存先がすべて completed で閉じている、agent/issue-<N> のブランチと開いた PR がない、
         実装中の Issue や同時に選ぶ Issue と「変更予定ファイル」が重ならない（shared_append_files だけの重なりは警告）。
   上限: max_workers −（in-progress と changes-requested の数）。順番: クリティカルパスの長いもの、次に番号の小さいもの。
-  --json: {ready, blocked_by_deps, conflicts, active, capacity}、--mermaid: 状態で色分けした DAG。循環があれば終了コード 3。`,
+  上限で選ばなかったものは deferred に入れる。PR は、作者が trusted_authors（か AGENTCTL_BOT_LOGIN）のものだけを数える。
+  --json: {ready, blocked_by_deps, conflicts, deferred, active, capacity}、--mermaid: 状態で色分けした DAG。循環があれば終了コード 3。`,
 	"state": `agentctl state <issue> <status>: 遷移表で検証し、status:* を付け替えて、状態のコメントを付ける。
   merged へは、Issue に関係する PR が実際にマージされているときだけ。拒否したら終了コード 1。`,
 	"claim": `agentctl claim <issue> --worker ID: 着手の宣言（ready → in-progress）。worker・branch・session・attempt を記録する。
   前提（status:ready、依存が完了、ブランチと開いた PR がない）を満たさなければ終了コード 4。
   同じ worker と session での 2 回目は何もせず成功する。
-  --resume: in-progress で、ブランチがあり、PR がないときの再開。状態は変えず、attempt を 1 増やした記録だけ付ける。`,
+  --resume: in-progress で、ブランチがあり、PR がないときの再開。状態は変えず、attempt を 1 増やした記録だけ付ける
+            （同じ session でも冪等の判定はしない）。PR は、作者が信頼する作者のものだけを数える。`,
 	"attempt": `agentctl attempt <issue> --cause KEY: 同じ cause の記録の数が retry_limit に達していたら、
   status:blocked と needs-human を付けて終了コード 5。まだなら記録を 1 つ足す。
   blocked から人が戻した記録より後だけを数える。`,
@@ -196,7 +198,7 @@ func runPlan(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, out)
 		return exitOK
 	}
-	res, err := plan.Plan(e.snap, e.cfg)
+	res, err := plan.Plan(e.snap, e.cfg, e.trusted)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -226,6 +228,7 @@ func runPlan(args []string, stdout, stderr io.Writer) int {
 	section("ready", res.Ready)
 	section("blocked_by_deps", res.BlockedByDeps)
 	section("conflicts", res.Conflicts)
+	section("deferred", res.Deferred)
 	section("active", res.Active)
 	return exitOK
 }
