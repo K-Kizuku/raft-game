@@ -159,6 +159,34 @@ done
 expect_bash 0 human "$repo" "scripts/github/install-workflows.sh --dry-run"
 expect_bash 0 human "$repo" "echo x > .github/workflows/ci.yml"
 
+# eval・git の別名・環境変数での git の設定は、判定をすり抜けられるので拒否する（human を除く）
+agents_denied=(
+  "eval git push origin main"
+  "eval 'echo hi'"
+  "command eval x"
+  "git -c alias.p=push p origin main"
+  "git -c Alias.P=push p origin agent/issue-5"
+  "git -calias.p=push p origin main"
+  "git --config-env=alias.p=X p origin main"
+  "git --config-env alias.p=X p origin main"
+  "git -C . -c alias.st=status st"
+  "git config alias.p push"
+  "git config --global alias.p '!git push origin main'"
+  "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p origin main"
+  "env GIT_CONFIG_PARAMETERS=x git p"
+)
+for role in orchestrator worker reviewer; do
+  for cmd in "${agents_denied[@]}"; do
+    expect_bash 2 "$role" "$wt" "$cmd"
+  done
+done
+expect_bash 0 human "$repo" "git -c alias.st=status st"
+expect_bash 0 human "$repo" "eval 'echo hi'"
+expect_bash 0 worker "$wt" "git -c user.name=x commit -m 'x (#5)'"
+expect_bash 0 worker "$wt" "git config --get alias.p"
+expect_bash 0 worker "$wt" "git config user.name x"
+expect_bash 0 worker "$wt" "echo evaluate"
+
 # ---------------- 通常の作業は通す ----------------
 for role in orchestrator worker human; do
   for cmd in \
@@ -216,6 +244,65 @@ expect_bash 0 worker "$wt6" "git push origin agent/issue-6"
 got="$(AGENT_ISSUE=6 run guard-bash.sh worker "$wt" "$(bash_input "git push origin agent/issue-6")")"
 [ "$got" = 0 ] && pass || fail "AGENT_ISSUE=6 なら agent/issue-6 へ push できる（got=$got）"
 
+# Worker: Bash からの保護されたパスへの書き込みは、AGENT_ALLOW_PROTECTED=1 のときだけ
+worker_protected_denied=(
+  "sed -i s/exit/true/ .claude/hooks/guard-bash.sh"
+  "sed -i.bak 1d $wt/.claude/hooks/guard-bash.sh"
+  "sed --in-place 1d ./.claude/hooks/lib.sh"
+  "echo 'exit 0' > .claude/hooks/guard-bash.sh"
+  "printf x >> \"./.claude/hooks/lib.sh\""
+  "cat x >| .claude/hooks/lib.sh"
+  "cat x | tee .claude/hooks/guard-write.sh"
+  "cat x | tee -a scripts/agents/lib.sh"
+  "cp /tmp/x .claude/hooks/guard-bash.sh"
+  "cp -R /tmp/hooks .claude/hooks"
+  "mv x scripts/agents/merge.sh"
+  "rm -rf .claude/hooks"
+  "rm -rf .claude"
+  "rm scripts/agents/merge.sh"
+  "ln -sf /tmp/x .agents/config.json"
+  "touch scripts/agents/new.sh"
+  "chmod -x .claude/hooks/guard-bash.sh"
+  "python3 -c \"open('.claude/hooks/guard-bash.sh','w').write('')\""
+  "perl -pi -e s/a/b/ scripts/agents/lib.sh"
+  "node -e \"require('fs').writeFileSync('.agents/config.json','{}')\""
+  "git checkout origin/main -- .claude/hooks/guard-bash.sh"
+  "git restore --source=HEAD~1 scripts/agents/merge.sh"
+  "git rm -q scripts/agents/merge.sh"
+  "dd if=/dev/zero of=.agents/config.json"
+  "cd sub && cp x ../.claude/hooks/y"
+  "tar -xf x.tar -C .claude/hooks"
+)
+for cmd in "${worker_protected_denied[@]}"; do
+  expect_bash 2 worker "$wt" "$cmd"
+done
+# 役割が未設定（Worktree の中＝worker）でも同じ
+got="$(run guard-bash.sh - "$wt" "$(bash_input "sed -i 1d .claude/hooks/guard-bash.sh")")"
+[ "$got" = 2 ] && pass || fail "役割が未設定の Worker でも保護されたパスへの sed -i を拒否する（got=$got）"
+for cmd in "${worker_protected_denied[@]}"; do
+  got="$(AGENT_ALLOW_PROTECTED=1 run guard-bash.sh worker "$wt" "$(bash_input "$cmd")")"
+  [ "$got" = 0 ] && pass || fail "AGENT_ALLOW_PROTECTED=1 なら Bash から保護されたパスに書ける（got=$got）: $cmd"
+done
+for cmd in \
+  "sed -i s/a/b/ server/x.go" \
+  "echo x > server/out.txt" \
+  "cp a b" \
+  "rm -rf .claude/worktrees/tmp" \
+  "cat .claude/hooks/guard-bash.sh" \
+  "grep -n deny .claude/hooks/guard-bash.sh > /dev/null" \
+  "sed -n 1,10p scripts/agents/lib.sh" \
+  "shellcheck .claude/hooks/guard-bash.sh scripts/agents/*.sh" \
+  "bash .claude/hooks/tests/run.sh" \
+  "git diff scripts/agents/merge.sh" \
+  "git add scripts/agents/merge.sh" \
+  "git log -- .claude/hooks" \
+  "python3 scripts/check-docs.py" \
+  "gofmt -l scripts"; do
+  expect_bash 0 worker "$wt" "$cmd"
+done
+# orchestrator・human には Bash の保護されたパスの判定をかけない（orchestrator の書き込みは guard-write と手順で止める）
+expect_bash 0 human "$wt" "sed -i 1d .claude/hooks/guard-bash.sh"
+
 # ---------------- Reviewer ----------------
 for cmd in \
   "git commit -m x" \
@@ -232,7 +319,18 @@ for cmd in \
   "sed -i s/a/b/ a.txt" \
   "git checkout -- a.txt" \
   "gh api -X POST repos/o/r/issues/1/comments" \
-  "scripts/agents/merge.sh 1"; do
+  "scripts/agents/merge.sh 1" \
+  "python3 -c \"open('x','w').write('1')\"" \
+  "python -c 1" \
+  "python3.12 x.py" \
+  "/usr/bin/python3 x.py" \
+  "env python3 x.py" \
+  "node -e 1" \
+  "perl -e 1" \
+  "perl -pi -e s/a/b/ a.txt" \
+  "ruby -e 1" \
+  "awk 'BEGIN { print 1 > \"x\" }'" \
+  "awk 'BEGIN { system(\"rm x\") }'"; do
   expect_bash 2 reviewer "$wt" "$cmd"
 done
 for cmd in \
@@ -244,6 +342,7 @@ for cmd in \
   "grep -rn 'a > b' ." \
   "ls > /dev/null 2>&1" \
   "gh pr view 12 --json body" \
+  "awk '{ print \$1 }' a.txt" \
   "shellcheck a.sh"; do
   expect_bash 0 reviewer "$wt" "$cmd"
 done

@@ -4,7 +4,9 @@
 #
 # コマンドを完全に解釈することはできないので、控えめに（疑わしいものは拒否する側に）
 # 判定する。引用符は取り除き、`;`・`&`・`|`・`(`・`)`・バッククォート・改行で区切った
-# まとまり（セグメント）ごとに調べる。
+# まとまり（セグメント）ごとに調べる。字句の判定なので、cd してから相対パスで書く・
+# 変数でパスを組み立てる・スクリプトのファイルの中身で書く、などは見分けられない
+# （main は Rulesets が、保護されたパスはレビューが最後の砦になる）。
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,6 +27,75 @@ MAIN_ROOT="$(repo_main_root "$CWD")"
 noquote="$(printf '%s\n' "$raw" | tr -d "\"'\\\\")"
 norm="$(printf '%s\n' "$noquote" | sed -E 's/[0-9]*>&[0-9-]+/ /g; s/&>/>/g')"
 
+# ---- Worker の保護されたパス（.agents/config.json の protected_paths） ----
+# AGENT_ALLOW_PROTECTED=1 でなければ、Bash からの書き込み（WRITERS・sed -i・リダイレクトなど）も拒否する。
+PROTECTED=()
+if [ "$ROLE" = "worker" ] && [ "${AGENT_ALLOW_PROTECTED:-0}" != "1" ] && [ -n "$TOP" ] &&
+  [ -f "$TOP/.agents/config.json" ]; then
+  while IFS= read -r p; do
+    [ -n "$p" ] && PROTECTED+=("$p")
+  done < <(jq -r '.protected_paths[]? // empty' "$TOP/.agents/config.json" 2>/dev/null || true)
+fi
+
+# lex_norm <絶対パス>: . と .. を字句のまま取り除く。
+lex_norm() {
+  local out="" part
+  local parts=()
+  IFS=/ read -r -a parts <<<"$1" || true
+  for part in "${parts[@]+"${parts[@]}"}"; do
+    case "$part" in
+      '' | .) ;;
+      ..) out="${out%/*}" ;;
+      *) out="$out/$part" ;;
+    esac
+  done
+  printf '%s\n' "${out:-/}"
+}
+
+# protected_hit <単語>: 単語が保護されたパス（またはその祖先のディレクトリ）を指していれば 0。
+# 控えめに、単語に保護されたパスの前半（最初のワイルドカードより前）が含まれるだけでも 0 にする。
+# shellcheck disable=SC2053
+protected_hit() {
+  local w="$1" p pre glob t rel
+  [ "${#PROTECTED[@]}" -gt 0 ] || return 1
+  case "$w" in
+    -*=*) w="${w#*=}" ;;
+    -*) return 1 ;;
+    *=*) w="${w#*=}" ;; # dd の of=… など
+  esac
+  [ -n "$w" ] || return 1
+  for p in "${PROTECTED[@]}"; do
+    pre="${p%%[*?[]*}"
+    if [ -n "$pre" ]; then
+      case "$w" in *"$pre"*) return 0 ;; esac
+    fi
+  done
+  [ -n "$TOP" ] || return 1
+  case "$w" in
+    /*) t="$w" ;;
+    '~'* | '$'*) return 1 ;;
+    *) t="$CWD/$w" ;;
+  esac
+  t="$(lex_norm "$t")"
+  case "$t" in
+    "$TOP"/*) rel="${t#"$TOP"/}" ;;
+    *) return 1 ;;
+  esac
+  for p in "${PROTECTED[@]}"; do
+    glob="${p//\*\*/*}"
+    if [[ "$rel" == $glob ]] || [[ "$rel/" == $glob ]]; then
+      return 0
+    fi
+    pre="${p%%[*?[]*}"
+    case "$pre" in
+      "$rel"/*) return 0 ;; # 祖先のディレクトリ（rm -r .claude など）
+    esac
+  done
+  return 1
+}
+
+PROTECTED_MSG="保護されたパス（.agents/config.json の protected_paths）は、Issue の変更予定ファイルに含まれるとき（AGENT_ALLOW_PROTECTED=1）だけ変更できる"
+
 # ---- 書き込みのリダイレクト ----
 # 引用符の中身を消してから、> の先を調べる。
 noqstr="$(printf '%s\n' "$raw" | sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g" |
@@ -39,6 +110,24 @@ fi
 if [ "$ROLE" = "reviewer" ]; then
   if printf '%s\n' "$noqstr" | grep -q '>'; then
     deny "Reviewer はファイルを書き換えない（リダイレクト > ・>> は使えない）"
+  fi
+fi
+if [ "${#PROTECTED[@]}" -gt 0 ]; then
+  while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    if protected_hit "$target"; then
+      deny "$PROTECTED_MSG（リダイレクトの先: $target）"
+    fi
+  done < <(printf '%s\n' "$norm" | grep -Eo '>>?\|?[[:space:]]*[^[:space:]<>;&|()]+' | sed -E 's/^>>?\|?[[:space:]]*//' || true)
+  # インタプリタのコード（python3 -c "open('…','w')" など）は ( や , で区切られてセグメントに分かれるので、
+  # コマンド全体の単語を調べる。
+  if printf '%s\n' "$norm" | grep -Eq '(^|[^A-Za-z0-9_.-])(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|perl[0-9.]*|ruby|php|lua|luajit|tclsh|osascript|Rscript)([[:space:]]|$)'; then
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      if protected_hit "$tok"; then
+        deny "$PROTECTED_MSG（インタプリタのコードの中: $tok）"
+      fi
+    done < <(printf '%s\n' "$norm" | tr -c 'A-Za-z0-9_./~$*?=:@+%-' '\n')
   fi
 fi
 
@@ -146,6 +235,14 @@ check_push() {
   fi
 }
 
+# is_alias_key <設定のキー>: alias.* なら 0（大文字と小文字を区別しない）。
+is_alias_key() {
+  case "$1" in
+    [Aa][Ll][Ii][Aa][Ss].*) return 0 ;;
+  esac
+  return 1
+}
+
 # check_git <セグメントの単語…>（先頭は git）
 check_git() {
   shift
@@ -160,7 +257,26 @@ check_git() {
         esac
         shift 2
         ;;
-      -c | --git-dir | --work-tree | --namespace) shift 2 ;;
+      -c | --config-env)
+        # git -c alias.p=push p … は push などの判定をすり抜けられるので拒否する。
+        if [ "$ROLE" != "human" ] && is_alias_key "${2:-}"; then
+          deny "git $1 alias.* は使わない（別名で判定をすり抜けられる）"
+        fi
+        [ "$#" -ge 2 ] || return 0
+        shift 2
+        ;;
+      -c* | --config-env=*)
+        local kv="${1#--config-env=}"
+        kv="${kv#-c}"
+        if [ "$ROLE" != "human" ] && is_alias_key "$kv"; then
+          deny "git -c alias.* は使わない（別名で判定をすり抜けられる）"
+        fi
+        shift
+        ;;
+      --git-dir | --work-tree | --namespace)
+        [ "$#" -ge 2 ] || return 0
+        shift 2
+        ;;
       -*) shift ;;
       *) break ;;
     esac
@@ -182,6 +298,20 @@ check_git() {
           case "$a" in
             --force | -f | -ff) deny "git worktree remove --force は禁止（未コミットの変更が消える）" ;;
           esac
+        done
+      fi
+      ;;
+    config)
+      # 別名を設定して、次のコマンドで判定をすり抜けることを防ぐ（読むだけなら許す）。
+      if [ "$ROLE" != "human" ]; then
+        local a
+        for a in "$@"; do
+          if is_alias_key "$a"; then
+            case " $* " in
+              *" --get"* | *" --list "* | *" -l "*) ;;
+              *) deny "git config で alias.* を設定しない（別名で判定をすり抜けられる）" ;;
+            esac
+          fi
         done
       fi
       ;;
@@ -380,6 +510,16 @@ invoked_script() {
 
 WRITERS=" cp mv tee install rsync ln touch rm rmdir mkdir truncate dd patch chmod chown unzip tar python python3 node perl ruby "
 
+# is_interpreter <コマンド名>: 任意のコードを実行できるインタプリタなら 0。
+is_interpreter() {
+  case "$1" in
+    python | python[0-9]* | pypy* | node | nodejs | deno | bun | perl | perl[0-9]* | ruby | php | lua | luajit | tclsh | osascript | Rscript)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 check_segment() {
   local seg="$1"
   local w=()
@@ -391,11 +531,20 @@ check_segment() {
   while [ "$changed" = 1 ] && [ "${#w[@]}" -gt 0 ]; do
     changed=0
     case "${w[0]}" in
+      GIT_CONFIG_*=* | GIT_CONFIG=*)
+        # GIT_CONFIG_COUNT・GIT_CONFIG_KEY_n などで alias.* を渡せるので、環境変数での上書きは使わない
+        [ "$ROLE" = "human" ] || deny "git の設定を環境変数（${w[0]%%=*}）で上書きしない（別名で判定をすり抜けられる）"
+        w=("${w[@]:1}"); changed=1; continue
+        ;;
       [A-Za-z_]*=*) w=("${w[@]:1}"); changed=1; continue ;;
-      env | sudo | command | exec | nohup | time | nice | then | do | else | if | while | until | '!' | '{' | '$')
+      env | sudo | command | builtin | exec | nohup | time | nice | then | do | else | if | while | until | '!' | '{' | '$')
         w=("${w[@]:1}")
         while [ "${#w[@]}" -gt 0 ]; do
           case "${w[0]}" in
+            GIT_CONFIG_*=* | GIT_CONFIG=*)
+              [ "$ROLE" = "human" ] || deny "git の設定を環境変数（${w[0]%%=*}）で上書きしない（別名で判定をすり抜けられる）"
+              w=("${w[@]:1}")
+              ;;
             -* | [A-Za-z_]*=*) w=("${w[@]:1}") ;;
             *) break ;;
           esac
@@ -434,6 +583,11 @@ check_segment() {
 
   local c0b="${w[0]##*/}" s0
   local segstr=" ${w[*]} "
+
+  # eval は中身を字句で調べられない（引用符を外した形と実際の解釈が異なる）ので拒否する
+  if [ "$c0b" = "eval" ] && [ "$ROLE" != "human" ]; then
+    deny "eval は使わない（中身を安全に判定できない）"
+  fi
 
   # スクリプトの実行
   s0="$(invoked_script "${w[@]}")"
@@ -502,6 +656,39 @@ check_segment() {
     esac
   fi
 
+  # Worker: 保護されたパスへの Bash からの書き込み（AGENT_ALLOW_PROTECTED=1 でなければ拒否）
+  if [ "${#PROTECTED[@]}" -gt 0 ]; then
+    local pw=0
+    case "$WRITERS" in
+      *" $c0b "*) pw=1 ;;
+    esac
+    is_interpreter "$c0b" && pw=1
+    case "$c0b" in
+      sed | gsed)
+        for x in "${w[@]:1}"; do
+          case "$x" in -i* | --in-place*) pw=1 ;; esac
+        done
+        ;;
+      gofmt | goimports)
+        for x in "${w[@]:1}"; do
+          [ "$x" = "-w" ] && pw=1
+        done
+        ;;
+      git)
+        case "$segstr" in
+          *" checkout "* | *" restore "* | *" mv "* | *" rm "* | *" apply "* | *" am "* | *" reset "*) pw=1 ;;
+        esac
+        ;;
+    esac
+    if [ "$pw" = 1 ]; then
+      for x in "${w[@]:1}"; do
+        if protected_hit "$x"; then
+          deny "$PROTECTED_MSG（$c0b: $x）"
+        fi
+      done
+    fi
+  fi
+
   # Worker（と Reviewer）: agentctl state … merged|ready-to-merge
   if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
     case "$segstr" in
@@ -523,16 +710,25 @@ check_segment() {
 
   # Reviewer: 書き込みにあたる操作
   if [ "$ROLE" = "reviewer" ]; then
+    if is_interpreter "$c0b"; then
+      deny "Reviewer はインタプリタ（$c0b）を使わない（任意のコードでファイルを書き換えられる）"
+    fi
     case "$c0b" in
       tee | cp | mv | rm | rmdir | touch | mkdir | ln | install | truncate | dd | patch | chmod | chown)
         deny "Reviewer はファイルを書き換えない（$c0b）"
         ;;
-      sed | perl)
+      sed | gsed)
         for x in "${w[@]:1}"; do
           case "$x" in
-            -i* | -pi* | --in-place*) deny "Reviewer はファイルを書き換えない（$c0b -i）" ;;
+            -i* | --in-place*) deny "Reviewer はファイルを書き換えない（$c0b -i）" ;;
           esac
         done
+        ;;
+      awk | gawk | mawk | nawk)
+        # awk のプログラムの中の > ・system() は、引用符の中なので上のリダイレクトの判定に掛からない
+        case "$segstr" in
+          *'>'* | *system*) deny "Reviewer は awk でファイルを書き換えない・コマンドを実行しない" ;;
+        esac
         ;;
     esac
   fi
