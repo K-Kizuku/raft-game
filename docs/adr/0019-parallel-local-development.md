@@ -3,7 +3,9 @@
 - 状態: Accepted
 - 日付: 2026-11-06
 - 決めた人: プロダクトオーナー（チームは人間 1 人と AI エージェントの並列開発、全員 Docker Desktop を使う）、Claude（具体化）
-- 関連: ADR-0016、[実装計画 §5](../08-implementation-plan.md)、[判断の記録 R-03](../09-assumptions-and-open-questions.md)
+- 関連: ADR-0016、[ADR-0021](./0021-hootl-agent-development.md)、[実装計画 §5](../08-implementation-plan.md)、[判断の記録 R-03](../09-assumptions-and-open-questions.md)
+
+この ADR は、ローカル環境（ポート・状態・名前）の分け方だけを決める。エージェントの役割・Issue からマージまでの流れ・Merge Gate などの運用は、[ADR-0021](./0021-hootl-agent-development.md) と [docs/agents/](../agents/README.md) を参照。
 
 ## 背景
 

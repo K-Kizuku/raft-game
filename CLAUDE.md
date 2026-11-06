@@ -6,6 +6,7 @@
 2. `docs/03-design-doc.md`（設計）
 3. `docs/08-implementation-plan.md`（タスク一覧）
 4. 迷ったら `docs/adr/` と `docs/09-assumptions-and-open-questions.md`（判断の記録）
+5. AI エージェントとして動くときは `docs/agents/README.md`（役割と権限・Issue からマージまでの流れ・運用。ローカル環境の分け方は ADR-0019）
 
 ## 絶対に守ること
 
@@ -71,7 +72,7 @@ go -C tools/agentctl run . review render "$PWD/review.json"                     
 
 ## AI エージェントの役割と禁止事項（#5）
 
-役割は環境変数 `AGENT_ROLE`（`orchestrator`・`worker`・`reviewer`・`human`）で決まる。未設定なら、リンクした Worktree の中は `worker`、それ以外は `orchestrator`。禁止事項は指示だけでなく、`.claude/settings.json` の権限と `.claude/hooks/guard-*.sh` で止める。詳しい運用は #6 のドキュメントを参照。
+役割は環境変数 `AGENT_ROLE`（`orchestrator`・`worker`・`reviewer`・`human`）で決まる。未設定なら、リンクした Worktree の中は `worker`、それ以外は `orchestrator`。禁止事項は指示だけでなく、`.claude/settings.json` の権限と `.claude/hooks/guard-*.sh` で止める。詳しい運用は [docs/agents/](docs/agents/README.md) を参照。
 
 - **全員**: `main` への push、`--force`・`-f` の push（`--force-with-lease` は `agent/issue-*` へだけ）、`gh pr merge`、`.github/workflows/` への書き込み（`human` を除く）、`gh secret`・`gh variable`・`gh ruleset`、ラベル `human-approved` の付与、`git worktree remove --force`、`cf deploy`（`--dry-run` を除く）、`wrangler` をしない
 - **Orchestrator**: コード・テスト・ドキュメントを直接変更しない（書けるのは `.agents/`・`.claude/worktrees/` だけ）。マージは `scripts/agents/merge.sh`（Merge Gate が pass のときだけ）で行う
