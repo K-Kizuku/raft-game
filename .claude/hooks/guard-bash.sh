@@ -508,6 +508,53 @@ invoked_script() {
   esac
 }
 
+# agentctl_write_sub <セグメントの単語…>: agentctl の書き込みのサブコマンド（comment・state・claim・attempt）を
+# 呼ぶ形なら、そのサブコマンドを出す（なければ空。--dry-run があれば空）。
+# 見る形: agentctl …（.agents/bin/agentctl・lib.sh の関数を含む）、scripts/agents/agentctl.sh …、
+# bash agentctl.sh …、go … run …（go -C tools/agentctl run . … など。cd してからの go run . も
+# 見分けられないので、go run では agentctl の有無を問わない）。
+agentctl_write_sub() {
+  local w=("$@") start=-1 i x
+  case "${w[0]##*/}" in
+    agentctl | agentctl.sh) start=1 ;;
+    bash | sh | zsh | dash | source | .)
+      for ((i = 1; i < ${#w[@]}; i++)); do
+        case "${w[$i]}" in
+          -*) ;;
+          *)
+            case "${w[$i]##*/}" in
+              agentctl | agentctl.sh) start=$((i + 1)) ;;
+            esac
+            break
+            ;;
+        esac
+      done
+      ;;
+    go)
+      for ((i = 1; i < ${#w[@]}; i++)); do
+        if [ "${w[$i]}" = "run" ]; then
+          start=$((i + 1))
+          break
+        fi
+      done
+      ;;
+  esac
+  [ "$start" -ge 0 ] || return 0
+  for x in "${w[@]:start}"; do
+    case "$x" in
+      --dry-run | -dry-run | --dry-run=true | -dry-run=true) return 0 ;;
+    esac
+  done
+  for x in "${w[@]:start}"; do
+    case "$x" in
+      comment | state | claim | attempt)
+        printf '%s\n' "$x"
+        return 0
+        ;;
+    esac
+  done
+}
+
 WRITERS=" cp mv tee install rsync ln touch rm rmdir mkdir truncate dd patch chmod chown unzip tar python python3 node perl ruby "
 
 # is_interpreter <コマンド名>: 任意のコードを実行できるインタプリタなら 0。
@@ -706,6 +753,16 @@ check_segment() {
         done
         ;;
     esac
+  fi
+
+  # Worker・Reviewer: agentctl の書き込みのサブコマンド（comment・state・claim・attempt。--dry-run を除く）（Issue #86）。
+  # agentctl comment は信頼する作者の認証情報で PR にコメントを書くので、偽のレビュー記録を投稿できてしまう。
+  if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
+    local acsub
+    acsub="$(agentctl_write_sub "${w[@]}")"
+    if [ -n "$acsub" ]; then
+      deny "Worker・Reviewer は agentctl $acsub を使わない（PR へのコメントと Issue の状態の書き込みは Orchestrator が行う。--dry-run だけ許す）"
+    fi
   fi
 
   # Reviewer: 書き込みにあたる操作
