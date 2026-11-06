@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "default_branch": "main",
+  "branch_prefix": "agent/issue-",
+  "max_workers": 2,
+  "retry_limit": 3,
+  "required_checks": ["ci-ok"],
+  "review": {
+    "primary": "codex",
+    "fallback": "claude-fallback",
+    "allow_fallback": true,
+    "fallback_reasons": ["auth_error", "rate_limited", "service_unavailable", "not_installed"],
+    "blocking_severities": ["critical", "high"],
+    "trusted_authors": ["K-Kizuku"]
+  },
+  "shared_append_files": ["CLAUDE.md", "docs/README.md", "docs/adr/README.md", "docs/08-implementation-plan.md"],
+  "protected_paths": [".github/workflows/**", ".github/workflow-sources/**", ".github/rulesets/**", ".agents/config.json", ".claude/settings.json", ".claude/hooks/**", ".claude/agents/**", "tools/agentctl/**", "scripts/agents/**"],
+  "dev_slots": 10
+}

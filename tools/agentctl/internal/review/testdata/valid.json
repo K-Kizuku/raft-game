@@ -1,0 +1,25 @@
+{
+  "schema": "agent-review/v1",
+  "pr": 12,
+  "head_sha": "1111111111111111111111111111111111111111",
+  "base_sha": "2222222222222222222222222222222222222222",
+  "round": 1,
+  "reviewer": "codex",
+  "reviewer_version": "codex-cli 0.167.0",
+  "fallback_reason": "",
+  "verdict": "request_changes",
+  "summary": "エラー処理が足りない",
+  "protected_paths_ack": { "reviewed": true, "weakens_guards": false },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "high",
+      "category": "correctness",
+      "file": "tools/agentctl/main.go", "line": 10,
+      "title": "5xx を無視している", "detail": "部分的な情報で pass になる",
+      "status": "open",
+      "resolution": ""
+    }
+  ],
+  "created_at": "2026-11-01T10:00:00Z"
+}

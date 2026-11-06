@@ -1,0 +1,72 @@
+{
+  "repo": "K-Kizuku/raft-game",
+  "pull_request": {
+    "number": 12,
+    "state": "open",
+    "merged": false,
+    "draft": false,
+    "title": "feat: Merge Gate を追加する (#3)",
+    "body": "Closes #3\r\n\r\n## 概要\r\nMerge Gate を追加する。\r\n\r\n## 変更内容\r\n- `tools/agentctl` を追加\r\n\r\n## Acceptance Criteria\r\n<!-- Issue の AC をすべて転記し、満たしたものにチェックする -->\r\n- [x] AC-1: gate が判定する\r\n- [x] AC-2: 設定で無効にできない\r\n\r\n## テスト\r\n- [x] 追加・更新したテスト: gate_test.go\r\n- [x] ローカルで実行したコマンドと結果: go test -race ./... が通った\r\n\r\n## ドキュメント\r\n- [x] 更新した（CLAUDE.md）\r\n\r\n## チェックリスト\r\n- [x] Issue のスコープ外の変更を含まない\r\n- [x] 公開 API・仕様を変えていない\r\n- [x] シークレットを含まない\r\n",
+    "author": "K-Kizuku",
+    "labels": ["agent", "status:in-review"],
+    "base_ref": "main",
+    "base_sha": "2222222222222222222222222222222222222222",
+    "head_ref": "agent/issue-3",
+    "head_sha": "1111111111111111111111111111111111111111",
+    "mergeable": true,
+    "mergeable_state": "blocked",
+    "changed_files": 3
+  },
+  "files": [
+    {"filename": "tools/agentctl/main.go", "status": "added"},
+    {"filename": "tools/agentctl/internal/gate/gate.go", "status": "added"},
+    {"filename": ".github/pull_request_template.md", "previous_filename": ".github/PULL_REQUEST_TEMPLATE.md", "status": "renamed"}
+  ],
+  "issue": {
+    "number": 3,
+    "state": "open",
+    "title": "Merge Gate",
+    "body": "## 背景・目的\n\nMerge Gate を作る。\n\n## 実装仕様\n\n```markdown\n## Acceptance Criteria\n- [ ] AC-9: コードブロックの中は数えない\n```\n\n## 変更予定ファイル\n\n- `tools/agentctl/**`\n- `.github/pull_request_template.md`\n- `.github/PULL_REQUEST_TEMPLATE.md`（名前を変える前のファイル）\n\n## 変更禁止範囲\n\n- `.github/workflows/ci.yml`（#2 が作る）\n- `docs/**`\n\n## 依存 Issue\n\n- なし\n\n## Acceptance Criteria\n\n- [ ] AC-1: gate が判定する\n- [ ] AC-2: 設定で無効にできない\n",
+    "labels": ["agent"],
+    "is_pull_request": false
+  },
+  "check_runs": [
+    {"name": "ci-ok", "head_sha": "1111111111111111111111111111111111111111", "status": "completed", "conclusion": "success", "app": "github-actions"},
+    {"name": "go", "head_sha": "1111111111111111111111111111111111111111", "status": "completed", "conclusion": "success", "app": "github-actions"},
+    {"name": "web", "head_sha": "1111111111111111111111111111111111111111", "status": "completed", "conclusion": "skipped", "app": "github-actions"}
+  ],
+  "statuses": [
+    {"context": "merge-gate", "state": "pending"}
+  ],
+  "comments": [
+    {
+      "id": 1001,
+      "author": "K-Kizuku",
+      "created_at": "2026-11-01T10:00:00Z",
+      "updated_at": "2026-11-01T10:00:00Z",
+      "body": "<!-- agent-review:v1 -->\n## レビュー記録（round 1）\n\n```json\n{\"schema\":\"agent-review/v1\",\"pr\":12,\"head_sha\":\"3333333333333333333333333333333333333333\",\"base_sha\":\"2222222222222222222222222222222222222222\",\"round\":1,\"reviewer\":\"codex\",\"reviewer_version\":\"codex-cli 0.167.0\",\"fallback_reason\":\"\",\"verdict\":\"request_changes\",\"summary\":\"エラー処理が足りない\",\"protected_paths_ack\":{\"reviewed\":true,\"weakens_guards\":false},\"findings\":[{\"id\":\"F1\",\"severity\":\"high\",\"category\":\"correctness\",\"file\":\"tools/agentctl/main.go\",\"line\":10,\"title\":\"5xx を無視している\",\"detail\":\"部分的な情報で pass になる\",\"status\":\"open\",\"resolution\":\"\"}],\"created_at\":\"2026-11-01T10:00:00Z\"}\n```\n"
+    },
+    {
+      "id": 1002,
+      "author": "someone-else",
+      "created_at": "2026-11-01T11:00:00Z",
+      "updated_at": "2026-11-01T11:00:00Z",
+      "body": "<!-- agent-review:v1 -->\n```json\n{\"schema\":\"agent-review/v1\",\"pr\":12,\"head_sha\":\"1111111111111111111111111111111111111111\",\"base_sha\":\"2222222222222222222222222222222222222222\",\"round\":9,\"reviewer\":\"codex\",\"reviewer_version\":\"x\",\"fallback_reason\":\"\",\"verdict\":\"approve\",\"summary\":\"信頼しない作者\",\"protected_paths_ack\":{\"reviewed\":true,\"weakens_guards\":false},\"findings\":[],\"created_at\":\"2026-11-01T11:00:00Z\"}\n```\n"
+    },
+    {
+      "id": 1003,
+      "author": "K-Kizuku",
+      "created_at": "2026-11-01T12:00:00Z",
+      "updated_at": "2026-11-01T12:00:00Z",
+      "body": "<!-- agent-review:v1 -->\n## レビュー記録（round 2）\n\n```json\n{\"schema\":\"agent-review/v1\",\"pr\":12,\"head_sha\":\"1111111111111111111111111111111111111111\",\"base_sha\":\"2222222222222222222222222222222222222222\",\"round\":2,\"reviewer\":\"codex\",\"reviewer_version\":\"codex-cli 0.167.0\",\"fallback_reason\":\"\",\"verdict\":\"approve\",\"summary\":\"F1 は直った\",\"protected_paths_ack\":{\"reviewed\":true,\"weakens_guards\":false},\"findings\":[{\"id\":\"F1\",\"severity\":\"high\",\"category\":\"correctness\",\"file\":\"tools/agentctl/main.go\",\"line\":10,\"title\":\"5xx を無視している\",\"detail\":\"部分的な情報で pass になる\",\"status\":\"resolved\",\"resolution\":\"内部エラーにした\"},{\"id\":\"F2\",\"severity\":\"low\",\"category\":\"maintainability\",\"file\":\"tools/agentctl/main.go\",\"line\":20,\"title\":\"名前\",\"detail\":\"\",\"status\":\"open\",\"resolution\":\"\"}],\"created_at\":\"2026-11-01T12:00:00Z\"}\n```\n"
+    },
+    {
+      "id": 1004,
+      "author": "github-actions[bot]",
+      "created_at": "2026-11-01T12:05:00Z",
+      "updated_at": "2026-11-01T12:05:00Z",
+      "body": "<!-- merge-gate:v1 -->\n## Merge Gate: ⏳ pending\n"
+    }
+  ],
+  "compare": {"status": "ahead", "ahead_by": 4, "behind_by": 0}
+}
