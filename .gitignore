@@ -1,0 +1,15 @@
+# AI エージェントの作業の状態（Issue #5）
+.agents/bin/
+.agents/run/
+.agents/logs/
+.agents/archive/
+.claude/worktrees/
+.claude/settings.local.json
+
+# シークレット
+.env
+.env.*
+*.secrets*
+
+# テストなどで作られるもの（残ると git worktree remove が失敗する）
+__pycache__/

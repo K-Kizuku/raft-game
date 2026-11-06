@@ -228,6 +228,72 @@ else
   pass "不明な引数はエラー"
 fi
 
+# ===== apply-repo-settings.sh と .github/rulesets/main.json（Issue #5） =====
+apply="$here/../apply-repo-settings.sh"
+ruleset="$here/../../../.github/rulesets/main.json"
+# 偽の gh（別のもの）: 引数を 1 行ずつ記録し、GET rulesets には FAKE_RULESETS を返す。
+mkdir -p "$tmp/bin-apply"
+cat >"$tmp/bin-apply/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_GH_LOG"
+case "$*" in
+  "api repos/o/r/rulesets --paginate") printf '%s\n' "${FAKE_RULESETS:-[]}" ;;
+  "repo view"*) echo "o/r" ;;
+esac
+EOF
+chmod +x "$tmp/bin-apply/gh"
+
+jqt() { jq -e "$@" >/dev/null; }
+check "Ruleset: 対象はデフォルトブランチ・bypass_actors は空" \
+  jqt '.target == "branch" and .enforcement == "active" and .bypass_actors == [] and .conditions.ref_name.include == ["~DEFAULT_BRANCH"]' "$ruleset"
+check "Ruleset: deletion・non_fast_forward・required_linear_history" \
+  jqt '[.rules[].type] | (index("deletion") != null) and (index("non_fast_forward") != null) and (index("required_linear_history") != null)' "$ruleset"
+check "Ruleset: pull_request（承認 0 件・squash だけ）" \
+  jqt '.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count == 0 and .parameters.allowed_merge_methods == ["squash"]' "$ruleset"
+check "Ruleset: ci-ok と merge-gate（GitHub Actions・strict）" \
+  jqt '.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy == true and
+    (.parameters.required_status_checks | sort_by(.context)) == [{"context":"ci-ok","integration_id":15368},{"context":"merge-gate","integration_id":15368}]' "$ruleset"
+
+for role in worker reviewer orchestrator; do
+  : >"$FAKE_GH_LOG"
+  if AGENT_ROLE="$role" PATH="$tmp/bin-apply:$PATH" bash "$apply" --dry-run --repo o/r >"$tmp/out" 2>&1; then
+    fail "apply-repo-settings: AGENT_ROLE=$role を拒否する"
+  else
+    check "apply-repo-settings: AGENT_ROLE=$role を拒否する" test ! -s "$FAKE_GH_LOG"
+  fi
+done
+
+: >"$FAKE_GH_LOG"
+if PATH="$tmp/bin-apply:$PATH" bash "$apply" --dry-run --repo o/r >"$tmp/out" 2>&1; then
+  check "apply-repo-settings --dry-run: 設定の PATCH を出す" grep -q "^PATCH repos/o/r$" "$tmp/out"
+  check "apply-repo-settings --dry-run: squash だけ・ブランチの自動削除" grep -q '"delete_branch_on_merge": true' "$tmp/out"
+  check "apply-repo-settings --dry-run: Ruleset がなければ POST" grep -q "^POST repos/o/r/rulesets$" "$tmp/out"
+  check "apply-repo-settings --dry-run: 送る本文に Ruleset を出す" grep -q '"merge-gate"' "$tmp/out"
+  check "apply-repo-settings --dry-run: 書き込みの API を呼ばない" test -z "$(grep -E -- '-X (PATCH|PUT|POST)' "$FAKE_GH_LOG" || true)"
+else
+  fail "apply-repo-settings --dry-run が成功する"
+  cat "$tmp/out" >&2
+fi
+
+: >"$FAKE_GH_LOG"
+if FAKE_RULESETS='[{"id":42,"name":"main","source_type":"Repository"},{"id":7,"name":"other"}]' \
+  PATH="$tmp/bin-apply:$PATH" bash "$apply" --repo o/r >"$tmp/out" 2>&1; then
+  check "apply-repo-settings: 設定を PATCH する" grep -q -- "^api -X PATCH repos/o/r --input " "$FAKE_GH_LOG"
+  check "apply-repo-settings: 同じ名前の Ruleset があれば PUT で更新する" grep -q -- "^api -X PUT repos/o/r/rulesets/42 --input .*main.json$" "$FAKE_GH_LOG"
+  check "apply-repo-settings: 更新のときは POST しない" test -z "$(grep -- "-X POST" "$FAKE_GH_LOG" || true)"
+else
+  fail "apply-repo-settings（更新）が成功する"
+  cat "$tmp/out" >&2
+fi
+: >"$FAKE_GH_LOG"
+if PATH="$tmp/bin-apply:$PATH" bash "$apply" >"$tmp/out" 2>&1; then
+  check "apply-repo-settings: --repo がなければ gh repo view・なければ POST で作る" \
+    grep -q -- "^api -X POST repos/o/r/rulesets --input " "$FAKE_GH_LOG"
+else
+  fail "apply-repo-settings（作成）が成功する"
+  cat "$tmp/out" >&2
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures 件失敗" >&2
   exit 1
