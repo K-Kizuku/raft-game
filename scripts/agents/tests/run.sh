@@ -205,13 +205,26 @@ for c in agentctl gh claude; do
   ln -s "$fake/bin/$c" "$fake/bin-nocodex/$c"
 done
 
-# 本物の codex・claude が入っているディレクトリを PATH から外す。
+# 本物の gh・codex・claude・agentctl を隠す（Issue #81）。それらを含むディレクトリは、
+# ディレクトリごと外すと同じ場所の git・rm なども消える（GitHub Actions では gh が /usr/bin にある）。
+# そこで、隠す対象以外の実行ファイルへのシンボリックリンクを一時ディレクトリに作り、代わりに PATH に入れる。
 sys_path=""
+shadow_n=0
 IFS=: read -r -a path_dirs <<<"$PATH"
 for d in "${path_dirs[@]}"; do
   [ -n "$d" ] || continue
   if [ -x "$d/codex" ] || [ -x "$d/claude" ] || [ -x "$d/gh" ] || [ -x "$d/agentctl" ]; then
-    continue
+    shadow_n=$((shadow_n + 1))
+    shadow="$tmp/sys-path/$shadow_n"
+    mkdir -p "$shadow"
+    for f in "$d"/*; do
+      [ -f "$f" ] && [ -x "$f" ] || continue
+      case "${f##*/}" in
+        gh | codex | claude | agentctl) continue ;;
+      esac
+      ln -s "$f" "$shadow/${f##*/}"
+    done
+    d="$shadow"
   fi
   sys_path="${sys_path:+$sys_path:}$d"
 done
