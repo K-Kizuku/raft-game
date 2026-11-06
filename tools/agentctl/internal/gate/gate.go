@@ -154,6 +154,10 @@ type evaluator struct {
 	records []record
 	latest  *record
 	issue   *issuebody.Doc
+	// codex は、Codex の GitHub 連携の最新の完了したレビュー（なければ nil）。
+	codex *CodexReview
+	// codexLatest は、codex が agent-review/v1 の最新の記録より新しい（判定に codex を使う）こと。
+	codexLatest bool
 }
 
 func (e *evaluator) note(format string, a ...any) {
@@ -170,6 +174,7 @@ func (e *evaluator) run() Report {
 		e.issue = issuebody.Parse(e.in.Issue.Body)
 	}
 	e.collectReviews()
+	e.collectCodex()
 
 	e.add("G0", Pass, "OK")
 	e.c1()
@@ -242,6 +247,29 @@ func (e *evaluator) collectReviews() {
 			CommentID: l.comment.ID, Author: l.comment.Author, Round: l.rec.Round,
 			HeadSHA: l.rec.HeadSHA, Verdict: l.rec.Verdict, Reviewer: l.rec.Reviewer,
 		}
+	}
+}
+
+// collectCodex は、Codex の GitHub 連携のレビューを集め、agent-review/v1 の最新の記録（created_at）より
+// 要約のコメントの updated_at が新しければ、そちらを最新のレビューにする。
+func (e *evaluator) collectCodex() {
+	cr, notes := FindCodexReview(e.cfg, e.in)
+	e.rep.Notes = append(e.rep.Notes, notes...)
+	if cr == nil {
+		return
+	}
+	e.codex = cr
+	if e.latest != nil && !cr.Updated.After(e.latest.created) {
+		return
+	}
+	e.codexLatest = true
+	verdict := "approve"
+	if len(cr.Blocking(e.cfg)) > 0 {
+		verdict = "request_changes"
+	}
+	e.rep.LatestReview = &ReviewRef{
+		CommentID: cr.Comment.ID, Author: cr.Comment.Author, HeadSHA: cr.SHA,
+		Verdict: verdict, Reviewer: config.ReviewerPrimary,
 	}
 }
 
@@ -428,16 +456,42 @@ func (e *evaluator) c4() {
 }
 
 func (e *evaluator) c5() {
-	if len(e.records) == 0 {
-		e.add("C5", Pending, "信頼する作者（%s）のレビュー記録がない", strings.Join(e.cfg.Review.TrustedAuthors, ", "))
+	n := len(e.records)
+	if e.codex != nil {
+		n++
+	}
+	if n == 0 {
+		e.add("C5", Pending, "信頼する作者（%s）のレビュー記録も、Codex（%s）の完了したレビューもない",
+			strings.Join(e.cfg.Review.TrustedAuthors, ", "), strings.Join(e.cfg.Review.CodexBotAuthors, ", "))
 		return
 	}
-	e.add("C5", Pass, "%d 件", len(e.records))
+	if e.codex != nil {
+		e.add("C5", Pass, "%d 件（agent-review/v1 %d 件、Codex の GitHub 連携 1 件）", n, len(e.records))
+		return
+	}
+	e.add("C5", Pass, "%d 件", n)
 }
 
 const noReview = "レビュー記録がない"
 
+// codexStale は、Codex のレビューが HEAD のものでなければ、その旨の文を返す。
+func (e *evaluator) codexStale() string {
+	if e.codex.SHA == e.in.PullRequest.HeadSHA {
+		return ""
+	}
+	return fmt.Sprintf("最新のレビュー（Codex の GitHub 連携）は古い SHA %s のもの。HEAD %s の再レビュー待ち",
+		short(e.codex.SHA), short(e.in.PullRequest.HeadSHA))
+}
+
 func (e *evaluator) c6() {
+	if e.codexLatest {
+		if s := e.codexStale(); s != "" {
+			e.add("C6", Pending, "%s", s)
+			return
+		}
+		e.add("C6", Pass, "Codex の GitHub 連携（コメント %d）が %s をレビューした", e.codex.Comment.ID, short(e.codex.SHA))
+		return
+	}
 	l := e.latest
 	if l == nil {
 		e.add("C6", Pending, noReview)
@@ -456,6 +510,26 @@ func (e *evaluator) c6() {
 }
 
 func (e *evaluator) c7() {
+	if e.codexLatest {
+		if s := e.codexStale(); s != "" {
+			e.add("C7", Pending, "%s", s)
+			return
+		}
+		var errs []string
+		for _, f := range e.codex.Blocking(e.cfg) {
+			p := f.Priority
+			if p == "" {
+				p = "重大度不明"
+			}
+			errs = append(errs, fmt.Sprintf("%s（%s・%s）%s:%d %s", f.ID(), p, f.Severity, f.Path, f.Line, f.Title))
+		}
+		if len(errs) > 0 {
+			e.add("C7", Fail, "Codex の重大な指摘がある: %s", strings.Join(errs, "・"))
+			return
+		}
+		e.add("C7", Pass, "Codex の指摘 %d 件に P0・P1 はない", len(e.codex.Findings))
+		return
+	}
 	l := e.latest
 	if l == nil {
 		e.add("C7", Pending, noReview)
@@ -494,6 +568,10 @@ func (e *evaluator) c7() {
 }
 
 func (e *evaluator) c8() {
+	if e.codexLatest {
+		e.add("C8", Pass, "%s（GitHub 連携）", config.ReviewerPrimary)
+		return
+	}
 	l := e.latest
 	if l == nil {
 		e.add("C8", Pending, noReview)
@@ -603,6 +681,11 @@ func (e *evaluator) c12() {
 	}
 	if len(hit) == 0 {
 		e.add("C12", Pass, "保護されたパスの変更なし")
+		return
+	}
+	if e.codexLatest {
+		e.add("C12", Fail, "保護されたパスの変更（%s）がある。最新のレビュー（Codex の GitHub 連携）は保護されたパスを確認しない（protected_paths_ack を持つ記録が必要）",
+			strings.Join(hit, ", "))
 		return
 	}
 	l := e.latest

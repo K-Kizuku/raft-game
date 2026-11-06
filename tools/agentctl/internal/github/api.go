@@ -102,6 +102,109 @@ func (c *Client) OpenPullsForSHA(ctx context.Context, repo, sha string) ([]int, 
 	return out, nil
 }
 
+func (p *pull) toGate() gate.PullRequest {
+	return gate.PullRequest{
+		Number: p.Number, State: p.State, Merged: p.Merged, Draft: p.Draft,
+		Title: p.Title, Body: str(p.Body), Author: p.User.Login, Labels: labelNames(p.Labels),
+		BaseRef: p.Base.Ref, BaseSHA: p.Base.SHA, HeadRef: p.Head.Ref, HeadSHA: p.Head.SHA,
+		Mergeable: p.Mergeable, MergeableState: p.MergeableState, ChangedFiles: p.ChangedFiles,
+	}
+}
+
+type pullReview struct {
+	ID          int64  `json:"id"`
+	User        *user  `json:"user"`
+	CommitID    string `json:"commit_id"`
+	Body        string `json:"body"`
+	SubmittedAt string `json:"submitted_at"`
+}
+
+type reviewComment struct {
+	ID               int64  `json:"id"`
+	User             *user  `json:"user"`
+	CommitID         string `json:"commit_id"`
+	OriginalCommitID string `json:"original_commit_id"`
+	Path             string `json:"path"`
+	Line             *int   `json:"line"`
+	OriginalLine     *int   `json:"original_line"`
+	Body             string `json:"body"`
+	CreatedAt        string `json:"created_at"`
+}
+
+func login(u *user) string {
+	if u == nil {
+		return ""
+	}
+	return u.Login
+}
+
+// fetchDiscussion は、PR のコメント（Issue のコメント）・レビュー・行コメントを、すべてのページで読む（REST だけ）。
+func (c *Client) fetchDiscussion(ctx context.Context, repo string, n int, in *gate.Input) error {
+	rp := repoPath(repo)
+	cs, err := getPages(ctx, c, fmt.Sprintf("%s/issues/%d/comments?per_page=100", rp, n), listOf[comment])
+	if err != nil {
+		return err
+	}
+	in.Comments = []gate.Comment{}
+	for _, cm := range cs {
+		in.Comments = append(in.Comments, gate.Comment{ID: cm.ID, Author: cm.User.Login, Body: cm.Body, CreatedAt: cm.CreatedAt, UpdatedAt: cm.UpdatedAt})
+	}
+
+	rvs, err := getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100", rp, n), listOf[pullReview])
+	if err != nil {
+		return err
+	}
+	in.Reviews = []gate.PullReview{}
+	for _, r := range rvs {
+		in.Reviews = append(in.Reviews, gate.PullReview{ID: r.ID, Author: login(r.User), CommitID: r.CommitID, Body: r.Body, SubmittedAt: r.SubmittedAt})
+	}
+
+	rcs, err := getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/comments?per_page=100", rp, n), listOf[reviewComment])
+	if err != nil {
+		return err
+	}
+	in.ReviewComments = []gate.ReviewComment{}
+	for _, r := range rcs {
+		line := 0
+		if r.Line != nil {
+			line = *r.Line
+		} else if r.OriginalLine != nil {
+			line = *r.OriginalLine
+		}
+		in.ReviewComments = append(in.ReviewComments, gate.ReviewComment{
+			ID: r.ID, Author: login(r.User), CommitID: r.CommitID, OriginalCommitID: r.OriginalCommitID,
+			Path: r.Path, Line: line, Body: r.Body, CreatedAt: r.CreatedAt,
+		})
+	}
+	return nil
+}
+
+// FetchDiscussion は、PR の状態と、コメント・レビュー・行コメントだけを集める（`agentctl pr view`）。
+// 結果は gate.Input の形で、ファイル・Issue・CI・比較は含まない。
+func (c *Client) FetchDiscussion(ctx context.Context, repo string, n int) (gate.Input, error) {
+	in := gate.Input{Repo: repo}
+	p, err := c.getPull(ctx, repo, n)
+	if err != nil {
+		return in, err
+	}
+	in.PullRequest = p.toGate()
+	if err := c.fetchDiscussion(ctx, repo, n, &in); err != nil {
+		return in, err
+	}
+	return in, nil
+}
+
+// CreateComment は PR（Issue）にコメントを作り、その ID を返す。
+func (c *Client) CreateComment(ctx context.Context, repo string, n int, body string) (int64, error) {
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	if _, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/issues/%d/comments", repoPath(repo), n), map[string]string{"body": body}, &out); err != nil {
+		return 0, err
+	}
+	return out.ID, nil
+}
+
 // mergeableRetries は、mergeable が未計算（null）のときに読み直す回数。
 const mergeableRetries = 3
 
@@ -120,12 +223,7 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 			return in, err
 		}
 	}
-	in.PullRequest = gate.PullRequest{
-		Number: p.Number, State: p.State, Merged: p.Merged, Draft: p.Draft,
-		Title: p.Title, Body: str(p.Body), Author: p.User.Login, Labels: labelNames(p.Labels),
-		BaseRef: p.Base.Ref, BaseSHA: p.Base.SHA, HeadRef: p.Head.Ref, HeadSHA: p.Head.SHA,
-		Mergeable: p.Mergeable, MergeableState: p.MergeableState, ChangedFiles: p.ChangedFiles,
-	}
+	in.PullRequest = p.toGate()
 	if p.State != "open" {
 		// closed・merged は fail にするだけなので、ほかの情報は集めない。
 		return in, nil
@@ -188,12 +286,8 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 		return in, err
 	}
 
-	cs, err := getPages(ctx, c, fmt.Sprintf("%s/issues/%d/comments?per_page=100", rp, n), listOf[comment])
-	if err != nil {
+	if err := c.fetchDiscussion(ctx, repo, n, &in); err != nil {
 		return in, err
-	}
-	for _, cm := range cs {
-		in.Comments = append(in.Comments, gate.Comment{ID: cm.ID, Author: cm.User.Login, Body: cm.Body, CreatedAt: cm.CreatedAt, UpdatedAt: cm.UpdatedAt})
 	}
 
 	var cmp gate.Compare
