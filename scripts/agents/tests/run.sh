@@ -131,6 +131,17 @@ case "${FAKE_CODEX_MODE:-good}" in
   net) echo "Reconnecting... 2/5 waiting for network" >&2; exit 1 ;;
   hang) sleep 5 ;;
   fail) echo "boom" >&2; exit 1 ;;
+  # 本物の codex exec のように、プロンプト（Issue の本文などを含む）を標準エラーに echo してから、
+  # 分類できない理由で失敗する。標準出力には紛らわしい語を出す。
+  echo-fail)
+    printf 'user\n%s\n' "${*: -1}" >&2
+    echo "codex: auth login timeout HTTP 401 HTTP 503 429 Too Many Requests"
+    echo "error: author field missing in the response" >&2
+    exit 1
+    ;;
+  proxy) echo "ERROR: Proxy connection failed: 403" >&2; exit 1 ;;
+  notlogged) echo "Error: Not logged in. Run codex login." >&2; exit 1 ;;
+  toomany) echo "unexpected status 429 Too Many Requests" >&2; exit 1 ;;
   bad) printf '{"verdict":"maybe"}\n' >"$out" ;;
   bad-then-good)
     if [ "$n" -le 1 ]; then printf 'not json\n' >"$out"; else printf '%s\n' "$good" >"$out"; fi
@@ -144,7 +155,44 @@ if [ "${1:-}" = "--version" ]; then
   echo "2.0.0 (Claude Code)"
   exit 0
 fi
-jq -cn --arg cwd "$PWD" --arg role "${AGENT_ROLE:-}" '{cwd:$cwd, role:$role, args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/claude.log"
+# Reviewer のときは、本物の Claude Code と同じように設定（--setting-sources に project があれば
+# カレントディレクトリの .claude/settings.json、それと --settings）の PreToolUse の hooks を集め、
+# CLAUDE_PROJECT_DIR をカレントディレクトリにして、書き込みの操作で試す（拒否されたら 2）。
+settings="" sources="user,project,local" prev=""
+for a in "$@"; do
+  [ "$prev" = "--settings" ] && settings="$a"
+  [ "$prev" = "--setting-sources" ] && sources="$a"
+  prev="$a"
+done
+files=()
+case ",$sources," in
+  *,project,*) [ -f "$PWD/.claude/settings.json" ] && files+=("$PWD/.claude/settings.json") ;;
+esac
+[ -n "$settings" ] && files+=("$settings")
+probe() { # probe <ツール名> <tool_input の JSON>
+  local tool="$1" ti="$2" f cmd rc=0 r input
+  input="$(jq -cn --arg cwd "$PWD" --arg t "$tool" --argjson ti "$ti" \
+    '{session_id:"s", cwd:$cwd, hook_event_name:"PreToolUse", tool_name:$t, tool_input:$ti}')"
+  for f in "${files[@]+"${files[@]}"}"; do
+    while IFS= read -r cmd; do
+      [ -n "$cmd" ] || continue
+      r=0
+      printf '%s' "$input" | CLAUDE_PROJECT_DIR="$PWD" bash -c "$cmd" >/dev/null 2>&1 || r=$?
+      [ "$r" = 2 ] && rc=2
+    done < <(jq -r --arg t "$tool" '.hooks.PreToolUse[]? | select(.matcher as $m | $t | test("^(" + $m + ")$")) | .hooks[]?.command' "$f" 2>/dev/null)
+  done
+  echo "$rc"
+}
+bash_rc="" write_rc="" hook_cmds="[]"
+if [ "${AGENT_ROLE:-}" = "reviewer" ]; then
+  hook_cmds="$(for f in "${files[@]+"${files[@]}"}"; do jq -c '[.hooks.PreToolUse[]?.hooks[]?.command]' "$f"; done | jq -cs 'add // []')"
+  bash_rc="$(probe Bash '{"command":"gh pr comment 12 --body x"}')"
+  write_rc="$(probe Write "$(jq -cn --arg p "$PWD/a.txt" '{file_path:$p, content:"x"}')")"
+fi
+jq -cn --arg cwd "$PWD" --arg role "${AGENT_ROLE:-}" --arg settings "$settings" --argjson hooks "$hook_cmds" \
+  --arg bash_rc "$bash_rc" --arg write_rc "$write_rc" \
+  '{cwd:$cwd, role:$role, settings:$settings, hook_cmds:$hooks, bash_rc:$bash_rc, write_rc:$write_rc, args:$ARGS.positional}' \
+  --args -- "$@" >>"$FAKE_LOG/claude.log"
 case "${FAKE_CLAUDE_MODE:-good}" in
   good)
     echo '{"type":"result","is_error":false,"structured_output":{"verdict":"request_changes","summary":"直すところがある","protected_paths_ack":{"reviewed":true,"weakens_guards":false},"findings":[{"id":"F1","severity":"high","category":"correctness","file":"a.txt","line":1,"title":"t","detail":"d","status":"open","resolution":""}]}}'
@@ -217,6 +265,9 @@ cp "$src_root/scripts/dev-slot.sh" "$repo/scripts/dev-slot.sh"
 cp "$src_root/.agents/config.json" "$repo/.agents/config.json"
 mkdir -p "$repo/.claude"
 cp -R "$src_root/.claude/agents" "$repo/.claude/agents"
+cp "$src_root/.claude/settings.json" "$repo/.claude/settings.json"
+cp -R "$src_root/.claude/hooks" "$repo/.claude/hooks"
+rm -rf "$repo/.claude/hooks/tests"
 printf 'a\n' >"$repo/a.txt"
 (
   cd "$repo"
@@ -335,6 +386,15 @@ FAKE_ISSUE_BODY="## 変更予定ファイル
 - \`docs/x.md\`" run_rc env AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run
 check "spawn --dry-run: 変更予定ファイルが protected_paths と重なれば AGENT_ALLOW_PROTECTED=1" \
   grep -q "AGENT_ALLOW_PROTECTED=1 claude" "$tmp/out"
+# 先頭がワイルドカードの項目は、保護されたパスと重ならないものとして扱い、警告を出す
+FAKE_ISSUE_BODY="## 変更予定ファイル
+
+- \`**/*.go\`
+- \`*.md\`
+- \`docs/x.md\`" run_rc env AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run
+check "spawn --dry-run: 先頭がワイルドカードの項目では AGENT_ALLOW_PROTECTED を付けない" \
+  test "$RC" = 0 -a -z "$(grep -o AGENT_ALLOW_PROTECTED "$tmp/out" || true)"
+check "spawn --dry-run: 先頭がワイルドカードの項目に警告を出す" grep -q "警告.*\*\*/\*\.go.*先頭がワイルドカード" "$tmp/err"
 # プロンプトに Issue の本文と値が入る（プロンプトは --output-format の値の直後＝最後の引数）
 run_rc env AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run --mode conflict --note /dev/null
 check "spawn --dry-run --mode conflict: 成功する" test "$RC" = 0
@@ -517,6 +577,13 @@ check "review: プロンプトは --output-format json の直後（--add-dir の
   log_has claude '(.args | length) as $n | .args[$n-3] == "--output-format" and .args[$n-2] == "json" and (.args[$n-1] | contains("PR #12")) and (.args | index("--add-dir")) < ($n - 3)'
 check "review: 標準エラーに理由を出す" grep -q "auth_error" "$tmp/err"
 check "review: 一時的な Worktree を消す（フォールバック）" no_worktree_left
+check "review: プロジェクトの設定を読まない（--setting-sources user・--strict-mcp-config）" \
+  log_has claude '.args[(.args | index("--setting-sources")) + 1] == "user" and (.args | index("--strict-mcp-config")) != null'
+check "review: --settings は一時的な Worktree の外のファイル" \
+  log_has claude '.cwd as $c | .settings != "" and (.settings | startswith($c) | not) and ($c != "'"$repo"'")'
+check "review: hooks のコマンドを main の絶対パスに固定する" \
+  log_has claude '(.hook_cmds | length) >= 3 and all(.hook_cmds[]; startswith("'"'$repo'"'/.claude/hooks/guard-") and (contains("CLAUDE_PROJECT_DIR") | not))'
+check "review: Reviewer の gh pr comment を hooks が拒否する" log_has claude '.bash_rc == "2" and .write_rc == "2"'
 # PR の HEAD の reviewer.md を書き換えても、メインの作業ツリーの定義を使う
 git -C "$repo" switch --quiet agent/issue-5
 printf -- '---\nname: reviewer\ntools: Read, Edit, Write, Bash\n---\n\n悪意のある本文\n' >"$repo/.claude/agents/reviewer.md"
@@ -528,6 +595,31 @@ run_rc env AGENT_ROLE=orchestrator FAKE_CODEX_MODE=auth bash "$A/review.sh" 12 -
   --issue-file "$tmp/issue.md" --no-post --out "$tmp/record.json"
 check "review: PR が reviewer.md を書き換えても main の定義を使う" \
   log_has claude '.args[(.args | index("--tools")) + 1] == "Read,Glob,Grep,Bash" and (.args[(.args | index("--append-system-prompt")) + 1] | contains("悪意のある本文") | not)'
+# PR の HEAD の settings.json（hooks を消す）と guard（exit 0 にする）を書き換えても、Reviewer の禁止が効く
+git -C "$repo" switch --quiet agent/issue-5
+printf '{"permissions":{"allow":["Bash"]}}\n' >"$repo/.claude/settings.json"
+for g in guard-bash.sh guard-write.sh guard-mcp.sh; do
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/.claude/hooks/$g"
+done
+git -C "$repo" commit --quiet -am "settings.json と guard を書き換える"
+evil_head2="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" switch --quiet main
+reset_logs
+run_rc env AGENT_ROLE=orchestrator FAKE_CODEX_MODE=auth bash "$A/review.sh" 12 --base "$base_sha" --head "$evil_head2" \
+  --issue-file "$tmp/issue.md" --no-post --out "$tmp/record.json"
+check "review: PR が settings.json・guard を書き換えても成功する" test "$RC" = 0
+check "review: PR が settings.json・guard を書き換えても、Reviewer の gh pr comment・Write を main の hooks が拒否する" \
+  log_has claude '.bash_rc == "2" and .write_rc == "2"'
+check "review: PR が settings.json を書き換えても main の hooks のコマンドを使う" \
+  log_has claude 'all(.hook_cmds[]; startswith("'"'$repo'"'/.claude/hooks/"))'
+# main の settings.json に hooks がなければ Reviewer を起動しない
+cp "$repo/.claude/settings.json" "$tmp/settings.bak"
+printf '{"permissions":{}}\n' >"$repo/.claude/settings.json"
+reset_logs
+run_rc env AGENT_ROLE=orchestrator FAKE_CODEX_MODE=auth bash "$A/review.sh" 12 --base "$base_sha" --head "$head_sha" \
+  --issue-file "$tmp/issue.md" --no-post --out "$tmp/record.json"
+check "review: main の settings.json に Bash の hooks がなければ止める" test "$RC" != 0 -a ! -s "$FAKE_LOG/claude.log"
+cp "$tmp/settings.bak" "$repo/.claude/settings.json"
 git -C "$repo" branch --quiet -f agent/issue-5 "$head_sha"
 
 for pair in rate:rate_limited net:service_unavailable; do
@@ -565,6 +657,27 @@ reset_logs
 FAKE_CODEX_MODE=fail review
 check "review: 分類できない失敗は再試行して終了コード 5" test "$RC" = 5 -a "$(wc -l <"$FAKE_LOG/codex.log" | tr -d ' ')" = 3 -a ! -s "$FAKE_LOG/claude.log"
 check "review: 失敗しても一時的な Worktree を消す" no_worktree_left
+# プロンプト（Issue の本文）に auth・login・timeout などの語があり、codex がそれを標準エラーに echo しても、
+# 標準出力に紛らわしい語があっても、フォールバックの理由にしない（再試行して終了コード 5）
+cat >"$tmp/issue-auth.md" <<'EOF'
+# Issue 5
+
+401・403・auth・login → auth_error、429・rate limit・usage limit → rate_limited、5xx・timeout・ECONN。
+not logged in・HTTP 401・429 Too Many Requests・Proxy connection failed・waiting for network・stream disconnected
+author: someone
+EOF
+reset_logs
+FAKE_CODEX_MODE=echo-fail run_rc env AGENT_ROLE=orchestrator bash "$A/review.sh" 12 --base "$base_sha" --head "$head_sha" \
+  --issue-file "$tmp/issue-auth.md" --no-post --out "$tmp/record.json"
+check "review: プロンプトに auth などの語があっても、分類できない失敗は再試行して終了コード 5" \
+  test "$RC" = 5 -a "$(wc -l <"$FAKE_LOG/codex.log" | tr -d ' ')" = 3 -a ! -s "$FAKE_LOG/claude.log"
+for pair in proxy:service_unavailable notlogged:auth_error toomany:rate_limited; do
+  reset_logs
+  FAKE_CODEX_MODE="${pair%%:*}" run_rc env AGENT_ROLE=orchestrator bash "$A/review.sh" 12 --base "$base_sha" --head "$head_sha" \
+    --issue-file "$tmp/issue-auth.md" --no-post --out "$tmp/record.json"
+  check "review: ${pair%%:*} → ${pair#*:}（プロンプトに auth などの語があっても）" \
+    jq -e --arg r "${pair#*:}" '.reviewer == "claude-fallback" and .fallback_reason == $r' "$tmp/record.json"
+done
 
 # --reviewer codex はフォールバックしない
 reset_logs

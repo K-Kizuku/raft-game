@@ -141,9 +141,16 @@ protected="$(cfg '.protected_paths | join("\n")' '')"
 while IFS= read -r pf; do
   [ -n "$pf" ] || continue
   a="$(glob_prefix "$pf")"
+  # 先頭がワイルドカードの項目（**/*.go・*.md など）は、前方一致の空文字がすべてに一致してしまうので、
+  # 重なりなしとして扱い、警告を出す（意図せず protected_paths の書き込みを許さないため）。
+  if [ -z "$a" ]; then
+    info "警告: 変更予定ファイルの「$pf」は先頭がワイルドカードなので、保護されたパスとは重ならないものとして扱う（必要なら具体的なパスを書く）"
+    continue
+  fi
   while IFS= read -r pp; do
     [ -n "$pp" ] || continue
     b="$(glob_prefix "$pp")"
+    [ -n "$b" ] || continue
     case "$a" in "$b"*) allow_protected=1 ;; esac
     case "$b" in "$a"*) allow_protected=1 ;; esac
   done <<EOF

@@ -77,7 +77,8 @@ go -C tools/agentctl run . review render "$PWD/review.json"                     
 - **Orchestrator**: コード・テスト・ドキュメントを直接変更しない（書けるのは `.agents/`・`.claude/worktrees/` だけ）。マージは `scripts/agents/merge.sh`（Merge Gate が pass のときだけ）で行う
 - **Worker**: 自分の Worktree の中と、自分のブランチ `agent/issue-<n>` だけを変更する。`merge.sh`・`review.sh`・`spawn-worker.sh`・`wt.sh` を実行しない。保護されたパス（`.agents/config.json` の `protected_paths`）は、Issue の変更予定ファイルに含まれるときだけ変更できる
 - **Reviewer**: 書き込みにあたる操作をしない（指摘だけを返す）
-- エージェントの定義（`.claude/agents/*.md`）は、メインの作業ツリー（`main`）のものを正とする。`review.sh` は PR の中の定義を使わないよう `--agent` を使わず、本文とツールを明示して渡す
+- `guard-bash.sh` の判定は字句によるもの（`eval`・`git -c alias.*`・Reviewer のインタプリタは拒否する）で、`cd` してからの相対パスや変数で組み立てたパス、スクリプトのファイルの中での書き込みは見分けられない。最後の砦は Rulesets とレビュー
+- エージェントの定義（`.claude/agents/*.md`）は、メインの作業ツリー（`main`）のものを正とする。`review.sh` は PR の中の定義を使わないよう `--agent` を使わず、本文とツールを明示して渡す。`settings.json` と hooks も PR の中のものを読まず（`--setting-sources user`）、main のものを `--settings` で渡す
 
 ```bash
 scripts/agents/spawn-worker.sh <issue> [--mode implement|fix|conflict] [--resume] [--background] [--dry-run]

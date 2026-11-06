@@ -14,15 +14,21 @@
 #
 # - 役割が orchestrator でなければ拒否する
 # - PR の HEAD を一時的な Worktree に --detach で取り出し、そこでレビューする（終了時に必ず消す）
-# - Codex は timeout（既定 300 秒、AGENT_CODEX_TIMEOUT）付きで実行し、失敗の理由を分類する:
-#   コマンドがない → not_installed、401・403・auth・login → auth_error、
-#   429・rate limit・usage limit → rate_limited、
-#   終了コード 124・5xx・timeout・ECONN・Proxy connection failed・waiting for network・
-#   stream disconnected → service_unavailable、
+# - Codex は timeout（既定 300 秒、AGENT_CODEX_TIMEOUT）付きで実行し、失敗の理由を標準エラーと
+#   終了コードから分類する。標準エラーのうち、プロンプト（Issue の本文などを含む）を echo した行は除き、
+#   具体的なエラーの書き方だけを探す（Issue の本文の「auth」「timeout」などの語に一致させない）:
+#   コマンドがない → not_installed、
+#   not logged in・HTTP 401/403・401 Unauthorized・authentication failed など → auth_error、
+#   HTTP 429・429 Too Many Requests・rate limit exceeded・usage limit → rate_limited、
+#   終了コード 124・HTTP 5xx・503 Service Unavailable・ECONNREFUSED などの ECONN・
+#   Proxy connection failed・waiting for network・stream disconnected → service_unavailable、
 #   それ以外（出力がスキーマに合わないときを含む）→ retry_limit 回まで Codex で再試行し、だめなら終了コード 5
 # - 理由が上の 4 つのときだけ、別のセッションの Claude Code に切り替える。--agent reviewer は使わず、
 #   メインの作業ツリーの .claude/agents/reviewer.md の本文（--append-system-prompt）とツール
 #   （--tools・--allowedTools）を渡す（PR の中の定義に左右されないようにする）
+# - 同じ理由で、PR の HEAD の .claude/settings.json と hooks も使わない。プロジェクトの設定を読まず
+#   （--setting-sources user・--strict-mcp-config）、メインの作業ツリーの settings.json の hooks のコマンドの
+#   $CLAUDE_PROJECT_DIR を main の絶対パスに置き換えたものを --settings で渡す
 # - 記録は agentctl review validate で検証し、agentctl review render で本文にして gh pr comment で載せる
 set -euo pipefail
 
@@ -225,16 +231,22 @@ build_record() {
   fi
 }
 
-# classify <終了コード> <ログのファイル>
+printf '%s\n' "$prompt" >"$tmp/prompt.txt"
+
+# classify <終了コード> <標準エラーのファイル>
+# プロンプトを echo した行（Issue の本文や前回の指摘を含む）は除いてから、具体的なエラーの書き方を探す。
 classify() {
-  local rc="$1" f="$2"
+  local rc="$1" f="$2" g="$tmp/codex-stderr.filtered"
   if [ "$rc" = 124 ]; then
     echo service_unavailable
-  elif grep -Eiq '(^|[^0-9])(401|403)([^0-9]|$)|auth|login' "$f"; then
+    return 0
+  fi
+  grep -vxF -f "$tmp/prompt.txt" "$f" >"$g" 2>/dev/null || true
+  if grep -Eiq 'not logged in|please (re-?)?log ?in|(log ?in|sign ?in) again|(HTTP|status)[ :]*40[13]([^0-9]|$)|40[13] (Unauthorized|Forbidden)|authentication (error|failed|required)|invalid api[ _-]?key|(access|auth|refresh) token (has )?expired' "$g"; then
     echo auth_error
-  elif grep -Eiq '(^|[^0-9])429([^0-9]|$)|rate[ _-]?limit|usage limit' "$f"; then
+  elif grep -Eiq '(HTTP|status)[ :]*429([^0-9]|$)|429 Too Many Requests|too many requests|rate[ _-]?limit(ed| exceeded| reached)|usage limit' "$g"; then
     echo rate_limited
-  elif grep -Eiq '(^|[^0-9])5[0-9][0-9]([^0-9]|$)|timeout|timed out|ECONN|Proxy connection failed|waiting for network|stream disconnected' "$f"; then
+  elif grep -Eiq '(HTTP|status)[ :]*5[0-9][0-9]([^0-9]|$)|5[0-9][0-9] (Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)|Proxy connection failed|waiting for network|stream disconnected|ECONN(REFUSED|RESET|ABORTED)|ETIMEDOUT|connection (refused|reset|timed out)|request timed out' "$g"; then
     echo service_unavailable
   else
     echo other
@@ -271,7 +283,7 @@ run_codex() {
     set +e
     ${to[@]+"${to[@]}"} codex exec --cd "$wtp" --sandbox read-only --skip-git-repo-check \
       --output-schema "$schema" --output-last-message "$tmp/codex-out.json" "$prompt" \
-      </dev/null >"$tmp/codex.log" 2>&1
+      </dev/null >"$tmp/codex.out" 2>"$tmp/codex.log"
     rc=$?
     set -e
     if [ "$rc" -eq 0 ]; then
@@ -294,6 +306,32 @@ run_codex() {
 }
 
 # ---- Claude Code（別のセッション） ----
+# sq <文字列>: シェルの単一引用符で囲む。
+sq() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# reviewer_settings: Reviewer に渡す設定のファイルを作り、そのパスを出す。
+# 一時的な Worktree（PR の HEAD）の .claude/settings.json と hooks は PR が書き換えられるので使わない。
+# メインの作業ツリーの settings.json の hooks のコマンドの $CLAUDE_PROJECT_DIR（Claude Code は
+# カレントディレクトリ＝PR の HEAD にする）を、main の絶対パスに置き換える。
+reviewer_settings() {
+  local src="$root/.claude/settings.json" dst="$tmp/reviewer-settings.json"
+  [ -f "$src" ] || die "$src がない（Reviewer のガードの hooks を main から読めない）"
+  jq --arg q "$(sq "$root")" '
+    def walk(f): . as $in
+      | if type == "object" then reduce keys[] as $k ({}; . + {($k): ($in[$k] | walk(f))}) | f
+        elif type == "array" then map(walk(f)) | f
+        else f end;
+    walk(if type == "object" and ((.command? // null) | type) == "string"
+         then .command |= (gsub("\"\\$CLAUDE_PROJECT_DIR\""; $q) | gsub("\\$\\{?CLAUDE_PROJECT_DIR\\}?"; $q))
+         else . end)' "$src" >"$dst" || die "$src を読めない"
+  jq -e '[.hooks.PreToolUse[]? | select((.matcher // "") | test("Bash"))] | length > 0' "$dst" >/dev/null 2>&1 ||
+    die "$src に Bash の hooks がない（Reviewer の書き込みを止められない）"
+  ! grep -q 'CLAUDE_PROJECT_DIR' "$dst" || die "$dst に CLAUDE_PROJECT_DIR が残っている"
+  printf '%s\n' "$dst"
+}
+
 run_claude() {
   need claude
   local ver attempt rc def tools sysprompt
@@ -304,11 +342,13 @@ run_claude() {
   def="$(agent_file reviewer)"
   tools="$(agent_tools "$def")"
   sysprompt="$(agent_body "$def")"
+  settings="$(reviewer_settings)"
   for ((attempt = 1; attempt <= retry_limit; attempt++)); do
     set +e
     # プロンプトは、値を 1 つだけとるオプション（--output-format）の直後に置く
     # （--tools・--allowedTools・--add-dir は値を複数とるので、後ろに置くとプロンプトがその値として解釈される）。
     (cd "$wtp" && AGENT_ROLE=reviewer claude -p --permission-mode dontAsk \
+      --setting-sources user --settings "$settings" --strict-mcp-config \
       --tools "$tools" --allowedTools "$tools" --append-system-prompt "$sysprompt" \
       --no-session-persistence --add-dir "$ctx" --json-schema "$(cat "$schema")" \
       --output-format json "$prompt") </dev/null >"$tmp/claude.json" 2>"$tmp/claude.log"
