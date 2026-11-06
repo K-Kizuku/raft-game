@@ -4,8 +4,14 @@
 //	              [--json] [--set-status] [--comment] [--target-url URL]
 //	agentctl review validate [--config PATH] <file|->
 //	agentctl review render   [--config PATH] <file|->
+//	agentctl plan    [--input snapshot.json] [--json | --mermaid]
+//	agentctl state   <issue> <status> [--reason TEXT] [--pr N] [--cause KEY]
+//	agentctl claim   <issue> --worker ID [--session UUID] [--resume]
+//	agentctl attempt <issue> --cause KEY
+//	agentctl recover [--input snapshot.json] [--json]
 //
 // gate の終了コード: pass=0・fail=1・pending=2・内部エラー=3。
+// plan〜recover の終了コードは tasks.go の taskUsage を参照。
 package main
 
 import (
@@ -57,6 +63,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "gate":
 		return runGate(args[1:], stdout, stderr)
+	case "plan":
+		return runPlan(args[1:], stdout, stderr)
+	case "state":
+		return runState(args[1:], stdout, stderr)
+	case "claim":
+		return runClaim(args[1:], stdout, stderr)
+	case "attempt":
+		return runAttempt(args[1:], stdout, stderr)
+	case "recover":
+		return runRecover(args[1:], stdout, stderr)
 	case "review":
 		if len(args) < 2 {
 			fmt.Fprint(stderr, usage)
@@ -69,10 +85,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return runReview(args[2:], stdin, stdout, stderr, true)
 		}
 	case "-h", "--help", "help":
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, usage+taskUsage)
 		return exitOK
 	}
-	fmt.Fprintf(stderr, "agentctl: 未知のコマンド %q\n%s", strings.Join(args, " "), usage)
+	fmt.Fprintf(stderr, "agentctl: 未知のコマンド %q\n%s%s", strings.Join(args, " "), usage, taskUsage)
 	return exitInternal
 }
 
