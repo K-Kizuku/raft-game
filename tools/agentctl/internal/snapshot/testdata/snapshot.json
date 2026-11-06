@@ -1,0 +1,106 @@
+{
+  "issues": [
+    {
+      "number": 3,
+      "title": "Merge Gate",
+      "state": "closed",
+      "state_reason": "completed",
+      "labels": ["agent-task", "status:merged"],
+      "body": "## 変更予定ファイル\n\n- `tools/agentctl/**`\n\n## 依存 Issue\n\n- なし\n",
+      "comments": []
+    },
+    {
+      "number": 4,
+      "title": "計画と状態の管理",
+      "state": "open",
+      "state_reason": "",
+      "labels": ["agent-task", "status:in-progress"],
+      "body": "## 変更予定ファイル\n\n- `tools/agentctl/**`\n\n## 依存 Issue\n\n- #3\n",
+      "comments": [
+        {
+          "author": "K-Kizuku",
+          "body": "<!-- agent-state:v1 {\"from\":\"ready\",\"to\":\"in-progress\",\"actor\":\"orchestrator\",\"worker\":\"issue-4\",\"branch\":\"agent/issue-4\",\"session\":\"5f0c8a52-9d3e-4c1b-8e2a-0f6b7c1d2e34\",\"attempt\":1,\"cause\":\"\",\"reason\":\"着手\",\"pr\":0,\"at\":\"2026-11-06T09:00:00Z\"} -->\n状態を `ready` から `in-progress` に変えた。（worker: issue-4、attempt: 1）\n",
+          "created_at": "2026-11-06T09:00:00Z"
+        },
+        {
+          "author": "K-Kizuku",
+          "body": "<!-- agent-state:v1 {\"from\": 壊れた記録 -->\n",
+          "created_at": "2026-11-06T09:01:00Z"
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "title": "Worker の起動",
+      "state": "open",
+      "state_reason": "",
+      "labels": ["agent-task", "status:ready"],
+      "body": "## 変更予定ファイル\n\n- `scripts/agents/**`\n- `CLAUDE.md`\n\n## 依存 Issue\n\n- #3\n",
+      "comments": []
+    },
+    {
+      "number": 6,
+      "title": "運用の説明",
+      "state": "open",
+      "state_reason": "",
+      "labels": ["agent-task", "status:ready"],
+      "body": "## 変更予定ファイル\n\n- `docs/agents/**`\n\n## 依存 Issue\n\n- #4\n- #5\n",
+      "comments": []
+    },
+    {
+      "number": 7,
+      "title": "agentctl の小さな改善",
+      "state": "open",
+      "state_reason": "",
+      "labels": ["agent-task", "status:ready"],
+      "body": "## 変更予定ファイル\n\n- `tools/agentctl/internal/plan/*.go`\n\n## 依存 Issue\n\n- なし\n",
+      "comments": []
+    },
+    {
+      "number": 8,
+      "title": "サーバーの雛形",
+      "state": "open",
+      "state_reason": "",
+      "labels": ["agent-task", "status:in-review"],
+      "body": "## 変更予定ファイル\n\n- `server/**`\n\n## 依存 Issue\n\n- なし\n",
+      "comments": []
+    },
+    {
+      "number": 9,
+      "title": "Web の雛形",
+      "state": "open",
+      "state_reason": "",
+      "labels": ["agent-task", "status:backlog"],
+      "body": "## 変更予定ファイル\n\n- `web/**`\n\n## 依存 Issue\n\n- #5\n",
+      "comments": []
+    }
+  ],
+  "pulls": [
+    {
+      "number": 29,
+      "state": "closed",
+      "merged": true,
+      "head_ref": "agent/issue-3",
+      "head_sha": "2222222222222222222222222222222222222222",
+      "body": "Closes #3\n",
+      "labels": []
+    },
+    {
+      "number": 30,
+      "state": "open",
+      "merged": false,
+      "head_ref": "agent/issue-8",
+      "head_sha": "1111111111111111111111111111111111111111",
+      "body": "Closes #8\n",
+      "labels": [],
+      "comments": []
+    }
+  ],
+  "branches": ["agent/issue-4", "agent/issue-8"],
+  "statuses": {
+    "1111111111111111111111111111111111111111": {"merge-gate": "pending", "ci-ok": "success"}
+  },
+  "worktrees": [
+    {"issue": 4, "path": "/home/user/raft-game/.claude/worktrees/issue-4", "branch": "agent/issue-4", "dirty": true, "ahead": 0}
+  ]
+}
