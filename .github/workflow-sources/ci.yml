@@ -1,0 +1,150 @@
+# PR ごとの CI（Issue #2 / AG-1）。
+# 結果は `ci-ok` の 1 つのチェックにまとめる。
+# ワークフロー名 `ci` とチェック名 `ci-ok` は Merge Gate（#3）と Rulesets（#5）が
+# 参照する公開の契約なので、名前を変えない。
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check relative links in Markdown
+        run: python3 scripts/check-docs.py
+      - name: Test check-docs.py
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+  shell:
+    name: shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(git ls-files -z -- '*.sh')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "対象なし: *.sh がない"
+            exit 0
+          fi
+          shellcheck --version
+          shellcheck -- "${files[@]}"
+      # 追跡されている tests/run.sh をすべて実行する。後の Issue がワークフローを
+      # 変えずにシェルのテストを足せるようにするため。
+      - name: tests/run.sh
+        run: |
+          set -euo pipefail
+          mapfile -d '' tests < <(git ls-files -z -- '*tests/run.sh')
+          if [ "${#tests[@]}" -eq 0 ]; then
+            echo "対象なし: tests/run.sh がない"
+            exit 0
+          fi
+          status=0
+          for t in "${tests[@]}"; do
+            echo "::group::$t"
+            if ! bash "$t"; then
+              echo "::error::失敗: $t"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+  go-tools:
+    name: go-tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find Go modules under tools/
+        id: find
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mods=(tools/*/go.mod)
+          if [ "${#mods[@]}" -eq 0 ]; then
+            echo "対象なし: tools/*/go.mod がない"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "${mods[@]}"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "first=${mods[0]}" >> "$GITHUB_OUTPUT"
+          fi
+      # setup-go は 1 つのジョブで 1 つの版しか入れられない。最初の go.mod の版を
+      # 入れ、ほかのモジュールは GOTOOLCHAIN=auto で各 go.mod の版に切り替える。
+      # （ジョブを matrix にするとチェック名が `go-tools (...)` に変わるため使わない）
+      - uses: actions/setup-go@v5
+        if: steps.find.outputs.found == 'true'
+        with:
+          go-version-file: ${{ steps.find.outputs.first }}
+          cache: false
+      - name: gofmt / go vet / go test
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          status=0
+          for mod in tools/*/go.mod; do
+            dir="$(dirname "$mod")"
+            echo "::group::$dir"
+            unformatted="$(gofmt -l "$dir")"
+            if [ -n "$unformatted" ]; then
+              echo "::error::gofmt の差分がある: $unformatted"
+              status=1
+            fi
+            go -C "$dir" vet ./... || status=1
+            go -C "$dir" test -race -count=1 ./... || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [docs, shell, go-tools]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results of required jobs
+        env:
+          RESULT_DOCS: ${{ needs.docs.result }}
+          RESULT_SHELL: ${{ needs.shell.result }}
+          RESULT_GO_TOOLS: ${{ needs.go-tools.result }}
+        run: |
+          set -euo pipefail
+          fail=0
+          for pair in "docs=$RESULT_DOCS" "shell=$RESULT_SHELL" "go-tools=$RESULT_GO_TOOLS"; do
+            echo "$pair"
+            if [ "${pair#*=}" != "success" ]; then
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::success 以外のジョブがある（skipped も失敗とする）"
+            exit 1
+          fi

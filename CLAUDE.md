@@ -33,7 +33,12 @@ make dev        # Go（standalone モード）と Vite を起動
 make demo-local # デモの保険（ノート PC で起動）
 (cd web && pnpm exec cf build)                           # Build Output を作る
 (cd web && pnpm exec cf deploy --prebuilt --dry-run)     # 反映せずに検査
+python3 scripts/check-docs.py                            # Markdown の相対リンク切れを検査（CI の docs ジョブ）
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'  # scripts/ のテスト
+bash scripts/github/tests/run.sh                         # install-workflows.sh のテスト（CI の shell ジョブ）
 ```
+
+- ワークフローは `.github/workflow-sources/` に書き、`.github/workflows/` には書かない（人が `scripts/github/install-workflows.sh` で取り込む）
 
 ## コストガード（ADR-0018）の注意点
 
