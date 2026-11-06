@@ -13,7 +13,8 @@
 # - 動いている Worker（.agents/run/issue-*.json の pid が生きているもの）が max_workers 以上なら拒否する
 # - git fetch origin main → DEV_SLOT を確保 → agentctl claim（implement と --resume のとき）→
 #   AGENT_ROLE=worker AGENT_ISSUE=<n> DEV_SLOT=<slot> claude -p -w issue-<n> --agent worker
-#   --permission-mode dontAsk --session-id <uuid> --verbose --output-format stream-json "<prompt>"
+#   --permission-mode dontAsk --allowedTools <worker.md の tools> --session-id <uuid>
+#   --verbose --output-format stream-json "<prompt>"
 # - Issue の変更予定ファイルが protected_paths と重なるときは AGENT_ALLOW_PROTECTED=1 を付ける
 # - 状態は .agents/run/issue-<n>.json（issue・session・slot・worktree・branch・pid・mode・started_at・log）
 # - agentctl claim が拒否したら（同じ Issue の 2 回目など）、何もしないでその終了コードで終わる
@@ -229,9 +230,12 @@ elif [ "$use_w" = 1 ]; then
 else
   run_cwd="$wt"
 fi
-cmd+=(--agent worker --permission-mode dontAsk)
+# dontAsk では許可の一覧にないツールが拒否されるので、worker.md の tools を --allowedTools で明示する。
+worker_tools="$(agent_tools "$(agent_file worker)")"
+cmd+=(--agent worker --permission-mode dontAsk --allowedTools "$worker_tools")
 [ "$use_resume_flag" = 1 ] || cmd+=(--session-id "$session")
-# プロンプトは、値を 1 つだけとるオプション（--output-format）の直後に置く。
+# プロンプトは、値を 1 つだけとるオプション（--output-format）の直後に置く
+# （--allowedTools は値を複数とるので、後ろに置くとプロンプトがツール名として解釈される）。
 cmd+=(--verbose --output-format stream-json "$prompt")
 
 if [ "$dry_run" = 1 ]; then

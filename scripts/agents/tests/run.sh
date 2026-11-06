@@ -215,6 +215,8 @@ cp -R "$src_root/scripts/agents" "$repo/scripts/agents"
 rm -rf "$repo/scripts/agents/tests"
 cp "$src_root/scripts/dev-slot.sh" "$repo/scripts/dev-slot.sh"
 cp "$src_root/.agents/config.json" "$repo/.agents/config.json"
+mkdir -p "$repo/.claude"
+cp -R "$src_root/.claude/agents" "$repo/.claude/agents"
 printf 'a\n' >"$repo/a.txt"
 (
   cd "$repo"
@@ -295,6 +297,7 @@ check "spawn --dry-run: --permission-mode dontAsk" grep -q -- " --permission-mod
 check "spawn --dry-run: claude -p" grep -q -- " claude -p " <<<"$cmdline"
 check "spawn --dry-run: --session-id" grep -Eq -- " --session-id [0-9a-f-]{36} " <<<"$cmdline"
 check "spawn --dry-run: stream-json と --verbose" grep -q -- " --verbose --output-format stream-json " <<<"$cmdline"
+check "spawn --dry-run: --allowedTools" grep -q -- " --allowedTools " <<<"$cmdline"
 check "spawn --dry-run: AGENT_ROLE=worker AGENT_ISSUE=7" grep -q -- "AGENT_ROLE=worker AGENT_ISSUE=7 DEV_SLOT=" <<<"$cmdline"
 check "spawn --dry-run: 保護されたパスに触れなければ AGENT_ALLOW_PROTECTED を付けない" \
   test -z "$(grep -o AGENT_ALLOW_PROTECTED <<<"$cmdline" || true)"
@@ -354,6 +357,8 @@ check "spawn: claude を -w issue-7 で呼ぶ" log_has claude '.args[0:3] == ["-
 check "spawn: Worker の環境変数" log_has claude '.role == "worker"'
 check "spawn: プロンプトは --output-format の値の直後" \
   log_has claude '(.args | length) as $n | .args[$n-3] == "--output-format" and .args[$n-2] == "stream-json" and (.args[$n-1] | contains("Issue #7"))'
+check "spawn: worker.md の tools を --allowedTools で渡す（--agent worker も付ける）" \
+  log_has claude '(.args | index("--allowedTools")) as $i | $i != null and .args[$i + 1] == "Read,Edit,Write,Glob,Grep,Bash" and .args[(.args | index("--agent")) + 1] == "worker"'
 check "spawn: 状態のファイル" jq -e '.issue == 7 and .mode == "implement" and (.pid | type == "number") and .branch == "agent/issue-7" and (.session | length) == 36 and .slot == 1' "$repo/.agents/run/issue-7.json"
 check "spawn: ログ" test -n "$(ls "$repo/.agents/logs/"issue-7-*.jsonl 2>/dev/null || true)"
 check "spawn: DEV_SLOT を確保した" test "$(cat "$repo/.git/agent-slots/1/path" 2>/dev/null)" = "$repo/.claude/worktrees/issue-7"
@@ -477,12 +482,30 @@ check "review: reviewer=claude-fallback・fallback_reason=auth_error" \
   jq -e '.reviewer == "claude-fallback" and .fallback_reason == "auth_error" and (.reviewer_version | startswith("claude-code"))' "$tmp/record.json"
 check "review: フォールバックの記録も #3 の書式" validate_record
 check "review: 認証エラーでは Codex を再試行しない" test "$(wc -l <"$FAKE_LOG/codex.log" | tr -d ' ')" = 1
-check "review: Claude Code を --agent reviewer・別のセッションで呼ぶ" \
-  log_has claude '.role == "reviewer" and .args[0] == "-p" and (.args | index("--agent")) != null and .args[(.args | index("--agent")) + 1] == "reviewer" and (.args | index("--no-session-persistence")) != null and (.args | index("--json-schema")) != null'
+check "review: Claude Code を reviewer の役割・別のセッションで呼ぶ" \
+  log_has claude '.role == "reviewer" and .args[0] == "-p" and (.args | index("--no-session-persistence")) != null and (.args | index("--json-schema")) != null and .args[(.args | index("--permission-mode")) + 1] == "dontAsk"'
+check "review: --agent を使わない（PR の HEAD の reviewer.md を読まない）" \
+  log_has claude '(.args | index("--agent")) == null'
+check "review: reviewer.md の tools を --tools・--allowedTools で明示する" \
+  log_has claude '.args[(.args | index("--tools")) + 1] == "Read,Glob,Grep,Bash" and .args[(.args | index("--allowedTools")) + 1] == "Read,Glob,Grep,Bash"'
+check "review: reviewer.md の本文を --append-system-prompt で渡す（frontmatter は除く）" \
+  log_has claude '.args[(.args | index("--append-system-prompt")) + 1] as $s | ($s | contains("**Reviewer**")) and ($s | contains("コードは直さない")) and ($s | contains("name: reviewer") | not)'
 check "review: プロンプトは --output-format json の直後（--add-dir の後ろに置かない）" \
   log_has claude '(.args | length) as $n | .args[$n-3] == "--output-format" and .args[$n-2] == "json" and (.args[$n-1] | contains("PR #12")) and (.args | index("--add-dir")) < ($n - 3)'
 check "review: 標準エラーに理由を出す" grep -q "auth_error" "$tmp/err"
 check "review: 一時的な Worktree を消す（フォールバック）" no_worktree_left
+# PR の HEAD の reviewer.md を書き換えても、メインの作業ツリーの定義を使う
+git -C "$repo" switch --quiet agent/issue-5
+printf -- '---\nname: reviewer\ntools: Read, Edit, Write, Bash\n---\n\n悪意のある本文\n' >"$repo/.claude/agents/reviewer.md"
+git -C "$repo" commit --quiet -am "reviewer.md を書き換える"
+evil_head="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" switch --quiet main
+reset_logs
+run_rc env AGENT_ROLE=orchestrator FAKE_CODEX_MODE=auth bash "$A/review.sh" 12 --base "$base_sha" --head "$evil_head" \
+  --issue-file "$tmp/issue.md" --no-post --out "$tmp/record.json"
+check "review: PR が reviewer.md を書き換えても main の定義を使う" \
+  log_has claude '.args[(.args | index("--tools")) + 1] == "Read,Glob,Grep,Bash" and (.args[(.args | index("--append-system-prompt")) + 1] | contains("悪意のある本文") | not)'
+git -C "$repo" branch --quiet -f agent/issue-5 "$head_sha"
 
 for pair in rate:rate_limited net:service_unavailable; do
   reset_logs

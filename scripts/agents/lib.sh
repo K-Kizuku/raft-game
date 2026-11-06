@@ -173,6 +173,35 @@ render_template() {
   printf '%s\n' "$text"
 }
 
+# agent_file <名前>: メインの作業ツリー（Orchestrator が使う main）の .claude/agents/<名前>.md。
+# PR の HEAD や Worker の Worktree の中の定義ではなく、こちらを正とする。
+agent_file() {
+  local f
+  f="$(main_root)/.claude/agents/$1.md"
+  [ -f "$f" ] || die "$f がない"
+  printf '%s\n' "$f"
+}
+
+# agent_tools <ファイル>: frontmatter の tools を「Read,Glob,Grep,Bash」の形で出す。
+agent_tools() {
+  local t
+  t="$(awk '
+    NR == 1 && /^---[ \t]*$/ { infm = 1; next }
+    infm && /^---[ \t]*$/ { exit }
+    infm && /^tools:/ { sub(/^tools:[ \t]*/, ""); print; exit }' "$1" | tr -d ' \t\r')"
+  [ -n "$t" ] || die "$1 の frontmatter に tools がない"
+  printf '%s\n' "$t"
+}
+
+# agent_body <ファイル>: frontmatter を除いた本文（システムプロンプト）。
+agent_body() {
+  awk '
+    NR == 1 && /^---[ \t]*$/ { infm = 1; next }
+    infm && /^---[ \t]*$/ { infm = 0; next }
+    infm { next }
+    { print }' "$1"
+}
+
 # usage_from_header <スクリプト>: 先頭のコメントを使い方として出す。
 usage_from_header() {
   sed -n '2,/^set -euo/p' "$1" | sed '$d' | sed 's/^# \{0,1\}//'

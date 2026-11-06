@@ -20,7 +20,9 @@
 #   終了コード 124・5xx・timeout・ECONN・Proxy connection failed・waiting for network・
 #   stream disconnected → service_unavailable、
 #   それ以外（出力がスキーマに合わないときを含む）→ retry_limit 回まで Codex で再試行し、だめなら終了コード 5
-# - 理由が上の 4 つのときだけ、別のセッションの Claude Code（--agent reviewer）に切り替える
+# - 理由が上の 4 つのときだけ、別のセッションの Claude Code に切り替える。--agent reviewer は使わず、
+#   メインの作業ツリーの .claude/agents/reviewer.md の本文（--append-system-prompt）とツール
+#   （--tools・--allowedTools）を渡す（PR の中の定義に左右されないようにする）
 # - 記録は agentctl review validate で検証し、agentctl review render で本文にして gh pr comment で載せる
 set -euo pipefail
 
@@ -294,14 +296,20 @@ run_codex() {
 # ---- Claude Code（別のセッション） ----
 run_claude() {
   need claude
-  local ver attempt rc
+  local ver attempt rc def tools sysprompt
   ver="$(claude --version 2>/dev/null | head -n 1 || true)"
   ver="claude-code ${ver:-unknown}"
+  # --agent reviewer は一時的な Worktree（PR の HEAD）の .claude/agents/reviewer.md を読むので、
+  # PR がその定義を書き換えられてしまう。メインの作業ツリーの定義の本文とツールを明示して渡す。
+  def="$(agent_file reviewer)"
+  tools="$(agent_tools "$def")"
+  sysprompt="$(agent_body "$def")"
   for ((attempt = 1; attempt <= retry_limit; attempt++)); do
     set +e
     # プロンプトは、値を 1 つだけとるオプション（--output-format）の直後に置く
-    # （--add-dir は値を複数とるので、後ろに置くとプロンプトがディレクトリとして解釈される）。
-    (cd "$wtp" && AGENT_ROLE=reviewer claude -p --agent reviewer --permission-mode dontAsk \
+    # （--tools・--allowedTools・--add-dir は値を複数とるので、後ろに置くとプロンプトがその値として解釈される）。
+    (cd "$wtp" && AGENT_ROLE=reviewer claude -p --permission-mode dontAsk \
+      --tools "$tools" --allowedTools "$tools" --append-system-prompt "$sysprompt" \
       --no-session-persistence --add-dir "$ctx" --json-schema "$(cat "$schema")" \
       --output-format json "$prompt") </dev/null >"$tmp/claude.json" 2>"$tmp/claude.log"
     rc=$?
