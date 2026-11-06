@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.2 |
+| 版 | v0.3 |
 | 更新日 | 2026-11-06 |
 | 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
-| 関連 ADR | [0002](./adr/0002-use-etcd-raft.md) / [0003](./adr/0003-drive-rawnode-single-goroutine.md) / [0004](./adr/0004-virtual-time-discrete-event-simulation.md) / [0006](./adr/0006-ferry-transport-outside-raft.md) / [0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [0010](./adr/0010-frontend-react-pixijs.md) / [0014](./adr/0014-monorepo-and-shared-types.md) / [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [0017](./adr/0017-persist-input-log-in-durable-object.md) |
+| 関連 ADR | [0002](./adr/0002-use-etcd-raft.md) / [0003](./adr/0003-drive-rawnode-single-goroutine.md) / [0004](./adr/0004-virtual-time-discrete-event-simulation.md) / [0006](./adr/0006-ferry-transport-outside-raft.md) / [0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [0010](./adr/0010-frontend-react-pixijs.md) / [0014](./adr/0014-monorepo-and-shared-types.md) / [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [0017](./adr/0017-persist-input-log-in-durable-object.md) / [0018](./adr/0018-cost-guard.md) / [0019](./adr/0019-parallel-local-development.md) |
 
 図はすべて Mermaid で書いているので、GitHub 上でそのまま表示されます。
 
@@ -60,7 +60,8 @@ flowchart TB
 
     subgraph cf[Cloudflare]
         assets[静的ファイル<br/>SPA]
-        worker[Worker<br/>/api/* と /ws/* の振り分け<br/>レート制限・Origin の検査]
+        worker[Worker<br/>/api/* と /ws/* の振り分け<br/>署名・Turnstile・レート制限・Origin の検査]
+        guard[(Durable Object CostGuard<br/>全体で 1 つ<br/>費用の上限・ガードの設定)]
         subgraph dobox[Durable Object GameSession：1 ゲームに 1 つ]
             dobj[WebSocket の中継<br/>トークンの検証<br/>操作の記録・復元]
             sqlite[(SQLite<br/>セッションの情報・操作の記録)]
@@ -76,7 +77,9 @@ flowchart TB
 
     net -- HTTPS --> assets
     net <-- "WebSocket(JSON)" --> worker
+    worker --> guard
     worker --> dobj
+    dobj --> guard
     dobj <-- "WebSocket(JSON)<br/>+ 内部の電文" --> loop
     dobj -.-> r2
 ```
@@ -84,9 +87,10 @@ flowchart TB
 | 要素 | 実装 | 責務 |
 |---|---|---|
 | 静的ファイル | Vite でビルドした SPA | 画面の配信。存在しないパスは `index.html` を返す |
-| Worker | TypeScript（`web/worker/index.ts`） | `/api/*` と `/ws/*` を受け、セッションの作成・Durable Object への振り分け・レート制限・`Origin` の検査を行う |
-| Durable Object `GameSession` | TypeScript（`web/worker/game-session.ts`） | 1 ゲームに 1 つ。コンテナの起動と停止、ブラウザとコンテナの間の WebSocket の中継、トークンの検証、操作の記録（SQLite）、コンテナが止まったときの復元 |
-| Container | Go（`server/`） | 1 ゲームに 1 つ。シミュレーションを動かすセッションループ。外部には直接公開しない |
+| Worker | TypeScript（`web/worker/index.ts`） | `/api/*` と `/ws/*` を受け、署名の確認・Turnstile・レート制限・`Origin` の検査をしてから、セッションの作成と Durable Object への振り分けを行う |
+| Durable Object `CostGuard` | TypeScript（`web/worker/cost-guard.ts`） | 全体で 1 つ。ゲームごとの見込みの費用の合計、上限の判定、ガードの設定（管理用 API）を持つ（[ADR-0018](./adr/0018-cost-guard.md)） |
+| Durable Object `GameSession` | TypeScript（`web/worker/game-session.ts`） | 1 ゲームに 1 つ。コンテナの起動（`ctx.container.start()`）と停止、ブラウザとコンテナの間の WebSocket の中継、トークンの検証、操作の記録（SQLite）、コンテナが止まったときの復元、ゲームの時間とアラームの回数の上限 |
+| Container | Go（`server/`） | 1 ゲームに 1 つ。シミュレーションを動かすセッションループ。外部には直接公開せず、外部への通信も禁止する（`enableInternet: false`） |
 | R2 | — | リプレイの共有（P1） |
 
 - **サーバー権威型**: ゲームの状態とルールは、すべてコンテナの Go が持ちます。クライアントは描画と入力だけを担当します（[ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md)）
@@ -226,21 +230,27 @@ sequenceDiagram
     autonumber
     participant UI as ブラウザ
     participant W as Worker
+    participant G as CostGuard（全体で 1 つ）
     participant DO as Durable Object（GameSession）
     participant CT as Container（Go）
-    UI->>W: POST /api/sessions {stageId, seed?}
-    W->>W: レート制限・入力の検査・sessionId とトークンを発行
+    UI->>W: POST /api/sessions {stageId, seed?, turnstileToken}
+    W->>W: Origin・IP ごとのレート制限・Turnstile を確認
+    W->>G: reserve(見込みの最悪の費用)
+    G-->>W: OK（上限を超えるなら 503 budget_exhausted）
+    W->>W: sessionId（署名付き）とトークンを発行
     W->>DO: init(stageId, seed, demo, トークンのハッシュ)
-    DO->>DO: SQLite にセッションの情報を保存
-    DO->>CT: コンテナを起動（ステージ選択の時点で先に起動し始める）
+    DO->>DO: SQLite にセッションの情報を保存。アラームを設定（回数に上限）
+    DO->>CT: ctx.container.start({ image, instance, enableInternet: false })
     W-->>UI: 201 {sessionId, token, wsPath}
-    Note over UI: ステージ紹介を表示している間に、コンテナの起動が進む
+    Note over UI: ステージ紹介を表示している間に、コンテナの起動が進む（多くは 1〜3 秒）
     UI->>W: GET /ws/sessions/{id}?token=…（Upgrade）
+    W->>W: sessionId の署名を確認（でたらめな ID では DO を呼ばない）
     W->>DO: 転送
     DO->>DO: トークンを検証
-    DO->>CT: WS を開き internal.init(stageId, seed, demo) を送る
+    DO->>CT: /healthz が応答するまで待ち、WS を開いて internal.init を送る
     CT-->>DO: snapshot
     DO-->>UI: snapshot（以降、双方向に中継）
+    Note over DO,G: ラウンドの終了で destroy()。実際に動いた時間で G に精算する
 ```
 
 ### 4.4 プレイヤーのコマンドの処理と記録
@@ -284,23 +294,30 @@ sequenceDiagram
 flowchart LR
     user([ブラウザ])
     subgraph cfn[Cloudflare]
-        subgraph wk["Worker raft-game（mode: production）"]
+        subgraph zone["ゾーン kizuku-hackathon.work"]
+            waf[WAF のレート制限<br/>AI クローラーの遮断<br/>（2 つのホスト名に限定）]
+        end
+        subgraph wk["Worker raft-game（mode: production）<br/>raft.kizuku-hackathon.work"]
             sa[Static Assets<br/>SPA]
             wcode[Worker のコード]
         end
+        guard[(Durable Object<br/>CostGuard)]
         dobj[Durable Object<br/>GameSession<br/>SQLite]
-        ctr[Container<br/>raft-game-server<br/>instanceType: basic<br/>maxInstances: 50<br/>regions: APAC]
+        ctr[Container<br/>raft-game-server<br/>durable_object 方式<br/>lite（一般公開）]
         r2[(R2<br/>raft-game-replays<br/>P1)]
         obs[Observability<br/>ログ]
-        demo["Worker raft-game-demo（mode: demo）<br/>DEMO_CONTROLS=1"]
+        demo["Worker raft-game-demo（mode: demo）<br/>raft-demo.kizuku-hackathon.work<br/>DEMO_CONTROLS=1 / standard-1"]
     end
     gh[GitHub Actions<br/>cf build / cf deploy]
 
-    user -- HTTPS --> sa
-    user -- "/api/* , /ws/*" --> wcode
+    user -- HTTPS --> waf
+    waf --> sa
+    waf -- "/api/* , /ws/*" --> wcode
+    wcode --> guard
     wcode --> dobj
     dobj --> ctr
     dobj -.-> r2
+    demo --> guard
     wcode & ctr --> obs
     gh -- "CLOUDFLARE_API_TOKEN" --> wk
     gh --> demo
@@ -308,12 +325,13 @@ flowchart LR
 
 | 要素 | 設定 | 理由 |
 |---|---|---|
-| 設定ファイル | `web/cloudflare.config.ts` の 1 ファイル | `cf` だけで管理する（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)） |
-| Worker | `assets.notFoundHandling: "single-page-application"`、`assets.runWorkerFirst: ["/api/*", "/ws/*"]` | 画面と API を同じオリジンにして CORS を不要にする |
-| Durable Object | `exports.GameSession = exports.durableObject({ storage: "sqlite", container })` | 1 ゲームに 1 つ。操作の記録を SQLite に保存する（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)） |
-| Container | `instanceType: "basic"`（1/4 vCPU・1 GiB）、`maxInstances: 50`、`constraints.regions: ["APAC"]` | 1 ゲームの負荷は小さいが、デモの安定を優先して basic にする。負荷テストで lite も検討する |
+| 設定ファイル | `web/cloudflare.config.ts` の 1 ファイル。ゾーンの設定は `scripts/cloudflare/` のスクリプト（`cf` の API コマンド） | `cf` だけで管理する（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)） |
+| URL | 一般公開 `raft.kizuku-hackathon.work`、デモ用 `raft-demo.kizuku-hackathon.work`。`workersDev: false`・`previewUrls: false` | 独自ドメインにすると、WAF などのゾーンの機能で bot を入り口で止められる |
+| Worker | `assets.notFoundHandling: "single-page-application"`、`assets.runWorkerFirst: ["/api/*", "/ws/*"]`、`limits.cpuMs` | 画面と API を同じオリジンにして CORS を不要にする。静的ファイルは無料なので、Worker を通さない |
+| Durable Object | `GameSession`（1 ゲームに 1 つ、SQLite）と `CostGuard`（全体で 1 つ。デモ用の Worker からも参照する） | 操作の記録（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）と費用の上限（[ADR-0018](./adr/0018-cost-guard.md)） |
+| Container | `schedulingPolicy: "durable-object"`、イメージは `images.server`（Dockerfile から `linux/amd64` でビルド）。大きさは `start()` で指定し、一般公開は `lite`、デモ用は `standard-1` | 推奨の方式。`default` 方式は非推奨 |
 | モード | `production`（一般公開）と `demo`（デモ操作を有効にした別の Worker） | デモ操作を一般の環境で使えないようにする |
-| デプロイ | GitHub Actions：`cf build` → PR は `cf deploy --prebuilt --dry-run`、`main` は `cf deploy --prebuilt --mode production` | 公式の手順に沿う。プレビュー環境はコンテナ付きの Durable Object に非対応なので使わない |
+| デプロイ | GitHub Actions：`cf build` → PR は `cf deploy --prebuilt --dry-run`、`main` は `cf deploy --prebuilt --mode production`、手動の実行で `--mode demo` | 公式の手順に沿う。プレビュー環境は使わない |
 | ログ | `observability.logs` を有効にし、ダッシュボードで見る | `cf` はリアルタイムのログ表示に未対応（ベータ版） |
 
 ### 5.1 AWS に戻す場合
@@ -331,7 +349,7 @@ raft-game/
 ├── docs/                        # 本ドキュメント群
 ├── server/                      # Go module: github.com/K-Kizuku/raft-game/server
 │   ├── go.mod                   # go 1.26 / go.etcd.io/raft/v3 v3.7.0（replace でパッチ版を使う）
-│   ├── Dockerfile               # Container のイメージ（single モード）
+│   ├── Dockerfile               # Container のイメージ（single モード、linux/amd64）
 │   ├── cmd/
 │   │   ├── server/              # ゲームサーバー（--mode single | standalone）
 │   │   ├── simcli/              # ヘッドレス実行・入力ログの再生・ボット対戦
@@ -352,8 +370,9 @@ raft-game/
 │   ├── cloudflare.config.ts     # Worker・Durable Object・Container・R2 の定義（インフラの正本）
 │   ├── vite.config.ts           # @cloudflare/vite-plugin
 │   ├── worker/                  # Worker と Durable Object（TypeScript）
-│   │   ├── index.ts             # /api/* と /ws/* の振り分け
-│   │   └── game-session.ts      # Durable Object GameSession
+│   │   ├── index.ts             # /api/* と /ws/* の振り分け、署名・Turnstile・レート制限
+│   │   ├── game-session.ts      # Durable Object GameSession
+│   │   └── cost-guard.ts        # Durable Object CostGuard（ADR-0018）
 │   ├── src/                     # SPA
 │   │   ├── app/                 # ルーティング・画面
 │   │   ├── game/                # PixiJS の描画（マップ・船・手紙）
@@ -362,11 +381,17 @@ raft-game/
 │   │   ├── net/                 # WS クライアント
 │   │   └── protocol/            # 生成された型（直接編集しない。worker/ からも使う）
 │   └── public/
+│       └── assets/              # 素材。generated/ に画像生成 AI の素材、CREDITS.md に出典
 ├── data/
 │   ├── raw/                     # 提供されたオープンデータの CSV と README（出典・取得日・利用規約）
 │   ├── curated/                 # 人手で抜き出した値（航路の所要時間など。出典の項目つき YAML）
 │   ├── islands.json             # ETL が生成（コミットする）
-│   └── stages/                  # ステージ定義 YAML（stage1.yaml … demo-goto.yaml, demo-izu.yaml）
+│   └── stages/                  # ステージ定義 YAML（stage1.yaml … demo-izu.yaml, demo-goto.yaml）
+├── scripts/
+│   ├── cloudflare/              # ゾーンの設定（WAF・AI クローラーの遮断など）を cf で行うスクリプト
+│   └── dev-slot.sh              # 並列開発のための DEV_SLOT の割り当て（ADR-0019）
+├── LICENSE                      # Apache-2.0
+├── NOTICE                       # 同梱する OSS・オープンデータ・生成した素材の表示
 └── .github/workflows/           # ci.yml / deploy.yml
 ```
 
@@ -381,6 +406,7 @@ raft-game/
 | 正しさ（Raft の安全性） | Raft のアルゴリズムには手を入れない。輸送層だけを差し替える。不変条件を常に検査するシミュレーションテスト |
 | 決定性 | 単一 goroutine・仮想時間・シードから派生する乱数・Raft の乱数源の注入・map の走査順に依存しない実装 |
 | 耐障害性 | 操作の記録を Durable Object に保存し、コンテナが止まったら再計算で復元する |
+| コストの抑制 | コストガード（費用の上限・時間の上限・署名・bot の遮断・CPU の上限・通知）（[ADR-0018](./adr/0018-cost-guard.md)） |
 | 応答性 | サーバーは 50ms ごとにステップを進め、100ms ごとにイベントをまとめて送る。船の位置はクライアントが補間する。コンテナは APAC に置く |
 | 差し替えやすさ | シミュレーションエンジンは I/O なし。インフラは `web/cloudflare.config.ts` と `web/worker/` に閉じる。プロトコルの型は 1 か所から生成する |
 | 観測性 | トレース（ドメインイベント）をすべて記録し、リザルトとエンジニアモードもここから作る |

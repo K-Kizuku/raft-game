@@ -2,11 +2,11 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.2 |
+| 版 | v0.3 |
 | 更新日 | 2026-11-06 |
-| 状態 | レビュー済み（判断の記録を反映）。ハッカソンの日程・人数が決まったら工数と並びを見直す（[Q-01](./09-assumptions-and-open-questions.md#q-01)） |
+| 状態 | レビュー済み。**このドキュメントは GitHub の Issue に転記する元**です。日程はオーナーが調整するので書きません（Q-01） |
 
-ドキュメントを読んだ人が、そのまま作業を始められるようにするための計画です。各タスクは GitHub Issue にそのまま転記できる粒度にしています。
+ドキュメントを読んだ人が、そのまま作業を始められるようにするための計画です。計画とタスクは GitHub の Issue で管理します（C-11）。各タスクは Issue にそのまま転記できる粒度にしています。§1 の図の枝分かれ（M1・M4・M6 など）が、AI エージェントに並列で割り振れる単位です。
 
 ---
 
@@ -14,22 +14,23 @@
 
 ```mermaid
 flowchart LR
-    M0[M0 基盤<br/>0.5日] --> M1[M1 シミュレーションのコア<br/>2日]
-    M1 --> M2[M2 ゲームルールとステージ<br/>1日]
-    M2 --> M3[M3 サーバー<br/>1日]
-    M0 --> M4[M4 フロントエンド<br/>3日]
+    M0[M0 基盤] --> M1[M1 シミュレーションのコア]
+    M1 --> M2[M2 ゲームルールとステージ]
+    M2 --> M3[M3 サーバー]
+    M0 --> M4[M4 フロントエンド]
     M1 -. イベント列の記録を渡す .-> M4
     M3 --> I[結合]
     M4 --> I
-    I --> M5[M5 デモの仕上げと調整<br/>1日]
-    M0 --> M6[M6 インフラ（Cloudflare）<br/>1日]
+    I --> M5[M5 デモの仕上げと調整]
+    M0 --> M6[M6 インフラ（Cloudflare）]
     M6 --> M5
     M5 --> M7[M7 P1 の機能]
 ```
 
-- **クリティカルパス**: M0 → M1 → M2 → M3 → 結合 → M5（約 5.5 人日）
-- フロントエンド（M4）とインフラ（M6）は M0 の後すぐ並行して始められます。M4 は、M1 の途中で `simcli record` が出すイベント列の記録を使い、サーバーなしで開発します
-- 目安の工数は 1 人日 = 集中して作業できる 6〜8 時間。3 人チーム（サーバー 1・フロント 1・どちらも 1）なら 3〜4 日で M5 まで届く想定です
+- **クリティカルパス**: M0 → M1 → M2 → M3 → 結合 → M5
+- チームは、人間 1 人が AI エージェントを並列に動かして開発します（R-03）。フロントエンド（M4）とインフラ（M6）は、M0 の後すぐ別のエージェントで並行して始められます。M4 は、M1 の途中で `simcli record` が出すイベント列の記録を使い、サーバーなしで開発します
+- 人の判断が要る作業（Raft との統合と決定性の要の部分、遊んでみての難易度の調整、デモのリハーサル、コストガードの上限の見直し）は、並列にせず人が確認します
+- 各タスクの「目安」は、作業量の比較のための目安です（日程ではありません）
 
 ---
 
@@ -60,7 +61,9 @@ flowchart LR
 | T-004 | `web/` を Vite + React + TS で作り、`cf`（版を固定）と `@cloudflare/vite-plugin` を入れて `cloudflare.config.ts` を置く（`"type": "module"`）。ESLint、Prettier、Vitest | ADR-0010, ADR-0016 | 2h |
 | T-005 | CI（`.github/workflows/ci.yml`）: Go の vet・`golangci-lint`（`forbidigo` で `time.Now` などを `internal/sim` 以下で禁止）・test、web の lint・typecheck・test | — | 2h |
 | T-006 | `CLAUDE.md` / `CONTRIBUTING` の規約を実際の構成に合わせて更新 | — | 0.5h |
-| T-007 | **スパイク: `cf` とコンテナの確認**。最小の Worker ＋ Durable Object（SQLite）＋ Go のコンテナ（WS のエコー）を `cf deploy` し、次を確かめて ADR-0016 に書く: コンテナの起動時間、`ctx.container` の API、手元で Docker が必要か・`cf dev` でコンテナが動くか、CPU アーキテクチャ、長時間通信がないときの停止の挙動 | ADR-0016 | 4h |
+| T-007 | **スパイク: `cf` とコンテナの確認**。最小の Worker ＋ Durable Object（SQLite）＋ Go のコンテナ（`durable_object` 方式、WS のエコー）を `cf deploy` し、次を測って ADR-0016 に書く: コンテナの起動時間、`lite` での CPU の余裕（8 倍速・復元の速さ）、`limits.cpuMs` の適切な値、`cf dev` での動作 | ADR-0016, R-02 | 4h |
+| T-008 | **並列開発の環境**: `scripts/dev-slot.sh`（`DEV_SLOT` の割り当て）、`Makefile` のポートの計算、`cf` の `--persist-to` を作業ディレクトリの中に、Docker の名前に作業ディレクトリ名を付ける、`make clean-docker` | ADR-0019 | 2h |
+| T-009 | CI にシークレットの検査（公開リポジトリのため）と、`LICENSE`・`NOTICE` の確認を入れる | ADR-0020 | 1h |
 
 ### M1 シミュレーションのコア（`server/internal/...`）
 
@@ -100,9 +103,11 @@ flowchart LR
 | T-303 | セッションループ（ステップ・まとめて送信・一時停止・速度・次の出来事まで進める・切断時の自動一時停止・`ack` の `t`） | DesignDoc §12.4 | 3h |
 | T-304 | `sim.Replay` と復元のテスト | ADR-0017 | 2h |
 | T-305 | デモ操作（`DEMO_CONTROLS`：嵐・8 倍速・次の出来事まで） | FR-EVT-07 | 1h |
-| T-306 | Dockerfile（マルチステージ、distroless。CPU アーキテクチャは T-007 の結果に合わせる） | ADR-0016 | 1h |
-| T-307 | Worker（`web/worker/index.ts`）: `/api/*` の処理、レート制限、`Origin` の検査、Durable Object への振り分け | DesignDoc §12.2 | 3h |
-| T-308 | Durable Object `GameSession`: コンテナの起動・停止、トークンの検証、WS の中継、入力ログの保存、`internal.*` の破棄、復元、アラーム | DesignDoc §12.3, ADR-0017 | 5h |
+| T-306 | Dockerfile（マルチステージ、distroless、`--platform=linux/amd64`。`/healthz` を持つ） | ADR-0016 | 1h |
+| T-307 | Worker（`web/worker/index.ts`）: `/api/*` の処理、`Origin` の検査、Durable Object への振り分け | DesignDoc §12.2 | 2h |
+| T-308 | Durable Object `GameSession`: `ctx.container.start()`（`durable_object` 方式）と準備完了の確認、`destroy()`、トークンの検証、WS の中継、入力ログの保存、`internal.*` の破棄、復元、アラーム（回数の上限つき） | DesignDoc §12.3, ADR-0017 | 5h |
+| T-309 | **コストガード（1）**: Durable Object `CostGuard`（費用の予約・精算・上限、設定の上書き、切り替えの記録）と管理用 API（`/api/admin/guards`、`ADMIN_TOKEN`、G3 は変更不可） | ADR-0018, FR-COST-01・06・07 | 4h |
+| T-310 | **コストガード（2）**: sessionId の HMAC 署名と検証（G3）、Turnstile の検証、IP ごとのレート制限（G4）、30 分の上限（G2） | ADR-0018, FR-COST-02〜04 | 3h |
 
 ### M4 フロントエンド
 
@@ -116,6 +121,9 @@ flowchart LR
 | T-406 | 島の詳細パネル・HUD（速度の切り替えを含む）・通知 | ゲームデザイン §7.2, §7.3 | 3h |
 | T-410 | 手紙の処分・差し替えのアニメーション（海に流れる・入れ替わる） | FR-MAIL-04 | 2h |
 | T-411 | デモ操作のキー（D・F・Shift+F・N） | FR-EVT-07 | 1h |
+| T-412 | 設定画面（「Raft の用語を併記する」の切り替え、ブラウザに保存）と、併記の表示 | FR-UI-10 | 2h |
+| T-413 | ステージ選択での Turnstile のウィジェットと、`503 budget_exhausted` などのエラーの表示 | FR-COST-01・04 | 2h |
+| T-414 | 素材: 郵便局長・タイトル・背景を画像生成 AI で作り、効果音をそろえ、`web/public/assets/CREDITS.md` を書く（利用規約の確認を含む） | FR-UI-11, データ仕様 §7 | 3h |
 | T-407 | エンジニアパネル（ノード一覧・手紙の詳細） | FR-ENG-01〜03 | 3h |
 | T-408 | リザルト画面と花火大会の演出 | ゲームデザイン §7.5 | 3h |
 | T-409 | Stage 1 のチュートリアル | 進行表 §7 | 2h |
@@ -133,15 +141,17 @@ flowchart LR
 
 | ID | タスク | 目安 |
 |---|---|---|
-| T-601 | `web/cloudflare.config.ts` を完成させる: Worker（`assets`・`env`・`exports`・`observability`）、`defineContainer`（`instanceType`・`maxInstances`・`constraints.regions`）、モード（`production` / `demo`）、R2 のバインディング（P1） | 3h |
+| T-601 | `web/cloudflare.config.ts` を完成させる: Worker（`domains`・`workersDev: false`・`previewUrls: false`・`assets`・`limits.cpuMs`・`env`（`GUARDS`・シークレット）・`exports`（`GameSession`・`CostGuard`）・`observability`）、`defineContainer`（`schedulingPolicy: "durable-object"`・`images`）、モード（`production` / `demo`）、R2 のバインディング（P1） | 3h |
 | T-602 | Cloudflare の API トークン（必要な権限だけ）を作り、GitHub の `CLOUDFLARE_API_TOKEN`・`CLOUDFLARE_ACCOUNT_ID` に登録する | 0.5h |
-| T-603 | `deploy.yml`: `pnpm install` → `cf build` → PR は `cf deploy --prebuilt --dry-run`、`main` は `cf deploy --prebuilt --mode production`、手動の実行で `--mode demo`。`CF_SEND_TELEMETRY=false` | 2h |
+| T-603 | `deploy.yml`: `pnpm install` → `cf build` → PR は `cf deploy --prebuilt --dry-run`、`main` は `cf deploy --prebuilt --mode production`、手動の実行で `--mode demo`。シークレット（`SESSION_SIGNING_KEY`・`ADMIN_TOKEN`・`TURNSTILE_SECRET`）は GitHub の Secrets から一時ファイルを作って `--secrets-file` で渡す。`CF_SEND_TELEMETRY=false` | 2h |
 | T-604 | ロールバック手順（`cf workers deployments`）と、`cf` の版を上げる手順を `docs/` に書く | 1h |
 | T-605 | 本番でのスモークテスト（`/api/healthz` と、WS で 1 ラウンド。コンテナの起動時間を記録） | 1h |
+| T-606 | **コストガード（3）**: `scripts/cloudflare/` に、`kizuku-hackathon.work` のゾーンの設定（2 つのホスト名に限定した WAF のレート制限、AI クローラーの遮断）と、Turnstile のウィジェットの作成を `cf` で行うスクリプトを書く | 2h |
+| T-607 | **コストガード（4）**: Cloudflare の予算アラートを 5 USD に設定する（`cf` で。G6）。緊急停止の手順（管理用 API）を `docs/` に書く | 1h |
 
 ### M7 P1（MVP の後）
 
-Stage 3（欠航のイベントを含む）、積み替え（中継倉庫）、共有予算、故障・ラッシュ・漂流瓶、エンジニアモードのフル機能（ログ・Progress・分断・タイムライン）、リプレイの再生と記録のダウンロード、R2 でのリプレイの共有、ステージの解放の保存、E2E テスト、夜間のファジング。
+Stage 3（伊豆諸島 6 島。欠航のイベントを含む）、**複数人の協力プレイ（FR-MULTI-01）**、積み替え（中継倉庫）、共有予算、故障・ラッシュ・漂流瓶、エンジニアモードのフル機能（ログ・Progress・分断・タイムライン）、リプレイの再生と記録のダウンロード、R2 でのリプレイの共有、ステージの解放の保存、E2E テスト、夜間のファジング。
 
 ---
 
@@ -183,7 +193,13 @@ cd web && pnpm exec cf auth login
 
 ## 5. 開発の進め方
 
+- タスクは GitHub の Issue で管理する。この文書のタスクを Issue に転記し、以後の進み具合は Issue で追う
 - ブランチ: `main` は常にデプロイできる状態。作業は `feat/…` `fix/…` ブランチで行い、PR でマージする
+- **並列開発**（[ADR-0019](./adr/0019-parallel-local-development.md)）:
+  - AI エージェントごとに `git worktree` で作業ディレクトリを分け、`DEV_SLOT` を割り当てる（`scripts/dev-slot.sh`）
+  - ポート・`cf` のローカルの状態（`--persist-to`）・Docker のイメージ名とコンテナ名は、作業ディレクトリごとに分ける。固定のポートや名前を使わない
+  - テストは並列に実行して安全にする（Go は `t.TempDir()` とポート `:0`）
+  - 本番・デモ用の環境へのデプロイ、ゾーンの設定の変更、Cloudflare のシークレットの更新は CI だけが行う。エージェントは直接行わない
 - PR には、関係する要件 ID（FR-…）またはタスク ID（T-…）を書く
 - 仕様を変える場合は、**先にドキュメント（または ADR）を更新**し、同じ PR でコードを変える
 - 新しい技術的な判断をしたら ADR を追加する（[adr/README.md](./adr/README.md)）

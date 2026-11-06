@@ -13,7 +13,7 @@
 
 ## 一覧
 
-2026-11-06 に、プロダクトオーナーのレビュー（[判断の記録](../09-assumptions-and-open-questions.md)）を反映しました。
+2026-11-06 に、プロダクトオーナーのレビュー（[判断の記録](../09-assumptions-and-open-questions.md)。仮決めの 24 項目と、その後の未確認事項・未決事項）を反映しました。
 
 | # | タイトル | 状態 | 差し替えやすさ |
 |---|---|---|---|
@@ -34,6 +34,9 @@
 | [0015](./0015-request-success-judged-at-origin-apply.md) | 依頼の成功は依頼元の島で適用された時点で判定する | Accepted | 容易 |
 | [0016](./0016-infrastructure-cloudflare-with-cf-cli.md) | インフラは Cloudflare（Workers ＋ Durable Objects ＋ Containers）、構成は Cloudflare CLI（`cf`）だけで管理する | Accepted | 中（アプリのコアは影響しない） |
 | [0017](./0017-persist-input-log-in-durable-object.md) | 操作の記録を Durable Object に保存して復元・リプレイに使い、リプレイの共有に R2 を使う | Accepted | 中 |
+| [0018](./0018-cost-guard.md) | コストガード — 意図しない課金の増加を、アプリ側の上限で防ぐ | Accepted | 中（個別の仕組みは管理用 API で無効にできる） |
+| [0019](./0019-parallel-local-development.md) | AI エージェントの並列開発のため、ローカル環境を作業ディレクトリ単位で分ける | Accepted | 容易 |
+| [0020](./0020-public-repository-apache-license.md) | リポジトリを公開し、ライセンスは Apache-2.0 にする | Accepted | 中 |
 
 ## 判断を差し替える手順
 

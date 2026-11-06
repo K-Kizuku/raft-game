@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.2 |
+| 版 | v0.3 |
 | 更新日 | 2026-11-06 |
 | 状態 | レビュー済み。提供データの実ファイルを確認して反映した |
 | 関連 | [ADR-0013](./adr/0013-open-data-build-time-etl.md) / [要件 FR-DATA](./01-requirements.md#410-オープンデータfr-data) / [判断の記録 A-05・A-06・A-21](./09-assumptions-and-open-questions.md) |
@@ -188,17 +188,17 @@ go run ./cmd/islandsdata --raw ../data/raw --curated ../data/curated --select ..
 | `nagasaki-naru` | 奈留島 | 長崎県 | 五島列島 | 五島市 | 1,927 | 23.68 | 2, demo-goto |
 | `nagasaki-nakadori` | 中通島 | 長崎県 | 五島列島 | 新上五島町 | 16,112 | 168.39 | 2, demo-goto |
 | `tokyo-oshima` | 大島 | 東京都 | 伊豆諸島 | 大島町 | 7,102 | 90.73 | 3, demo-izu |
-| `tokyo-toshima` | 利島 | 東京都 | 伊豆諸島 | 利島村 | 327 | 4.12 | 3 |
-| `tokyo-niijima` | 新島 | 東京都 | 伊豆諸島 | 新島村 | 1,967 | 22.97 | 3, demo-izu |
-| `tokyo-kozushima` | 神津島 | 東京都 | 伊豆諸島 | 神津島村 | 1,855 | 18.24 | 3, demo-izu |
-| `tokyo-miyakejima` | 三宅島 | 東京都 | 伊豆諸島 | 三宅村 | 2,273 | 55.20 | 3 |
-| `tokyo-hachijojima` | 八丈島 | 東京都 | 伊豆諸島 | 八丈町 | 7,042 | 69.11 | 4 |
+| `tokyo-toshima` | 利島 | 東京都 | 伊豆諸島 | 利島村 | 327 | 4.12 | 3, demo-izu |
+| `tokyo-miyakejima` | 三宅島 | 東京都 | 伊豆諸島 | 三宅村 | 2,273 | 55.20 | 3, demo-izu |
+| `tokyo-mikurajima` | 御蔵島 | 東京都 | 伊豆諸島 | 御蔵島村 | 323 | 20.51 | 3, demo-izu |
+| `tokyo-hachijojima` | 八丈島 | 東京都 | 伊豆諸島 | 八丈町 | 7,042 | 69.11 | 3, 4, demo-izu |
+| `tokyo-aogashima` | 青ヶ島 | 東京都 | 伊豆諸島 | 青ヶ島村 | 169 | 5.96 | 3, demo-izu |
 | `niigata-sado` | 佐渡島 | 新潟県 | 佐渡島 | 佐渡市 | 51,492 | 854.81 | 4 |
 | `hokkaido-rishiri` | 利尻島 | 北海道 | 利尻島 | 利尻町・利尻富士町 | 4,462（合計） | 182.08（合計） | 4 |
 | `shimane-dogo` | 島後 | 島根県 | 隠岐島 | 隠岐の島町 | 13,433 | 241.53 | 4 |
 | `nagasaki-tsushima` | 対馬島 | 長崎県 | 対馬島 | 対馬市 | 28,374 | 695.74 | 4 |
 
-選定の基準と経緯は [A-05](./09-assumptions-and-open-questions.md#a-05) にあります。
+選定の基準と経緯は [A-05](./09-assumptions-and-open-questions.md#a-05) と [R-07](./09-assumptions-and-open-questions.md#r-07) にあります。
 
 ### 3.3 計画書から使う記述（`data/curated/` に抜き出すもの）
 
@@ -208,8 +208,10 @@ go run ./cmd/islandsdata --raw ../data/raw --curated ../data/curated --select ..
 | 1 | 小豆島地域の `NATURAL_CLIMATE_FEATURES`：「温暖、小雨の典型的な瀬戸内式気候」 | 嵐のない穏やかな海のチュートリアルの紹介文 | `fact` |
 | 2 | 長崎県の `NATURAL_CLIMATE_FEATURES`：「台風等の自然災害の影響を受けやすい」 | 嵐のイベントの題材 | `fact` |
 | 2 | 長崎県の `LOCAL_INDUSTRY_TOURISM`：「世界遺産登録された『長崎と天草地方の潜伏キリシタン関連遺産』」 | 島の紹介文 | `fact` |
-| 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「利島 … 定期貨客船の欠航 … 令和2(2020)年利島17%」 | 欠航のイベントの確率（§4.4） | `derived` |
-| 3 | 伊豆諸島地域の `DISASTER_LAND_CONSERVATION`：「平成25年台風26号による大島町の被害、令和元年台風15号による新島村の被害」 | 嵐のイベントの題材 | `fact` |
+| 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「令和2(2020)年利島17%、御蔵島・青ヶ島41%」（定期貨客船の欠航） | 欠航のイベントの確率（§4.4） | `derived` |
+| 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター … が運航」 | 島どうしのつながり（どの島とどの島に航路を引くか）（§4.5） | `derived` |
+| 3 | 伊豆諸島地域の `PORTS`：「… あおがしま丸、橘丸、フェリーあぜりあ、… 新さるびあ丸、セブンアイランド結、… くろしお丸が就航」 | 船の名前（「計画書に記載された船名を使用しており、運航会社とは関係ありません」と注記する） | `fact` |
+| 3 | 伊豆諸島地域の `DISASTER_LAND_CONSERVATION`：「平成25年台風26号による大島町の被害」 | 嵐のイベントの題材 | `fact` |
 
 ---
 
@@ -232,9 +234,9 @@ w_i = round( 1000 × sqrt(pop_i) / Σ_j sqrt(pop_j) )   # 千分率の整数。�
 |---|---|
 | Stage 1 | 小豆島 659 / 直島 227 / 豊島 114 |
 | Stage 2 | 福江島 511 / 中通島 363 / 奈留島 126 |
-| Stage 3 | 大島 355 / 三宅島 201 / 新島 187 / 神津島 181 / 利島 76 |
+| Stage 3 | 大島 318 / 八丈島 317 / 三宅島 180 / 利島 68 / 御蔵島 68 / 青ヶ島 49 |
 | Stage 4 | 佐渡島 253 / 福江島 199 / 対馬島 188 / 島後 129 / 八丈島 94 / 利尻島 75 / 直島 62 |
-| demo-izu | 大島 491 / 新島 258 / 神津島 251 |
+| demo-izu | Stage 3 と同じ |
 | demo-goto | Stage 2 と同じ |
 
 ### 4.2 ランダムな依頼の発生
@@ -270,17 +272,32 @@ travelMs = 実際の所要時間[分] × 150     # 実際の 1 分 ＝ ゲーム
 
 ### 4.4 欠航率から欠航の確率を決める（Stage 3、P1）
 
-伊豆諸島の計画書の欠航率（令和 2 年：利島 17%）を、欠航のイベントの確率に使います。
+伊豆諸島の計画書の欠航率（令和 2 年：利島 17%、御蔵島 41%、青ヶ島 41%）を、欠航のイベントの確率に使います。
 
 ```text
-欠航の確率[‰] = 欠航率[%] × 10                   # 利島：170‰
+欠航の確率[‰] = 欠航率[%] × 10                   # 利島 170‰、御蔵島 410‰、青ヶ島 410‰
 各区間（slotMs = 30 秒）ごとに、その島に接する航路を
 rng("events").IntN(1000) < 欠航の確率 なら durationMs（10 秒）の間、出航できなくする
 ```
 
-欠航率が載っていない島（大島・新島・神津島・三宅島）に接する航路は、欠航のイベントの対象にしません（台本の嵐だけ）。
+- 欠航率が載っていない島（大島・三宅島・八丈島）に接する航路は、その島の側からは欠航させません（台本の嵐だけ）
+- 御蔵島と青ヶ島は欠航が非常に多く、難しくなりすぎる場合は `durationMs` を短くして調整します（確率はデータのまま変えない）
+- デモ用のステージ（`demo-izu`）では、展開を台本どおりにするため欠航のイベントを止め、欠航率はステージ紹介の文で見せます
 
----
+### 4.5 計画書の記述から島どうしのつながりを決める（Stage 3）
+
+伊豆諸島の計画書にある「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター（ヘリコプターによる乗客の定期輸送）が運航」という記述を、島どうしの航路の組み合わせに使います。
+
+| 航路 | 根拠 | `travelMs`（ゲーム上の設定） |
+|---|---|---|
+| 利島–大島 | 「大島-利島」の区間 | 3,000 |
+| 大島–三宅島 | 「三宅島-大島」の区間 | 10,000 |
+| 三宅島–御蔵島 | 「御蔵島-三宅島」の区間 | 4,000 |
+| 御蔵島–八丈島 | 「八丈島-御蔵島」の区間 | 9,000 |
+| 八丈島–青ヶ島 | 「青ヶ島-八丈島」の区間 | 6,000 |
+
+- つながりの出典区分は `derived` です。ヘリコプターの区間であり、船の航路そのものではないことを、ステージ紹介に書きます
+- 航行時間は計画書に書かれていないので、実際の距離の比をおおまかに反映した `creative` の値です
 
 ## 5. ステージ定義 `data/stages/*.yaml`
 
@@ -290,10 +307,10 @@ rng("events").IntN(1000) < 欠航の確率 なら durationMs（10 秒）の間�
 |---|---|---|---|
 | `stage1.yaml` | はじめての郵便船 | 小豆島・豊島・直島 | `derived` |
 | `stage2.yaml` | 島から返事が来ない！ | 福江島・奈留島・中通島 | `creative` |
-| `stage3.yaml` | 嵐の離島共和国 | 大島・利島・新島・神津島・三宅島 | `creative`（欠航の確率は `derived`） |
+| `stage3.yaml` | 嵐の離島共和国 | 大島・利島・三宅島・御蔵島・八丈島・青ヶ島 | つながりは `derived`、時間は `creative`（欠航の確率は `derived`） |
 | `stage4.yaml` | 全国しまじま大作戦 | 佐渡島・利尻島・島後・八丈島・直島・対馬島・福江島 | `creative` |
-| `demo-goto.yaml` | デモ（五島版） | 福江島・奈留島・中通島 | `creative`（Stage 2 の 0.6 倍） |
-| `demo-izu.yaml` | デモ（伊豆版） | 大島・新島・神津島 | `creative` |
+| `demo-izu.yaml` | デモ（伊豆版・メイン） | Stage 3 と同じ 6 島 | Stage 3 の 0.6 倍 |
+| `demo-goto.yaml` | デモ（五島版・サブ） | 福江島・奈留島・中通島 | `creative`（Stage 2 の 0.6 倍） |
 
 ### 5.2 例（Stage 1）
 
@@ -401,13 +418,13 @@ events:
       text: 台風が近づき、福江島のまわりの海が荒れています
       provenance: derived
       source: { dataset: mlit-ritou-2026, region: 長崎県, field: NATURAL_CLIMATE_FEATURES, quote: "台風等の自然災害の影響を受けやすい" }
-  - kind: cancellation          # Stage 3（P1）：欠航率から決める欠航
+  - kind: cancellation          # Stage 3（P1）：欠航率から決める欠航。利島・御蔵島・青ヶ島の 3 つを書く
     island: tokyo-toshima
     probabilityPermille: 170    # 欠航率 17% × 10
     slotMs: 30000
     durationMs: 10000
     provenance: derived
-    source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "令和2(2020)年利島17%" }
+    source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "令和2(2020)年利島17%、御蔵島・青ヶ島41%" }
   - kind: breakdown             # P1
     window: [80000, 120000]
     ferry: any                  # any = シードで選ぶ
@@ -422,16 +439,16 @@ events:
     minAgeMs: 30000
 ```
 
-デモ用のステージ（`demo-goto.yaml`・`demo-izu.yaml`）では、嵐を台本に書かず、発表者の操作（`demo.trigger`）で起こします。代わりに、発表者が起こす嵐の対象を `demo.storm.routes` に書きます。
+デモ用のステージ（`demo-izu.yaml`・`demo-goto.yaml`）では、嵐を台本に書かず、発表者の操作（`demo.trigger`）で起こします。代わりに、発表者が起こす嵐の対象を `demo.storm.routes` に書きます。
 
 ```yaml
 demo:
   endOnAllCriticalSecured: true # ★2 を達成した時点でラウンドを終え、花火大会へ
   storm:
-    routes: [[tokyo-oshima, tokyo-niijima], [tokyo-oshima, tokyo-kozushima]]
+    routes: [[tokyo-oshima, tokyo-miyakejima]]   # 北の 2 島（大島・利島）と南の 4 島に分かれる
     durationMs: 20000
     flavor:
-      text: 台風が近づき、大島のまわりの海が荒れています
+      text: 台風が近づき、大島と三宅島の間の海が荒れています
       provenance: derived
       source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: DISASTER_LAND_CONSERVATION, quote: "平成25年台風26号による大島町の被害" }
 ```
@@ -452,6 +469,23 @@ demo:
 
 ---
 
+### 5.5 船の名前（Stage 3・demo-izu）
+
+計画書の伊豆諸島の `PORTS` の項目にある船名を使います（`fact`）。
+
+```yaml
+ferries:
+  - { id: f1, name: 橘丸,           home: tokyo-oshima,      capacity: 4, speed: 1.0, provenance: fact }
+  - { id: f2, name: 新さるびあ丸,   home: tokyo-oshima,      capacity: 3, speed: 1.2, provenance: fact }
+  - { id: f3, name: くろしお丸,     home: tokyo-miyakejima,  capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f4, name: あおがしま丸,   home: tokyo-hachijojima, capacity: 3, speed: 1.0, provenance: fact }
+```
+
+- 積載量・速度・母港は `creative` です
+- ステージ紹介とクレジットに「計画書に記載された船名を使用しており、運航会社とは関係ありません」と書きます
+
+---
+
 ## 6. クレジット表示
 
 クレジット画面と `NOTICE` に次を載せます。
@@ -462,7 +496,40 @@ demo:
 出典：国土交通省 Project LINKS（https://www.mlit.go.jp/links/）
 利用規約：政府標準利用規約（第2.0版）
 航行時間・積載量・イベントなどの多くはゲーム上の設定であり、実際の航路・運航とは異なります。
+ゲーム内の船の名前の一部は、離島振興計画書に記載された船名を使用しており、実在の運航会社とは関係ありません。
 
 etcd-io/raft — Copyright The etcd Authors — Apache License 2.0
 （乱数源を注入する変更を加えています。詳細は server/third_party/etcd-raft/PATCHES.md）
 ```
+
+リポジトリの `NOTICE` にも同じ内容を書きます（[ADR-0020](./adr/0020-public-repository-apache-license.md)）。
+
+---
+
+## 7. 素材（画像・音）
+
+[判断の記録 R-09](./09-assumptions-and-open-questions.md#r-09) の方針です。
+
+| 対象 | 作り方 | 出典区分 |
+|---|---|---|
+| 手紙・船・代表のマーク・嵐など、遊ぶうえで意味を持つもの | PixiJS の図形と絵文字。色と形の両方で区別する | `creative` |
+| 島の郵便局長のキャラクター、タイトル画面、ステージ紹介の背景 | 画像生成 AI | `creative` |
+| 効果音（出航・到着・確定・嵐・花火など） | 生成ツールなどで作る（MVP） | `creative` |
+| BGM | MVP では使わない | — |
+
+- 画像生成 AI などで作った素材は `web/public/assets/generated/` に置き、`web/public/assets/CREDITS.md` に、使ったサービス・作った日・利用規約の URL を書く
+- 使うサービスの利用規約が、公開のリポジトリでの再配布（Apache-2.0）を認めていることを確かめてから使う
+- 郵便局長の名前と口調は、計画書の観光などの記述（例：小豆島のオリーブ）にちなむ。実在のご当地キャラクターは使わない
+
+### 7.1 PLATEAU の 3D 都市モデル（確認済み・今回は使わない）
+
+- 「Project LINKS アイディアソン公開データ（2026年度）PLATEAU の成果報告書等のデータ」を確認した
+  - 中身は、PLATEAU に取り組んだ自治体の報告書をデータにしたもの（CSV 19 本とデータ定義書）
+  - 3D 都市モデル本体は含まれていない
+- 整備状況の一覧（226 自治体）と照合した結果、今回の島の自治体で 3D 都市モデルがあるのは、Stage 4 の島後（隠岐の島町）だけだった
+  - 建物・道路・土地利用：LOD1。範囲は都市計画区域の約 30 km²
+  - 地形と災害リスク：町の全域（約 243 km²）
+  - 細かい形の建物（LOD2）：ランドマークの 10 棟
+- 2D の PixiJS のマップに 3D を入れるには別の描画ライブラリが必要になるため、今回は使わない
+- 将来の案（P2、未採用）: Stage 4 の島後だけ、詳細の画面で 3D の地形と建物を表示する
+

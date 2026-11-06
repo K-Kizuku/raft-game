@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.2（プロトコルバージョン `1`） |
+| 版 | v0.3（プロトコルバージョン `1`） |
 | 更新日 | 2026-11-06 |
 | 状態 | レビュー済み |
 | 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) |
@@ -55,24 +55,71 @@
 リクエスト:
 
 ```json
-{ "stageId": "stage2", "seed": 20261101, "demo": false }
+{ "stageId": "stage2", "seed": 20261101, "demo": false, "turnstileToken": "…" }
 ```
 
 - `seed` を省略するとサーバーが決める
+- `turnstileToken` は Cloudflare Turnstile のウィジェットが返すトークン。Worker が検証する（コストガード G4。無効にした場合は省略可）
 - `demo: true` は `demo` モードでデプロイした Worker（`DEMO_CONTROLS=1`）のときだけ受け付ける
 - Worker は Durable Object を作り、コンテナの起動を始めてから応答する（ステージ紹介の間に起動を終える）
 
 レスポンス `201`:
 
 ```json
-{ "sessionId": "s_8f3k2…", "token": "base64url(128bit)", "wsPath": "/ws/sessions/s_8f3k2…" }
+{ "sessionId": "s_<ランダム 128bit>.<HMAC 署名>", "token": "base64url(128bit)", "wsPath": "/ws/sessions/s_…" }
 ```
 
-エラー: `400`（不正なステージ）/ `429`（レート制限）/ `503`（同時に遊べるゲームの上限。コンテナの `maxInstances`）
+- `sessionId` には Worker の秘密鍵（`SESSION_SIGNING_KEY`）による署名が付く。Worker は WS の接続時に署名を確かめ、合わなければ Durable Object を呼ばずに `404` を返す（コストガード G3）
+
+エラー:
+
+| HTTP | `code` | 意味 | 画面の表示 |
+|---|---|---|---|
+| 400 | `bad_request` | 不正なステージなど | — |
+| 403 | `turnstile_failed` | Turnstile の確認に失敗 | 「もう一度お試しください」 |
+| 429 | `rate_limited` | レート制限 | 「少し待ってからお試しください」 |
+| 503 | `budget_exhausted` | 費用の上限に達した（G1） | 「本日の受付は終了しました」 |
+| 503 | `sessions_disabled` | 管理者が受付を一括で止めている（G6） | 「ただいま受付を停止しています」 |
+
+エラーの本文は `{ "code": "…", "message": "…" }` です。
 
 ### `GET /ws/sessions/{id}?token=…`
 
 WebSocket にアップグレードします。Worker が `Origin` を許可リストで検査し、Durable Object がトークンを検証します。同じセッションに 2 本目の接続が来たら、古い接続を閉じます（再接続のため）。
+
+---
+
+### `GET /api/admin/guards`・`PATCH /api/admin/guards`（管理用）
+
+コストガード（[ADR-0018](./adr/0018-cost-guard.md)）の確認と切り替えです。`Authorization: Bearer <ADMIN_TOKEN>` が必要です。
+
+`GET` のレスポンス:
+
+```json
+{
+  "guards": {
+    "budget":      { "enabled": true, "monthlyUsd": 30, "dailyUsd": 1 },
+    "gameTime":    { "enabled": true, "maxMinutes": 30, "maxAlarms": 20 },
+    "signature":   { "enabled": true, "locked": true },
+    "turnstile":   { "enabled": true },
+    "rateLimit":   { "enabled": true, "perIpPerMinute": 10 },
+    "cpuMs":       { "value": 50, "note": "変更には再デプロイが必要" },
+    "acceptGames": true
+  },
+  "usage": { "todayUsd": 0.12, "monthUsd": 1.48, "activeGames": 2 },
+  "unitCostUsd": { "lite": 0.0065, "standard-1": 0.040 }
+}
+```
+
+`PATCH` のリクエスト（変えたい項目だけ）:
+
+```json
+{ "budget": { "enabled": false }, "reason": "デモ当日のため一時的に外す" }
+```
+
+- `signature` は変更できません（`locked: true`。変えようとすると `400 locked`）
+- `acceptGames: false` で、新しいゲームの受付を一括で止めます（遊んでいるゲームは続きます）
+- 変更は数秒で反映され、`CostGuard` に記録（いつ・何を・理由）が残ります
 
 ---
 

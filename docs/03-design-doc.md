@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.2 |
+| 版 | v0.3 |
 | 更新日 | 2026-11-06 |
 | 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
 | 対象読者 | 実装者（サーバー・フロントエンド・インフラ）、レビュアー |
@@ -570,7 +570,8 @@ func Sub(seed uint64, name string) *rand.Rand {
 
 | 層 | 実装 | 責務 |
 |---|---|---|
-| Worker | TypeScript（`web/worker/index.ts`） | 静的ファイルの配信（SPA）、`/api/*` と `/ws/*` の受付、レート制限、`Origin` の検査、セッションの作成、Durable Object への振り分け |
+| Worker | TypeScript（`web/worker/index.ts`） | 静的ファイルの配信（SPA）、`/api/*` と `/ws/*` の受付、署名の確認・Turnstile・レート制限・`Origin` の検査、セッションの作成、Durable Object への振り分け、管理用 API |
+| Durable Object `CostGuard` | TypeScript（`web/worker/cost-guard.ts`） | 全体で 1 つ。費用の予約・精算・上限の判定、ガードの設定、切り替えの記録（[ADR-0018](./adr/0018-cost-guard.md)） |
 | Durable Object `GameSession` | TypeScript（`web/worker/game-session.ts`） | 1 ゲームに 1 つ。コンテナの起動・停止、トークンの検証、ブラウザとコンテナの間の WebSocket の中継、入力ログの保存（SQLite）、コンテナが止まったときの復元、寿命の管理（アラーム） |
 | Go サーバー `single` モード | Go（`server/cmd/server --mode single`）。コンテナの中で動く | 1 プロセス＝1 ゲーム。Durable Object からの WebSocket だけを受け、セッションループでシミュレーションを動かす |
 | Go サーバー `standalone` モード | 同じバイナリ（`--mode standalone`） | ローカル開発とデモの保険（`make demo-local`）。1 プロセスで複数のゲームを持ち、§12.2 の公開 API を自分で提供する |
@@ -583,38 +584,68 @@ func Sub(seed uint64, name string) *rand.Rand {
 |---|---|---|
 | GET | `/api/healthz` | ヘルスチェック（Worker が直接返す） |
 | GET | `/api/stages` | ステージ一覧（ビルド時に `data/stages/` から作った JSON を Worker に同梱） |
-| POST | `/api/sessions` | セッションを作る（`{stageId, seed?}` → `{sessionId, token}`）。Durable Object を作り、コンテナの起動を始める |
-| GET | `/ws/sessions/{id}?token=…` | WebSocket に切り替え。Durable Object に転送する |
+| POST | `/api/sessions` | セッションを作る（`{stageId, seed?, turnstileToken}` → `{sessionId, token}`）。Turnstile とレート制限を確認し、`CostGuard` で費用を予約してから、Durable Object を作り、コンテナの起動を始める |
+| GET | `/ws/sessions/{id}?token=…` | WebSocket に切り替え。**sessionId の署名を確認してから** Durable Object に転送する |
+| GET / PATCH | `/api/admin/guards` | コストガードの設定の確認と切り替え（`ADMIN_TOKEN` が必要） |
 
 詳細は [06-protocol.md](./06-protocol.md)。Go 側の WebSocket ライブラリは `github.com/coder/websocket` を使います（`context` 対応で、依存が少ないため）。
 
 ### 12.3 Durable Object `GameSession`
 
+コンテナは、推奨の `durable_object` 方式で、Durable Object のコードから起動します（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)）。
+
 ```ts
-// 概略。コンテナの操作には Workers ランタイムの ctx.container（start()・getTcpPort(port).fetch()）を使う想定。
-// 正確な API は実装計画 T-007 で確認する。
+// 概略。API は Cloudflare の Durable Object Container API（ctx.container）に従う。
 export class GameSession extends DurableObject {
   async init(req: { stageId: string; seed: number; demo: boolean; tokenHash: string }) {
-    // SQLite: session(stage_id, seed, demo, token_hash, state, created_at)
-    // コンテナを起動し始める（ステージ紹介の間に起動を終える）
-    // アラーム: 起動から 30 分で強制終了
+    // SQLite: session(stage_id, seed, demo, token_hash, state, created_at, alarm_count)
+    this.ctx.container.start({
+      image: this.ctx.container.images.server,
+      instance: this.env.CONTAINER_INSTANCE,   // 一般公開 "lite" / デモ "standard-1"
+      enableInternet: false,                   // 外部への通信は禁止
+      env: { MODE: "single", PORT: "8080" },
+    });
+    // start() は準備完了の前に戻る。monitor() で起動の失敗を検知する
+    // アラーム: 起動から 30 分で強制終了（コストガード G2）
   }
   async fetch(request: Request) {
     // 1. token を検証（ハッシュで比較）
     // 2. ブラウザとの WebSocket を受け付ける
-    // 3. コンテナの :8080/ws に WebSocket を開き、最初に internal.init（または internal.restore）を送る
-    // 4. 双方向に中継する。ブラウザ → コンテナの cmd.* は cmdId ごとに覚えておき、
+    // 3. getTcpPort(8080).fetch("http://container/healthz") が成功するまで待つ
+    // 4. コンテナの /ws に WebSocket を開き、最初に internal.init（または internal.restore）を送る
+    // 5. 双方向に中継する。ブラウザ → コンテナの cmd.* は cmdId ごとに覚えておき、
     //    コンテナ → ブラウザの ack(ok=true, t) を見たら (t, cmd) を SQLite の input_log に追記する
-    // 5. ブラウザ由来の internal.* は破棄する（内部の電文はこの Durable Object だけが送る）
+    // 6. ブラウザ由来の internal.* は破棄する（内部の電文はこの Durable Object だけが送る）
   }
   async onContainerLost() {
     // 新しいコンテナを起動 → internal.restore(stageId, seed, input_log) → コンテナが snapshot を返す
   }
+  async onRoundEnded() {
+    // ctx.container.destroy() ですぐに止め、実際に動いた時間で CostGuard に精算する
+  }
   async alarm() {
-    // 切断から 5 分、終了から 10 分、起動から 30 分のいずれかでコンテナを止める
+    // 切断から 5 分、起動から 30 分のいずれかでコンテナを止める
+    // アラームの再設定は 1 ゲームで 20 回まで（繰り返しが止まらなくなるのを防ぐ。コストガード G2）
   }
 }
 ```
+
+### 12.3.1 Durable Object `CostGuard`
+
+全体で 1 つの Durable Object です（`idFromName("global")`）。一般公開とデモ用の Worker が共有します。
+
+```ts
+export class CostGuard extends DurableObject {
+  // SQLite: settings(key, value), ledger(session_id, reserved_usd, settled_usd, started_at, ended_at), audit(at, change)
+  async reserve(sessionId: string, instance: "lite" | "standard-1"): Promise<"ok" | "budget_exhausted" | "sessions_disabled">
+  async settle(sessionId: string, runSeconds: number): Promise<void>  // 予約した額を実際の時間で精算する
+  async getGuards(): Promise<Guards>                                  // 設定ファイルの既定値に、保存した上書きを重ねたもの
+  async patchGuards(change: Partial<Guards>, by: string): Promise<Guards> // G3 は変更できない
+}
+```
+
+- 見込みの費用の単価・上限は `GUARDS`（`cloudflare.config.ts`）に既定値を持ち、管理用 API で上書きできる
+- 呼ぶのはゲームの開始と終了のときだけなので、全体で 1 つでも負荷は小さい
 
 ### 12.4 セッションループ（Go）
 
@@ -661,13 +692,16 @@ func (s *Session) run(ctx context.Context) {
 
 | 項目 | 値 | どこで守るか |
 |---|---|---|
-| 同時に遊べるゲームの数 | 50（コンテナの `maxInstances`） | Cloudflare。超えたら Worker が 503 と「混雑中」を返す |
+| 費用の上限 | 1 か月 30 USD・1 日 1 USD（見込みの費用の合計） | `CostGuard`（コストガード G1） |
+| 同時に遊べるゲームの数 | 上限なし（R-01） | — |
+| 1 ゲームの最長時間 | 30 分 | Durable Object のアラーム（G2） |
+| アラームの再設定の回数 | 1 ゲームで 20 回まで | Durable Object（G2） |
 | 切断されてからの保持時間 | 5 分（その間は自動で一時停止） | Durable Object のアラーム |
-| ラウンド終了後の保持時間 | 10 分（コンテナを止める。入力ログと結果は Durable Object に残る） | Durable Object のアラーム |
-| 1 ゲームの最長時間 | 30 分 | Durable Object のアラーム |
-| セッション作成のレート制限 | 1 IP あたり 10 回/分 | Worker（レート制限のバインディング） |
+| ラウンド終了後 | すぐにコンテナを止める。入力ログと結果は Durable Object に残る | Durable Object |
+| セッション作成のレート制限 | 1 IP あたり 10 回/分 ＋ Turnstile | Worker（G4） |
 | コマンドのレート制限 | 1 セッションあたり 30 回/秒 | Durable Object |
 | WS の受信メッセージの最大サイズ | 16 KiB | Durable Object と Go の両方 |
+| Worker 1 回あたりの CPU 時間 | `limits.cpuMs`（値は T-007 で測って決める） | Cloudflare（G5） |
 
 ---
 
@@ -761,7 +795,10 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 | 脅威 | 対策 |
 |---|---|
 | セッションの乗っ取り | セッション作成時に推測できないトークン（128 bit）を発行し、WS の接続時に検証する |
-| 大量のセッション作成による資源の枯渇 | Worker で IP ごとのレート制限、コンテナの `maxInstances` で同時ゲーム数の上限 |
+| 大量のセッション作成による資源の枯渇・課金の増加 | コストガード（[ADR-0018](./adr/0018-cost-guard.md)）：Turnstile、IP ごとのレート制限、ゾーンの WAF と AI クローラーの遮断、費用の上限 |
+| でたらめな ID による Durable Object の大量作成 | sessionId に HMAC の署名を付け、Worker で検証してから Durable Object を呼ぶ（G3。**無効にしない**） |
+| 管理用 API の悪用 | `ADMIN_TOKEN`（`--secrets-file` で渡す）を必須にし、切り替えの記録を残す。合言葉は定期的に変える |
+| シークレットの漏えい（公開リポジトリ） | `.env` などは `.gitignore` に入れ、CI でシークレットの検査（secret scanning）を行う |
 | 巨大・大量のメッセージ | WS の受信サイズの上限、コマンドのレート制限、JSON のデコードは型を決めて行う |
 | 他のサイトからの WS 接続 | Worker で `Origin` ヘッダーを許可リスト（`ALLOWED_ORIGINS`）と照合する |
 | コンテナへの直接の接続 | コンテナは外部に公開しない。Durable Object からだけ接続する。ブラウザ由来の `internal.*` の電文は Durable Object が破棄する |
@@ -788,6 +825,9 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 | オープンデータ | ビルド時の ETL | 実行時に取得 | [0013](./adr/0013-open-data-build-time-etl.md) |
 | リポジトリ | モノレポ + 型の生成 | リポジトリを分ける、protobuf | [0014](./adr/0014-monorepo-and-shared-types.md) |
 | 依頼の成功判定 | 依頼元の島で適用された時点 | Commit された時点 | [0015](./adr/0015-request-success-judged-at-origin-apply.md) |
+| コストの抑制 | アプリ側のコストガード（費用の上限など 6 つ） | 予算アラートだけ、同時に動く数の上限 | [0018](./adr/0018-cost-guard.md) |
+| ローカルの開発環境 | 作業ディレクトリごとに分けて並列に動かす | 別の PC、1 本ずつ順番に | [0019](./adr/0019-parallel-local-development.md) |
+| 公開とライセンス | 公開・Apache-2.0 | MIT、ライセンスなし | [0020](./adr/0020-public-repository-apache-license.md) |
 
 ---
 
@@ -800,7 +840,10 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 | etcd-io/raft v3.7 の API がサンプルと違い、実装に時間がかかる | 中 | M1（コアの実装）の最初に、3 ノードを即時配達で動かす最小の例を作る |
 | 乱数のパッチが上流の更新で当たらなくなる | 小 | 版を v3.7.0 に固定する。パッチは 1 か所だけ。上流への提案も検討する |
 | 本番でのデモ中に再デプロイやコンテナの再起動でゲームが切れる | 大 | 入力ログから復元する（FR-GAME-09）。デモの前はデプロイを凍結する。ローカルで起動する手順（`make demo-local`）を用意しておく |
-| `cf` がベータ版で、コマンドや設定の形式が変わる | 中 | `cf` の版を固定する。上げるときは専用の PR で `cf build` と `--dry-run` を確認する |
+| `cf` と `durable_object` 方式のコンテナがベータ版で、コマンドや設定の形式が変わる | 中 | `cf` の版を固定する。上げるときは専用の PR で `cf build` と `--dry-run` を確認する |
+| bot のアクセスなどで課金が意図せず増える | 大 | コストガード（[ADR-0018](./adr/0018-cost-guard.md)）。予算アラートを 5 USD に設定する |
+| コストガードがデモの最中に受付を止めてしまう | 中 | 管理用 API でその場で外せる。デモの前に 1 日の上限の残りを確かめる |
+| `lite` では 8 倍速や復元が遅い | 中 | T-007 と負荷テストで測り、足りなければ `standard-1` に上げる（R-02） |
 | コンテナの起動待ちがデモで目立つ | 中 | ステージ選択の時点で起動を始め、ステージ紹介と開会式の間に隠す。リハーサルで起動時間を計る |
 | Durable Object とコンテナの API の細部が想定と違う | 中 | 実装計画 T-007（M0 のスパイク）で、最小の構成を実際にデプロイして確かめる |
 | 計画書の記述が地域によって薄い（長崎県など） | 小 | 記述の薄い地域の航路は `creative` として扱い、画面で区別する。生成した JSON をコミットするので、ETL が間に合わなくても進められる |

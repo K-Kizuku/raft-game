@@ -1,0 +1,32 @@
+合意、乗船中。— 離島Raft共和国（raft-game）
+Copyright 2026 The raft-game Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------
+Third-party software
+
+etcd-io/raft (go.etcd.io/raft/v3 v3.7.0)
+Copyright The etcd Authors
+Licensed under the Apache License, Version 2.0.
+This repository includes a modified copy under server/third_party/etcd-raft/.
+Modification: the election-timeout random source can be injected via
+Config.RandIntn for deterministic simulation.
+See server/third_party/etcd-raft/PATCHES.md and docs/adr/0005-deterministic-raft-rng-patch.md.
+
+------------------------------------------------------------------------
+Open data
+
+本ソフトウェアは、国土交通省「Project LINKS アイディアソン公開データ（2026年度）
+離島に関するデータ」（離島振興対策実施地域一覧・離島振興計画書 ほか）を加工して作成しています。
+出典：国土交通省 Project LINKS（https://www.mlit.go.jp/links/）
+利用規約：政府標準利用規約（第2.0版）（https://www.mlit.go.jp/links/terms-of-use.html）
+航行時間・積載量・イベントなどの多くはゲーム上の設定であり、実際の航路・運航とは異なります。
+ゲーム内の船の名前の一部は、離島振興計画書に記載された船名を使用しており、
+実在の運航会社とは関係ありません。
+
+------------------------------------------------------------------------
+Generated assets
+
+画像・効果音の一部は画像生成 AI 等で作成しています。
+使用したサービスと条件は docs/07-data-spec.md の「素材」の節に記載します。

@@ -35,13 +35,32 @@ make demo-local # デモの保険（ノート PC で起動）
 (cd web && pnpm exec cf deploy --prebuilt --dry-run)     # 反映せずに検査
 ```
 
+## コストガード（ADR-0018）の注意点
+
+- **署名の確認（G3）は無効にしない。** sessionId の署名を確かめる前に Durable Object を呼ばない。管理用 API の切り替えの対象にもしない
+- Durable Object のアラームは、1 ゲームで設定できる回数に上限を設ける。アラームの中で無条件にアラームを設定し直さない
+- Durable Object やコンテナを作る処理は、必ず `CostGuard` の予約を通す
+- ラウンドが終わったら、すぐにコンテナを止める（`destroy()`）
+- ログの量を増やす変更をするときは、Workers Logs の課金を意識する
+
+## 並列開発（ADR-0019）の約束
+
+- AI エージェントごとに `git worktree` で作業ディレクトリを分け、`DEV_SLOT` を割り当てる（`scripts/dev-slot.sh`）
+- 固定のポート・固定のファイル名・固定の Docker の名前を使わない。ポートは `DEV_SLOT` から計算し、テストではポート `:0` と `t.TempDir()` を使う
+- `cf` のローカルの状態は、作業ディレクトリの中（`--persist-to ./.cloudflare/state`）に置く
+- 本番・デモ用の環境へのデプロイ、ゾーンの設定の変更、Cloudflare のシークレットの更新はしない（CI だけが行う）
+- タスクは GitHub の Issue で管理されている。作業の前に、対応する Issue を確認する
+
 ## Cloudflare（`cf`）の注意点
 
 - インフラの構成は `web/cloudflare.config.ts` と `cf`（Cloudflare CLI、ベータ版）だけで管理する。Wrangler・Terraform・ダッシュボードでの手作業の変更は使わない（ADR-0016）
 - `cf` は `web/` の devDependency として版を固定する。上げるときは専用の PR にする
 - `cf deploy` を使う。Durable Object のクラスの作成・削除・改名は `cf workers versions create` ではできない
 - リアルタイムのログ表示とシークレットの個別登録は未対応。ログはダッシュボード、シークレットは `cf deploy --secrets-file`
-- 1 ゲーム＝1 Durable Object `GameSession`＝1 コンテナ。コンテナ（Go）は外部に直接公開しない
+- 1 ゲーム＝1 Durable Object `GameSession`＝1 コンテナ。コンテナ（Go）は外部に直接公開せず、外部への通信も禁止する（`enableInternet: false`）
+- コンテナは `durable_object` 方式（`default` 方式は非推奨）。マシンの大きさは `ctx.container.start()` で指定する。イメージは `linux/amd64`
+- URL は `raft.kizuku-hackathon.work`（一般公開）と `raft-demo.kizuku-hackathon.work`（デモ用）。ゾーンの設定は、この 2 つのホスト名だけに効くようにする
+- 公開リポジトリなので、シークレットをコミットしない（`--secrets-file` 用のファイルは `.gitignore` に入れる）
 - ブラウザから届いた `internal.*` の電文は、Durable Object で必ず破棄する
 
 ## etcd-io/raft v3.7 の注意点
