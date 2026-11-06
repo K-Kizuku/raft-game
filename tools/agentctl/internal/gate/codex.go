@@ -138,9 +138,10 @@ const codexDetailMax = 2000
 //
 //   - reviewer は codex、reviewer_version は codex.ReviewerVersion
 //   - findings は行コメントから（id は C<コメントの ID>、status は open）
-//   - prev（前回の記録）にあって今回の指摘にない open の指摘は、今回の SHA の Codex のレビューで
-//     指摘されなかったものとして resolved にして引き継ぐ（C7 の「前の round の重大な指摘」のため）
-//   - verdict は、重大な指摘があれば request_changes、なければ approve
+//   - prev（前回の記録）にあって今回の指摘にない open の指摘は引き継ぐ。Codex の指摘（C<コメントの ID>）と
+//     重大でない指摘は、今回の SHA の Codex のレビューで指摘されなかったものとして resolved にする。
+//     Codex 以外の重大な指摘は、Codex のレビューでは resolved にできないので open のまま（C7 で fail になる）
+//   - verdict は、重大な指摘（引き継いだ open のものを含む）があれば request_changes、なければ approve
 //   - Codex は保護されたパスの確認をしないので、protected_paths_ack は reviewed: false
 func (c *CodexReview) Record(cfg *config.Config, pr int, baseSHA string, prev *review.Record, now time.Time) *review.Record {
 	round := 1
@@ -149,7 +150,7 @@ func (c *CodexReview) Record(cfg *config.Config, pr int, baseSHA string, prev *r
 	}
 	findings := []review.Finding{}
 	seen := map[string]bool{}
-	blocking := 0
+	blocking, carried := 0, 0
 	for _, f := range c.Findings {
 		id := f.ID()
 		if seen[id] {
@@ -175,22 +176,31 @@ func (c *CodexReview) Record(cfg *config.Config, pr int, baseSHA string, prev *r
 			}
 			seen[f.ID] = true
 			if f.Status == "open" {
-				f.Status = "resolved"
-				f.Resolution = fmt.Sprintf("Codex（GitHub 連携）の %s のレビューで指摘されなかった", short(c.SHA))
+				if cfg.IsBlocking(f.Severity) && !IsCodexFindingID(f.ID) {
+					// Codex 以外の重大な指摘は、Codex のレビューでは resolved にしない（open のまま引き継ぐ）。
+					carried++
+				} else {
+					f.Status = "resolved"
+					f.Resolution = fmt.Sprintf("Codex（GitHub 連携）の %s のレビューで指摘されなかった", short(c.SHA))
+				}
 			}
 			findings = append(findings, f)
 		}
 	}
 	verdict := "approve"
-	if blocking > 0 {
+	if blocking > 0 || carried > 0 {
 		verdict = "request_changes"
+	}
+	summary := fmt.Sprintf("Codex（GitHub 連携）が %s をレビューした。指摘 %d 件（うち重大 %d 件）。",
+		short(c.SHA), len(c.Findings), blocking)
+	if carried > 0 {
+		summary += fmt.Sprintf("前のレビューの重大な指摘 %d 件は open のまま引き継いだ（Codex 以外のレビューで確かめる）。", carried)
 	}
 	return &review.Record{
 		Schema: review.Schema, PR: pr, HeadSHA: c.SHA, BaseSHA: baseSHA, Round: round,
 		Reviewer: config.ReviewerPrimary, ReviewerVersion: codex.ReviewerVersion, FallbackReason: "",
-		Verdict: verdict,
-		Summary: fmt.Sprintf("Codex（GitHub 連携）が %s をレビューした。指摘 %d 件（うち重大 %d 件）。",
-			short(c.SHA), len(c.Findings), blocking),
+		Verdict:           verdict,
+		Summary:           summary,
 		ProtectedPathsAck: &review.Ack{Reviewed: boolPtr(false), WeakensGuards: boolPtr(false)},
 		Findings:          findings,
 		CreatedAt:         now.UTC().Format(time.RFC3339),

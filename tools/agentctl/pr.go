@@ -20,12 +20,15 @@ import (
 
 const prUsage = `  agentctl comment --repo OWNER/NAME --pr N (--body TEXT | --body-file FILE|-)
   agentctl pr view         --repo OWNER/NAME --pr N
-  agentctl pr codex-record --repo OWNER/NAME --pr N [--sha SHA] [--previous FILE] [--input view.json] [--config PATH]
+  agentctl pr codex-record --repo OWNER/NAME --pr N [--sha SHA] [--after TIME] [--previous FILE] [--input view.json] [--config PATH]
+  agentctl pr protected-files --repo OWNER/NAME --pr N [--input view.json] [--config PATH]
 
 comment は PR にコメントを作り、{"id": …} を出す。
 pr view は PR の状態・コメント・レビュー・行コメントを gate.Input の形の JSON で出す。
 pr codex-record は、Codex の GitHub 連携の SHA（省略時は HEAD）のレビューを agent-review/v1 の記録にして出す
-（--previous を省略すると、PR のコメントの最新のレビュー記録を前回とする）。
+（--previous を省略すると、PR のコメントの最新のレビュー記録を前回とする。--after TIME（RFC 3339）を付けると、
+要約のコメントの updated_at が TIME より新しいものだけを完了とみなす）。
+pr protected-files は、PR の変更ファイル（名前を変えたファイルは前の名前も）のうち protected_paths に当たるものを 1 行ずつ出す。
 終了コード: 0=成功・2=Codex のレビューがまだ終わっていない（codex-record）・3=内部エラー。
 `
 
@@ -93,24 +96,38 @@ func runPR(args []string, stdout, stderr io.Writer) int {
 		return runPRView(args[1:], stdout, stderr)
 	case "codex-record":
 		return runCodexRecord(args[1:], stdout, stderr)
+	case "protected-files":
+		return runProtectedFiles(args[1:], stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "agentctl pr: 未知のサブコマンド %q\n%s", args[0], prUsage)
 	return exitInternal
 }
 
 type prOpts struct {
-	repo, sha, previous, input, cfgPath string
-	pr                                  int
+	repo, sha, after, previous, input, cfgPath string
+	pr                                         int
 }
 
-func (o *prOpts) flags(name string, stderr io.Writer, codex bool) *flag.FlagSet {
+// prFlags は、サブコマンドごとのフラグの組。
+type prFlags int
+
+const (
+	prFlagsView prFlags = iota
+	prFlagsCodex
+	prFlagsProtected
+)
+
+func (o *prOpts) flags(name string, stderr io.Writer, kind prFlags) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&o.repo, "repo", "", "OWNER/NAME")
 	fs.IntVar(&o.pr, "pr", 0, "PR の番号")
-	if codex {
+	if kind == prFlagsCodex {
 		fs.StringVar(&o.sha, "sha", "", "レビューの対象の SHA（省略時は PR の HEAD）")
+		fs.StringVar(&o.after, "after", "", "要約のコメントの updated_at がこの時刻（RFC 3339）より新しいものだけを完了とみなす")
 		fs.StringVar(&o.previous, "previous", "", "前回のレビュー記録（JSON かコメントの本文）")
+	}
+	if kind != prFlagsView {
 		fs.StringVar(&o.input, "input", "", "GitHub に接続せず、この JSON（pr view の出力か gate.Input）を使う")
 		fs.StringVar(&o.cfgPath, "config", "", "設定ファイル（省略時は .agents/config.json を親のディレクトリへたどって探す）")
 	}
@@ -130,6 +147,11 @@ func (o *prOpts) check(fs *flag.FlagSet) error {
 	if o.sha != "" && !shaArgRe.MatchString(o.sha) {
 		return fmt.Errorf("--sha は 40 桁の 16 進（小文字）にする（%q）", o.sha)
 	}
+	if o.after != "" {
+		if _, err := time.Parse(time.RFC3339, o.after); err != nil {
+			return fmt.Errorf("--after は RFC 3339 の時刻にする（%q）", o.after)
+		}
+	}
 	return nil
 }
 
@@ -145,7 +167,7 @@ func fetchDiscussion(repo string, pr int) (gate.Input, error) {
 
 func runPRView(args []string, stdout, stderr io.Writer) int {
 	var o prOpts
-	fs := o.flags("pr view", stderr, false)
+	fs := o.flags("pr view", stderr, prFlagsView)
 	if err := fs.Parse(args); err != nil {
 		return exitInternal
 	}
@@ -169,7 +191,7 @@ func runPRView(args []string, stdout, stderr io.Writer) int {
 
 func runCodexRecord(args []string, stdout, stderr io.Writer) int {
 	var o prOpts
-	fs := o.flags("pr codex-record", stderr, true)
+	fs := o.flags("pr codex-record", stderr, prFlagsCodex)
 	if err := fs.Parse(args); err != nil {
 		return exitInternal
 	}
@@ -222,6 +244,9 @@ func runCodexRecord(args []string, stdout, stderr io.Writer) int {
 	case cr.SHA != sha:
 		fmt.Fprintf(stderr, "agentctl pr codex-record: Codex の最新のレビューは %s のもの（%s を待つ）\n", short(cr.SHA), short(sha))
 		return exitPending
+	case o.after != "" && !cr.Updated.After(mustTime(o.after)):
+		fmt.Fprintf(stderr, "agentctl pr codex-record: Codex の要約のコメント %d は %s から更新されていない（新しいレビューを待つ）\n", cr.Comment.ID, o.after)
+		return exitPending
 	}
 	if prev == nil {
 		prev = gate.LatestRecord(cfg, in)
@@ -236,6 +261,56 @@ func runCodexRecord(args []string, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 	return exitOK
+}
+
+// runProtectedFiles は、PR の変更ファイルのうち protected_paths に当たるものを 1 行ずつ出す。
+func runProtectedFiles(args []string, stdout, stderr io.Writer) int {
+	var o prOpts
+	fs := o.flags("pr protected-files", stderr, prFlagsProtected)
+	if err := fs.Parse(args); err != nil {
+		return exitInternal
+	}
+	fail := func(format string, a ...any) int {
+		fmt.Fprintf(stderr, "agentctl pr protected-files: "+format+"\n", a...)
+		return exitInternal
+	}
+	if err := o.check(fs); err != nil {
+		return fail("%v", err)
+	}
+	cfg, err := loadConfig(o.cfgPath)
+	if err != nil {
+		return fail("%v", err)
+	}
+	var files []gate.File
+	if o.input != "" {
+		in, err := readInput(o.input)
+		if err != nil {
+			return fail("%v", err)
+		}
+		if in.PullRequest.Number != o.pr {
+			return fail("--input の PR #%d が --pr と違う", in.PullRequest.Number)
+		}
+		files = in.Files
+	} else {
+		client, err := newClient()
+		if err != nil {
+			return fail("%v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if files, err = client.ListFiles(ctx, o.repo, o.pr); err != nil {
+			return fail("%v", err)
+		}
+	}
+	for _, p := range gate.ProtectedFiles(cfg, files) {
+		fmt.Fprintln(stdout, p)
+	}
+	return exitOK
+}
+
+func mustTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
 }
 
 func short(sha string) string {

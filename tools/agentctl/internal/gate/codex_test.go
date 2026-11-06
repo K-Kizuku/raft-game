@@ -295,7 +295,7 @@ func TestCodexRecord(t *testing.T) {
 	if prev == nil || prev.Round != 2 {
 		t.Fatalf("prev = %+v", prev)
 	}
-	prev.Findings = append(prev.Findings, finding("F9", "high", "open"))
+	prev.Findings = append(prev.Findings, finding("F9", "high", "open"), finding("F8", "low", "open"), finding("C4000", "high", "open"))
 	now := time.Date(2026, 11, 6, 1, 2, 3, 0, time.UTC)
 	rec := cr.Record(cfg, 12, baseSHA, prev, now)
 	if err := rec.Validate(cfg); err != nil {
@@ -319,9 +319,18 @@ func TestCodexRecord(t *testing.T) {
 	if f := byID["C4601"]; f.Severity != "medium" {
 		t.Errorf("C4601 = %+v", f)
 	}
-	// 前回の open の指摘は、今回指摘されなければ resolved で引き継ぐ。resolved のものはそのまま。
-	if f := byID["F9"]; f.Status != "resolved" || !strings.Contains(f.Resolution, "1111111") {
+	// 前回の Codex 以外の重大な指摘は、Codex のレビューでは resolved にせず open のまま引き継ぐ。
+	if f := byID["F9"]; f.Status != "open" || f.Resolution != "" {
 		t.Errorf("F9 = %+v", f)
+	}
+	if !strings.Contains(rec.Summary, "open のまま引き継いだ") {
+		t.Errorf("summary = %s", rec.Summary)
+	}
+	// 重大でない指摘と、前の Codex の指摘は、今回指摘されなければ resolved で引き継ぐ。resolved のものはそのまま。
+	for _, id := range []string{"F8", "C4000"} {
+		if f := byID[id]; f.Status != "resolved" || !strings.Contains(f.Resolution, "1111111") {
+			t.Errorf("%s = %+v", id, f)
+		}
 	}
 	if f := byID["F1"]; f.Status != "resolved" || f.Resolution != "内部エラーにした" {
 		t.Errorf("F1 = %+v", f)
@@ -347,4 +356,81 @@ func TestCodexRecord(t *testing.T) {
 	if rec := cr.Record(cfg, 12, baseSHA, nil, now); rec.Verdict != "approve" || rec.Round != 1 || len(rec.Findings) != 0 {
 		t.Errorf("record = %+v", rec)
 	}
+	// 指摘がなくても、前の重大な指摘を open のまま引き継いだら request_changes。
+	if rec := cr.Record(cfg, 12, baseSHA, prev, now); rec.Verdict != "request_changes" {
+		t.Errorf("record = %+v", rec)
+	}
+}
+
+// codexAfterOpenHigh は、round 1 の記録（Claude のフォールバック）で F1（high）が open のあと、
+// Codex の GitHub 連携が HEAD を指摘なしでレビューした入力を返す。
+func codexAfterOpenHigh(t *testing.T) Input {
+	t.Helper()
+	in := codexInput(t, "codex-pr84.json", false)
+	rec := makeRecord(1, oldSHA, "request_changes", []review.Finding{finding("F1", "high", "open")}, fallback("service_unavailable"))
+	rec.CreatedAt = "2026-11-01T00:00:00Z"
+	in.Comments = append(in.Comments, commentOf(t, 7000, "K-Kizuku", rec))
+	return in
+}
+
+func TestCodexCannotResolvePriorBlocking(t *testing.T) {
+	cfg := loadConfig(t)
+
+	t.Run("前の high が open のまま Codex が指摘なし", func(t *testing.T) {
+		rep := Evaluate(cfg, codexAfterOpenHigh(t))
+		if rep.Verdict == Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		if rep.LatestReview == nil || rep.LatestReview.CommentID != 2201 {
+			t.Errorf("latest = %+v（Codex の要約のコメントが最新）", rep.LatestReview)
+		}
+		mustResult(t, rep, "C6", Pass)
+		if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "F1") {
+			t.Errorf("C7 = %+v", r)
+		}
+	})
+
+	t.Run("変換した記録を載せても resolved にならない", func(t *testing.T) {
+		in := codexAfterOpenHigh(t)
+		cr, _ := FindCodexReview(cfg, in)
+		prev := LatestRecord(cfg, in)
+		if cr == nil || prev == nil || prev.Round != 1 {
+			t.Fatalf("codex = %+v, prev = %+v", cr, prev)
+		}
+		rec := cr.Record(cfg, 12, baseSHA, prev, time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC))
+		if rec.Verdict != "request_changes" {
+			t.Errorf("verdict = %s", rec.Verdict)
+		}
+		in.Comments = append(in.Comments, commentOf(t, 7001, "K-Kizuku", rec))
+		rep := Evaluate(cfg, in)
+		if rep.LatestReview == nil || rep.LatestReview.CommentID != 7001 {
+			t.Errorf("latest = %+v", rep.LatestReview)
+		}
+		if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "F1") {
+			t.Errorf("C7 = %+v", r)
+		}
+
+		// 変換した記録で F1 を resolved に書き換えても（古い版の変換など）、Codex 以外の最新の記録で判定する。
+		rec.Findings[0].Status, rec.Findings[0].Resolution = "resolved", "Codex が指摘しなかった"
+		rec.Verdict = "approve"
+		in.Comments[len(in.Comments)-1] = commentOf(t, 7001, "K-Kizuku", rec)
+		rep = Evaluate(cfg, in)
+		if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "F1") {
+			t.Errorf("C7 = %+v", r)
+		}
+	})
+
+	t.Run("Codex 以外のレビューで resolved にすれば pass", func(t *testing.T) {
+		in := codexAfterOpenHigh(t)
+		rec := makeRecord(2, headSHA, "approve", resolvedF1())
+		rec.CreatedAt = "2026-11-01T01:00:00Z"
+		in.Comments = append(in.Comments, commentOf(t, 7002, "K-Kizuku", rec))
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		if rep.LatestReview == nil || rep.LatestReview.CommentID != 2201 {
+			t.Errorf("latest = %+v", rep.LatestReview)
+		}
+	})
 }

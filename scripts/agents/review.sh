@@ -13,7 +13,11 @@
 #                    codex-review-state が completed になるまで待つ（既定 900 秒、AGENT_CODEX_GITHUB_TIMEOUT。
 #                    確認の間隔は AGENT_CODEX_GITHUB_POLL 秒、既定 30）。終わったら agentctl pr codex-record で
 #                    agent-review/v1 に変換する。タイムアウト・連携の不調（agentctl のエラーが retry_limit 回続く）の
-#                    ときだけ service_unavailable として、下の local の経路にフォールバックする
+#                    ときだけ service_unavailable として、下の local の経路にフォールバックする。
+#                    依頼する前の要約のコメントの updated_at を覚え、それより後に更新された completed だけを待つ。
+#                    変更ファイルが protected_paths に当たるとき（agentctl pr protected-files）は、Codex の
+#                    GitHub 連携は保護されたパスを確認しないので、続けて local の経路のレビューも行い、
+#                    両方の記録を出す（GitHub 連携の記録が先、protected_paths_ack を持つ local の記録が後。--out は後者）
 #                    local: これまでの経路（ローカルの Codex CLI → Claude Code）だけを使う
 #   --base/--head    比べるコミット（省略時は PR の base・HEAD）
 #   --issue-file     Issue の本文（省略時は PR の本文の Closes #N から gh issue view）
@@ -163,20 +167,35 @@ github_unavailable() {
   return 1
 }
 
+# codex_state_baseline <pr view の JSON>: 信頼する Codex の作者の要約のコメント（codex-review-state）の
+# updated_at（なければ created_at）のうち最も新しいものを出す（なければ空）。
+codex_state_baseline() {
+  local authors
+  authors="$(jq -c '.review.codex_bot_authors // []' "$agent_config" 2>/dev/null || echo '[]')"
+  jq -r --argjson a "$authors" '
+    [.comments[]? | select((.author as $x | any($a[]; . == $x)) and ((.body // "") | contains("<!-- codex-review-state:v1")))
+      | (if (.updated_at // "") != "" then .updated_at else (.created_at // "") end) | select(. != "")]
+    | max // empty' "$1" 2>/dev/null || true
+}
+
 run_github() {
-  local sha rc start errors=0 args
+  local sha rc start errors=0 args after
+  # 依頼する前の要約のコメントの updated_at を覚え、それより新しい completed だけを待つ
+  # （同じ SHA の前のレビューの completed を、今回のレビューの結果と取り違えない）。
+  agentctl pr view --repo "$repo" --pr "$pr" >"$tmp/pr-view.json" 2>"$tmp/github.log" ||
+    github_unavailable "PR #$pr を読めない（agentctl pr view）: $(tail -n 3 "$tmp/github.log" | tr '\n' ' ')" || return 1
   if [ -n "$head_ref" ]; then
     sha="$(git rev-parse --verify --quiet "$head_ref^{commit}")" || die "--head $head_ref が見つからない"
   else
-    agentctl pr view --repo "$repo" --pr "$pr" >"$tmp/pr-view.json" 2>"$tmp/github.log" ||
-      github_unavailable "PR #$pr を読めない（agentctl pr view）: $(tail -n 3 "$tmp/github.log" | tr '\n' ' ')" || return 1
     sha="$(jq -r '.pull_request.head_sha // empty' "$tmp/pr-view.json" 2>/dev/null || true)"
     [ -n "$sha" ] || github_unavailable "PR #$pr の HEAD の SHA がない" || return 1
   fi
+  after="$(codex_state_baseline "$tmp/pr-view.json")"
   agentctl comment --repo "$repo" --pr "$pr" --body "@codex review" >/dev/null 2>"$tmp/github.log" ||
     github_unavailable "@codex review を投稿できない（agentctl comment）: $(tail -n 3 "$tmp/github.log" | tr '\n' ' ')" || return 1
-  info "PR #$pr に @codex review を依頼した。$sha のレビューの完了を最大 ${github_timeout} 秒待つ"
+  info "PR #$pr に @codex review を依頼した。$sha のレビューの完了を最大 ${github_timeout} 秒待つ${after:+（要約のコメントの $after より後の更新）}"
   args=(pr codex-record --repo "$repo" --pr "$pr" --sha "$sha" --config "$agent_config")
+  [ -z "$after" ] || args+=(--after "$after")
   [ -z "$previous_file" ] || args+=(--previous "$previous_file")
   start="$(date +%s)"
   while :; do
@@ -454,17 +473,36 @@ run_claude() {
   die_code 5 "Claude Code のレビューが retry_limit（$retry_limit）回失敗した"
 }
 
-github_done=0
+github_record=""
+need_local=1
 if [ "$via" = github ]; then
   if run_github; then
-    github_done=1
+    need_local=0
+    # Codex の GitHub 連携は保護されたパスを確認しない（protected_paths_ack を持たない）。
+    # 変更ファイルが protected_paths に当たるときは、これまでの経路のレビューも行い、両方の記録を出す。
+    if protected_hits="$(agentctl pr protected-files --repo "$repo" --pr "$pr" --config "$agent_config" 2>"$tmp/github.log")"; then
+      if [ -n "$protected_hits" ]; then
+        need_local=1
+        info "保護されたパスの変更（$(printf '%s' "$protected_hits" | tr '\n' ' ')）があるので、これまでの経路のレビューも行う"
+      fi
+    else
+      need_local=1
+      info "保護されたパスに当たるかを確かめられない（agentctl pr protected-files）ので、これまでの経路のレビューも行う: $(tail -n 3 "$tmp/github.log" | tr '\n' ' ')"
+    fi
+    if [ "$need_local" = 1 ]; then
+      github_record="$tmp/record-github.json"
+      cp "$record" "$github_record"
+      github_reviewer="$done_reviewer"
+      github_round="$round"
+      previous_file="$github_record"
+    fi
   else
     info "これまでの経路（ローカルの Codex CLI → Claude Code）に切り替える"
-    fallback_reason=""
   fi
+  fallback_reason=""
 fi
 
-if [ "$github_done" = 0 ]; then
+if [ "$need_local" = 1 ]; then
   if [ "$reviewer_opt" = claude ]; then
     fallback_reason="${AGENT_FALLBACK_REASON:-}"
     is_fallback_reason "$fallback_reason" ||
@@ -489,13 +527,24 @@ if [ "$github_done" = 0 ]; then
   esac
 fi
 
-[ -z "$out_file" ] || cp "$record" "$out_file"
-body="$tmp/body.md"
-agentctl review render "$record" >"$body" || die "agentctl review render に失敗した"
-verdict="$(jq -r .verdict "$record")"
-if [ "$no_post" = 1 ]; then
-  cat "$body"
-else
-  agentctl comment --repo "$repo" --pr "$pr" --body-file "$body" >/dev/null || die "PR #$pr にコメントできない（agentctl comment）"
+# emit_record <記録の JSON>: 本文にして、PR に載せる（--no-post なら標準出力に出す）。
+emit_record() {
+  local body="$tmp/body.md"
+  agentctl review render "$1" >"$body" || die "agentctl review render に失敗した"
+  if [ "$no_post" = 1 ]; then
+    cat "$body"
+  else
+    agentctl comment --repo "$repo" --pr "$pr" --body-file "$body" >/dev/null || die "PR #$pr にコメントできない（agentctl comment）"
+  fi
+}
+
+# 保護されたパスの変更があって両方のレビューをしたときは、Codex の GitHub 連携の記録を先に、
+# これまでの経路の記録（protected_paths_ack を持つ。round が 1 つ後）を後に出す。--out は後者。
+if [ -n "$github_record" ]; then
+  emit_record "$github_record"
+  info "PR #$pr round $github_round: $(jq -r .verdict "$github_record")（$github_reviewer）"
 fi
+[ -z "$out_file" ] || cp "$record" "$out_file"
+emit_record "$record"
+verdict="$(jq -r .verdict "$record")"
 info "PR #$pr round $round: $verdict（$done_reviewer${fallback_reason:+、fallback_reason=$fallback_reason}）"

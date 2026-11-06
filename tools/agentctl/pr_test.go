@@ -152,6 +152,54 @@ func TestPRCodexRecordPending(t *testing.T) {
 	}
 }
 
+func TestPRCodexRecordAfter(t *testing.T) {
+	// 依頼する前の要約のコメントの updated_at（--after）より新しいものだけを完了とみなす。
+	fixedNow(t)
+	view := writeViewJSON(t, codexView(t))
+	base := []string{"pr", "codex-record", "--repo", repoName, "--pr", "12", "--config", sampleConfig, "--input", view}
+	if code, _, errOut := runCmd(t, append(base, "--after", "2026-11-05T10:30:00Z")...); code != 2 || !strings.Contains(errOut, "2101") {
+		t.Errorf("同じ updated_at: exit = %d, %s", code, errOut)
+	}
+	if code, _, errOut := runCmd(t, append(base, "--after", "2026-11-05T11:00:00Z")...); code != 2 {
+		t.Errorf("後の時刻: exit = %d, %s", code, errOut)
+	}
+	if code, out, errOut := runCmd(t, append(base, "--after", "2026-11-05T10:29:59Z")...); code != 0 || !strings.Contains(out, `"reviewer": "codex"`) {
+		t.Errorf("前の時刻: exit = %d\n%s\n%s", code, out, errOut)
+	}
+	if code, _, _ := runCmd(t, append(base, "--after", "yesterday")...); code != 3 {
+		t.Errorf("不正な --after: exit = %d", code)
+	}
+}
+
+func TestPRProtectedFiles(t *testing.T) {
+	in := codexView(t)
+	base := []string{"pr", "protected-files", "--repo", repoName, "--pr", "12", "--config", sampleConfig}
+	code, out, errOut := runCmd(t, append(base, "--input", writeViewJSON(t, in))...)
+	if code != 0 || out != "tools/agentctl/main.go\ntools/agentctl/internal/gate/gate.go\n" {
+		t.Errorf("exit = %d\n%q\n%s", code, out, errOut)
+	}
+	// 名前を変えたファイルは前の名前も見る。
+	in.Files = []gate.File{{Filename: "docs/x.md", PreviousFilename: "scripts/agents/x.md", Status: "renamed"}, {Filename: "README.md"}}
+	if code, out, _ := runCmd(t, append(base, "--input", writeViewJSON(t, in))...); code != 0 || out != "scripts/agents/x.md\n" {
+		t.Errorf("renamed: exit = %d, %q", code, out)
+	}
+	in.Files = []gate.File{{Filename: "README.md"}}
+	if code, out, _ := runCmd(t, append(base, "--input", writeViewJSON(t, in))...); code != 0 || out != "" {
+		t.Errorf("なし: exit = %d, %q", code, out)
+	}
+	// GitHub の REST（GET /pulls/{n}/files）から読む。
+	githubFake(t, codexView(t))
+	if code, out, errOut := runCmd(t, base...); code != 0 || !strings.HasPrefix(out, "tools/agentctl/main.go\n") {
+		t.Errorf("API: exit = %d\n%q\n%s", code, out, errOut)
+	}
+	if code, _, _ := runCmd(t, "pr", "protected-files", "--repo", repoName, "--pr", "13", "--config", sampleConfig); code != 3 {
+		t.Errorf("存在しない PR: exit = %d", code)
+	}
+	if code, _, _ := runCmd(t, append(base, "x")...); code != 3 {
+		t.Errorf("余計な引数: exit = %d", code)
+	}
+}
+
 func TestPRCodexRecordErrors(t *testing.T) {
 	view := writeViewJSON(t, codexView(t))
 	for name, args := range map[string][]string{
@@ -220,6 +268,8 @@ func githubFake(t *testing.T, in gate.Input) (*httptest.Server, *[]string) {
 					"path": c.Path, "line": c.Line, "body": c.Body, "created_at": c.CreatedAt})
 			}
 			_ = enc.Encode(out)
+		case pre + "/pulls/12/files":
+			_ = enc.Encode(in.Files)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"message":"Not Found"}`))

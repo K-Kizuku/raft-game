@@ -78,9 +78,15 @@ case "$1" in
     n="$(jq -s '[.[] | select(.args[0:2] == ["pr","codex-record"])] | length' "$FAKE_LOG/agentctl.log")"
     mode="${FAKE_GH_MODE:-unavailable}"
     if [ "$2" = view ]; then
-      [ "$mode" != unavailable ] || exit 3
-      jq -cn --arg s "${FAKE_PR_HEAD_SHA:-}" '{pull_request:{number:12, head_sha:$s}}'
+      # FAKE_PR_VIEW=fail で失敗。FAKE_PR_COMMENTS（JSON の配列）を comments に入れる
+      [ "${FAKE_PR_VIEW:-}" != fail ] || { echo "agentctl pr view: github: 503" >&2; exit 3; }
+      jq -cn --arg s "${FAKE_PR_HEAD_SHA:-}" --argjson c "${FAKE_PR_COMMENTS:-[]}" '{pull_request:{number:12, head_sha:$s}, comments:$c}'
       exit 0
+    fi
+    if [ "$2" = protected-files ]; then
+      # FAKE_PROTECTED_FILES（改行区切り）を出す。FAKE_PROTECTED_RC で終了コード
+      [ -z "${FAKE_PROTECTED_FILES:-}" ] || printf '%s\n' "$FAKE_PROTECTED_FILES"
+      exit "${FAKE_PROTECTED_RC:-0}"
     fi
     [ "$mode" != pending-then-completed ] || { [ "$n" -gt 2 ] && mode=completed || mode=pending; }
     case "$mode" in
@@ -864,6 +870,56 @@ check "review github: pr view の HEAD の完了を待つ" log_has agentctl '.ar
 check "review github: --previous を codex-record に渡す" log_has agentctl '.args[0:2] == ["pr","codex-record"] and .args[(.args | index("--previous")) + 1] == "'"$tmp/prev.json"'"'
 check "review github: 記録を agentctl comment --body-file で載せる" grep -q "<!-- agent-review:v1 -->" "$FAKE_LOG/comment.md"
 check "review github: gh を使わない（--head なし）" test ! -s "$FAKE_LOG/gh.log"
+
+# 依頼する前の要約のコメントの updated_at を覚え、それより新しい completed だけを待つ（--after）
+reset_logs
+FAKE_GH_MODE=completed FAKE_PR_COMMENTS='[
+  {"id":1,"author":"chatgpt-codex-connector[bot]","body":"<!-- codex-review-state:v1 {} -->","created_at":"2026-11-01T00:00:00Z","updated_at":"2026-11-05T10:30:00Z"},
+  {"id":2,"author":"chatgpt-codex-connector[bot]","body":"<!-- codex-review-state:v1 {} -->","created_at":"2026-11-04T00:00:00Z","updated_at":""},
+  {"id":3,"author":"someone-else","body":"<!-- codex-review-state:v1 {} -->","created_at":"2026-11-09T00:00:00Z","updated_at":"2026-11-09T00:00:00Z"},
+  {"id":4,"author":"chatgpt-codex-connector[bot]","body":"ふつうのコメント","created_at":"2026-11-08T00:00:00Z","updated_at":"2026-11-08T00:00:00Z"}
+]' review
+check "review github: 依頼の前に agentctl pr view で要約のコメントを読む" \
+  test "$(jq -s -r '[.[] | select(.args[0] == "pr" or .args[0] == "comment") | .args[0:2] | join(" ")] | .[0:2] | join(",")' "$FAKE_LOG/agentctl.log")" = "pr view,comment --repo"
+check "review github: 信頼する作者の要約のコメントの最新の updated_at を --after に渡す" \
+  log_has agentctl '.args[0:2] == ["pr","codex-record"] and .args[(.args | index("--after")) + 1] == "2026-11-05T10:30:00Z"'
+reset_logs
+FAKE_GH_MODE=completed review
+check "review github: 要約のコメントがまだなければ --after を付けない" \
+  log_has agentctl '.args[0:2] == ["pr","codex-record"] and (.args | index("--after")) == null'
+reset_logs
+FAKE_GH_MODE=completed FAKE_PR_VIEW=fail FAKE_CODEX_MODE=good review
+check "review github: pr view が失敗したら依頼せずに切り替える" \
+  test "$RC" = 0 -a -z "$(jq -c 'select(.args[0] == "comment" and (.args | index("--body")) != null)' "$FAKE_LOG/agentctl.log")"
+check "review github: pr view の失敗の後はローカルの Codex" jq -e '.reviewer_version == "codex-cli 0.99.0"' "$tmp/record.json"
+
+# 保護されたパスの変更があれば、GitHub 連携のレビューに続けて、これまでの経路のレビューも行う（両方の記録を出す）
+reset_logs
+FAKE_GH_MODE=completed FAKE_PROTECTED_FILES=$'scripts/agents/review.sh\ntools/agentctl/pr.go' FAKE_CODEX_MODE=good review
+check "review github（保護されたパス）: 成功する" test "$RC" = 0
+check "review github（保護されたパス）: agentctl pr protected-files で確かめる" \
+  log_has agentctl '.args[0:6] == ["pr","protected-files","--repo","K-Kizuku/raft-game","--pr","12"]'
+check "review github（保護されたパス）: ローカルの Codex のレビューも行う" test "$(wc -l <"$FAKE_LOG/codex.log" | tr -d ' ')" = 1
+check "review github（保護されたパス）: 両方の記録を出す（GitHub 連携が先）" \
+  test "$(grep -c '<!-- agent-review:v1 -->' "$tmp/out")" = 2 -a \
+  "$(grep -o 'chatgpt-codex-connector (GitHub)\|codex-cli 0.99.0' "$tmp/out" | head -n 1)" = "chatgpt-codex-connector (GitHub)"
+check "review github（保護されたパス）: --out はローカルの記録（GitHub 連携の記録の次の round）" \
+  jq -e '.reviewer_version == "codex-cli 0.99.0" and .round == 3 and .protected_paths_ack.reviewed == true' "$tmp/record.json"
+check "review github（保護されたパス）: GitHub 連携の記録を前回としてプロンプトに入れる" log_has codex '.args | last | contains("C4101")'
+check "review github（保護されたパス）: 一時的な Worktree を残さない" no_worktree_left
+reset_logs
+FAKE_GH_MODE=completed FAKE_PROTECTED_FILES='scripts/agents/review.sh' FAKE_CODEX_MODE=auth review
+check "review github（保護されたパス）: ローカルの Codex が使えなければ Claude Code" \
+  jq -e '.reviewer == "claude-fallback" and .fallback_reason == "auth_error"' "$tmp/record.json"
+reset_logs
+FAKE_GH_MODE=completed FAKE_PROTECTED_RC=3 FAKE_CODEX_MODE=good review
+check "review github: 保護されたパスを確かめられなければ、これまでの経路のレビューも行う" \
+  test "$RC" = 0 -a "$(grep -c '<!-- agent-review:v1 -->' "$tmp/out")" = 2
+reset_logs
+FAKE_GH_MODE=completed FAKE_PROTECTED_FILES=$'scripts/agents/review.sh' FAKE_CODEX_MODE=good run_rc env AGENT_ROLE=orchestrator \
+  bash "$A/review.sh" 12 --base "$base_sha" --head "$head_sha" --issue-file "$tmp/issue.md" --out "$tmp/record.json"
+check "review github（保護されたパス）: 両方の記録を PR に載せる" \
+  test "$(jq -s '[.[] | select(.args[0] == "comment" and (.args | index("--body-file")) != null)] | length' "$FAKE_LOG/agentctl.log")" = 2
 
 # ================= wt.sh =================
 mk_wt() { # mk_wt <issue> : agent/issue-<n> の Worktree を作って push する

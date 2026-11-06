@@ -194,6 +194,11 @@ func (c *Client) FetchDiscussion(ctx context.Context, repo string, n int) (gate.
 	return in, nil
 }
 
+// ListFiles は、PR の変更ファイルを、すべてのページで読む（`agentctl pr protected-files`）。
+func (c *Client) ListFiles(ctx context.Context, repo string, n int) ([]gate.File, error) {
+	return getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/files?per_page=100", repoPath(repo), n), listOf[gate.File])
+}
+
 // CreateComment は PR（Issue）にコメントを作り、その ID を返す。
 func (c *Client) CreateComment(ctx context.Context, repo string, n int, body string) (int64, error) {
 	var out struct {
@@ -230,7 +235,7 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 	}
 	head := p.Head.SHA
 
-	if in.Files, err = getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/files?per_page=100", rp, n), listOf[gate.File]); err != nil {
+	if in.Files, err = c.ListFiles(ctx, repo, n); err != nil {
 		return in, err
 	}
 

@@ -186,10 +186,11 @@ scripts/agents/review.sh <pr> --via local
 
 | 手順 | 内容 |
 |---|---|
-| 1. 依頼 | `agentctl comment` で PR に `@codex review` と書く（`--no-post` でも依頼は投稿する） |
-| 2. 待つ | `agentctl pr codex-record --sha <HEAD>` を `AGENT_CODEX_GITHUB_POLL` 秒（既定 30）ごとに実行し、対象の SHA の `codex-review-state` の `code_review.status` が `completed` になるまで待つ（既定 900 秒、`AGENT_CODEX_GITHUB_TIMEOUT`） |
+| 1. 依頼 | `agentctl pr view` で、依頼する前の要約のコメント（`codex_bot_authors` の `codex-review-state`）の `updated_at` を覚える。`agentctl comment` で PR に `@codex review` と書く（`--no-post` でも依頼は投稿する） |
+| 2. 待つ | `agentctl pr codex-record --sha <HEAD> --after <依頼する前の updated_at>` を `AGENT_CODEX_GITHUB_POLL` 秒（既定 30）ごとに実行し、対象の SHA の `codex-review-state` の `code_review.status` が `completed` になり、要約のコメントが依頼する前より後に更新されるまで待つ（既定 900 秒、`AGENT_CODEX_GITHUB_TIMEOUT`）。同じ SHA の前のレビューの `completed` を、今回の結果と取り違えない |
 | 3. 変換 | Codex の出力を `agent-review/v1` に変換する（下の表）。`agentctl review validate` で検証し、`--no-post` でなければ `agentctl comment` で PR に載せる |
-| 4. フォールバック | タイムアウト、または連携の不調（`@codex review` を投稿できない・`agentctl` のエラーが `retry_limit` 回続く・変換した記録が不正）のときだけ、`service_unavailable` として下のこれまでの経路（ローカルの Codex CLI → Claude Code）に切り替える |
+| 4. 保護されたパス | 変更ファイルが `protected_paths` に当たるとき（`agentctl pr protected-files`。確かめられないときも同じ）は、Codex の GitHub 連携の記録に続けて、下のこれまでの経路のレビューも行い、`protected_paths_ack` を持つ記録を作る。両方の記録を出す（GitHub 連携の記録が先、これまでの経路の記録が round ＋ 1 で後。`--out` は後者） |
+| 5. フォールバック | タイムアウト、または連携の不調（PR を読めない・`@codex review` を投稿できない・`agentctl` のエラーが `retry_limit` 回続く・変換した記録が不正）のときだけ、`service_unavailable` として下のこれまでの経路（ローカルの Codex CLI → Claude Code）に切り替える |
 
 Codex が PR に書くもの（作者は `review.codex_bot_authors`。既定は `chatgpt-codex-connector[bot]`。ほかの作者の、似せたコメントは無視する）:
 
@@ -205,11 +206,11 @@ Codex が PR に書くもの（作者は `review.codex_bot_authors`。既定は 
 |---|---|
 | `reviewer`・`reviewer_version` | `codex`・`chatgpt-codex-connector (GitHub)` |
 | `round` | 前回の記録（`--previous`、省略時は PR のコメントの最新のレビュー記録）の round ＋ 1 |
-| `findings` | 対象の SHA の行コメントから。`id` は `C<コメントの ID>`、`status` は `open`、`category` は `correctness`、`title` は本文の 1 行目（P0〜P3 を前に付ける）。前回の記録の `open` の指摘で今回の指摘にないものは、`resolved`（今回の SHA のレビューで指摘されなかった）として引き継ぐ |
-| `verdict` | P0・P1 の指摘があれば `request_changes`、なければ `approve` |
-| `protected_paths_ack` | `reviewed: false`（Codex は保護されたパスの確認をしない）。保護されたパスを変える PR では C12 が fail になるので、`--via local` のレビューで確認する |
+| `findings` | 対象の SHA の行コメントから。`id` は `C<コメントの ID>`、`status` は `open`、`category` は `correctness`、`title` は本文の 1 行目（P0〜P3 を前に付ける）。前回の記録の `open` の指摘で今回の指摘にないものは引き継ぐ。Codex の指摘（`C<コメントの ID>`）と重大でない指摘は `resolved`（今回の SHA のレビューで指摘されなかった）にする。**Codex 以外の重大な指摘（critical・high）は、Codex のレビューでは `resolved` にできないので `open` のまま引き継ぐ** |
+| `verdict` | P0・P1 の指摘、または引き継いだ `open` の重大な指摘があれば `request_changes`、なければ `approve` |
+| `protected_paths_ack` | `reviewed: false`（Codex は保護されたパスの確認をしない）。保護されたパスを変える PR では C12 が fail になるので、これまでの経路のレビューも続けて行う（手順 4） |
 
-`agentctl pr codex-record` の終了コードは 0=成功・2=まだ終わっていない（対象の SHA の完了したレビューがない）・3=内部エラー。`agentctl pr view` は PR の状態・コメント・レビュー・行コメントを `gate.Input` の形の JSON で出す（`codex-record --input` にそのまま渡せる）。どちらも REST だけを使い、`GITHUB_TOKEN` か `GH_TOKEN` が要る（`review.sh` は、どちらもなければ `gh auth token` を使う）。
+`agentctl pr codex-record` の終了コードは 0=成功・2=まだ終わっていない（対象の SHA の完了したレビューがない・`--after` より後に更新されていない）・3=内部エラー。`agentctl pr protected-files` は、PR の変更ファイル（名前を変えたファイルは前の名前も）のうち `protected_paths` に当たるものを 1 行ずつ出す（C12 と同じ判定）。`agentctl pr view` は PR の状態・コメント・レビュー・行コメントを `gate.Input` の形の JSON で出す（`codex-record --input` にそのまま渡せる）。どちらも REST だけを使い、`GITHUB_TOKEN` か `GH_TOKEN` が要る（`review.sh` は、どちらもなければ `gh auth token` を使う）。
 
 ### これまでの経路（`--via local`、または GitHub 連携が使えないとき）
 
@@ -297,7 +298,7 @@ go -C tools/agentctl run . review render "$PWD/review.json"
 | C4 | 必須のチェック（`ci-ok`）が HEAD で成功し、失敗したチェックがない | 必須のチェックが未実行・実行中 | 必須のチェックが成功していない・ほかの check run が `failure`・`cancelled`・`timed_out`・`action_required`・ほかのステータスが `failure`・`error`（`merge-gate` と `merge-gate-evaluate` 自身は数えない） |
 | C5 | 信頼する作者（`trusted_authors`）のレビュー記録か、Codex の GitHub 連携（`codex_bot_authors`）の完了したレビューがある | どちらもない | — |
 | C6 | 最新のレビュー記録が HEAD に対する `approve` | 記録がない・最新の記録が古い SHA のもの（再レビュー待ち） | 最新の記録の verdict が `approve` ではない |
-| C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビュー | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す） |
+| C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビュー | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す）・Codex のレビューが最新でも、Codex の GitHub 連携の変換ではない最新の記録で、それまでの重大な指摘（Codex の指摘 `C<コメントの ID>` を除く）が `resolved` になっていない |
 | C8 | レビュー役が `codex` か、正しいフォールバック（Codex の GitHub 連携は `codex`） | 記録がない | `reviewer` が認めない値・`allow_fallback` が false なのに `claude-fallback`・`fallback_reason` が `fallback_reasons` にない |
 | C9 | コンフリクトがない | `mergeable` が未計算 | `mergeable=false`・`mergeable_state=dirty` |
 | C10 | ベースより遅れていない | — | 比較の結果がない・`main` より遅れている（`behind_by > 0`） |
@@ -305,7 +306,7 @@ go -C tools/agentctl run . review render "$PWD/review.json"
 | C12 | 保護されたパス（`protected_paths`）の変更が確認済みで、ガードを弱めない | 保護されたパスの変更があり、記録がない | 最新の記録の `protected_paths_ack` が `reviewed: true`・`weakens_guards: false` ではない・最新が Codex の GitHub 連携のレビュー（確認をしない） |
 
 - レビュー記録は、信頼する作者のコメントで、目印と JSON が正しく、同じ PR のものだけを数える。最新の記録は round、`created_at`、コメントの作成日時、コメントの ID の順で決める
-- Codex の GitHub 連携のレビュー（`codex_bot_authors` の要約のコメントで `code_review.status == "completed"`）も、レビュー記録の 1 つとして数える。`agent-review/v1` の最新の記録の `created_at` と、Codex の要約のコメントの `updated_at` のうち新しい方を「最新」とする。Codex が最新なら、その SHA が HEAD と一致すれば C6 は pass（古ければ C6・C7 は pending）、その SHA の行コメントに P0・P1 があれば C7 が fail
+- Codex の GitHub 連携のレビュー（`codex_bot_authors` の要約のコメントで `code_review.status == "completed"`）も、レビュー記録の 1 つとして数える。`agent-review/v1` の最新の記録の `created_at` と、Codex の要約のコメントの `updated_at` のうち新しい方を「最新」とする。Codex が最新なら、その SHA が HEAD と一致すれば C6 は pass（古ければ C6・C7 は pending）、その SHA の行コメントに P0・P1 があれば C7 が fail。Codex のレビューでは前の指摘を `resolved` にできないので、Codex が最新でも（最新の記録が Codex の GitHub 連携の変換でも）、それより前の `agent-review/v1` の記録の重大な指摘が、Codex の GitHub 連携の変換ではない最新の記録で `resolved` になっていなければ C7 が fail
 - Merge Gate のワークフロー（[merge-gate.yml](../../.github/workflow-sources/merge-gate.yml)）は、PR の変更・コメント・CI の完了のたびに判定し、PR の HEAD にコミットステータス `merge-gate` を付け、Merge Gate のコメントを更新する。`--set-status` と `--comment` はこのワークフローだけが使う
 - `merge.sh` はマージの直前にもう一度 `agentctl gate` を実行し、pass のときだけ、判定した SHA を `--match-head-commit` に指定して squash merge する
 
