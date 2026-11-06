@@ -1,0 +1,41 @@
+{
+  "description": "agent-review/v1（Issue #3）のうち、レビュー役が埋める部分。ほかの項目は scripts/agents/review.sh が足す",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "protected_paths_ack", "findings"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["approve", "request_changes"] },
+    "summary": { "type": "string" },
+    "protected_paths_ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewed", "weakens_guards"],
+      "properties": {
+        "reviewed": { "type": "boolean" },
+        "weakens_guards": { "type": "boolean" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "category", "file", "line", "title", "detail", "status", "resolution"],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "category": {
+            "type": "string",
+            "enum": ["correctness", "security", "performance", "concurrency", "test-coverage", "spec", "maintainability"]
+          },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "title": { "type": "string" },
+          "detail": { "type": "string" },
+          "status": { "type": "string", "enum": ["open", "resolved", "wont_fix"] },
+          "resolution": { "type": "string" }
+        }
+      }
+    }
+  }
+}
