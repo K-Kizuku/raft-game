@@ -1,6 +1,6 @@
 # ADR-0011: インフラは AWS（CloudFront + S3 + ALB + ECS Fargate）、IaC は Terraform
 
-- 状態: Proposed（仮決め）
+- 状態: Superseded by [ADR-0016](./0016-infrastructure-cloudflare-with-cf-cli.md)（2026-11-06。オーナーの判断で Cloudflare に変更）
 - 日付: 2026-11-01
 - 決めた人: Claude（オーナーの指定「AWS もしくは Cloudflare」から選択）
 - 関連: C-03、NFR-06・15、[アーキテクチャ §5](../02-architecture.md)、ADR-0009、ADR-0012

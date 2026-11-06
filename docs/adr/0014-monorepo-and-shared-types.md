@@ -1,6 +1,6 @@
 # ADR-0014: モノレポにし、WS の型は Go から生成する
 
-- 状態: Proposed（仮決め）
+- 状態: Accepted（2026-11-06 にプロダクトオーナーが承認）
 - 日付: 2026-11-01
 - 決めた人: Claude
 - 関連: [プロトコル仕様](../06-protocol.md)、[アーキテクチャ §6](../02-architecture.md)
@@ -33,7 +33,7 @@
 
 ## 決定
 
-案 A。`make gen` で `server/internal/protocol` から `web/src/protocol/` を生成し、生成物もコミットする（CI で生成し直して差分がないことを確認する）。
+案 A。`make gen` で `server/internal/protocol` から `web/src/protocol/` を生成し、生成物もコミットする（CI で生成し直して差分がないことを確認する）。Cloudflare の Worker と Durable Object（`web/worker/`、TypeScript）も、同じ生成された型を使う（2026-11-06 の追記）。
 
 ディレクトリ構成は [アーキテクチャ §6](../02-architecture.md) のとおり。
 

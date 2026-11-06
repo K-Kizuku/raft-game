@@ -5,7 +5,7 @@
 1. `docs/01-requirements.md`（要件 ID と優先度）
 2. `docs/03-design-doc.md`（設計）
 3. `docs/08-implementation-plan.md`（タスク一覧）
-4. 迷ったら `docs/adr/` と `docs/09-assumptions-and-open-questions.md`
+4. 迷ったら `docs/adr/` と `docs/09-assumptions-and-open-questions.md`（判断の記録）
 
 ## 絶対に守ること
 
@@ -29,8 +29,20 @@ make test       # Go と web のテスト
 make lint       # golangci-lint・ESLint・型チェック
 make gen        # Go のプロトコルの型から TS の型を生成
 make sync-data  # data/ を server/internal/stage/embedded/ にコピー
-make dev        # サーバーと Vite を起動
+make dev        # Go（standalone モード）と Vite を起動
+make demo-local # デモの保険（ノート PC で起動）
+(cd web && pnpm exec cf build)                           # Build Output を作る
+(cd web && pnpm exec cf deploy --prebuilt --dry-run)     # 反映せずに検査
 ```
+
+## Cloudflare（`cf`）の注意点
+
+- インフラの構成は `web/cloudflare.config.ts` と `cf`（Cloudflare CLI、ベータ版）だけで管理する。Wrangler・Terraform・ダッシュボードでの手作業の変更は使わない（ADR-0016）
+- `cf` は `web/` の devDependency として版を固定する。上げるときは専用の PR にする
+- `cf deploy` を使う。Durable Object のクラスの作成・削除・改名は `cf workers versions create` ではできない
+- リアルタイムのログ表示とシークレットの個別登録は未対応。ログはダッシュボード、シークレットは `cf deploy --secrets-file`
+- 1 ゲーム＝1 Durable Object `GameSession`＝1 コンテナ。コンテナ（Go）は外部に直接公開しない
+- ブラウザから届いた `internal.*` の電文は、Durable Object で必ず破棄する
 
 ## etcd-io/raft v3.7 の注意点
 

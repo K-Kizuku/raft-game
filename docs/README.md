@@ -15,18 +15,18 @@
 | 6 | [06-protocol.md](./06-protocol.md) | 通信プロトコル仕様（HTTP / WebSocket） | 実装者 |
 | 7 | [07-data-spec.md](./07-data-spec.md) | データ仕様 — オープンデータ・島データ・ステージ定義 | 実装者・データ担当 |
 | 8 | [08-implementation-plan.md](./08-implementation-plan.md) | 実装計画 — マイルストーン・タスク一覧・最初の手順 | 実装者 |
-| 9 | [09-assumptions-and-open-questions.md](./09-assumptions-and-open-questions.md) | **仮決め一覧と未決事項** — オーナーが確認・差し替えるための一覧 | プロダクトオーナー |
+| 9 | [09-assumptions-and-open-questions.md](./09-assumptions-and-open-questions.md) | **判断の記録と未決事項** — 24 項目の判断の理由・決定・変更箇所 | プロダクトオーナー |
 | 10 | [10-glossary.md](./10-glossary.md) | 用語集（ゲームの言葉 ⇔ Raft の言葉） | 全員 |
-| — | [adr/](./adr/README.md) | **ADR** — 技術判断の記録（15 件） | 全員 |
+| — | [adr/](./adr/README.md) | **ADR** — 技術判断の記録（17 件。うち 2 件は置き換え済み） | 全員 |
 
 ## プロダクトオーナーの方へ
 
-企画書の段階で決まっていなかったことは、ドキュメント作成者（Claude）が仮に決めています。
+2026-11-06 に、企画書の段階で仮に決めていた 24 項目をすべて確認していただき、その結果を全ドキュメントに反映しました。
 
-1. まず [仮決め一覧](./09-assumptions-and-open-questions.md) の表を見てください。各項目に、判断の理由・代替案・差し替えたときに直す場所が書いてあります
+1. 何をどう決めたかは [判断の記録](./09-assumptions-and-open-questions.md) の表にあります。仮決めから変わった項目には 🔁 が付いています
 2. 大きな技術判断は [ADR](./adr/README.md) に、検討した選択肢と長所・短所を残しています
-3. 承認・差し替えは、仮決め一覧の「レビュー」欄に書き込んでください。差し替えの手順は [adr/README.md](./adr/README.md#判断を差し替える手順) にあります
-4. [未決事項](./09-assumptions-and-open-questions.md#3-未決事項オーナーに確認したいこと)（Q-01〜Q-12）に回答いただけると、計画を具体化できます
+3. 判断を変えたくなったときの手順は [adr/README.md](./adr/README.md#判断を差し替える手順) にあります
+4. 残っている [未決事項](./09-assumptions-and-open-questions.md#3-未決事項オーナーに確認したいこと)（Q-01・Q-03 の一部・Q-04・Q-06〜Q-08・Q-10・Q-12・Q-13）に回答いただけると、計画をさらに具体化できます
 
 ## ドキュメントの約束
 

@@ -1,6 +1,6 @@
 # ADR-0012: MVP では永続化しない
 
-- 状態: Proposed（仮決め）
+- 状態: Superseded by [ADR-0017](./0017-persist-input-log-in-durable-object.md)（2026-11-06。Cloudflare 採用に伴い、操作の記録を保存する方針に変更）
 - 日付: 2026-11-01
 - 決めた人: Claude
 - 関連: FR-LOG、[DesignDoc §5.2・§10](../03-design-doc.md)、ADR-0011

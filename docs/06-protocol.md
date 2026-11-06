@@ -2,9 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.1（プロトコルバージョン `1`） |
-| 状態 | Draft |
-| 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) |
+| 版 | v0.2（プロトコルバージョン `1`） |
+| 更新日 | 2026-11-06 |
+| 状態 | レビュー済み |
+| 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) |
 
 型の正本は Go の `server/internal/protocol` です。TypeScript の型は `tygo` で `web/src/protocol/` に生成します。この文書と Go のコードが食い違ったら、**コードを直してからこの文書を更新**してください。
 
@@ -25,6 +26,8 @@
 
 ## 2. HTTP API
 
+本番では、§2 の API はすべて Cloudflare の Worker が受けます。WebSocket は Worker から Durable Object `GameSession` に転送され、Durable Object がコンテナ（Go）との間を中継します。§3〜§7 の電文は、ブラウザと Go の間でそのまま通ります（Durable Object は中身を書き換えない）。ローカルの `standalone` モードでは、Go サーバーが §2 の API を自分で提供します。
+
 ### `GET /api/healthz`
 
 `200 {"status":"ok","build":"git:3f2c1ab"}`
@@ -37,7 +40,7 @@
     {
       "id": "stage1",
       "title": "はじめての郵便船",
-      "region": "隠岐諸島",
+      "region": "瀬戸内（香川県）",
       "islands": 3,
       "ferries": 1,
       "durationMs": 180000,
@@ -56,7 +59,8 @@
 ```
 
 - `seed` を省略するとサーバーが決める
-- `demo: true` はサーバーの `DEMO_CONTROLS=1` のときだけ受け付ける
+- `demo: true` は `demo` モードでデプロイした Worker（`DEMO_CONTROLS=1`）のときだけ受け付ける
+- Worker は Durable Object を作り、コンテナの起動を始めてから応答する（ステージ紹介の間に起動を終える）
 
 レスポンス `201`:
 
@@ -64,11 +68,11 @@
 { "sessionId": "s_8f3k2…", "token": "base64url(128bit)", "wsPath": "/ws/sessions/s_8f3k2…" }
 ```
 
-エラー: `400`（不正なステージ）/ `429`（レート制限）/ `503`（同時セッション数の上限）
+エラー: `400`（不正なステージ）/ `429`（レート制限）/ `503`（同時に遊べるゲームの上限。コンテナの `maxInstances`）
 
 ### `GET /ws/sessions/{id}?token=…`
 
-WebSocket にアップグレードします。`Origin` は許可リストで検査します。同じセッションに 2 本目の接続が来たら、古い接続を閉じます（再接続のため）。
+WebSocket にアップグレードします。Worker が `Origin` を許可リストで検査し、Durable Object がトークンを検証します。同じセッションに 2 本目の接続が来たら、古い接続を閉じます（再接続のため）。
 
 ---
 
@@ -97,7 +101,8 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
 | `hello` | `{ "client": "web/0.1.0", "resume": false }` | 接続直後に送る。サーバーは `snapshot` を返す | P0 |
 | `cmd.game.start` | `{}` | 開会式を始める（ステージ紹介の「出航する」） | P0 |
 | `cmd.game.pause` | `{ "paused": true }` | 一時停止・再開 | P0 |
-| `cmd.game.speed` | `{ "speed": 2 }` | 0.5 / 1 / 2 | P1 |
+| `cmd.game.speed` | `{ "speed": 2 }` | 0.5 / 1 / 2 / 4。デモ操作が有効なセッションでは 8 も | P0 |
+| `cmd.game.skip` | `{ "until": "next_notable" }` | デモ用。次の船の到着・台本の出来事・依頼の発生まで進めて一時停止する（最大 30 秒先まで） | P0 |
 | `cmd.ferry.load` | `{ "ferryId": "f1", "letterIds": [12, 13] }` | 港の手紙を積む。全部積めない場合は全体を拒否する | P0 |
 | `cmd.ferry.unload` | `{ "ferryId": "f1", "letterIds": [12] }` | 積んだ手紙をいまいる港へ戻す（P1 で中継倉庫へ預けるのにも使う） | P0 |
 | `cmd.ferry.autoload` | `{ "ferryId": "f1", "to": 2 }` | おまかせ積み込み | P0 |
@@ -105,7 +110,7 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
 | `cmd.relay.load` | `{ "ferryId": "f1", "letterIds": [20] }` | 中継倉庫の手紙を積む | P1 |
 | `cmd.sync` | `{}` | スナップショットを要求する | P0 |
 | `sub.engineer` | `{ "enabled": true, "nodeId": 2 }` | エンジニアモードの購読（`nodeId` の詳細を 2Hz で送る） | P0 |
-| `demo.trigger` | `{ "event": "storm", "routeIds": ["1-2","1-3"], "durationMs": 20000 }` | デモ用。デモ操作が有効なセッションだけ | P0 |
+| `demo.trigger` | `{ "event": "storm" }` | デモ用。ステージ定義の `demo.storm`（対象の航路・時間）で嵐を起こす。デモ操作が有効なセッションだけ | P0 |
 | `ping` | `{ "clientTime": 123456 }` | 15 秒ごと | P0 |
 
 ### 4.1 コマンドの検証とエラーコード
@@ -133,7 +138,7 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
 |---|---|---|
 | `snapshot` | `Snapshot`（§5.1） | 接続時・`cmd.sync` の応答・送信キューがあふれたとき |
 | `events` | `{ "clock": Clock, "events": Event[] }` | 100ms ごとにまとめて送る（イベントがなくても 1 秒に 1 回は `clock` のために送る） |
-| `ack` | `{ "cmdId": "c-12", "ok": true }` / `{ "cmdId": "c-12", "ok": false, "code": "route_blocked", "message": "…" }` | コマンドの結果 |
+| `ack` | `{ "cmdId": "c-12", "ok": true, "t": 61200 }` / `{ "cmdId": "c-12", "ok": false, "code": "route_blocked", "message": "…" }` | コマンドの結果。`t` は適用したゲーム内時刻で、Durable Object が入力ログに記録するのに使う |
 | `node.detail` | `NodeDetail`（§5.4） | エンジニアモードの購読中、2Hz |
 | `round.result` | `RoundResult`（§5.5） | ラウンド終了時 |
 | `error` | `{ "code": "…", "message": "…", "fatal": true }` | `fatal` なら直後に切断する |
@@ -144,21 +149,21 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
 ```json
 {
   "protocol": 1,
-  "session": { "id": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false },
+  "session": { "id": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "restored": false },
   "phase": "sailing",
-  "clock": { "t": 61200, "speed": 1, "paused": false, "endsAt": 210000 },
+  "clock": { "t": 61200, "speed": 1, "paused": false, "endsAt": 210000, "allowedSpeeds": [0.5, 1, 2, 4] },
   "stage": {
     "title": "島から返事が来ない！",
     "islands": [
-      { "id": 1, "name": "島後", "municipality": "隠岐の島町", "layout": {"x": 620, "y": 180},
-        "population": { "value": null, "provenance": "fact", "source": "mlit-ritou-list-2026" },
+      { "id": 1, "name": "福江島", "municipality": "五島市", "layout": {"x": 620, "y": 180},
+        "population": { "value": 31945, "asOf": "令和8年4月1日", "provenance": "fact", "source": "mlit-ritou-2026" },
         "color": "#E07A5F" }
     ],
-    "routes": [ { "id": "1-2", "a": 1, "b": 2, "travelMs": 9000 } ],
+    "routes": [ { "id": "1-2", "a": 1, "b": 2, "travelMs": 4000, "provenance": "creative" } ],
     "resources": [ { "id": "firework:a", "kind": "firework", "label": "大花火 A", "critical": true } ]
   },
   "ferries": [
-    { "id": "f1", "name": "おき丸", "capacity": 4, "state": "sailing", "from": 1, "to": 2,
+    { "id": "f1", "name": "ごとう丸", "capacity": 4, "state": "sailing", "from": 1, "to": 2,
       "departAt": 58000, "arriveAt": 67000, "readyAt": 68500, "cargo": [31, 32] }
   ],
   "routesState": [ { "id": "1-2", "blockedUntil": null } ],
@@ -183,7 +188,7 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
   "label": "append",
   "raft": {
     "type": "MsgApp", "term": 2, "logTerm": 2, "index": 13, "commit": 13,
-    "entries": [ { "index": 14, "term": 2, "type": "normal", "summary": "stall.reserve stage2-0005 (中ノ島)" } ],
+    "entries": [ { "index": 14, "term": 2, "type": "normal", "summary": "stall.reserve stage2-0005 (奈留島)" } ],
     "reject": false, "rejectHint": 0,
     "stale": false
   }
@@ -221,7 +226,7 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
 {
   "id": 2, "role": "follower", "term": 3, "vote": 2, "lead": 2,
   "commit": 18, "applied": 18, "lastIndex": 19,
-  "log": [ { "index": 19, "term": 3, "type": "normal", "summary": "firework.reserve stage2-0009 (西ノ島)", "committed": false } ],
+  "log": [ { "index": 19, "term": 3, "type": "normal", "summary": "firework.reserve stage2-0009 (中通島)", "committed": false } ],
   "progress": [ { "id": 1, "match": 15, "next": 16, "state": "probe", "recentActive": false } ],
   "ledger": { "firework:a": "stage2-0002", "stall:main": ["stage2-0001", "stage2-0005"] },
   "electionEstimate": { "ticksSinceLeaderContact": 12, "note": "推定値" }
@@ -245,7 +250,7 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
     "finalLogs": [ { "id": 1, "lastIndex": 24, "commit": 24, "terms": [[1, 1, 9], [3, 10, 24]] } ]
   },
   "story": [
-    { "t": 72000, "text": "嵐で島後が孤立しました。島後は過半数と連絡が取れなくなったので、自分から代表を降りました。", "concepts": ["CheckQuorum"] }
+    { "t": 72000, "text": "嵐で福江島が孤立しました。福江島は過半数と連絡が取れなくなったので、自分から代表を降りました。", "concepts": ["CheckQuorum"] }
   ],
   "inputLogAvailable": true
 }
@@ -300,3 +305,19 @@ WebSocket にアップグレードします。`Origin` は許可リストで検�
 
 - 後方互換な変更（フィールドやイベントの追加）では `v` を上げない。クライアントは知らないフィールド・イベントを無視する
 - 互換性のない変更では `v` を上げる。MVP の間は、サーバーとクライアントを常に同時にデプロイするので、旧バージョンとの共存はしない
+
+---
+
+## 9. 内部の電文（Durable Object ⇔ コンテナ）
+
+Durable Object だけが送る電文です。ブラウザから届いた `internal.*` は、Durable Object が破棄します。エンベロープは §3 と同じです。
+
+| type | 方向 | payload | 説明 |
+|---|---|---|---|
+| `internal.init` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false }` | 新しいゲームを始める。コンテナは `snapshot` を返す |
+| `internal.restore` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "inputLog": InputLog }` | コンテナが止まった後の復元。コンテナは `sim.Replay` で入力ログの最後の時刻まで進め、一時停止の状態で `snapshot`（`session.restored: true`）を返す |
+| `internal.result` | コンテナ → DO | `RoundResult`（§5.5） | ラウンドの終了時。DO が SQLite に保存する（ブラウザには別に `round.result` が届く） |
+| `internal.ping` / `internal.pong` | 双方向 | `{}` | 死活監視（5 秒ごと）。3 回続けて応答がなければ、DO はコンテナが止まったとみなして復元する |
+
+`InputLog` の形式は [DesignDoc §10.1](./03-design-doc.md) のとおりです。
+

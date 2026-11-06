@@ -1,6 +1,6 @@
 # ADR-0010: フロントエンドは React + PixiJS v8
 
-- 状態: Proposed（仮決め）
+- 状態: Accepted（2026-11-06 にプロダクトオーナーが承認）
 - 日付: 2026-11-01
 - 決めた人: Claude（企画書 §11 の「React / TypeScript」「PixiJS など」を具体化）
 - 関連: NFR-01・09・10、[DesignDoc §13](../03-design-doc.md)

@@ -2,9 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.1（仮決め版） |
-| 状態 | Draft |
-| 関連 ADR | [0002](./adr/0002-use-etcd-raft.md) / [0003](./adr/0003-drive-rawnode-single-goroutine.md) / [0004](./adr/0004-virtual-time-discrete-event-simulation.md) / [0006](./adr/0006-ferry-transport-outside-raft.md) / [0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [0010](./adr/0010-frontend-react-pixijs.md) / [0011](./adr/0011-infrastructure-aws-ecs-fargate.md) / [0014](./adr/0014-monorepo-and-shared-types.md) |
+| 版 | v0.2 |
+| 更新日 | 2026-11-06 |
+| 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
+| 関連 ADR | [0002](./adr/0002-use-etcd-raft.md) / [0003](./adr/0003-drive-rawnode-single-goroutine.md) / [0004](./adr/0004-virtual-time-discrete-event-simulation.md) / [0006](./adr/0006-ferry-transport-outside-raft.md) / [0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [0010](./adr/0010-frontend-react-pixijs.md) / [0014](./adr/0014-monorepo-and-shared-types.md) / [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [0017](./adr/0017-persist-input-log-in-durable-object.md) |
 
 図はすべて Mermaid で書いているので、GitHub 上でそのまま表示されます。
 
@@ -17,25 +18,28 @@ flowchart LR
     player([プレイヤー<br/>ブラウザ])
     eng([エンジニア / 学習者<br/>ブラウザ])
     ops([開発者・デモ担当])
-    mlit[(国土交通省<br/>離島オープンデータ)]
+    mlit[(国土交通省<br/>Project LINKS<br/>離島に関するデータ)]
 
-    subgraph system[合意、乗船中。]
+    subgraph system[合意、乗船中。 on Cloudflare]
         web[Web クライアント<br/>React + PixiJS]
-        srv[ゲームサーバー<br/>Go + etcd-io/raft]
+        edge[Worker + Durable Object<br/>TypeScript]
+        srv[ゲームサーバー<br/>Go + etcd-io/raft<br/>Cloudflare Containers]
     end
 
     player -- 遊ぶ --> web
     eng -- エンジニアモードで観察 --> web
-    web <-- WebSocket / HTTPS --> srv
+    web <-- WebSocket / HTTPS --> edge
+    edge <-- WebSocket（中継） --> srv
     ops -- ETL を実行し、生成 JSON をコミット --> repo[(GitHub リポジトリ)]
-    mlit -- CSV/Excel/PDF を手で取得 --> ops
-    repo -- CI/CD --> system
+    mlit -- CSV を取得して data/raw に保存 --> ops
+    repo -- GitHub Actions + cf deploy --> system
 ```
 
 ポイント:
 
-- オープンデータは**ビルド時**に取り込みます（ETL を実行して JSON を生成し、コミットする）。実行中に外部 API は呼びません（[ADR-0013](./adr/0013-open-data-build-time-etl.md)）。
-- プレイヤーは匿名です。ログインはありません。
+- オープンデータは**ビルド時**に取り込みます（ETL を実行して JSON を生成し、コミットする）。実行中に外部のサイトは呼びません（[ADR-0013](./adr/0013-open-data-build-time-etl.md)）
+- プレイヤーは匿名です。ログインはありません
+- インフラの構成は Cloudflare CLI（`cf`）だけで管理します（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)）
 
 ---
 
@@ -46,7 +50,7 @@ flowchart TB
     subgraph browser[ブラウザ]
         ui[React UI<br/>HUD・フェリー操作・島の詳細・<br/>エンジニアパネル・リザルト]
         pixi[PixiJS マップ描画<br/>島・航路・船・手紙]
-        store[(クライアント状態<br/>zustand<br/>サーバーイベントを反映)]
+        store[(クライアント状態<br/>zustand)]
         net[WS クライアント<br/>再接続・コマンド送信]
         ui <--> store
         pixi --> store
@@ -54,24 +58,43 @@ flowchart TB
         net --> store
     end
 
-    subgraph server[Go サーバー：1 プロセス]
-        http[HTTP / WS ハンドラ<br/>net/http + coder/websocket]
-        sm[セッションマネージャ<br/>セッションの作成・破棄・上限]
-        subgraph session[セッション：1 ゲームにつき 1 goroutine]
+    subgraph cf[Cloudflare]
+        assets[静的ファイル<br/>SPA]
+        worker[Worker<br/>/api/* と /ws/* の振り分け<br/>レート制限・Origin の検査]
+        subgraph dobox[Durable Object GameSession：1 ゲームに 1 つ]
+            dobj[WebSocket の中継<br/>トークンの検証<br/>操作の記録・復元]
+            sqlite[(SQLite<br/>セッションの情報・操作の記録)]
+            dobj --- sqlite
+        end
+        subgraph ctr[Container：1 ゲームに 1 つ]
             loop[セッションループ<br/>実時間 → ゲーム内時間]
             sim[シミュレーションエンジン<br/>決定的・I/O なし]
+            loop --> sim
         end
-        stages[(ステージ定義・島データ<br/>go:embed)]
-        http --> sm --> session
-        sim --> stages
+        r2[(R2<br/>リプレイの共有 P1)]
     end
 
-    net <-- "WebSocket(JSON)<br/>コマンド ↑ / イベント ↓" --> http
+    net -- HTTPS --> assets
+    net <-- "WebSocket(JSON)" --> worker
+    worker --> dobj
+    dobj <-- "WebSocket(JSON)<br/>+ 内部の電文" --> loop
+    dobj -.-> r2
 ```
 
-- **サーバー権威型**: ゲームの状態とルールはすべてサーバーが持ちます。クライアントは描画と入力だけを担当します（[ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md)）。
-- **1 セッション = 1 goroutine**: セッション内部にはロックがありません。外部とのやり取りはチャネルだけで行います。
-- **シミュレーションエンジンは I/O を持たない純粋なライブラリ**です。これにより、テスト・CLI での再生・将来の WASM 化（ブラウザ内実行）を同じコードで行えます。
+| 要素 | 実装 | 責務 |
+|---|---|---|
+| 静的ファイル | Vite でビルドした SPA | 画面の配信。存在しないパスは `index.html` を返す |
+| Worker | TypeScript（`web/worker/index.ts`） | `/api/*` と `/ws/*` を受け、セッションの作成・Durable Object への振り分け・レート制限・`Origin` の検査を行う |
+| Durable Object `GameSession` | TypeScript（`web/worker/game-session.ts`） | 1 ゲームに 1 つ。コンテナの起動と停止、ブラウザとコンテナの間の WebSocket の中継、トークンの検証、操作の記録（SQLite）、コンテナが止まったときの復元 |
+| Container | Go（`server/`） | 1 ゲームに 1 つ。シミュレーションを動かすセッションループ。外部には直接公開しない |
+| R2 | — | リプレイの共有（P1） |
+
+- **サーバー権威型**: ゲームの状態とルールは、すべてコンテナの Go が持ちます。クライアントは描画と入力だけを担当します（[ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md)）
+- **1 ゲーム＝1 Durable Object＝1 コンテナ**: ゲームどうしは完全に分かれます。コンテナの中では、セッションループの goroutine だけがエンジンに触れます
+- **シミュレーションエンジンは I/O を持たない純粋なライブラリ**です。テスト・CLI での再生・コンテナが止まったときの復元・将来の WASM 化を、同じコードで行えます
+- **Go サーバーには 2 つの動かし方**があります。
+  - `single` モード：本番。1 プロセス＝1 ゲームで、Durable Object からの接続だけを受ける
+  - `standalone` モード：ローカル開発とデモの保険。1 プロセスで複数のゲームを持ち、ブラウザから直接接続できる（`make demo-local`）
 
 ---
 
@@ -79,9 +102,9 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    subgraph engine["sim.Engine（1 セッション分の世界）"]
+    subgraph engine["sim.Engine（1 ゲーム分の世界）"]
         clock[仮想時計<br/>SimTime ms]
-        sched[イベントスケジューラ<br/>優先度キュー：時刻, 連番]
+        sched[イベントスケジューラ<br/>優先度キュー：時刻, 種類, 連番]
         rng[乱数<br/>シードから派生した PCG]
 
         subgraph cluster["cluster：Raft クラスタ"]
@@ -99,7 +122,7 @@ flowchart TB
         subgraph game["game：ゲームルール"]
             req[依頼の生成と追跡]
             score[スコア・満足度]
-            evts[イベント台本<br/>嵐・故障・ラッシュ]
+            evts[イベント台本<br/>嵐・欠航・故障・ラッシュ]
         end
 
         trace[トレース記録<br/>ドメインイベント列]
@@ -123,13 +146,13 @@ flowchart TB
 | パッケージ | 責務 | 依存してよい先 |
 |---|---|---|
 | `internal/sim` | 仮想時計・スケジューラ・`Engine`（全体の組み立て）・不変条件の検査 | 下記すべて |
-| `internal/cluster` | `RawNode` の生成・Ready ループ・台帳への適用 | `go.etcd.io/raft/v3`, `internal/ledger` |
+| `internal/cluster` | `RawNode` の生成・Ready ループ・台帳への適用 | `go.etcd.io/raft/v3`、`internal/ledger` |
 | `internal/ferry` | 手紙・港キュー・フェリー・航路 | `raftpb`（メッセージを保持するため） |
 | `internal/ledger` | 共有台帳の状態機械（花火・屋台・予算） | なし（純粋なロジック） |
 | `internal/game` | 依頼・スコア・満足度・イベント台本 | `internal/ledger` |
 | `internal/stage` | ステージ定義（YAML）と島データ（JSON）の読み込み・検証 | なし |
-| `internal/protocol` | WebSocket メッセージの型（TS の型を生成する元） | なし |
-| `internal/server` | HTTP / WS・セッション管理・レート制限 | `internal/sim`, `internal/protocol` |
+| `internal/protocol` | WebSocket の電文の型（TS の型を生成する元） | なし |
+| `internal/server` | HTTP / WS・セッションループ・`single` / `standalone` モード | `internal/sim`、`internal/protocol` |
 
 依存の向きは「`server` → `sim` → (`cluster`, `ferry`, `game`) → (`ledger`, `stage`)」の一方向です。`cluster` と `ferry` はお互いを知りません（`sim` がつなぎます）。
 
@@ -137,7 +160,9 @@ flowchart TB
 
 ## 4. 主要なシーケンス
 
-### 4.1 依頼が確定するまで（3 島・Leader が島 A、依頼元が島 C）
+### 4.1 依頼が確定するまで（3 島・代表が島 A、依頼元が島 C）
+
+Stage 2（五島）なら、A＝福江島、B＝奈留島、C＝中通島です。
 
 ```mermaid
 sequenceDiagram
@@ -194,77 +219,106 @@ sequenceDiagram
     Note over A: A の港に残っていた古い Term の手紙が届いても、受け取った側で無視される（V-4）
 ```
 
-### 4.3 プレイヤーのコマンドの処理
+### 4.3 セッションの作成と接続
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as ブラウザ
+    participant W as Worker
+    participant DO as Durable Object（GameSession）
+    participant CT as Container（Go）
+    UI->>W: POST /api/sessions {stageId, seed?}
+    W->>W: レート制限・入力の検査・sessionId とトークンを発行
+    W->>DO: init(stageId, seed, demo, トークンのハッシュ)
+    DO->>DO: SQLite にセッションの情報を保存
+    DO->>CT: コンテナを起動（ステージ選択の時点で先に起動し始める）
+    W-->>UI: 201 {sessionId, token, wsPath}
+    Note over UI: ステージ紹介を表示している間に、コンテナの起動が進む
+    UI->>W: GET /ws/sessions/{id}?token=…（Upgrade）
+    W->>DO: 転送
+    DO->>DO: トークンを検証
+    DO->>CT: WS を開き internal.init(stageId, seed, demo) を送る
+    CT-->>DO: snapshot
+    DO-->>UI: snapshot（以降、双方向に中継）
+```
+
+### 4.4 プレイヤーのコマンドの処理と記録
 
 ```mermaid
 sequenceDiagram
     participant UI as ブラウザ
-    participant WS as WS ハンドラ
-    participant S as セッションループ
+    participant DO as Durable Object
+    participant S as セッションループ（Go）
     participant E as sim.Engine
-    UI->>WS: {"type":"cmd.ferry.depart","payload":{...},"cmdId":"c-12"}
-    WS->>S: cmdCh <- cmd（goroutine の境界）
+    UI->>DO: {"type":"cmd.ferry.depart","payload":{...},"cmdId":"c-12"}
+    DO->>S: 中継
     S->>E: 次のステップの最初に Apply(cmd, now)
-    E->>E: 入力ログに追記（SimTime と cmd）
     E-->>S: 検証の結果と、発生したドメインイベント
-    S-->>WS: ack(c-12) + events（100ms ごとにまとめて送る）
-    WS-->>UI: JSON
+    S-->>DO: ack(c-12, ok, t=61200) + events（100ms ごとにまとめて送る）
+    DO->>DO: ok の ack なら (t, cmd) を SQLite に追記（ADR-0017）
+    DO-->>UI: 中継
+```
+
+### 4.5 コンテナが止まったときの復元
+
+```mermaid
+sequenceDiagram
+    participant UI as ブラウザ
+    participant DO as Durable Object
+    participant CT2 as 新しい Container
+    Note over DO: コンテナとの WS が切れた / 応答がない
+    DO-->>UI: notice（復元中）
+    DO->>CT2: 起動
+    DO->>CT2: internal.restore(stageId, seed, 操作の記録)
+    CT2->>CT2: 記録の最後の時刻まで再計算（決定的なので同じ状態になる）し、一時停止
+    CT2-->>DO: snapshot
+    DO-->>UI: snapshot（プレイヤーが再開を押すと続きから）
 ```
 
 ---
 
-## 5. デプロイ構成（AWS：仮決め）
+## 5. デプロイ構成（Cloudflare）
 
 ```mermaid
 flowchart LR
     user([ブラウザ])
-    subgraph aws[AWS ap-northeast-1]
-        cf[CloudFront<br/>単一ドメイン]
-        s3[(S3<br/>SPA の静的ファイル<br/>OAC で非公開)]
-        alb[ALB<br/>idle timeout 3600s]
-        subgraph vpc[VPC]
-            subgraph pub[Public Subnet × 2 AZ]
-                ecs[ECS Fargate Service<br/>Go サーバー<br/>ARM64 0.5vCPU / 1GB<br/>desired=1]
-            end
+    subgraph cfn[Cloudflare]
+        subgraph wk["Worker raft-game（mode: production）"]
+            sa[Static Assets<br/>SPA]
+            wcode[Worker のコード]
         end
-        ecr[(ECR)]
-        cw[CloudWatch Logs<br/>/ Metrics / Alarm]
+        dobj[Durable Object<br/>GameSession<br/>SQLite]
+        ctr[Container<br/>raft-game-server<br/>instanceType: basic<br/>maxInstances: 50<br/>regions: APAC]
+        r2[(R2<br/>raft-game-replays<br/>P1)]
+        obs[Observability<br/>ログ]
+        demo["Worker raft-game-demo（mode: demo）<br/>DEMO_CONTROLS=1"]
     end
-    gh[GitHub Actions<br/>OIDC]
+    gh[GitHub Actions<br/>cf build / cf deploy]
 
-    user -- HTTPS --> cf
-    cf -- "/*（デフォルト）" --> s3
-    cf -- "/api/* , /ws/*" --> alb
-    alb --> ecs
-    ecs --> cw
-    gh -- "docker push" --> ecr
-    gh -- "s3 sync + invalidation" --> s3
-    gh -- "ecs update-service" --> ecs
-    ecr --> ecs
+    user -- HTTPS --> sa
+    user -- "/api/* , /ws/*" --> wcode
+    wcode --> dobj
+    dobj --> ctr
+    dobj -.-> r2
+    wcode & ctr --> obs
+    gh -- "CLOUDFLARE_API_TOKEN" --> wk
+    gh --> demo
 ```
 
 | 要素 | 設定 | 理由 |
 |---|---|---|
-| CloudFront | `/ws/*` と `/api/*` を ALB へ（キャッシュなし・全ヘッダ転送）、それ以外は S3 へ | 同じオリジンにすることで CORS を不要にし、WebSocket も CloudFront を経由させる |
-| ALB | idle timeout 3600 秒。ヘルスチェックは `/api/healthz` | WebSocket を長く保持するため。アプリ側でも 15 秒ごとに ping を送る |
-| ECS Fargate | desired=1、最小限のタスクサイズ。public subnet + public IP（NAT Gateway なし） | ハッカソン規模ならタスク 1 つで足りる。NAT Gateway の費用を避ける |
-| セッションの状態 | タスクのメモリ上にだけ持つ（DB なし） | [ADR-0012](./adr/0012-no-persistence-in-mvp.md)。再デプロイ時には遊んでいるセッションが切れる（デモの前はデプロイを止める） |
-| IaC | Terraform（`infra/terraform`） | [ADR-0011](./adr/0011-infrastructure-aws-ecs-fargate.md) |
+| 設定ファイル | `web/cloudflare.config.ts` の 1 ファイル | `cf` だけで管理する（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)） |
+| Worker | `assets.notFoundHandling: "single-page-application"`、`assets.runWorkerFirst: ["/api/*", "/ws/*"]` | 画面と API を同じオリジンにして CORS を不要にする |
+| Durable Object | `exports.GameSession = exports.durableObject({ storage: "sqlite", container })` | 1 ゲームに 1 つ。操作の記録を SQLite に保存する（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)） |
+| Container | `instanceType: "basic"`（1/4 vCPU・1 GiB）、`maxInstances: 50`、`constraints.regions: ["APAC"]` | 1 ゲームの負荷は小さいが、デモの安定を優先して basic にする。負荷テストで lite も検討する |
+| モード | `production`（一般公開）と `demo`（デモ操作を有効にした別の Worker） | デモ操作を一般の環境で使えないようにする |
+| デプロイ | GitHub Actions：`cf build` → PR は `cf deploy --prebuilt --dry-run`、`main` は `cf deploy --prebuilt --mode production` | 公式の手順に沿う。プレビュー環境はコンテナ付きの Durable Object に非対応なので使わない |
+| ログ | `observability.logs` を有効にし、ダッシュボードで見る | `cf` はリアルタイムのログ表示に未対応（ベータ版） |
 
-スケールアウトするとき（P2）: セッションはタスクに固定されるため、ALB のスティッキーセッション（Cookie）を使うか、決定性を活かして「入力ログを持って別のタスクで再構築する」方式にします。MVP では扱いません。
+### 5.1 AWS に戻す場合
 
-### 5.1 Cloudflare に差し替える場合
-
-[ADR-0011](./adr/0011-infrastructure-aws-ecs-fargate.md) の「代替案 B」にあたります。
-
-```mermaid
-flowchart LR
-    user([ブラウザ]) --> w[Cloudflare Workers<br/>Static Assets で SPA を配信<br/>+ /ws をルーティング]
-    w --> dobj[Durable Object<br/>1 セッション = 1 インスタンス]
-    dobj --> ctr[Cloudflare Containers<br/>Go サーバーのイメージ]
-```
-
-アプリケーションのコード（`server/`・`web/`）は変更不要です。変わるのは `infra/` と CI のデプロイ手順だけです。
+[ADR-0011](./adr/0011-infrastructure-aws-ecs-fargate.md)（置き換え済み）の構成です。Go サーバーを `standalone` モードで ECS Fargate に置き、CloudFront と S3 で画面を配信します。差し替えるのは Worker と Durable Object の部分（`web/worker/`）と CI です。操作の記録の保存先を別に用意する必要があります。
 
 ---
 
@@ -273,12 +327,13 @@ flowchart LR
 ```text
 raft-game/
 ├── README.md
-├── CLAUDE.md                    # 実装エージェント・開発者向けの規約
+├── CLAUDE.md                    # 開発者・実装エージェント向けの規約
 ├── docs/                        # 本ドキュメント群
 ├── server/                      # Go module: github.com/K-Kizuku/raft-game/server
 │   ├── go.mod                   # go 1.26 / go.etcd.io/raft/v3 v3.7.0（replace でパッチ版を使う）
+│   ├── Dockerfile               # Container のイメージ（single モード）
 │   ├── cmd/
-│   │   ├── server/              # 本番サーバー（HTTP + WS）
+│   │   ├── server/              # ゲームサーバー（--mode single | standalone）
 │   │   ├── simcli/              # ヘッドレス実行・入力ログの再生・ボット対戦
 │   │   └── islandsdata/         # オープンデータの ETL
 │   ├── internal/
@@ -288,30 +343,34 @@ raft-game/
 │   │   ├── ledger/              # 台帳の状態機械
 │   │   ├── game/                # 依頼・スコア・イベント
 │   │   ├── stage/               # ステージと島データの読み込み
-│   │   ├── protocol/            # WS メッセージの型（tygo で TS を生成）
-│   │   └── server/              # HTTP / WS / セッション管理
+│   │   ├── protocol/            # WS の電文の型（tygo で TS を生成）
+│   │   └── server/              # HTTP / WS / セッションループ
 │   └── third_party/
 │       └── etcd-raft/           # v3.7.0 + 乱数を注入するパッチ（ADR-0005）
-├── web/                         # Vite + React + TypeScript
-│   ├── src/
+├── web/                         # Vite + React + TypeScript + Cloudflare（cf）
+│   ├── package.json             # "type": "module"、devDependencies に cf（版を固定）と @cloudflare/vite-plugin
+│   ├── cloudflare.config.ts     # Worker・Durable Object・Container・R2 の定義（インフラの正本）
+│   ├── vite.config.ts           # @cloudflare/vite-plugin
+│   ├── worker/                  # Worker と Durable Object（TypeScript）
+│   │   ├── index.ts             # /api/* と /ws/* の振り分け
+│   │   └── game-session.ts      # Durable Object GameSession
+│   ├── src/                     # SPA
 │   │   ├── app/                 # ルーティング・画面
 │   │   ├── game/                # PixiJS の描画（マップ・船・手紙）
 │   │   ├── ui/                  # HUD・パネル類
 │   │   ├── state/               # zustand ストアとイベントの反映（reducer）
 │   │   ├── net/                 # WS クライアント
-│   │   └── protocol/            # 生成された型（直接編集しない）
+│   │   └── protocol/            # 生成された型（直接編集しない。worker/ からも使う）
 │   └── public/
 ├── data/
-│   ├── raw/                     # 取得したオープンデータの原本と README（出典・取得日）
-│   ├── curated/                 # 人手で抜き出した計画書の記述（出典ページ付き YAML）
+│   ├── raw/                     # 提供されたオープンデータの CSV と README（出典・取得日・利用規約）
+│   ├── curated/                 # 人手で抜き出した値（航路の所要時間など。出典の項目つき YAML）
 │   ├── islands.json             # ETL が生成（コミットする）
-│   └── stages/                  # ステージ定義 YAML（stage1.yaml ...）
-├── infra/
-│   └── terraform/
+│   └── stages/                  # ステージ定義 YAML（stage1.yaml … demo-goto.yaml, demo-izu.yaml）
 └── .github/workflows/           # ci.yml / deploy.yml
 ```
 
-`data/` は `server/` から `go:embed` で取り込みます。Go の embed は親ディレクトリを参照できないため、ビルド時に `data/` を `server/internal/stage/embedded/` にコピーします（`make sync-data`）。コピー先は `.gitignore` に入れます。
+`data/` は `server/` から `go:embed` で取り込みます。Go の embed は親ディレクトリを参照できないため、ビルド時に `data/` を `server/internal/stage/embedded/` にコピーします（`make sync-data`）。コピー先は `.gitignore` に入れます。ステージの一覧（`/api/stages`）は、ビルド時に `data/stages/` から JSON を作り、Worker に同梱します。
 
 ---
 
@@ -321,6 +380,7 @@ raft-game/
 |---|---|
 | 正しさ（Raft の安全性） | Raft のアルゴリズムには手を入れない。輸送層だけを差し替える。不変条件を常に検査するシミュレーションテスト |
 | 決定性 | 単一 goroutine・仮想時間・シードから派生する乱数・Raft の乱数源の注入・map の走査順に依存しない実装 |
-| 応答性 | サーバーは 50ms ごとにステップを進め、100ms ごとにイベントをまとめて送る。船の位置はクライアントが補間する |
-| 差し替えやすさ | シミュレーションエンジンは I/O なし。インフラは `infra/` に閉じる。プロトコルの型は 1 か所から生成する |
-| 観測性 | トレース（ドメインイベント）を全て記録し、リザルトとエンジニアモードもここから作る |
+| 耐障害性 | 操作の記録を Durable Object に保存し、コンテナが止まったら再計算で復元する |
+| 応答性 | サーバーは 50ms ごとにステップを進め、100ms ごとにイベントをまとめて送る。船の位置はクライアントが補間する。コンテナは APAC に置く |
+| 差し替えやすさ | シミュレーションエンジンは I/O なし。インフラは `web/cloudflare.config.ts` と `web/worker/` に閉じる。プロトコルの型は 1 か所から生成する |
+| 観測性 | トレース（ドメインイベント）をすべて記録し、リザルトとエンジニアモードもここから作る |

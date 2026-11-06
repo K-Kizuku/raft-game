@@ -1,6 +1,6 @@
 # ADR-0002: Raft の実装に etcd-io/raft を使う
 
-- 状態: Proposed（仮決め）
+- 状態: Accepted（2026-11-06 にプロダクトオーナーが承認）
 - 日付: 2026-11-01
 - 決めた人: Claude（企画書 §10.1 の指定を確認）
 - 関連: C-04、C-05、[DesignDoc §5](../03-design-doc.md)、ADR-0003、ADR-0005

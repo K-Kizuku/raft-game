@@ -1,6 +1,6 @@
 # ADR-XXXX: タイトル（判断を一文で）
 
-- 状態: Proposed（仮決め） / Accepted / Superseded by ADR-YYYY / Deprecated
+- 状態: Proposed / Accepted / Superseded by ADR-YYYY / Deprecated
 - 日付: YYYY-MM-DD
 - 決めた人: 
 - 関連: （要件 ID、他の ADR、ドキュメント）

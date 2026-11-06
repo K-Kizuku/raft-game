@@ -2,8 +2,9 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.1（仮決め版） |
-| 状態 | Draft / レビュー待ち |
+| 版 | v0.2 |
+| 更新日 | 2026-11-06 |
+| 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
 | 対象読者 | 実装者（サーバー・フロントエンド・インフラ）、レビュアー |
 | 前提ドキュメント | [要件定義書](./01-requirements.md)、[アーキテクチャ](./02-architecture.md)、[ゲームデザイン仕様](./04-game-design.md) |
 
@@ -15,7 +16,7 @@
 
 ### 1.1 一言で
 
-`etcd-io/raft` の `RawNode` を島の数だけ 1 つの Go プロセス内に立て、それらの間のネットワークを「プレイヤーが操作するフェリー」に差し替えた、**決定的な離散イベントシミュレーション**を作る。ブラウザはその世界を WebSocket で受け取って描画し、プレイヤーの操作をコマンドとして送り返す。
+`etcd-io/raft` の `RawNode` を島の数だけ 1 つの Go プロセス（Cloudflare Containers 上の、1 ゲーム専用のコンテナ）内に立て、それらの間のネットワークを「プレイヤーが操作するフェリー」に差し替えた、**決定的な離散イベントシミュレーション**を作る。ブラウザはその世界を WebSocket（Cloudflare の Worker と Durable Object が中継する）で受け取って描画し、プレイヤーの操作をコマンドとして送り返す。
 
 ### 1.2 ゴール
 
@@ -68,7 +69,7 @@ flowchart LR
 `SimTime` の進み方は、セッションループが決めます（§12.2）。
 
 - 通常: 実時間 1 秒 = ゲーム内 1 秒（`speed = 1.0`）
-- 速度変更: 0.5x / 1x / 2x（P1）
+- 速度変更: 0.5x / 1x / 2x / 4x（P0）。デモ操作では 8x と「次の到着・出来事まで進める」も使える（A-17）
 - 一時停止: 進まない
 
 速度を変えても、`Engine` から見れば「`RunUntil` に渡される時刻の刻み方」が変わるだけです。イベントの時刻は実時間に依存しないので、**結果は変わりません**（コマンドが届いたゲーム内時刻だけは実時間に依存しますが、これは入力ログに記録されるので再現できます）。
@@ -77,13 +78,13 @@ flowchart LR
 
 `etcd-io/raft` は時間を知らず、`Tick()` が呼ばれた回数だけを数えます。そこで、ゲーム内時間の一定間隔ごとに全ノードの `Tick()` を呼びます。
 
-| パラメータ | 既定値（仮決め） | 意味 |
+| パラメータ | 既定値 | 意味 |
 |---|---|---|
 | `raft.tickMs` | 500 | ゲーム内 500ms ごとに 1 tick |
 | `raft.heartbeatTick` | 2 | Leader は 1 秒ごとに定期連絡（Heartbeat）を出す |
-| `raft.electionTick` | Stage 1: 1200 / Stage 2 以降: 40 | 選挙タイムアウト。実際の値は `electionTick` 以上 `2×electionTick` 未満の乱数（Stage 2 なら 20〜40 秒） |
+| `raft.electionTick` | Stage 1: 120 / Stage 2 以降: 40 / デモ: 16 | 選挙タイムアウト。実際の値は `electionTick` 以上 `2×electionTick` 未満の乱数（Stage 1 なら 60〜120 秒、Stage 2 なら 20〜40 秒、デモなら 8〜16 秒） |
 
-**調整の目安**: 選挙タイムアウト（`electionTick × tickMs`）は「Leader と、最も近い Follower の間をフェリーが往復する時間」の 2 倍以上にします。これより短いと、プレイヤーがどう頑張っても選挙が頻発します。逆に長すぎると、Stage 2 の学習目標（Heartbeat が途切れると選挙が始まる）が体験できません。Stage 1 は Log Replication に集中させるため、事実上選挙が起きない値（600 秒）にしています。最終的な値はプレイテストで決めます（[A-07](./09-assumptions-and-open-questions.md#a-07)）。
+**調整の目安**: 選挙タイムアウト（`electionTick × tickMs`）は「Leader と、最も近い Follower の間をフェリーが往復する時間」の 2 倍以上にします。これより短いと、プレイヤーがどう頑張っても選挙が頻発します。逆に長すぎると、Stage 2 の学習目標（Heartbeat が途切れると選挙が始まる）が体験できません。Stage 1 は Log Replication に集中させつつ、終盤に「放っておかれた島が立候補の相談を始める」様子を軽く見せるため、長め（60〜120 秒）にしています。最終的な値はプレイテストで決めます（[A-07](./09-assumptions-and-open-questions.md#a-07)）。
 
 ### 3.3 Election Timeout の残り時間について
 
@@ -153,6 +154,13 @@ func (e *Engine) NodeDetail(id uint64) protocol.NodeDetail // エンジニアモ
 func (e *Engine) Result() (protocol.RoundResult, bool)   // 終了後のみ
 func (e *Engine) InputLog() protocol.InputLog
 func (e *Engine) TraceHash() [32]byte
+
+// 次に「プレイヤーに見せたい出来事」（船の到着・台本のイベント・依頼の発生）が起きる時刻。
+// デモ操作の「次の出来事まで進める」に使う。
+func (e *Engine) NextNotableAt() (SimTime, bool)
+
+// 入力ログを最初から適用し直して、同じ状態のエンジンを作る（コンテナが止まったときの復元、リプレイ）。
+func Replay(st *stage.Stage, log protocol.InputLog, opt Options) (*Engine, error)
 ```
 
 ---
@@ -517,6 +525,8 @@ func Sub(seed uint64, name string) *rand.Rand {
 
 - `t` はコマンドを適用したゲーム内時刻
 - 一時停止・速度変更のコマンドも記録しますが、エンジンの結果には影響しません（記録はするがリプレイ時には無視してよい）
+- **保存先**: 入力ログは Durable Object の SQLite に保存します。コンテナはコマンドを適用したら `ack` に適用時刻 `t` を入れて返し、Durable Object が `(t, cmd)` を追記します（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）
+- **復元**: コンテナが止まったら、Durable Object が新しいコンテナに入力ログを渡し、`Replay` で同じ状態に戻します
 - **リプレイ** = 同じステージ・シードで `Engine` を作り、各コマンドの `t` まで `RunUntil` してから `Apply` することの繰り返し
 
 ### 10.2 トレース
@@ -554,20 +564,59 @@ func Sub(seed uint64, name string) *rand.Rand {
 
 ---
 
-## 12. サーバー（`internal/server`）
+## 12. サーバー（Go のゲームサーバーと、Cloudflare の Worker・Durable Object）
 
-### 12.1 HTTP / WebSocket
+### 12.1 役割分担
+
+| 層 | 実装 | 責務 |
+|---|---|---|
+| Worker | TypeScript（`web/worker/index.ts`） | 静的ファイルの配信（SPA）、`/api/*` と `/ws/*` の受付、レート制限、`Origin` の検査、セッションの作成、Durable Object への振り分け |
+| Durable Object `GameSession` | TypeScript（`web/worker/game-session.ts`） | 1 ゲームに 1 つ。コンテナの起動・停止、トークンの検証、ブラウザとコンテナの間の WebSocket の中継、入力ログの保存（SQLite）、コンテナが止まったときの復元、寿命の管理（アラーム） |
+| Go サーバー `single` モード | Go（`server/cmd/server --mode single`）。コンテナの中で動く | 1 プロセス＝1 ゲーム。Durable Object からの WebSocket だけを受け、セッションループでシミュレーションを動かす |
+| Go サーバー `standalone` モード | 同じバイナリ（`--mode standalone`） | ローカル開発とデモの保険（`make demo-local`）。1 プロセスで複数のゲームを持ち、§12.2 の公開 API を自分で提供する |
+
+インフラの構成は [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) を参照してください。
+
+### 12.2 公開 API（Worker が受ける）
 
 | メソッド | パス | 内容 |
 |---|---|---|
-| GET | `/api/healthz` | ヘルスチェック |
-| GET | `/api/stages` | ステージ一覧 |
-| POST | `/api/sessions` | セッションを作る（`{stageId, seed?}` → `{sessionId, token}`） |
-| GET | `/ws/sessions/{id}?token=…` | WebSocket に切り替え |
+| GET | `/api/healthz` | ヘルスチェック（Worker が直接返す） |
+| GET | `/api/stages` | ステージ一覧（ビルド時に `data/stages/` から作った JSON を Worker に同梱） |
+| POST | `/api/sessions` | セッションを作る（`{stageId, seed?}` → `{sessionId, token}`）。Durable Object を作り、コンテナの起動を始める |
+| GET | `/ws/sessions/{id}?token=…` | WebSocket に切り替え。Durable Object に転送する |
 
-詳細は [06-protocol.md](./06-protocol.md)。WebSocket ライブラリは `github.com/coder/websocket` を使います（`context` 対応で、依存が少ないため）。
+詳細は [06-protocol.md](./06-protocol.md)。Go 側の WebSocket ライブラリは `github.com/coder/websocket` を使います（`context` 対応で、依存が少ないため）。
 
-### 12.2 セッションループ
+### 12.3 Durable Object `GameSession`
+
+```ts
+// 概略。コンテナの操作には Workers ランタイムの ctx.container（start()・getTcpPort(port).fetch()）を使う想定。
+// 正確な API は実装計画 T-007 で確認する。
+export class GameSession extends DurableObject {
+  async init(req: { stageId: string; seed: number; demo: boolean; tokenHash: string }) {
+    // SQLite: session(stage_id, seed, demo, token_hash, state, created_at)
+    // コンテナを起動し始める（ステージ紹介の間に起動を終える）
+    // アラーム: 起動から 30 分で強制終了
+  }
+  async fetch(request: Request) {
+    // 1. token を検証（ハッシュで比較）
+    // 2. ブラウザとの WebSocket を受け付ける
+    // 3. コンテナの :8080/ws に WebSocket を開き、最初に internal.init（または internal.restore）を送る
+    // 4. 双方向に中継する。ブラウザ → コンテナの cmd.* は cmdId ごとに覚えておき、
+    //    コンテナ → ブラウザの ack(ok=true, t) を見たら (t, cmd) を SQLite の input_log に追記する
+    // 5. ブラウザ由来の internal.* は破棄する（内部の電文はこの Durable Object だけが送る）
+  }
+  async onContainerLost() {
+    // 新しいコンテナを起動 → internal.restore(stageId, seed, input_log) → コンテナが snapshot を返す
+  }
+  async alarm() {
+    // 切断から 5 分、終了から 10 分、起動から 30 分のいずれかでコンテナを止める
+  }
+}
+```
+
+### 12.4 セッションループ（Go）
 
 ```go
 func (s *Session) run(ctx context.Context) {
@@ -578,12 +627,22 @@ func (s *Session) run(ctx context.Context) {
         select {
         case <-ctx.Done(): return
         case c := <-s.cmdCh:          // WS の読み取り goroutine から
-            ack := s.engine.Apply(c)
+            switch c.Type {
+            case "cmd.game.speed":    // 0.5 / 1 / 2 / 4（デモ操作では 8 も）
+                s.speed = c.Speed
+            case "cmd.game.skip":     // デモ操作のみ：次の出来事まで進めて一時停止
+                if t, ok := s.engine.NextNotableAt(); ok && t-s.engine.Now() <= 30_000 {
+                    s.engine.RunUntil(t)
+                }
+                s.paused = true
+            }
+            ack := s.engine.Apply(c)   // ack には適用時刻 t が入る（ADR-0017）
             s.out.enqueueAck(ack)
         case now := <-step.C:
             if !s.paused && s.engine.Phase() != sim.Ended {
                 dt := now.Sub(last)
-                s.engine.RunUntil(s.engine.Now() + sim.SimTime(float64(dt.Milliseconds())*s.speed))
+                adv := min(sim.SimTime(float64(dt.Milliseconds())*s.speed), 1000) // 1 回に進めるのは 1 秒まで
+                s.engine.RunUntil(s.engine.Now() + adv)
             }
             last = now
         case <-flush.C:
@@ -594,19 +653,21 @@ func (s *Session) run(ctx context.Context) {
 ```
 
 - `Engine` に触れるのはこの goroutine だけ（ロック不要）
-- 1 回の `RunUntil` で進める時間には上限（1 秒）を設け、GC などで止まった後に大量のイベントを一度に処理しないようにします
+- 速度はセッションループの中だけの値で、エンジンの結果には影響しません。8 倍速でも、1 ステップで進めるのは 400ms（＜上限の 1 秒）です
 - 送信キューが詰まった場合（クライアントが遅い）は、イベントを捨てずに次回まとめて送ります。一定量（1,000 件）を超えたらイベント列を捨て、代わりにスナップショットを送ります
+- `internal.restore` を受けたら、`sim.Replay` で入力ログの最後の時刻まで一気に進め、一時停止の状態でスナップショットを返します
 
-### 12.3 セッションの寿命と上限
+### 12.5 寿命と上限
 
-| 項目 | 値（仮決め） |
-|---|---|
-| 同時セッション数の上限 | 200（超えたら 503 と「混雑中」の表示） |
-| 切断されてからの保持時間 | 5 分（その間は自動で一時停止） |
-| ラウンド終了後の保持時間 | 10 分（リザルトの再取得・トレースのダウンロード用） |
-| セッション作成のレート制限 | 1 IP あたり 10 回/分 |
-| コマンドのレート制限 | 1 セッションあたり 30 回/秒 |
-| WS の受信メッセージの最大サイズ | 16 KiB |
+| 項目 | 値 | どこで守るか |
+|---|---|---|
+| 同時に遊べるゲームの数 | 50（コンテナの `maxInstances`） | Cloudflare。超えたら Worker が 503 と「混雑中」を返す |
+| 切断されてからの保持時間 | 5 分（その間は自動で一時停止） | Durable Object のアラーム |
+| ラウンド終了後の保持時間 | 10 分（コンテナを止める。入力ログと結果は Durable Object に残る） | Durable Object のアラーム |
+| 1 ゲームの最長時間 | 30 分 | Durable Object のアラーム |
+| セッション作成のレート制限 | 1 IP あたり 10 回/分 | Worker（レート制限のバインディング） |
+| コマンドのレート制限 | 1 セッションあたり 30 回/秒 | Durable Object |
+| WS の受信メッセージの最大サイズ | 16 KiB | Durable Object と Go の両方 |
 
 ---
 
@@ -673,7 +734,9 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 | Ready の順序 | `cluster` | Storage をラップして呼び出し順を検査（V-5） | 毎回 |
 | シナリオテスト | 分断・復帰・古い手紙・再送 | 台本どおりに船を動かし、期待する状態を検査（V-1, V-2, V-4） | 毎回 |
 | シミュレーションテスト | エンジン全体 | ランダムに動くボット船長 × ランダムな嵐・漂流瓶で多数のシードを回し、§11 の不変条件を常に検査 | PR は 200 シード、main は 1,000 シード |
-| 決定性テスト | エンジン全体 | 同じ入力ログを 2 回実行してトレースのハッシュを比べる。`RunUntil` の刻み方を変えた実行とも比べる（V-6） | 毎回 |
+| 決定性テスト | エンジン全体 | 同じ入力ログを 2 回実行してトレースのハッシュを比べる。`RunUntil` の刻み方を変えた実行（速度の違い・早送り・次の出来事まで進める）とも比べる（V-6） | 毎回 |
+| 復元テスト | エンジン全体 | 途中まで遊んだエンジンと、その入力ログから `Replay` したエンジンの `Snapshot` が一致すること（FR-GAME-09） | 毎回 |
+| Worker / Durable Object | `web/worker/` | Vitest。中継・入力ログの追記・`internal.*` の破棄・トークンの検証。コンテナはモックの WS で置き換える | 毎回 |
 | ファジング | コマンド列 | `go test -fuzz`。不正なコマンドで panic しないこと、不変条件が保たれること | 夜間（P1） |
 | パッチの検証 | `third_party/etcd-raft` | 上流との差分が乱数の部分だけであることをスクリプトで確認。上流のテストがすべて通ること | 毎回 |
 | フロントの単体 | `applyEvent`、補間 | Vitest + 記録したイベント列 | 毎回 |
@@ -686,10 +749,10 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 
 ## 15. 観測性
 
-- ログ: `log/slog` の JSON 出力。セッション ID を必ず付ける
-- メトリクス（CloudWatch のメトリクスフィルタで集計）: 同時セッション数、セッションの作成数、1 ステップの処理時間の p99、送信キューの長さ、エラー数
-- アラーム: タスクの停止、5xx の割合、ステップの処理時間（デモ前だけ有効にしてもよい）
-- `/api/debug/sessions`（環境変数で有効にしたときのみ）: セッションの一覧
+- ログ: Go は `log/slog` の JSON 出力、Worker と Durable Object は `console.log` の JSON。セッション ID を必ず付ける
+- 保存と閲覧: `cloudflare.config.ts` の `observability.logs` とコンテナの `observability` を有効にし、Cloudflare のダッシュボードで見る（`cf` はベータ版で、リアルタイムのログ表示に未対応）
+- 記録する指標（ログの項目として出す）: セッションの作成数、コンテナの起動にかかった時間、1 ステップの処理時間の p99、送信キューの長さ、復元の回数、エラー数
+- デモの前: 起動時間と復元の回数を確認する
 
 ---
 
@@ -698,10 +761,11 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 | 脅威 | 対策 |
 |---|---|
 | セッションの乗っ取り | セッション作成時に推測できないトークン（128 bit）を発行し、WS の接続時に検証する |
-| 大量のセッション作成による資源の枯渇 | IP ごとのレート制限、同時セッション数の上限 |
+| 大量のセッション作成による資源の枯渇 | Worker で IP ごとのレート制限、コンテナの `maxInstances` で同時ゲーム数の上限 |
 | 巨大・大量のメッセージ | WS の受信サイズの上限、コマンドのレート制限、JSON のデコードは型を決めて行う |
-| 他のサイトからの WS 接続 | `Origin` ヘッダーを許可リストで検査する |
-| デモ用の機能の悪用 | イベントを即時に発生させる機能は、サーバーの環境変数 `DEMO_CONTROLS=1` のときだけ有効にする |
+| 他のサイトからの WS 接続 | Worker で `Origin` ヘッダーを許可リスト（`ALLOWED_ORIGINS`）と照合する |
+| コンテナへの直接の接続 | コンテナは外部に公開しない。Durable Object からだけ接続する。ブラウザ由来の `internal.*` の電文は Durable Object が破棄する |
+| デモ用の機能の悪用 | 嵐を起こす・8 倍速・次の出来事まで進める機能は、`demo` モードでデプロイした別の Worker（`DEMO_CONTROLS=1`）でだけ有効にする |
 | 依存ライブラリの脆弱性 | Dependabot、`govulncheck`、`npm audit` を CI で実行する |
 
 ---
@@ -719,8 +783,8 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 | 提案の転送 | アプリ層の依頼書 | Raft 標準の転送（`MsgProp`） | [0008](./adr/0008-application-level-request-forwarding.md) |
 | 実行場所 | サーバーで実行し WS で配信 | Go を WASM にしてブラウザで実行 | [0009](./adr/0009-server-authoritative-simulation-over-websocket.md) |
 | フロントエンド | React + PixiJS | Phaser、Canvas 直書き | [0010](./adr/0010-frontend-react-pixijs.md) |
-| インフラ | AWS（ECS Fargate） | Cloudflare（Containers） | [0011](./adr/0011-infrastructure-aws-ecs-fargate.md) |
-| 永続化 | なし（メモリのみ） | DynamoDB / S3 | [0012](./adr/0012-no-persistence-in-mvp.md) |
+| インフラ | Cloudflare（Workers ＋ Durable Objects ＋ Containers）、`cf` で管理 | AWS（ECS Fargate）、Wrangler、Terraform | [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)（[0011](./adr/0011-infrastructure-aws-ecs-fargate.md) を置き換え） |
+| 永続化 | 入力ログを Durable Object に保存、リプレイの共有は R2 | 保存しない | [0017](./adr/0017-persist-input-log-in-durable-object.md)（[0012](./adr/0012-no-persistence-in-mvp.md) を置き換え） |
 | オープンデータ | ビルド時の ETL | 実行時に取得 | [0013](./adr/0013-open-data-build-time-etl.md) |
 | リポジトリ | モノレポ + 型の生成 | リポジトリを分ける、protobuf | [0014](./adr/0014-monorepo-and-shared-types.md) |
 | 依頼の成功判定 | 依頼元の島で適用された時点 | Commit された時点 | [0015](./adr/0015-request-success-judged-at-origin-apply.md) |
@@ -735,8 +799,11 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 | 手紙が多すぎて画面が煩雑になる | 中 | 港の合流規則で数を抑える。宛先別の山とバッジで表示する。「おまかせ積み込み」 |
 | etcd-io/raft v3.7 の API がサンプルと違い、実装に時間がかかる | 中 | M1（コアの実装）の最初に、3 ノードを即時配達で動かす最小の例を作る |
 | 乱数のパッチが上流の更新で当たらなくなる | 小 | 版を v3.7.0 に固定する。パッチは 1 か所だけ。上流への提案も検討する |
-| 本番でのデモ中に再デプロイやタスクの再起動でセッションが切れる | 大 | デモの前はデプロイを凍結する。ローカルで起動する手順（`make demo-local`）を用意しておく |
-| オープンデータの形式が想定と違う | 中 | ETL の入力は人手で整えた CSV でもよいことにする。生成した JSON をコミットするので、ETL が間に合わなくても進められる |
+| 本番でのデモ中に再デプロイやコンテナの再起動でゲームが切れる | 大 | 入力ログから復元する（FR-GAME-09）。デモの前はデプロイを凍結する。ローカルで起動する手順（`make demo-local`）を用意しておく |
+| `cf` がベータ版で、コマンドや設定の形式が変わる | 中 | `cf` の版を固定する。上げるときは専用の PR で `cf build` と `--dry-run` を確認する |
+| コンテナの起動待ちがデモで目立つ | 中 | ステージ選択の時点で起動を始め、ステージ紹介と開会式の間に隠す。リハーサルで起動時間を計る |
+| Durable Object とコンテナの API の細部が想定と違う | 中 | 実装計画 T-007（M0 のスパイク）で、最小の構成を実際にデプロイして確かめる |
+| 計画書の記述が地域によって薄い（長崎県など） | 小 | 記述の薄い地域の航路は `creative` として扱い、画面で区別する。生成した JSON をコミットするので、ETL が間に合わなくても進められる |
 
 ---
 

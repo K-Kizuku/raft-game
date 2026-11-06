@@ -1,6 +1,6 @@
 # ADR-0003: `RawNode` を単一 goroutine で駆動する
 
-- 状態: Proposed（仮決め）
+- 状態: Accepted（2026-11-06 にプロダクトオーナーが承認）
 - 日付: 2026-11-01
 - 決めた人: Claude
 - 関連: NFR-04、V-5、V-6、[DesignDoc §5](../03-design-doc.md)
