@@ -235,6 +235,29 @@ A="$repo/scripts/agents"
 DS="$repo/scripts/dev-slot.sh"
 cd "$repo"
 
+# ================= lib.sh の agentctl =================
+# PATH に agentctl の実行ファイルがないときは scripts/agents/agentctl.sh を使う
+# （command -v は関数自身にも一致するので、それに頼ると「command not found」になる）。
+reset_logs
+lt="$tmp/libtest"
+mkdir -p "$lt"
+cp "$A/lib.sh" "$lt/lib.sh"
+cat >"$lt/agentctl.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'wrapper:%s\n' "$*"
+EOF
+chmod +x "$lt/agentctl.sh"
+run_rc env PATH="$sys_path" bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" review validate x.json
+check "lib agentctl: PATH になければ agentctl.sh を使う" test "$RC:$(cat "$tmp/out")" = "0:wrapper:review validate x.json"
+check "lib agentctl: command not found を出さない" test ! -s "$tmp/err"
+run_rc env PATH="$fake/bin:$sys_path" bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" state 5 merged
+check "lib agentctl: PATH にあればそれを使う" test "$RC" = 0 -a ! -s "$tmp/out"
+check "lib agentctl: PATH の agentctl を呼ぶ" log_has agentctl '.args == ["state","5","merged"]'
+run_rc env PATH="$sys_path" AGENTCTL="$fake/bin/agentctl" bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" claim 9
+check "lib agentctl: AGENTCTL を優先する" test "$RC" = 0 -a ! -s "$tmp/out"
+check "lib agentctl: AGENTCTL の agentctl を呼ぶ" log_has agentctl '.args == ["claim","9"]'
+reset_logs
+
 # ================= dev-slot.sh =================
 cfg2="$tmp/config-2slots.json"
 jq '.dev_slots = 2' "$repo/.agents/config.json" >"$cfg2"

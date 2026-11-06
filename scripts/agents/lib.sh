@@ -117,11 +117,13 @@ repo_slug() {
 }
 
 # agentctl を実行する。AGENTCTL → PATH の agentctl → scripts/agents/agentctl.sh の順。
+# （command -v はこの関数自身にも一致するので、実行ファイルだけを探す type -P を使う）
 agentctl() {
+  local exe
   if [ -n "${AGENTCTL:-}" ]; then
     "$AGENTCTL" "$@"
-  elif command -v agentctl >/dev/null 2>&1; then
-    command agentctl "$@"
+  elif exe="$(type -P agentctl)" && [ -n "$exe" ]; then
+    "$exe" "$@"
   else
     "$AGENTS_DIR/agentctl.sh" "$@"
   fi
