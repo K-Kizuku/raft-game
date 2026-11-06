@@ -69,6 +69,25 @@ go -C tools/agentctl run . review render "$PWD/review.json"                     
 - 本番・デモ用の環境へのデプロイ、ゾーンの設定の変更、Cloudflare のシークレットの更新はしない（CI だけが行う）
 - タスクは GitHub の Issue で管理されている。作業の前に、対応する Issue を確認する
 
+## AI エージェントの役割と禁止事項（#5）
+
+役割は環境変数 `AGENT_ROLE`（`orchestrator`・`worker`・`reviewer`・`human`）で決まる。未設定なら、リンクした Worktree の中は `worker`、それ以外は `orchestrator`。禁止事項は指示だけでなく、`.claude/settings.json` の権限と `.claude/hooks/guard-*.sh` で止める。詳しい運用は #6 のドキュメントを参照。
+
+- **全員**: `main` への push、`--force`・`-f` の push（`--force-with-lease` は `agent/issue-*` へだけ）、`gh pr merge`、`.github/workflows/` への書き込み（`human` を除く）、`gh secret`・`gh variable`・`gh ruleset`、ラベル `human-approved` の付与、`git worktree remove --force`、`cf deploy`（`--dry-run` を除く）、`wrangler` をしない
+- **Orchestrator**: コード・テスト・ドキュメントを直接変更しない（書けるのは `.agents/`・`.claude/worktrees/` だけ）。マージは `scripts/agents/merge.sh`（Merge Gate が pass のときだけ）で行う
+- **Worker**: 自分の Worktree の中と、自分のブランチ `agent/issue-<n>` だけを変更する。`merge.sh`・`review.sh`・`spawn-worker.sh`・`wt.sh` を実行しない。保護されたパス（`.agents/config.json` の `protected_paths`）は、Issue の変更予定ファイルに含まれるときだけ変更できる
+- **Reviewer**: 書き込みにあたる操作をしない（指摘だけを返す）
+
+```bash
+scripts/agents/spawn-worker.sh <issue> [--mode implement|fix|conflict] [--resume] [--background] [--dry-run]
+scripts/agents/review.sh <pr> [--no-post]   # まず Codex、使えないときだけ Claude Code
+scripts/agents/merge.sh <pr> [--dry-run]
+scripts/agents/wt.sh list|cleanup [--issue N] [--dry-run]
+scripts/agents/status.sh
+scripts/dev-slot.sh acquire|release|list|current
+bash .claude/hooks/tests/run.sh && bash scripts/agents/tests/run.sh   # テスト（CI の shell ジョブ）
+```
+
 ## Cloudflare（`cf`）の注意点
 
 - インフラの構成は `web/cloudflare.config.ts` と `cf`（Cloudflare CLI、ベータ版）だけで管理する。Wrangler・Terraform・ダッシュボードでの手作業の変更は使わない（ADR-0016）
