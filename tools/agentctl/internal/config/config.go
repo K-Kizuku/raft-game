@@ -50,15 +50,25 @@ type Review struct {
 	CarryOverOnBaseMerge bool `json:"carry_over_on_base_merge"`
 }
 
+// Merge はマージに関する設定（Issue #239）。
+type Merge struct {
+	// RequireUpToDate は、Merge Gate の C10 でベース（既定のブランチ）より遅れている PR を fail にすること。
+	// 省略（null）は true（今までどおり）。false なら、遅れていても C10 は pass にする（遅れの数を detail に書く）。
+	// C9（コンフリクト）と C4（CI）の判定は変わらない。
+	RequireUpToDate *bool `json:"require_up_to_date"`
+}
+
 // Config は `.agents/config.json` の内容。
 type Config struct {
-	Version           int      `json:"version"`
-	DefaultBranch     string   `json:"default_branch"`
-	BranchPrefix      string   `json:"branch_prefix"`
-	MaxWorkers        int      `json:"max_workers"`
-	RetryLimit        int      `json:"retry_limit"`
-	RequiredChecks    []string `json:"required_checks"`
-	Review            Review   `json:"review"`
+	Version        int      `json:"version"`
+	DefaultBranch  string   `json:"default_branch"`
+	BranchPrefix   string   `json:"branch_prefix"`
+	MaxWorkers     int      `json:"max_workers"`
+	RetryLimit     int      `json:"retry_limit"`
+	RequiredChecks []string `json:"required_checks"`
+	Review         Review   `json:"review"`
+	// Merge は省略できる（古い設定は今までどおりに扱う）。
+	Merge             *Merge   `json:"merge,omitempty"`
 	SharedAppendFiles []string `json:"shared_append_files"`
 	ProtectedPaths    []string `json:"protected_paths"`
 	DevSlots          int      `json:"dev_slots"`
@@ -201,6 +211,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: 設定が不正: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// RequireUpToDate は、Merge Gate の C10 でベースより遅れている PR を fail にするかを返す。
+// 設定がない（merge・require_up_to_date の省略）ときは true。
+func (c *Config) RequireUpToDate() bool {
+	if c == nil || c.Merge == nil || c.Merge.RequireUpToDate == nil {
+		return true
+	}
+	return *c.Merge.RequireUpToDate
 }
 
 // IsBlocking は、重大度が「重大な指摘」に当たるかを返す。
