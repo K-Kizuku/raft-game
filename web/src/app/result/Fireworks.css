@@ -1,0 +1,92 @@
+/* 花火大会の演出（T-408）。素材（#131）が届くまでは絵文字と CSS の火花だけで描く。 */
+
+.fireworks-banner {
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  background: #1e1b4b;
+  color: #fef9c3;
+  font-size: 1.25rem;
+  font-weight: bold;
+  text-align: center;
+}
+
+/* 画面全体に重ねるが、操作は妨げない。 */
+.fireworks-sky {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+}
+
+.fireworks-sky .firework {
+  position: absolute;
+  font-size: 2.5rem;
+  line-height: 1;
+  transform: translate(-50%, -50%) scale(0.2);
+  opacity: 0;
+  /* 1 回 1.8 秒を 3 回くり返して止まる。最後は見えない（fill-mode: both）。遅れは style で付ける。 */
+  animation: fireworks-burst 1.8s ease-out 3 both;
+}
+
+/* 火花。currentColor（style の color）の点を周りに散らす。 */
+.fireworks-sky .firework::before,
+.fireworks-sky .firework::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin: -0.1875rem 0 0 -0.1875rem;
+  border-radius: 50%;
+}
+
+.fireworks-sky .firework::before {
+  box-shadow:
+    0 -3rem 0 0 currentColor,
+    2.1rem -2.1rem 0 0 currentColor,
+    3rem 0 0 0 currentColor,
+    2.1rem 2.1rem 0 0 currentColor,
+    0 3rem 0 0 currentColor,
+    -2.1rem 2.1rem 0 0 currentColor,
+    -3rem 0 0 0 currentColor,
+    -2.1rem -2.1rem 0 0 currentColor;
+}
+
+.fireworks-sky .firework::after {
+  box-shadow:
+    1.15rem -1.9rem 0 0 currentColor,
+    1.9rem -1.15rem 0 0 currentColor,
+    1.9rem 1.15rem 0 0 currentColor,
+    1.15rem 1.9rem 0 0 currentColor,
+    -1.15rem 1.9rem 0 0 currentColor,
+    -1.9rem 1.15rem 0 0 currentColor,
+    -1.9rem -1.15rem 0 0 currentColor,
+    -1.15rem -1.9rem 0 0 currentColor;
+}
+
+@keyframes fireworks-burst {
+  0% {
+    transform: translate(-50%, -50%) scale(0.2);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* 動きを減らす設定では、空を出さず文字の帯だけにする。 */
+@media (prefers-reduced-motion: reduce) {
+  .fireworks-sky {
+    display: none;
+  }
+}
