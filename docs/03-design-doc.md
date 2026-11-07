@@ -172,6 +172,7 @@ func Replay(cfg Config, stageHash string, in ReplayLog, opt Options) (*Engine, e
 - `Snapshot` の `letters` は港と船の上の手紙だけ（ID の昇順）。`requests` は発生済みの依頼（ID の順。最後に出した `request.*` の値。`Intro` では空）。`nodes` は最後に出した `node.state` の値。`lastSeq` 以下のイベントを当てはめた状態と一致する
 - `letter.stale` は、ノードの Term が上がったとき、そのノードが送信元で港と船にある Raft の手紙のうち、新しく古くなったものを ID の昇順に 1 回だけ出す。各ノードの出力の処理の中で、役割の変化の後・手紙の前に出す
 - `cmd.ferry.autoload` は `Apply` のコマンドで、ゲームデザイン §3.4 の順に空きを埋める。入力ログには `{ferryId, to}` だけが入る（リプレイでも同じ手紙が選ばれる）
+- `demo.trigger`（`Command.Event` が `storm`）は `Apply` のコマンドで、`Config.DemoStorm`（ステージ定義の `demo.storm`）の航路を、いまの時刻から `DurationMs` だけ遮断する（予報なし。`raiseStorm`）。デモ操作を許すかはセッションが決め、Engine はステージの設定どおりに動く（リプレイでも同じ）。入力ログには `{event}` だけが入る
 - `NextNotableAt` は、航行中の船の到着（`DurationMs` 以下）、まだ発生していない最初の依頼の時刻、まだ処理していない嵐の予報・開始・終わり（`DurationMs` 以下）のうち最も小さいもの。`FerryReady` を含めない。30 秒の上限と一時停止はセッションループ（§12.4）が持つ
 - 後のタスクで次を足す: `NodeDetail(id)`（エンジニアモード用）は T-407、`Result()`（終了後のみ）は T-203
 - Engine の誤り（`Process`・`PostRaft`・`Arrive`・`AdvanceTo`・`Push` のエラー、コードに対応しない `ferry` のエラー、台帳の結果の型の違い、テストモードの不変条件の違反）は panic する。正しく使えば起きない。セッションループ（T-303）が panic を回復し、そのセッションを `error`（`fatal`）で閉じる
@@ -428,7 +429,7 @@ type Ferry struct {
   - 嵐の開始で `Transport.Block` を呼ぶ。`Block` は遮断の終わりを長いほうにそろえる（`blockedUntil = max(blockedUntil, 嵐の終わり)`）。航行中の船はそのまま進み、遮断は出航の条件だけを変える（§6.3）
   - `route.blocked` は遮断が延びた航路だけを、`route.unblocked` は遮断が本当に終わった航路だけを、1 回ずつ出す。嵐が重なっても、実際の遮断の変化だけを表す（ある嵐の終わりと別の嵐の開始が同じ時刻・同じ航路なら、開始が先に遮断を延ばすので途切れない）。`route.blocked` の `until` はこの時刻から出航できる時刻、`route.unblocked` の `until` は遮断が終わった時刻（= イベントの `t`）
   - 予報（`forecast`）は開始の `forecastMs` 前に出す（`forecastMs` が 0 なら出さない）。航路の ID は `routesState` と同じ形（`"A-B"`、`A < B`）で、台本に書いた順に並べる
-  - 嵐はステージ定義とシードだけで決まる（`New` で全部の時刻を決める。§9.1）ので、入力ログから再現できる。デモの嵐（`demo.storm`）は T-305 が Engine のコマンドにして、非公開の入口 `raiseStorm` を呼ぶ（入力ログに残る）
+  - 嵐はステージ定義とシードだけで決まる（`New` で全部の時刻を決める。§9.1）ので、入力ログから再現できる。デモの嵐（`demo.storm`）は `demo.trigger` のコマンドで起こす（§4.3）。入力ログに残るので、リプレイで再現できる。嵐の途中で起こすと遮断が延び、延びた航路だけ `route.blocked` が出る
   - `stage.SimConfig` は台本の嵐（`kind: storm`）を書いた順のまま `sim.Config.Storms` に入れる。`storm` 以外のイベント（P1）を誤りにするかは保留（#32 の報告。既存のテストと食い違うため）
 - ネットワーク分断の状態（FR-ENG-08）は「遮断されていない辺だけでの連結成分」として計算する。ただし、これは「船が行き来できるか」を表すだけで、実際に通信できるかは船の運航次第です
 
@@ -654,7 +655,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 - Engine は成功したコマンドをすべて記録するので、最初のコマンドは `cmd.game.start` です（`Engine.InputLog()`）
 - 一時停止・速度変更のコマンドも記録しますが、エンジンの結果には影響しません（記録はするがリプレイ時には無視してよい）
 - `cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` はリプレイで無視します。そのほかの未知の `type`・未知のキーは誤りです
-- `payload` の形はプロトコル（[06-protocol.md §4](./06-protocol.md)）のとおりで、キーは `type`・`payload` の順です（`cmd.game.start` は `{}`、`cmd.ferry.load`・`cmd.ferry.unload` は `ferryId`・`letterIds`、`cmd.ferry.depart`・`cmd.ferry.autoload` は `ferryId`・`to`）
+- `payload` の形はプロトコル（[06-protocol.md §4](./06-protocol.md)）のとおりで、キーは `type`・`payload` の順です（`cmd.game.start` は `{}`、`cmd.ferry.load`・`cmd.ferry.unload` は `ferryId`・`letterIds`、`cmd.ferry.depart`・`cmd.ferry.autoload` は `ferryId`・`to`、`demo.trigger` は `event`）
 - T-301（`protocol`）ができるまで、JSON との変換は `server/cmd/simcli`（`inputlog.go`）が持ちます。`simcli` は 1 行目にヘッダーと `"commands":[`、続けてコマンドを 1 件 1 行、最後の行に `]}` と書きます（件数が 0 なら 1 行）。読み込みは厳密で、必須のキー（`format`・`stageId`・`stageHash`・`seed`・`commands`、`payload` の各キー）がない・`t` が 0 以上の整数でない・JSON の後ろに余分なデータがあるときは、場所（例: `commands[3].cmd.payload.to`）を書いて誤りにします。`build` は読みますが使いません
 - **保存先**: 入力ログは Durable Object の SQLite に保存します。コンテナはコマンドを適用したら `ack` に適用時刻 `t` を入れて返し、Durable Object が `(t, cmd)` を追記します（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）
 - **復元**: コンテナが止まったら、Durable Object が新しいコンテナに入力ログを渡し、`Replay` で同じ状態に戻します
@@ -662,7 +663,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 - **`sim.Replay`** が受けるのは、`format`・`stageHash`・`seed`・コマンドの列（`ReplayLog`）です（`stageId`・`build` は受けない。JSON の読み書きとプロトコルの型からの変換は呼び出し側）
   - 検査の順序は、形式 → `stageHash` の照合 → 時刻の順です。`stageHash` は、空どうしでも一致とみなしません
   - 各コマンドが成功して同じ `t` で適用されなければ、失敗（記録と食い違った。`ErrReplayDiverged`）にします
-  - セッションのコマンド（一時停止・速度・次の出来事まで）は、呼び出し側が除いてから渡します。`Replay` は知らない種類のコマンドを読み飛ばさず、失敗にします
+  - セッションのコマンド（一時停止・速度・次の出来事まで）は、呼び出し側が除いてから渡します。`demo.trigger` は Engine のコマンドなので除きません。`Replay` は知らない種類のコマンドを読み飛ばさず、失敗にします
   - 最後に `Until`（省略時は最後のコマンドの `t`）まで進めます
   - 返した Engine には `New` からの全イベントが残ります。セッションはそれを捨ててから `snapshot` を送ります（`lastSeq` 以下のイベントはスナップショットに含まれているため）
 
