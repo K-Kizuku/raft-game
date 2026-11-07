@@ -10,7 +10,7 @@ import (
 
 // Bot はボット船長。1 つの Bot は 1 つの Engine だけに使う。goroutine から同時に使わない。
 type Bot interface {
-	// Name は New に渡した名前（"random" か "greedy"）。
+	// Name は New に渡した名前（"greedy"・"random"・"steady" のどれか）。
 	Name() string
 	// Act は、今の時刻に行う操作を e に Apply する。e.Phase() が PhaseSailing でなければ何もしない。
 	// RunUntil・DrainEvents は呼ばない。失敗した Ack が返ったら、そこで止めて error を返す（ボットの誤り）。
@@ -21,14 +21,15 @@ type Bot interface {
 const (
 	nameGreedy = "greedy"
 	nameRandom = "random"
+	nameSteady = "steady"
 )
 
-// Names はボットの名前の一覧を昇順で返す（["greedy", "random"]）。返す slice は呼ぶたびに新しく作る。
+// Names はボットの名前の一覧を昇順で返す（["greedy", "random", "steady"]）。返す slice は呼ぶたびに新しく作る。
 func Names() []string {
-	return []string{nameGreedy, nameRandom}
+	return []string{nameGreedy, nameRandom, nameSteady}
 }
 
-// New は name のボットを作る。乱数は sim.Sub(seed, "bot/"+name) から取る（greedy は乱数を引かない）。
+// New は name のボットを作る。乱数は sim.Sub(seed, "bot/"+name) から取る（greedy・steady は乱数を引かない）。
 // name が Names() にない（空・大文字を含む）ならエラー。
 func New(name string, seed uint64) (Bot, error) {
 	switch name {
@@ -36,6 +37,8 @@ func New(name string, seed uint64) (Bot, error) {
 		return newRandom(sim.Sub(seed, streamName(name))), nil
 	case nameGreedy:
 		return newGreedy(), nil
+	case nameSteady:
+		return newSteady(), nil
 	}
 	return nil, fmt.Errorf("bot: unknown bot %q (want one of %q)", name, Names())
 }
@@ -47,7 +50,7 @@ func streamName(name string) string { return "bot/" + name }
 // 計画は s の上で必ず成功するコマンドだけからなる。
 type planFunc func(s sim.Snapshot, i int) []sim.Command
 
-// base は 2 つのボットに共通の部分（名前と航路）。
+// base はボットに共通の部分（名前と航路）。
 type base struct {
 	name string
 	topo *topology // 最初の Act で Snapshot から作る
@@ -65,7 +68,7 @@ func (b *base) observe(s sim.Snapshot) {
 	b.topo.check(s)
 }
 
-// act は Act の流れ（random・greedy で共通）。
+// act は Act の流れ（すべてのボットで共通）。
 func (b *base) act(e *sim.Engine, plan planFunc) error {
 	if e.Phase() != sim.PhaseSailing {
 		return nil
@@ -168,10 +171,10 @@ func weight(l sim.LetterView) int {
 	return rankWeights[rank(l)]
 }
 
-// sortByRank は手紙を（順位, ID）の昇順に並べる。
-func sortByRank(ls []sim.LetterView) {
+// sortBy は手紙を（rankOf の順位, ID）の昇順に並べる。
+func sortBy(ls []sim.LetterView, rankOf func(sim.LetterView) int) {
 	slices.SortFunc(ls, func(a, b sim.LetterView) int {
-		if c := cmp.Compare(rank(a), rank(b)); c != 0 {
+		if c := cmp.Compare(rankOf(a), rankOf(b)); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.ID, b.ID)
@@ -187,11 +190,11 @@ func letterIDs(ls []sim.LetterView) []uint64 {
 	return out
 }
 
-// sumWeights は手紙の重みの和。
-func sumWeights(ls []sim.LetterView) int {
+// sumWeights は手紙の重み（weightOf）の和。
+func sumWeights(ls []sim.LetterView, weightOf func(sim.LetterView) int) int {
 	w := 0
 	for _, l := range ls {
-		w += weight(l)
+		w += weightOf(l)
 	}
 	return w
 }
