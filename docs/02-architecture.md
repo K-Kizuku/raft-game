@@ -350,7 +350,7 @@ raft-game/
 ├── docs/                        # 本ドキュメント群
 ├── server/                      # Go module: github.com/K-Kizuku/raft-game/server
 │   ├── go.mod                   # go 1.26 / go.etcd.io/raft/v3 v3.7.0（replace でパッチ版を使う）
-│   ├── Dockerfile               # Container のイメージ（single モード、linux/amd64）
+│   ├── Dockerfile               # Container のイメージ（single モード、linux/amd64、distroless。T-306）
 │   ├── cmd/
 │   │   ├── server/              # ゲームサーバー（--mode single | standalone）
 │   │   ├── simcli/              # ヘッドレス実行・入力ログの再生・ボット対戦
@@ -402,6 +402,8 @@ raft-game/
 ```
 
 `make sync-data` で `data/` を `server/internal/stage/embedded/` にコピーし、`-tags embeddata` でビルドしたときだけ埋め込む（Go の embed は親ディレクトリを参照できない。コピー先は `.gitignore` に入れる）。タグなしのビルド（`make test`・CI）はコピーを要らない。`make dev` は `DATA_DIR` で作業ツリーの `data/` を読む（[ADR-0025](./adr/0025-stage-data-source.md)）。ステージの一覧（`/api/stages`）は、ビルド時に `data/stages/` から JSON を作り、Worker に同梱します。
+
+コンテナのイメージは `server/Dockerfile` でビルドする。文脈は `server/` で、`data/` は文脈の外にあるので、先にリポジトリのルートで `make sync-data` を実行する（Dockerfile は `-tags embeddata` でステージ定義を埋め込み、コピーがなければ止まる）。ビルド引数 `BUILD_ID` が `/healthz` の `build` になる。手で確かめるときは `bash scripts/docker-smoke.sh`（`DEV_SLOT` が要る。ADR-0019 の名前を使い、`make clean-docker` で消える）。
 
 ---
 
