@@ -1,0 +1,84 @@
+{
+  "title": "テストの海",
+  "islands": [
+    {
+      "id": 1,
+      "name": "一の島",
+      "municipality": "テスト町",
+      "layout": {
+        "x": 100,
+        "y": 100
+      },
+      "population": {
+        "value": 100,
+        "asOf": "令和8年4月1日",
+        "provenance": "creative",
+        "source": "test"
+      },
+      "color": "#E07A5F"
+    },
+    {
+      "id": 2,
+      "name": "二の島",
+      "municipality": "テスト町",
+      "layout": {
+        "x": 300,
+        "y": 100
+      },
+      "population": {
+        "value": 100,
+        "asOf": "令和8年4月1日",
+        "provenance": "creative",
+        "source": "test"
+      },
+      "color": "#3D405B"
+    },
+    {
+      "id": 3,
+      "name": "三の島",
+      "municipality": "テスト町",
+      "layout": {
+        "x": 200,
+        "y": 260
+      },
+      "population": {
+        "value": 100,
+        "asOf": "令和8年4月1日",
+        "provenance": "creative",
+        "source": "test"
+      },
+      "color": "#81B29A"
+    }
+  ],
+  "routes": [
+    {
+      "id": "1-2",
+      "a": 1,
+      "b": 2,
+      "travelMs": 4000,
+      "provenance": "creative"
+    },
+    {
+      "id": "1-3",
+      "a": 1,
+      "b": 3,
+      "travelMs": 4000,
+      "provenance": "creative"
+    },
+    {
+      "id": "2-3",
+      "a": 2,
+      "b": 3,
+      "travelMs": 4000,
+      "provenance": "creative"
+    }
+  ],
+  "resources": [
+    {
+      "id": "stall:main",
+      "kind": "stall",
+      "label": "屋台",
+      "critical": false
+    }
+  ]
+}
