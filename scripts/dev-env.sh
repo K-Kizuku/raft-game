@@ -111,13 +111,19 @@ cmd_env() {
 
 DEV_TMP=""
 DEV_GO_PID=""
+DEV_WEB_PID=""
 
+# dev_cleanup: 裏で動かしているフロントエンドと Go の両方に TERM を送り、終わるのを待ってから後始末する。
 dev_cleanup() {
-  if [ -n "$DEV_GO_PID" ]; then
-    kill "$DEV_GO_PID" 2>/dev/null || true
-    wait "$DEV_GO_PID" 2>/dev/null || true
-    DEV_GO_PID=""
-  fi
+  local pid
+  for pid in "$DEV_WEB_PID" "$DEV_GO_PID"; do
+    if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
+  done
+  for pid in "$DEV_WEB_PID" "$DEV_GO_PID"; do
+    if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
+  done
+  DEV_WEB_PID=""
+  DEV_GO_PID=""
   if [ -n "$DEV_TMP" ]; then
     rm -rf "$DEV_TMP"
     DEV_TMP=""
@@ -159,27 +165,47 @@ cmd_dev() {
     command -v go >/dev/null 2>&1 || die "go がない"
   fi
 
+  # 前で動かすと、bash はそのコマンドが終わるまで TERM の trap を遅らせる。どちらも裏で起動し、
+  # 割り込める wait で待つ。trap の exit から EXIT の trap（dev_cleanup）が両方に kill を送る。
   trap dev_cleanup EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
+  local pid="" rc=0
   if [ "$has_go" = 1 ]; then
     tmp="$(mktemp -d)" || die "一時ディレクトリを作れない"
     DEV_TMP="$tmp"
     go -C "$DEV_WORKTREE/server" build -o "$tmp/server" ./cmd/server || die "Go のビルドに失敗した"
-    if [ "$has_web" = 0 ]; then
-      MODE=standalone PORT="$DEV_SERVER_PORT" "$tmp/server"
-      return $?
-    fi
     MODE=standalone PORT="$DEV_SERVER_PORT" "$tmp/server" &
     DEV_GO_PID=$!
+    pid="$DEV_GO_PID"
   fi
-  DEV_SERVER_PORT="$DEV_SERVER_PORT" pnpm -C "$DEV_WORKTREE/web" exec vite --host 127.0.0.1 --port "$DEV_WEB_PORT" --strictPort
+  if [ "$has_web" = 1 ]; then
+    DEV_SERVER_PORT="$DEV_SERVER_PORT" pnpm -C "$DEV_WORKTREE/web" exec vite --host 127.0.0.1 --port "$DEV_WEB_PORT" --strictPort &
+    DEV_WEB_PID=$!
+    pid="$DEV_WEB_PID"
+  fi
+  wait "$pid" || rc=$?
+  if [ "$pid" = "$DEV_WEB_PID" ]; then DEV_WEB_PID=""; else DEV_GO_PID=""; fi
+  return "$rc"
 }
 
 # uniq_lines: 標準入力の一覧から空行を除き、重複を除いて並べ替える（2 つの一覧の和を作る）。
 uniq_lines() {
   grep -v '^[[:space:]]*$' | sort -u || true
+}
+
+# regex_quote <s>: 正規表現（Go の regexp）の特殊文字を「\」でエスケープして出す。
+regex_quote() {
+  printf '%s' "$1" | LC_ALL=C sed -e 's/[][\.*^$+?(){}|/]/\\&/g'
+}
+
+# exact_name_ids: 「ID 名前」の行から、名前がちょうど <name> のものの ID だけを出す。
+exact_name_ids() {
+  local want="$1" id names
+  while IFS=' ' read -r id names; do
+    if [ -n "$id" ] && [ "$names" = "$want" ]; then printf '%s\n' "$id"; fi
+  done
 }
 
 cmd_clean_docker() {
@@ -193,7 +219,10 @@ cmd_clean_docker() {
   local conn_err="Docker に接続できない（Docker Desktop が動いているか確かめる）"
 
   a="$("$docker" ps -a -q --filter "label=$DEV_DOCKER_LABEL")" || die "$conn_err"
-  b="$("$docker" ps -a -q --filter "name=^${DEV_DOCKER_CONTAINER}\$")" || die "$conn_err"
+  # name の filter は Docker 側で正規表現として照合される。特殊文字（名前に入りうる「.」など）を
+  # エスケープし、さらに名前がちょうど一致するものだけを残す（raft.game が raftXgame に当たらないように）。
+  b="$("$docker" ps -a --filter "name=^$(regex_quote "$DEV_DOCKER_CONTAINER")\$" --format '{{.ID}} {{.Names}}')" || die "$conn_err"
+  b="$(printf '%s\n' "$b" | exact_name_ids "$DEV_DOCKER_CONTAINER")"
   while IFS= read -r line; do
     if [ -n "$line" ]; then containers+=("$line"); fi
   done <<EOF

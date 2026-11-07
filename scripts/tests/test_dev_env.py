@@ -8,10 +8,12 @@
 
 import os
 import re
+import signal
 import stat
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -30,6 +32,9 @@ DROP_KEYS = (
     "FAKE_IMAGE",
     "FAKE_LOG",
     "FAKE_MODE",
+    "FAKE_CONTAINER",
+    "FAKE_SIMILAR",
+    "FAKE_PIDS",
 )
 
 TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
@@ -293,6 +298,103 @@ class DevDryRunTest(TempTree):
         self.assertIn("dev-env:", res.stderr)
 
 
+FAKE_PNPM = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    # 偽物の pnpm。PID を書いてから、長く眠る（exec なので PID は変わらない）。
+    echo "$$" >"$FAKE_PIDS/pnpm"
+    exec sleep 300
+    """
+)
+
+FAKE_GO = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    # 偽物の go。build -o <out> に、PID を書いて長く眠るサーバーを作る。
+    out=""
+    while [ $# -gt 0 ]; do
+      if [ "$1" = -o ]; then out="$2"; shift; fi
+      shift
+    done
+    printf '#!/usr/bin/env bash\\necho "$$" >"$FAKE_PIDS/server"\\nexec sleep 300\\n' >"$out"
+    chmod +x "$out"
+    """
+)
+
+
+def write_exe(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+class DevSignalTest(TempTree):
+    # D-13: SIGTERM で、スクリプトと裏で動くフロントエンド・Go の両方が数秒以内に終わる。
+    def start(self, *, go: bool, web: bool) -> tuple:
+        wt = self.tree("wt")
+        if web:
+            (wt / "web").mkdir()
+            (wt / "web" / "package.json").write_text("{}", encoding="utf-8")
+        if go:
+            (wt / "server" / "cmd" / "server").mkdir(parents=True)
+            (wt / "server" / "cmd" / "server" / "main.go").write_text("package main\n", encoding="utf-8")
+        bindir = self.tree("bin")
+        write_exe(bindir / "pnpm", FAKE_PNPM)
+        write_exe(bindir / "go", FAKE_GO)
+        pids = self.tree("pids")
+        env = clean_env(DEV_SLOT="3", PATH=f"{bindir}:/usr/bin:/bin", FAKE_PIDS=str(pids))
+        proc = subprocess.Popen(
+            ["bash", str(SCRIPT), "dev", "--path", str(wt)],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        return proc, pids
+
+    def wait_pids(self, pids: Path, names: list) -> list:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if all((pids / n).exists() and (pids / n).read_text().strip() for n in names):
+                return [int((pids / n).read_text()) for n in names]
+            time.sleep(0.05)
+        self.fail(f"子のプロセスが起動しない: {names}")
+
+    def check(self, *, go: bool, web: bool, names: list) -> None:
+        proc, pids = self.start(go=go, web=web)
+        children = self.wait_pids(pids, names)
+        for pid in children:
+            self.addCleanup(lambda p=pid: alive(p) and os.kill(p, signal.SIGKILL))
+        time.sleep(0.2)
+        proc.send_signal(signal.SIGTERM)
+        try:
+            rc = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("SIGTERM のあと 5 秒以内にスクリプトが終わらない")
+        self.assertEqual(rc, 143)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and any(alive(p) for p in children):
+            time.sleep(0.05)
+        for name, pid in zip(names, children):
+            self.assertFalse(alive(pid), f"{name}（PID {pid}）が残っている")
+
+    def test_web_only(self) -> None:
+        self.check(go=False, web=True, names=["pnpm"])
+
+    def test_go_and_web(self) -> None:
+        self.check(go=True, web=True, names=["pnpm", "server"])
+
+    def test_go_only(self) -> None:
+        self.check(go=True, web=False, names=["server"])
+
+
 FAKE_DOCKER = textwrap.dedent(
     """\
     #!/usr/bin/env bash
@@ -309,7 +411,11 @@ FAKE_DOCKER = textwrap.dedent(
         [ "$mode" = empty ] && exit 0
         case "$all" in
           *label=*) printf 'c1\\nc2\\n' ;;
-          *name=*) printf 'c2\\n' ;;
+          *name=*)
+            # 実物は name を正規表現として照合するので、似た名前（FAKE_SIMILAR）も返しうる。
+            printf 'c2 %s\\n' "$FAKE_CONTAINER"
+            for s in ${FAKE_SIMILAR:-}; do printf 'x-%s %s\\n' "$s" "$s"; done
+            ;;
         esac
         ;;
       images)
@@ -350,11 +456,13 @@ class CleanDockerTest(TempTree):
         self.docker = make_fake_docker(bindir)
         self.log = self.tmp / "docker.log"
 
-    def clean(self, *extra: str, mode: str = "", docker: str = "") -> subprocess.CompletedProcess:
+    def clean(self, *extra: str, mode: str = "", docker: str = "", similar: str = "") -> subprocess.CompletedProcess:
         env = clean_env(
             DOCKER=docker or str(self.docker),
             FAKE_LOG=str(self.log),
             FAKE_IMAGE=self.values["DEV_DOCKER_IMAGE"],
+            FAKE_CONTAINER=self.values["DEV_DOCKER_CONTAINER"],
+            FAKE_SIMILAR=similar,
             FAKE_MODE=mode,
         )
         return run(["clean-docker", "--path", str(self.wt), *extra], env=env)
@@ -373,7 +481,8 @@ class CleanDockerTest(TempTree):
                     if f.startswith("label="):
                         self.assertEqual(f, f"label=raft-game.worktree={real}")
                     elif f.startswith("name="):
-                        self.assertEqual(f, f"name=^raft-game-server-{slug}$")
+                        quoted = re.sub(r"([][\\.*^$+?(){}|/])", r"\\\1", f"raft-game-server-{slug}")
+                        self.assertEqual(f, f"name=^{quoted}$")
                     else:
                         self.fail(f"未知の filter: {f}")
 
@@ -425,6 +534,33 @@ class CleanDockerTest(TempTree):
     def test_rm_fails(self) -> None:
         res = self.clean(mode="rmfail")
         self.assertEqual(res.returncode, 1, res.stdout)
+
+    # D-12
+    def test_dot_in_name(self) -> None:
+        self.wt = self.tree("raft.game")
+        self.values = self.env_of(self.wt)
+        name = self.values["DEV_DOCKER_CONTAINER"]
+        self.assertIn(".", name)
+        similar = " ".join(
+            [name.replace(".", "X"), name + "-old", "other-" + name, name.replace(".", "\\.")]
+        )
+        for dry in (True, False):
+            with self.subTest(dry=dry):
+                if self.log.exists():
+                    self.log.unlink()
+                res = self.clean(*(["--dry-run"] if dry else []), similar=similar)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                calls = read_log(self.log)
+                self.assert_safe(calls)
+                names = [c[i + 1] for c in calls for i, a in enumerate(c) if a == "--filter" and c[i + 1].startswith("name=")]
+                self.assertEqual(len(names), 1, calls)
+                self.assertIn("raft\\.game", names[0])
+                self.assertNotIn("x-", res.stdout)
+                if dry:
+                    self.assertIn(f"+ {self.docker} rm -f c1 c2", res.stdout.splitlines())
+                else:
+                    rm = [c for c in calls if c[:1] == ["rm"]]
+                    self.assertEqual(rm, [["rm", "-f", "c1", "c2"]], calls)
 
     def test_without_dev_slot(self) -> None:
         # clean() の環境には DEV_SLOT がない（clean_env が消す）。
