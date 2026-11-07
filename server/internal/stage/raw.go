@@ -160,7 +160,18 @@ type rawDemoStorm struct {
 }
 
 type rawScoring struct {
-	Target *rawTarget `yaml:"target"`
+	Target                  *rawTarget `yaml:"target"`
+	Points                  *rawPoints `yaml:"points"`
+	FerryCostMsPerPoint     yInt       `yaml:"ferryCostMsPerPoint"`
+	FairnessPerSatisfaction yInt       `yaml:"fairnessPerSatisfaction"`
+}
+
+type rawPoints struct {
+	Normal         yInt `yaml:"normal"`
+	Critical       yInt `yaml:"critical"`
+	Late           yInt `yaml:"late"`
+	Rejected       yInt `yaml:"rejected"`
+	ExpiredPenalty yInt `yaml:"expiredPenalty"`
 }
 
 type rawTarget struct {
@@ -169,9 +180,12 @@ type rawTarget struct {
 }
 
 type rawSatisfaction struct {
-	Initial        yInt               `yaml:"initial"`
-	SilenceAfterMs yInt               `yaml:"silenceAfterMs"`
-	SilencePenalty *rawSilencePenalty `yaml:"silencePenalty"`
+	Initial         yInt               `yaml:"initial"`
+	SilenceAfterMs  yInt               `yaml:"silenceAfterMs"`
+	SilencePenalty  *rawSilencePenalty `yaml:"silencePenalty"`
+	Succeeded       yInt               `yaml:"succeeded"`
+	RejectedPenalty yInt               `yaml:"rejectedPenalty"`
+	ExpiredPenalty  yInt               `yaml:"expiredPenalty"`
 }
 
 type rawSilencePenalty struct {

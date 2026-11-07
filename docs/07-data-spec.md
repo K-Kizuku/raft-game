@@ -525,13 +525,19 @@ requests:
 
 events: []                      # 任意（省略は空）。Stage 1 ではイベントなし
 
-scoring:                        # 必須。いまは target だけ。配点のキー（04-game-design.md §5.1）は T-203 で足す
+scoring:                        # 必須（04-game-design.md §5.1・§5.3）。減点も正の数で書いて引く
   target: { successes: 4, score3: 900 }
+  points: { normal: 100, critical: 300, late: 30, rejected: 0, expiredPenalty: 50 }
+  ferryCostMsPerPoint: 2000     # 運航コスト = 1 回の航行ごとに ceil(航行時間[ms] ÷ この値) 点
+  fairnessPerSatisfaction: 5    # 公平ボーナス = この値 × 全島の満足度の最小値（ラウンドの終わりに 1 回）
 
-satisfaction:
+satisfaction:                   # 必須（04-game-design.md §5.2）
   initial: 60
   silenceAfterMs: 30000
   silencePenalty: { everyMs: 10000, amount: 2 }
+  succeeded: 10                 # その島の依頼が確定したら足す
+  rejectedPenalty: 3            # その島の依頼が予約失敗なら引く
+  expiredPenalty: 10            # その島の依頼が期限切れなら引く
 
 speed:                          # A-17
   allowed: [0.5, 1, 2, 4]       # 小数第 3 位まで。狭義の昇順で、1 を含む
@@ -679,13 +685,20 @@ demo:
 | `demo` | マッピング | 任意 | 下の「デモ」 |
 | `scoring.target.successes` | 整数 | 必須 | 1 以上 |
 | `scoring.target.score3` | 整数 | 必須 | 0 以上 |
+| `scoring.points` | マッピング | 必須 | — |
+| `scoring.points.normal`・`critical`・`late`・`rejected`・`expiredPenalty` | 整数 | 必須 | 0 以上（この順に検査） |
+| `scoring.ferryCostMsPerPoint` | 整数 | 必須 | 1 以上 |
+| `scoring.fairnessPerSatisfaction` | 整数 | 必須 | 0 以上 |
 | `satisfaction.initial` | 整数 | 必須 | 0 以上 100 以下 |
 | `satisfaction.silenceAfterMs` | 整数 | 必須 | 1 以上 |
 | `satisfaction.silencePenalty.everyMs` | 整数 | 必須 | 1 以上 |
 | `satisfaction.silencePenalty.amount` | 整数 | 必須 | 0 以上 |
+| `satisfaction.succeeded`・`rejectedPenalty`・`expiredPenalty` | 整数 | 必須 | 0 以上 100 以下（この順に検査） |
 | `speed.allowed` | 小数の列 | 必須 | 1 個以上（`speed.allowed`）。各要素が 0 より大きい（`speed.allowed[i]`）。狭義の昇順（崩れた要素の `speed.allowed[i]`）。`1` を含む（`speed.allowed`） |
 
-`scoring`・`scoring.target`・`satisfaction`・`satisfaction.silencePenalty`・`speed`・`requests.deadlineMs` のマッピング自体も必須です（書いていなければ、そのマッピングの `Path` で 1 件）。
+`scoring`・`scoring.target`・`scoring.points`・`satisfaction`・`satisfaction.silencePenalty`・`speed`・`requests.deadlineMs` のマッピング自体も必須です（書いていなければ、そのマッピングの `Path` で 1 件）。`scoring.target`・`scoring.points` のどちらかがなくても、兄弟の欄（`scoring.points`・`ferryCostMsPerPoint` など）の検査は続けます。`satisfaction.silencePenalty` がなくても、`satisfaction.succeeded` 以下の検査は続けます。
+
+**設計書にない判断（T-203、D-12 の案 A）**: 採点と満足度の数値（配点・係数・増減）は、共通のファイルではなく、ステージごとの YAML の `scoring`・`satisfaction` に書きます。どれも必須で、既定値を持ちません。
 
 #### イベント（`events[i]`）
 
@@ -759,7 +772,7 @@ ferries:
 | `Parse(name, data, islands)` | 1 つのステージ定義を読んで検証し（§5.4）、重み（§4.1）・警告・ハッシュを計算する。I/O をしない純粋な関数 |
 | `LoadDir(fsys, islandsPath, stagesDir)` | `io/fs.FS` から `islands.json` とディレクトリの直下の `*.yaml` を読み、ファイルをまたぐ検査（§5.4）をする。ステージはファイルの名前の順。呼び出し側が `os.DirFS` か `embed.FS` を渡す |
 | `Weights(values)` | 整数の最大剰余法で、合計 1000 の千分率の重みを計算する（§4.1） |
-| `SimConfig(st)` | 検証済みの `Stage` から `sim.New` に渡す `sim.Config` を作る。`raft.checkQuorum`・`raft.preVote` が `false` なら誤り（`cluster` は常に `true`。ADR-0007）。`relayCap`（P1）・依頼（T-202 が足す）・イベント・スコアなどは使わない |
+| `SimConfig(st)` | 検証済みの `Stage` から `sim.New` に渡す `sim.Config` を作る。`raft.checkQuorum`・`raft.preVote` が `false` なら誤り（`cluster` は常に `true`。ADR-0007）。`relayCap`（P1）は使わない。`scoring.*`・`satisfaction.*` は `Score`（`game.ScoreConfig`）に入れる。`events` の扱いは §5.3 |
 
 エラーは、ファイルごとの `*stage.Error`（ファイル名と、`Path`・説明の一覧）です。`LoadDir` は複数のファイルのエラーを `errors.Join` でまとめて返します。
 

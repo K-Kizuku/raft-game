@@ -383,6 +383,11 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 - `from`・`to` は `sailing` のときだけ。`departAt`・`arriveAt` は `docked` のとき `0`
 - `readyAt` は、`docked` なら出航できるようになる時刻、`sailing` なら着いてから出航できる時刻（`arriveAt + dockMs`）
 
+`islandsState[]`・`score` の注記（T-203）:
+
+- `islandsState` は全島を ID の順に並べる。`satisfaction` は 0〜100、`lastDeliveredAt` は最後にその島宛ての手紙が配達された時刻で、最初は `0`（開会式で全島に配達したものとして数える）
+- `score.target` はステージ定義の `scoring.target.successes`。`criticalSecured` は確定した重要な資源の ID を、資源の定義の順に並べる（空なら `[]`）
+
 ### 5.2 Letter
 
 ```json
@@ -473,6 +478,10 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 `finalLogs[].terms` は `[term, 最初の index, 最後の index]` の配列で、ログを Term ごとの帯として描くのに使います。
 
+- `score`・`stars`・`stats.succeeded`・`stats.rejected`・`stats.expired` は T-203 が作ります。ほかの `stats`（`lettersDelivered`・`leaderChanges`・`avgCommitLatencyMs`・`longestSilenceMs`・`finalLogs`）と `story` は T-208 が足します
+- `breakdown.expired`・`breakdown.ferryCost` は 0 以下（負の数）で、`requests + expired + ferryCost + fairness` が `total` と等しくなります
+- `stats.succeeded` は期限を過ぎてから確定したものを含みます。`stats.expired` は期限切れのフラグが立った依頼の数で、その後に確定・予約失敗したものも含みます
+
 ---
 
 ## 6. イベント（`events.events[]`）
@@ -498,8 +507,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `request.created` | `request`（Request 全体。`status` は `received`） | 依頼の発生 |
 | `request.updated` | `id`, `status`, `expired`, `result`（§5.3） | 状態の変化（同じステップ内の変化はまとめる） |
 | `ledger.applied` | `islandId`, `index`, `reqId`, `result`（`ok` / `rejected` / `duplicate`）, `reason`（`rejected` のときだけ） | 台帳への適用（エンジニアモード・トレース用） |
-| `island.updated` | `id`, `satisfaction`, `lastDeliveredAt` | 満足度の変化 |
-| `score.updated` | `total`, `successes`, `criticalSecured` | スコアの変化 |
+| `island.updated` | `id`, `satisfaction`, `lastDeliveredAt` | 満足度か最後の配達の時刻の変化（同じステップ内の変化はまとめる） |
+| `score.updated` | `total`, `successes`, `criticalSecured` | スコアの変化（同じステップ内の変化はまとめる）。`criticalSecured` は資源の定義の順。ラウンドの終わりの公平ボーナスは `phase.changed{ended}` の前に出す |
 | `notice` | `islandId`, `key`, `params` | 島のキャラクターの通知。文言はクライアントが `key` から組み立てる |
 
 `node.stepped_down.reason` はゲーム側の推定です（`etcd-io/raft` は理由を外部に出さないため、直前に受け取ったメッセージの Term などから判定します）。

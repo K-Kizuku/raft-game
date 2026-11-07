@@ -212,10 +212,17 @@ type DemoStorm struct {
 	Flavor     *Text
 }
 
-// Scoring は目標（配点のキーは T-203 で足す）。
+// Scoring は採点の設定（データ仕様 §5.2 の scoring）。
 type Scoring struct {
-	TargetSuccesses int64 // scoring.target.successes
-	TargetScore3    int64 // scoring.target.score3
+	TargetSuccesses         int64 // scoring.target.successes
+	TargetScore3            int64 // scoring.target.score3
+	PointsNormal            int64 // scoring.points.normal
+	PointsCritical          int64 // scoring.points.critical
+	PointsLate              int64 // scoring.points.late
+	PointsRejected          int64 // scoring.points.rejected
+	PointsExpiredPenalty    int64 // scoring.points.expiredPenalty（引く点）
+	FerryCostMsPerPoint     int64 // scoring.ferryCostMsPerPoint
+	FairnessPerSatisfaction int64 // scoring.fairnessPerSatisfaction
 }
 
 // Satisfaction は満足度の設定。
@@ -224,6 +231,9 @@ type Satisfaction struct {
 	SilenceAfterMs        int64
 	SilencePenaltyEveryMs int64
 	SilencePenaltyAmount  int64
+	Succeeded             int64 // satisfaction.succeeded
+	RejectedPenalty       int64 // satisfaction.rejectedPenalty（引く値）
+	ExpiredPenalty        int64 // satisfaction.expiredPenalty（引く値）
 }
 
 // Issue は 1 つの誤り（または警告）。
