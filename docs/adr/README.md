@@ -38,6 +38,7 @@
 | [0019](./0019-parallel-local-development.md) | AI エージェントの並列開発のため、ローカル環境を作業ディレクトリ単位で分ける | Accepted | 容易 |
 | [0020](./0020-public-repository-apache-license.md) | リポジトリを公開し、ライセンスは Apache-2.0 にする | Accepted | 中 |
 | [0021](./0021-hootl-agent-development.md) | AI エージェントの開発は、ローカル PC の Codex CLI と Claude Code で行い、Rulesets・必須のチェック・hooks で強制する | Accepted | 中 |
+| [0022](./0022-yaml-library.md) | YAML の読み込みに `go.yaml.in/yaml/v3` を使い、未知のキーを拒否する | Proposed | 容易 |
 
 ## 判断を差し替える手順
 
