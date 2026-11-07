@@ -90,6 +90,7 @@ type Engine struct {
 	storms  stormBook   // 嵐の帳簿（storm.go）
 	reqs    requestBook // 依頼の帳簿（request.go）
 	score   scoreBook   // 採点の帳簿（score.go）
+	stats   statsBook   // 統計と「今日の出来事」の帳簿（stats.go）
 
 	phase   Phase
 	opening cluster.OpeningResult
@@ -185,6 +186,7 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	if err := e.initScore(); err != nil {
 		return nil, err
 	}
+	e.initStats()
 	res, err := cluster.Opening(e.nodes, cfg.InitialLeader)
 	if err != nil {
 		return nil, fmt.Errorf("sim: %w", err)
@@ -350,6 +352,7 @@ func (e *Engine) emit(d EventData) {
 	ev := DomainEvent{Seq: e.seq, T: e.Now(), Type: d.EventType(), Data: d}
 	e.pending = append(e.pending, ev)
 	e.trace.write(ev)
+	e.observeStats(ev)
 }
 
 func (e *Engine) emitDrops(drops []ferry.Drop) {
