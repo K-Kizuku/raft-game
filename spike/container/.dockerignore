@@ -1,0 +1,10 @@
+# ビルドに要るのは go.mod・go.sum と *.go（テストを除く）だけ
+*
+!go.mod
+!go.sum
+!*.go
+!loadmodel/
+loadmodel/*
+!loadmodel/*.go
+*_test.go
+loadmodel/*_test.go

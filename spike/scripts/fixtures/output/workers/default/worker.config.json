@@ -1,0 +1,60 @@
+{
+  "name": "raft-game-spike",
+  "compatibilityDate": "2026-11-04",
+  "limits": {
+    "cpuMs": 50
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "headSamplingRate": 1
+    }
+  },
+  "workersDev": true,
+  "previewUrls": false,
+  "env": {
+    "SESSIONS": {
+      "type": "durable-object",
+      "worker": "raft-game-spike",
+      "exportName": "SpikeSession"
+    },
+    "PLAIN": {
+      "type": "durable-object",
+      "worker": "raft-game-spike",
+      "exportName": "PlainStore"
+    },
+    "CONTROL": {
+      "type": "durable-object",
+      "worker": "raft-game-spike",
+      "exportName": "ControlStore"
+    },
+    "SPIKE_MAX_SESSIONS": {
+      "type": "text",
+      "value": "30"
+    },
+    "SPIKE_TOKEN": {
+      "type": "secret"
+    }
+  },
+  "exports": {
+    "SpikeSession": {
+      "type": "durable-object",
+      "storage": "sqlite",
+      "container": "raft-game-spike-server"
+    },
+    "PlainStore": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "ControlStore": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "manifest": {
+    "type": "partial",
+    "mainModule": "index.js",
+    "modules": {}
+  }
+}

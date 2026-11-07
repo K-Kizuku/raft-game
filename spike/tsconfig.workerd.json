@@ -1,0 +1,10 @@
+{
+  "//": "cf workers types が生成した本物の型（.cloudflare/types/index.d.ts）で worker/ を検査する。先に cf workers types を実行する",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["worker/**/*.ts", ".cloudflare/types/index.d.ts"],
+  "exclude": ["worker/**/*.test.ts", "worker/test-sqlite.ts", "worker/test-fakes.ts","worker/cloudflare-workers.d.ts"]
+}
