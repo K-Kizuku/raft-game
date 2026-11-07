@@ -358,6 +358,11 @@ cp -R "$src_root/.claude/agents" "$repo/.claude/agents"
 cp "$src_root/.claude/settings.json" "$repo/.claude/settings.json"
 cp -R "$src_root/.claude/hooks" "$repo/.claude/hooks"
 rm -rf "$repo/.claude/hooks/tests"
+# settings.json は hooks を（bash を通さず）直接実行するので、実行のビットがないと拒否が効かない
+for g in guard-bash.sh guard-write.sh guard-mcp.sh; do
+  check "hooks: .claude/hooks/$g に実行のビットがある（Git でも 100755）" \
+    test -x "$src_root/.claude/hooks/$g" -a "$(git -C "$src_root" ls-files -s ".claude/hooks/$g" | awk '{ print $1 }')" = 100755
+done
 printf 'a\n' >"$repo/a.txt"
 (
   cd "$repo"
@@ -1238,6 +1243,14 @@ case "$1 $2" in
     fi
     ;;
   "issue view")
+    # gh issue view <n> --json updatedAt -q .updatedAt（判定の目印。issue-rc-<n> があれば失敗する）
+    case " $* " in
+      *" updatedAt "*)
+        [ ! -f "$TRAIN_DIR/issue-rc-$n" ] || exit "$(cat "$TRAIN_DIR/issue-rc-$n")"
+        cat "$TRAIN_DIR/issue-updated-$n" 2>/dev/null || echo "2026-11-07T00:00:00Z"
+        exit 0
+        ;;
+    esac
     # gh issue view <n> --json labels -q '.labels[].name'
     [ ! -f "$TRAIN_DIR/labels-rc-$n" ] || exit "$(cat "$TRAIN_DIR/labels-rc-$n")"
     cat "$TRAIN_DIR/labels-$n" 2>/dev/null || true
@@ -1289,12 +1302,13 @@ train_reset() {
   : >"$FAKE_LOG/review.log"
   : >"$FAKE_LOG/spawn.log"
 }
-# mkgate <PR> <verdict> <C2> <C6> <C7> <C9> <C10> [closed]: 偽の gate の結果を置く
+# mkgate <PR> <verdict> <C2> <C6> <C7> <C9> <C10> [closed] [C12] [head]: 偽の gate の結果を置く
 mkgate() {
   jq -n --argjson pr "$1" --arg v "$2" --arg c2 "$3" --arg c6 "$4" --arg c7 "$5" --arg c9 "$6" --arg c10 "$7" \
-    --argjson closed "${8:-false}" '{verdict:$v, repo:"K-Kizuku/raft-game", pr:$pr, head_sha:"h\($pr)", closed:$closed,
+    --argjson closed "${8:-false}" --arg c12 "${9:-pass}" --arg h "${10:-h$1}" \
+    '{verdict:$v, repo:"K-Kizuku/raft-game", pr:$pr, head_sha:$h, closed:$closed,
     results:[{id:"C1",status:"pass"},{id:"C2",status:$c2},{id:"C4",status:"pass"},{id:"C6",status:$c6},
-      {id:"C7",status:$c7},{id:"C9",status:$c9},{id:"C10",status:$c10}]}' >"$TRAIN_DIR/gate-$1.json"
+      {id:"C7",status:$c7},{id:"C9",status:$c9},{id:"C10",status:$c10},{id:"C12",status:$c12}]}' >"$TRAIN_DIR/gate-$1.json"
 }
 mkprs() { # mkprs <PR:ブランチ>…
   local a out="[]"
@@ -1628,6 +1642,64 @@ echo 1 >"$TRAIN_DIR/comments-71"
 train 1
 check "train（不具合 3）: approve の記録のコメントが付いたら（コメントの数が変わったら）判定し直す" test "$(gate_calls 71)" = 2
 check "train（不具合 3）: 判定し直した結果でマージする" test "$(cat "$FAKE_LOG/merge.log")" = "71"
+
+# ---- Issue の更新時刻が変わったら判定し直す（Issue の側だけで AC・変更予定ファイルを直したとき）----
+train_reset
+mkprs "72:agent/issue-172"
+mkgate 72 fail fail pass pass pass pass
+train 2
+check "train: 目印（Issue の更新時刻を含む）が同じなら gate を呼ばない" test "$(gate_calls 72)" = 1
+check "train: Issue の更新時刻を gh issue view --json updatedAt で読む" \
+  log_has gh '.args == ["issue","view","172","--repo","K-Kizuku/raft-game","--json","updatedAt","-q",".updatedAt"]'
+mkgate 72 pass pass pass pass pass pass
+echo "2026-11-07T01:00:00Z" >"$TRAIN_DIR/issue-updated-172"
+train 1
+check "train: Issue の更新時刻が変わったら、PR と main が同じでも判定し直す" test "$(gate_calls 72)" = 2
+check "train: Issue を直して判定し直した結果でマージする" test "$(cat "$FAKE_LOG/merge.log")" = "72"
+# Issue を読めなければ、その周はその PR に何もしない
+train_reset
+mkprs "73:agent/issue-173"
+mkgate 73 pass pass pass pass pass pass
+echo 1 >"$TRAIN_DIR/issue-rc-173"
+train 1
+check "train: Issue を読めなければ判定しない・マージしない" test "$(gate_calls 73)" = 0 -a ! -s "$FAKE_LOG/merge.log"
+check "train: Issue を読めないことを出す" grep -q "PR #73: Issue #173 を読めない（次の周で試す）" "$tmp/err"
+
+# ---- C6 が pass で C12 が fail（保護されたパスの確認の記録が足りない）→ HEAD ごとに 1 回だけ review.sh ----
+train_reset
+mkprs "74:agent/issue-174"
+mkgate 74 fail pass pass pass pass pass false fail
+train 1
+wait_reviews
+check "train: C6 が pass で C12 が fail なら review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "74"
+check "train: C12 でレビューを依頼したことを出す" grep -q "PR #74: 保護されたパスの確認の記録が足りない（C12）" "$tmp/err"
+# 同じ HEAD でレビューのあとも C12 が fail（記録が付いても通らない）なら、もう依頼せずに止まった
+echo 1 >"$TRAIN_DIR/comments-74"
+train 2
+wait_reviews
+check "train: 同じ HEAD で C12 のレビューを 2 回は依頼しない" test "$(count_lines "$FAKE_LOG/review.log")" = 1
+check "train: レビューのあとも C12 が fail なら止まった" grep -q "PR #74: 止まった.*C12" "$tmp/err"
+check "train: C12 で止まった PR は、目印が同じ間は止まったまま" grep -q "PR #74: 止まったまま" "$tmp/err"
+# HEAD が変わったら（修正）、また 1 回だけ依頼する
+echo h74b >"$TRAIN_DIR/head-74"
+mkgate 74 fail pass pass pass pass pass false fail h74b
+train 1
+wait_reviews
+check "train: HEAD が変わったら C12 のレビューをもう一度依頼する" test "$(count_lines "$FAKE_LOG/review.log")" = 2
+# review.sh が動いている間は、止まった扱いにせず 2 つ目も起動しない
+train_reset
+mkprs "75:agent/issue-175"
+mkgate 75 fail pass pass pass pass pass false fail
+train 2 FAKE_REVIEW_SLEEP=2
+check "train: C12 のレビューが動いている間は止まった扱いにしない" test "$(grep -c "PR #75: 止まった" "$tmp/err" || true)" = 0
+wait_reviews
+check "train: C12 のレビューが動いている間は 2 つ目を起動しない" test "$(count_lines "$FAKE_LOG/review.log")" = 1
+# C12 が fail でも C10 が fail なら update-branch を先にする
+train_reset
+mkprs "76:agent/issue-176"
+mkgate 76 fail pass pass pass pass fail false fail
+train 1
+check "train: C12 が fail でも C10 が fail ならレビューを依頼しない" test ! -s "$FAKE_LOG/review.log" -a "$(update_calls 76)" = 1
 
 # ---- 不具合 4: merge.sh がマージの後の処理で 0 以外を返しても、マージ済みなら列から外す ----
 train_reset

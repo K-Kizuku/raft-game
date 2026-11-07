@@ -16,13 +16,16 @@
 #   1. 前から順に Merge Gate（agentctl gate）を判定し、pass の最初の 1 つを、Issue を ready-to-merge に
 #      してから merge.sh でマージする。マージしたら、メインの作業ツリーで git pull --ff-only を実行する
 #      （.agents/config.json などの変更を、ほかの道具の判定にすぐ反映するため）。
-#      PR の HEAD・更新時刻・コメントの数・チェックの状態と main の HEAD が前の周と同じなら、前の判定を使う
+#      PR の HEAD・更新時刻・コメントの数・チェックの状態と、Issue の更新時刻と main の HEAD が前の周と同じなら、
+#      前の判定を使う（Issue の AC・変更予定ファイルだけを直したときも判定し直すため）
 #      （一時的な pending＝C9 の mergeable の未計算を含む判定は 2 周まで。過ぎたら判定し直す）
 #   2. 残りを 1 歩ずつ進める
 #      C10 が fail → main の取り込み（PUT pulls/<PR>/update-branch。HTTP 422 の merge conflict は「止まった」、
 #      それ以外の失敗＝通信・5xx・API の上限などは次の周で試す）
 #      C9 が fail →「止まった」。C6 が fail か、C6 が pass で C7 が fail →「止まった」
 #      C6 が pass でなく C10 が pass → review.sh をバックグラウンドで起動（PR ごとに 1 つまで）
+#      C6 が pass で C12 が fail、C10 が pass → 保護されたパスの確認の記録が足りないので、review.sh を
+#      HEAD ごとに 1 回だけ起動する（そのレビューのあとも C12 が fail なら「止まった」）
 #      C2 が fail で ci-ok が pass → 本文の「- [ ] AC-n: CI（`ci-ok`）が通る」の行だけを [x] にする
 # - 判定できない（gate の結果が空・不正）ときは、その周はその PR に何もしない
 # - マージ済み・閉じた PR は列から外す。止まった PR は、新しい PR か修正（判定の目印が変わる）を待つ
@@ -250,7 +253,7 @@ pr_gone() {
 # advance <PR> <gate の JSON> <本文のファイル> <目印>: 1 歩だけ進める
 advance() {
   local pr="$1" g="$2" body_file="$3" key="$4"
-  local c2 c6 c7 c9 c10 ci out
+  local c2 c6 c7 c9 c10 c12 ci out head
   if [ -f "$state_dir/stopped-$pr" ] && [ "$(cat "$state_dir/stopped-$pr")" = "$key" ]; then
     log "PR #${pr}: 止まったまま（判定の目印が変わるのを待つ）"
     return 0
@@ -261,6 +264,7 @@ advance() {
   c7="$(status_of "$g" C7)"
   c9="$(status_of "$g" C9)"
   c10="$(status_of "$g" C10)"
+  c12="$(status_of "$g" C12)"
   if [ "$c10" = fail ]; then
     if gh api -X PUT "repos/$repo/pulls/$pr/update-branch" >"$state_dir/update-$pr.err" 2>&1; then
       log "PR #${pr}: ${default_branch} の取り込みを依頼した（update-branch）。次の周で判定し直す"
@@ -286,6 +290,20 @@ advance() {
   fi
   if [ "$c6" != pass ] && [ "$c10" = pass ]; then
     start_review "$pr"
+  elif [ "$c6" = pass ] && [ "$c12" = fail ] && [ "$c10" = pass ]; then
+    # 最新の記録（Codex の GitHub 連携など）が保護されたパスの確認（protected_paths_ack）を持たない。
+    # review.sh は保護されたパスの変更があれば確認の記録も出すので、HEAD ごとに 1 回だけ依頼する
+    head="$(printf '%s' "$g" | jq -r '.head_sha // ""' 2>/dev/null || true)"
+    if review_running "$pr"; then
+      log "PR #${pr}: review.sh が動いている（2 つ目は起動しない）"
+    elif [ -n "$head" ] && [ "$(cat "$state_dir/review-c12-$pr" 2>/dev/null || true)" = "$head" ]; then
+      stop_pr "$pr" "$key" "保護されたパスの確認（C12）が、レビューを依頼したあとも通らない"
+      return 0
+    else
+      [ -z "$head" ] || printf '%s\n' "$head" >"$state_dir/review-c12-$pr"
+      log "PR #${pr}: 保護されたパスの確認の記録が足りない（C12）ので、レビューを依頼する"
+      start_review "$pr"
+    fi
   fi
   if [ "$c2" = fail ]; then
     ci="$(pr_checks "$pr" | jq -r '[.[] | select(.name == "ci-ok") | .bucket] | first // ""' 2>/dev/null || true)"
@@ -304,20 +322,25 @@ advance() {
   return 0
 }
 
-# evaluate <PR>: 判定する（使い回せれば使い回す）。結果を ${gate}・${key}、本文を ${state_dir}/body-<PR> に置く。
+# evaluate <PR> <Issue>: 判定する（使い回せれば使い回す）。結果を ${gate}・${key}、本文を ${state_dir}/body-<PR> に置く。
 # 判定できなければ 1
 evaluate() {
-  local pr="$1" info mh new_key cache_key out rc uses
+  local pr="$1" issue="$2" info iu mh new_key cache_key out rc uses
   # 目印は GraphQL の 1 回（gh pr view）と git ls-remote で作る
   info="$(gh pr view "$pr" --repo "$repo" --json number,state,headRefOid,updatedAt,comments,statusCheckRollup,body 2>/dev/null)" || {
     log "PR #${pr}: gh pr view に失敗した（次の周で試す）"
     return 1
   }
   printf '%s' "$info" | jq -j '.body // ""' >"$state_dir/body-$pr" 2>/dev/null || return 1
+  # Issue の更新時刻（AC・変更予定ファイルを Issue の側だけで直したときも判定し直す）
+  iu="$(gh issue view "$issue" --repo "$repo" --json updatedAt -q .updatedAt 2>/dev/null)" || {
+    log "PR #${pr}: Issue #${issue} を読めない（次の周で試す）"
+    return 1
+  }
   mh="$(main_head)"
-  new_key="$(printf '%s' "$info" | jq -r --arg m "$mh" '
+  new_key="$(printf '%s' "$info" | jq -r --arg m "$mh" --arg iu "$iu" '
     ([.statusCheckRollup // [] | .[] | "\(.name // .context // "")=\(.conclusion // .state // .status // "")"] | sort | join(",")) as $c
-    | "head=\(.headRefOid // "") updated=\(.updatedAt // "") comments=\(.comments // [] | length) checks=\($c) main=\($m)"' 2>/dev/null)" ||
+    | "head=\(.headRefOid // "") updated=\(.updatedAt // "") comments=\(.comments // [] | length) checks=\($c) issue=\($iu) main=\($m)"' 2>/dev/null)" ||
     return 1
   key="$new_key"
   cache_key="$(cat "$state_dir/gate-$pr.key" 2>/dev/null || true)"
@@ -383,7 +406,7 @@ one_cycle() {
     fi
     mark_in_review "$pr" "$issue"
     gate="" key=""
-    evaluate "$pr" || continue
+    evaluate "$pr" "$issue" || continue
     if [ "$(printf '%s' "$gate" | jq -r '.closed // false')" = true ]; then
       log "PR #${pr}: マージ済みか閉じているので列から外す"
       done_prs="$done_prs$pr "

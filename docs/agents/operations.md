@@ -163,10 +163,11 @@ scripts/agents/autospawn.sh
 | C9 が fail | 「止まった」（コンフリクト） |
 | C6 が fail、または C6 が pass で C7 が fail | 「止まった」（`request_changes`・重大な指摘） |
 | C6 が pass でなく、C10 が pass | `review.sh` をバックグラウンドで起動する（PR ごとに 1 つまで。`.agents/run/train/review-<PR>.pid` で判定し、終わっていれば起動し直す） |
+| C6 が pass で C12 が fail、C10 が pass | 保護されたパスの確認の記録（`protected_paths_ack`）が足りない（最新の記録が Codex の GitHub 連携など）。`review.sh` を HEAD ごとに 1 回だけバックグラウンドで起動する（`.agents/run/train/review-c12-<PR>` に HEAD を記録する）。そのレビューのあとも C12 が fail なら「止まった」 |
 | C2 が fail で、`ci-ok` が pass | 本文の `` - [ ] AC-n: CI（`ci-ok`）が通る `` の行だけを `[x]` にする（行の末尾の「（…結果待ち）」は外す） |
 
 - 止まった PR は、ログに理由を出して、新しい PR か修正を待つ（終わらない）。Orchestrator が「指摘・CI の失敗・Conflict への対応」で直す
-- 判定の使い回し: PR の HEAD・更新時刻・コメントの数・チェックの状態と、main の HEAD が前の周と同じなら、前の判定を使う（`agentctl gate` は引き継ぎの判定で REST の API を 10 回以上呼ぶため）。ただし、目印に表れない一時的な pending（C9 の `mergeable` の未計算）を含む判定は 2 周まで使い、過ぎたら判定し直す
+- 判定の使い回し: PR の HEAD・更新時刻・コメントの数・チェックの状態と、Issue の更新時刻と main の HEAD が前の周と同じなら、前の判定を使う（`agentctl gate` は引き継ぎの判定で REST の API を 10 回以上呼ぶため。Issue の更新時刻は、Issue の側だけで AC・変更予定ファイルを直したときに判定し直すため。Issue を読めなければ、その周はその PR に何もしない）。ただし、目印に表れない一時的な pending（C9 の `mergeable` の未計算）を含む判定は 2 周まで使い、過ぎたら判定し直す
 - `agentctl gate` の結果が空・不正（API の上限など）のときは、その周はその PR に何もしない。`gh` が失敗しても止まらず、次の周で試す。`gh api rate_limit` の残りが 300 未満なら、戻る時刻まで休む
 - マージ済み・閉じた PR は列から外す（`merge.sh` がマージの後の処理で 0 以外を返したときも）
 
