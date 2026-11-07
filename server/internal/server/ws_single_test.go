@@ -50,6 +50,7 @@ func TestSingleInitSnapshot(t *testing.T) {
 			t.Errorf("islands[%d] = %+v", i, is)
 		}
 	}
+	assertSnapshotIslands(t, env.Payload) // SV-3
 	if got := mustJSON(t, snap.Stage.Routes); got !=
 		`[{"id":"1-2","a":1,"b":2,"travelMs":1500,"provenance":"derived"},{"id":"2-3","a":2,"b":3,"travelMs":4000,"provenance":"creative"}]` {
 		t.Errorf("routes = %s", got)
