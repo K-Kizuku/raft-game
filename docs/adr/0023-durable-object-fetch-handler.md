@@ -1,8 +1,8 @@
 # ADR-0023: Durable Object は `fetch` のハンドラーで呼び、`cloudflare:workers`・RPC を使わない
 
-- 状態: Proposed
+- 状態: Accepted（2026-11-08 に #132 でプロダクトオーナーが承認）
 - 日付: 2026-11-07
-- 決めた人: 実装エージェント（T-309、#45）。プロダクトオーナーのレビュー待ち
+- 決めた人: 実装エージェント（T-309、#45）。2026-11-08 に #132 でプロダクトオーナーが承認
 - 関連: FR-COST-01・06・07、NFR-15、[ADR-0016](./0016-infrastructure-cloudflare-with-cf-cli.md)、[ADR-0018](./0018-cost-guard.md)、[DesignDoc §12.3.1](../03-design-doc.md)、[プロトコル §2](../06-protocol.md)
 
 ## 背景
