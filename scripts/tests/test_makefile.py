@@ -21,9 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 TARGETS = ["test", "lint", "dev", "dev-env", "clean-docker", "gen", "sync-data", "demo-local", "help"]
 
-UNIMPLEMENTED = {
-    "demo-local": "T-504",
-}
+UNIMPLEMENTED: dict = {}
 
 SKELETON_DIRS = [
     "server/cmd",
@@ -147,6 +145,13 @@ class MakefileTest(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("DEV_WEB_PORT=15193", res.stdout)
         self.assertIn("DEV_SERVER_PORT=18100", res.stdout)
+
+    # MK-1（T-504）: make demo-local DRY_RUN=1 は Go（デモ操作あり）と Vite の起動を表示する。
+    def test_demo_local_dry_run(self) -> None:
+        res = make("demo-local", "DRY_RUN=1", "CHECK=", "DEMO_DATA_DIR=server/internal/server/testdata")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("DEMO_CONTROLS=1", res.stdout)
+        self.assertIn("DEV_BACKEND=standalone", res.stdout)
 
     # M-4
     def test_clean_docker_dry_run(self) -> None:

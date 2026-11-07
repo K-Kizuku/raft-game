@@ -141,8 +141,8 @@ dev-env: ## この作業ツリーの DEV_SLOT・ポート・cf の状態・Docke
 clean-docker: ## この作業ツリーの Docker のコンテナとイメージを消す（DRY_RUN=1 で表示だけ）
 	@bash scripts/dev-env.sh clean-docker $(if $(DRY_RUN),--dry-run)
 
-demo-local: ## デモの保険（ノート PC で起動する）（T-504）
-	@echo "demo-local: デモの保険（ノート PC で起動する）。未実装（T-504）"
+demo-local: ## デモの保険: ノート PC で Go（standalone・デモ操作あり）と Vite を起動する（CHECK=1 で準備の確認、DRY_RUN=1 で表示だけ）（T-504）
+	@bash scripts/demo-local.sh $(if $(CHECK),--check) $(if $(DRY_RUN),--dry-run) $(if $(DEMO_DATA_DIR),--data "$(DEMO_DATA_DIR)")
 
 .PHONY: check-secrets check-license
 
