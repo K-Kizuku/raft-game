@@ -4,6 +4,9 @@
 //	              [--json] [--set-status] [--comment] [--target-url URL]
 //	agentctl review validate [--config PATH] <file|->
 //	agentctl review render   [--config PATH] <file|->
+//	agentctl comment --repo OWNER/NAME --pr N (--body TEXT | --body-file FILE|-)
+//	agentctl pr view         --repo OWNER/NAME --pr N
+//	agentctl pr codex-record --repo OWNER/NAME --pr N [--sha SHA] [--previous FILE] [--input view.json]
 //	agentctl plan    [--input snapshot.json] [--json | --mermaid]
 //	agentctl state   <issue> <status> [--reason TEXT] [--pr N] [--cause KEY]
 //	agentctl claim   <issue> --worker ID [--session UUID] [--resume]
@@ -73,6 +76,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runAttempt(args[1:], stdout, stderr)
 	case "recover":
 		return runRecover(args[1:], stdout, stderr)
+	case "comment":
+		return runComment(args[1:], stdin, stdout, stderr)
+	case "pr":
+		return runPR(args[1:], stdout, stderr)
 	case "review":
 		if len(args) < 2 {
 			fmt.Fprint(stderr, usage)
@@ -85,10 +92,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return runReview(args[2:], stdin, stdout, stderr, true)
 		}
 	case "-h", "--help", "help":
-		fmt.Fprint(stdout, usage+taskUsage)
+		fmt.Fprint(stdout, usage+prUsage+taskUsage)
 		return exitOK
 	}
-	fmt.Fprintf(stderr, "agentctl: 未知のコマンド %q\n%s%s", strings.Join(args, " "), usage, taskUsage)
+	fmt.Fprintf(stderr, "agentctl: 未知のコマンド %q\n%s%s%s", strings.Join(args, " "), usage, prUsage, taskUsage)
 	return exitInternal
 }
 

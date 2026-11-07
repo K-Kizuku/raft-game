@@ -43,6 +43,8 @@ type Review struct {
 	FallbackReasons    []string `json:"fallback_reasons"`
 	BlockingSeverities []string `json:"blocking_severities"`
 	TrustedAuthors     []string `json:"trusted_authors"`
+	// CodexBotAuthors は、Codex の GitHub 連携の結果（要約のコメント・行コメント）として信頼する作者（Issue #82）。
+	CodexBotAuthors []string `json:"codex_bot_authors"`
 }
 
 // Config は `.agents/config.json` の内容。
@@ -172,6 +174,14 @@ func (c *Config) Validate() error {
 			add("review.trusted_authors に空の値がある")
 		}
 	}
+	if len(r.CodexBotAuthors) == 0 {
+		add("review.codex_bot_authors は 1 件以上にする")
+	}
+	for _, a := range r.CodexBotAuthors {
+		if strings.TrimSpace(a) == "" {
+			add("review.codex_bot_authors に空の値がある")
+		}
+	}
 
 	for _, p := range c.ProtectedPaths {
 		if err := issuebody.ValidatePattern(p); err != nil {
@@ -198,6 +208,16 @@ func (c *Config) IsBlocking(severity string) bool {
 // IsTrustedAuthor は、login が信頼する作者かを返す（GitHub の login は大文字と小文字を区別しない）。
 func (c *Config) IsTrustedAuthor(login string) bool {
 	for _, a := range c.Review.TrustedAuthors {
+		if strings.EqualFold(a, login) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCodexBot は、login が Codex の GitHub 連携の結果として信頼する作者かを返す（大文字と小文字を区別しない）。
+func (c *Config) IsCodexBot(login string) bool {
+	for _, a := range c.Review.CodexBotAuthors {
 		if strings.EqualFold(a, login) {
 			return true
 		}

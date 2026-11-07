@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/codex"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/config"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/issuebody"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/prbody"
@@ -154,6 +155,12 @@ type evaluator struct {
 	records []record
 	latest  *record
 	issue   *issuebody.Doc
+	// codex は、Codex の GitHub 連携の最新の完了したレビュー（なければ nil）。
+	codex *CodexReview
+	// codexLatest は、codex が agent-review/v1 の最新の記録より新しい（判定に codex を使う）こと。
+	codexLatest bool
+	// codexIDs は、Codex の指摘として出所を確かめられる ID（CodexFindingIDs）。
+	codexIDs map[string]bool
 }
 
 func (e *evaluator) note(format string, a ...any) {
@@ -170,6 +177,7 @@ func (e *evaluator) run() Report {
 		e.issue = issuebody.Parse(e.in.Issue.Body)
 	}
 	e.collectReviews()
+	e.collectCodex()
 
 	e.add("G0", Pass, "OK")
 	e.c1()
@@ -242,6 +250,30 @@ func (e *evaluator) collectReviews() {
 			CommentID: l.comment.ID, Author: l.comment.Author, Round: l.rec.Round,
 			HeadSHA: l.rec.HeadSHA, Verdict: l.rec.Verdict, Reviewer: l.rec.Reviewer,
 		}
+	}
+}
+
+// collectCodex は、Codex の GitHub 連携のレビューを集め、agent-review/v1 の最新の記録（created_at）より
+// 要約のコメントの updated_at が新しければ、そちらを最新のレビューにする。
+func (e *evaluator) collectCodex() {
+	e.codexIDs = CodexFindingIDs(e.cfg, e.in)
+	cr, notes := FindCodexReview(e.cfg, e.in)
+	e.rep.Notes = append(e.rep.Notes, notes...)
+	if cr == nil {
+		return
+	}
+	e.codex = cr
+	if e.latest != nil && !cr.Updated.After(e.latest.created) {
+		return
+	}
+	e.codexLatest = true
+	verdict := "approve"
+	if len(cr.Blocking(e.cfg)) > 0 {
+		verdict = "request_changes"
+	}
+	e.rep.LatestReview = &ReviewRef{
+		CommentID: cr.Comment.ID, Author: cr.Comment.Author, HeadSHA: cr.SHA,
+		Verdict: verdict, Reviewer: config.ReviewerPrimary,
 	}
 }
 
@@ -428,16 +460,42 @@ func (e *evaluator) c4() {
 }
 
 func (e *evaluator) c5() {
-	if len(e.records) == 0 {
-		e.add("C5", Pending, "信頼する作者（%s）のレビュー記録がない", strings.Join(e.cfg.Review.TrustedAuthors, ", "))
+	n := len(e.records)
+	if e.codex != nil {
+		n++
+	}
+	if n == 0 {
+		e.add("C5", Pending, "信頼する作者（%s）のレビュー記録も、Codex（%s）の完了したレビューもない",
+			strings.Join(e.cfg.Review.TrustedAuthors, ", "), strings.Join(e.cfg.Review.CodexBotAuthors, ", "))
 		return
 	}
-	e.add("C5", Pass, "%d 件", len(e.records))
+	if e.codex != nil {
+		e.add("C5", Pass, "%d 件（agent-review/v1 %d 件、Codex の GitHub 連携 1 件）", n, len(e.records))
+		return
+	}
+	e.add("C5", Pass, "%d 件", n)
 }
 
 const noReview = "レビュー記録がない"
 
+// codexStale は、Codex のレビューが HEAD のものでなければ、その旨の文を返す。
+func (e *evaluator) codexStale() string {
+	if e.codex.SHA == e.in.PullRequest.HeadSHA {
+		return ""
+	}
+	return fmt.Sprintf("最新のレビュー（Codex の GitHub 連携）は古い SHA %s のもの。HEAD %s の再レビュー待ち",
+		short(e.codex.SHA), short(e.in.PullRequest.HeadSHA))
+}
+
 func (e *evaluator) c6() {
+	if e.codexLatest {
+		if s := e.codexStale(); s != "" {
+			e.add("C6", Pending, "%s", s)
+			return
+		}
+		e.add("C6", Pass, "Codex の GitHub 連携（コメント %d）が %s をレビューした", e.codex.Comment.ID, short(e.codex.SHA))
+		return
+	}
 	l := e.latest
 	if l == nil {
 		e.add("C6", Pending, noReview)
@@ -456,34 +514,51 @@ func (e *evaluator) c6() {
 }
 
 func (e *evaluator) c7() {
+	if e.codexLatest {
+		if s := e.codexStale(); s != "" {
+			e.add("C7", Pending, "%s", s)
+			return
+		}
+		var errs []string
+		for _, f := range e.codex.Blocking(e.cfg) {
+			p := f.Priority
+			if p == "" {
+				p = "重大度不明"
+			}
+			if f.Carried {
+				p += "・" + short(f.SHA) + " から未解決"
+			}
+			errs = append(errs, fmt.Sprintf("%s（%s・%s）%s:%d %s", f.ID(), p, f.Severity, f.Path, f.Line, f.Title))
+		}
+		if len(errs) > 0 {
+			e.add("C7", Fail, "Codex の重大な指摘がある: %s", strings.Join(errs, "・"))
+			return
+		}
+		// Codex のレビューでは、前の agent-review/v1 の記録の重大な指摘を resolved にできない。
+		// Codex 以外の最新の記録で、それまでの重大な指摘が resolved になっていなければ fail。
+		// Codex 自身の指摘（信頼する Codex の作者の行コメントに対応する C<コメントの ID>）は、今回の Codex のレビューで
+		// 判定し直したので除く。ID の形が C<数字> でも、対応する行コメントがなければ除かない。
+		if i := e.lastNonCodexRecord(); i >= 0 {
+			if errs := e.blockingErrs(i, true, map[string]bool{}); len(errs) > 0 {
+				e.add("C7", Fail, "前のレビューの重大な指摘が解決していない（Codex のレビューでは resolved にできない）: %s",
+					strings.Join(errs, "・"))
+				return
+			}
+		}
+		e.add("C7", Pass, "Codex の指摘 %d 件に P0・P1 はない", len(e.codex.Findings))
+		return
+	}
 	l := e.latest
 	if l == nil {
 		e.add("C7", Pending, noReview)
 		return
 	}
-	var errs []string
-	inLatest := map[string]review.Finding{}
-	for _, f := range l.rec.Findings {
-		inLatest[f.ID] = f
-		if e.cfg.IsBlocking(f.Severity) && f.Status == "open" {
-			errs = append(errs, fmt.Sprintf("%s（%s）が open", f.ID, f.Severity))
-		}
-	}
 	reported := map[string]bool{}
-	for _, r := range e.records[:len(e.records)-1] {
-		for _, f := range r.rec.Findings {
-			if !e.cfg.IsBlocking(f.Severity) || reported[f.ID] {
-				continue
-			}
-			cur, ok := inLatest[f.ID]
-			switch {
-			case !ok:
-				errs = append(errs, fmt.Sprintf("round %d の %s（%s）が最新の記録にない", r.rec.Round, f.ID, f.Severity))
-				reported[f.ID] = true
-			case cur.Status != "resolved":
-				errs = append(errs, fmt.Sprintf("round %d の %s（%s）が resolved ではない（%s）", r.rec.Round, f.ID, f.Severity, cur.Status))
-				reported[f.ID] = true
-			}
+	errs := e.blockingErrs(len(e.records)-1, false, reported)
+	// 最新の記録が Codex の GitHub 連携の変換なら、Codex 以外の指摘の解決は、Codex 以外の最新の記録で確かめる。
+	if isCodexConverted(l.rec) {
+		if i := e.lastNonCodexRecord(); i >= 0 {
+			errs = append(errs, e.blockingErrs(i, true, reported)...)
 		}
 	}
 	if len(errs) > 0 {
@@ -493,7 +568,62 @@ func (e *evaluator) c7() {
 	e.add("C7", Pass, "OK")
 }
 
+// isCodexConverted は、rec が Codex の GitHub 連携のレビューを変換した記録かどうかを返す。
+func isCodexConverted(rec *review.Record) bool {
+	return rec.Reviewer == config.ReviewerPrimary && rec.ReviewerVersion == codex.ReviewerVersion
+}
+
+// lastNonCodexRecord は、Codex の GitHub 連携の変換ではない最新の記録の添字を返す（なければ -1）。
+func (e *evaluator) lastNonCodexRecord() int {
+	for i := len(e.records) - 1; i >= 0; i-- {
+		if !isCodexConverted(e.records[i].rec) {
+			return i
+		}
+	}
+	return -1
+}
+
+// blockingErrs は、e.records[idx] を最新とみなして、重大な指摘が open のもの、
+// それより前の記録の重大な指摘が resolved になっていないものを返す。
+// skipCodex なら Codex の指摘（信頼する Codex の作者の行コメントに対応する C<コメントの ID>。e.codexIDs）を除く。reported に出した ID を記録し、重ねて出さない。
+func (e *evaluator) blockingErrs(idx int, skipCodex bool, reported map[string]bool) []string {
+	skip := func(f review.Finding) bool {
+		return !e.cfg.IsBlocking(f.Severity) || reported[f.ID] || (skipCodex && e.codexIDs[f.ID])
+	}
+	l := e.records[idx]
+	var errs []string
+	inLatest := map[string]review.Finding{}
+	for _, f := range l.rec.Findings {
+		inLatest[f.ID] = f
+		if !skip(f) && f.Status == "open" {
+			errs = append(errs, fmt.Sprintf("round %d の %s（%s）が open", l.rec.Round, f.ID, f.Severity))
+			reported[f.ID] = true
+		}
+	}
+	for _, r := range e.records[:idx] {
+		for _, f := range r.rec.Findings {
+			if skip(f) {
+				continue
+			}
+			cur, ok := inLatest[f.ID]
+			switch {
+			case !ok:
+				errs = append(errs, fmt.Sprintf("round %d の %s（%s）が round %d の記録にない", r.rec.Round, f.ID, f.Severity, l.rec.Round))
+				reported[f.ID] = true
+			case cur.Status != "resolved":
+				errs = append(errs, fmt.Sprintf("round %d の %s（%s）が resolved ではない（%s）", r.rec.Round, f.ID, f.Severity, cur.Status))
+				reported[f.ID] = true
+			}
+		}
+	}
+	return errs
+}
+
 func (e *evaluator) c8() {
+	if e.codexLatest {
+		e.add("C8", Pass, "%s（GitHub 連携）", config.ReviewerPrimary)
+		return
+	}
 	l := e.latest
 	if l == nil {
 		e.add("C8", Pending, noReview)
@@ -539,15 +669,29 @@ func (e *evaluator) c10() {
 }
 
 // paths は変更ファイルのパス（名前を変えたファイルは、前の名前も含む）。
-func (e *evaluator) paths() []string {
+func (e *evaluator) paths() []string { return filePaths(e.in.Files) }
+
+func filePaths(files []File) []string {
 	var out []string
-	for _, f := range e.in.Files {
+	for _, f := range files {
 		out = append(out, f.Filename)
 		if f.PreviousFilename != "" && f.PreviousFilename != f.Filename {
 			out = append(out, f.PreviousFilename)
 		}
 	}
 	return out
+}
+
+// ProtectedFiles は、変更ファイルのパス（名前を変えたファイルは、前の名前も含む）のうち、
+// 保護されたパス（protected_paths）に当たるものを返す（C12 と同じ判定）。
+func ProtectedFiles(cfg *config.Config, files []File) []string {
+	var hit []string
+	for _, p := range filePaths(files) {
+		if ok, _ := issuebody.MatchAny(cfg.ProtectedPaths, p); ok {
+			hit = append(hit, p)
+		}
+	}
+	return hit
 }
 
 func (e *evaluator) c11() {
@@ -595,14 +739,14 @@ func (e *evaluator) c11() {
 }
 
 func (e *evaluator) c12() {
-	var hit []string
-	for _, p := range e.paths() {
-		if ok, _ := issuebody.MatchAny(e.cfg.ProtectedPaths, p); ok {
-			hit = append(hit, p)
-		}
-	}
+	hit := ProtectedFiles(e.cfg, e.in.Files)
 	if len(hit) == 0 {
 		e.add("C12", Pass, "保護されたパスの変更なし")
+		return
+	}
+	if e.codexLatest {
+		e.add("C12", Fail, "保護されたパスの変更（%s）がある。最新のレビュー（Codex の GitHub 連携）は保護されたパスを確認しない（protected_paths_ack を持つ記録が必要）",
+			strings.Join(hit, ", "))
 		return
 	}
 	l := e.latest

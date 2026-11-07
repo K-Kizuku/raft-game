@@ -22,6 +22,9 @@ func TestRepoConfigIsValid(t *testing.T) {
 	if !c.IsTrustedAuthor("k-kizuku") || c.IsTrustedAuthor("other") {
 		t.Error("IsTrustedAuthor")
 	}
+	if !c.IsCodexBot("chatgpt-codex-connector[bot]") || c.IsCodexBot("chatgpt-codex-connector") || c.IsCodexBot("K-Kizuku") {
+		t.Error("IsCodexBot")
+	}
 	if !c.IsFallbackReason("rate_limited") || c.IsFallbackReason("") || c.IsFallbackReason("x") {
 		t.Error("IsFallbackReason")
 	}
@@ -63,6 +66,9 @@ func TestInvalid(t *testing.T) {
 			review(m)["blocking_severities"] = []any{"critical", "high", "urgent"}
 		}, "urgent"},
 		{"trusted_authors が空", func(m map[string]any) { review(m)["trusted_authors"] = []any{} }, "trusted_authors"},
+		{"codex_bot_authors が空", func(m map[string]any) { review(m)["codex_bot_authors"] = []any{} }, "codex_bot_authors"},
+		{"codex_bot_authors がない", func(m map[string]any) { delete(review(m), "codex_bot_authors") }, "codex_bot_authors"},
+		{"codex_bot_authors に空の値", func(m map[string]any) { review(m)["codex_bot_authors"] = []any{" "} }, "codex_bot_authors"},
 		{"max_workers が 0", func(m map[string]any) { m["max_workers"] = 0 }, "max_workers"},
 		{"max_workers が 9", func(m map[string]any) { m["max_workers"] = 9 }, "max_workers"},
 		{"retry_limit が 0", func(m map[string]any) { m["retry_limit"] = 0 }, "retry_limit"},
