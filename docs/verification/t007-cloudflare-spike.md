@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 を実施済み。H-5 では Worker の CPU p99/最大 3 ms、DO fetch の p99 112 ms / 最大 116 ms を取得し、WS と ping の内訳を確認。現在の対象デプロイは 50 ms。次は暫定候補 500 ms をスパイクにデプロイして s-25 で CPU/WS を再測定する。後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 と H-5 の測定を実施済み。500 ms の反映をメタデータで確認し、s-25 で WS 再測定が成功。limits.cpuMs の本番向け暫定候補は 500 ms。次は H-6 で使用済み 20 セッションの最終停止と資源の削除。後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -22,8 +22,8 @@
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
-| H-5 limits.cpuMs の判断 | 途中 | 50 ms で Worker p99/最大 3 ms、DO fetch p99 112 ms/最大 116 ms。暫定候補 500 ms で CPU/WS を再測定する手順を案内。再デプロイと再測定の結果は未受領 |
-| H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
+| H-5 limits.cpuMs の判断 | 暫定値の検証完了 | cpu_ms=500 を確認、WS 再測定成功、終了コード 0。CPU は Worker が 1e9 で 503、DO は 1e9 まで成功。本体での最終調整は T-605 に残す |
+| H-6 後片付け・費用確認 | 停止確認の手順を案内 | 使用済み 20 セッションの全停止と資源一覧・削除コマンドのヘルプを次に取得する。削除・翌日の費用確認は未実施 |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
 
@@ -1151,6 +1151,99 @@ printf 'H-5 exit status: %s\n' $status
 - Node のメタデータ検査の構文を確認した。デプロイ・API への問い合わせ・測定そのものは AI から実行していない。
 
 再測定後に使った全番号の停止、クラウド資源の削除、ローカルの後片付け、翌日の費用確認へ進む。H-7 / H-8 / 最終 PR は継続中。
+
+## 2026-11-07: 500 ms のデプロイと CPU / WS 再測定に成功
+
+ユーザーが案内済みの一連のコマンドを実行した。プロンプト表示は 17:41:50。ビルド、再デプロイ、healthz、最新バージョンの検査、測定の順に成功し、H-5 exit status は 0。
+
+### 再デプロイ
+
+| 項目 | 共有された結果 |
+|---|---|
+| ビルドの SPIKE_CPU_MS | 500 |
+| デプロイ | --prebuilt --secrets-file spike.secrets.json --containers-rollout immediate |
+| 最新バージョン | 377cff51-0169-452e-bee7-baf928786026 |
+| バージョンの limits.cpu_ms | 500。条件検査も成功 |
+| healthz | ok: true |
+| デプロイ所要 | 7.07 秒 (usr 1.22 秒 / sys 0.24 秒) |
+| Uploaded / triggers | 4.02 秒 / 0.68 秒 |
+| Worker Startup Time | 1 ms。コンテナの起動時間とは区別する |
+| バンドル | 27.32 KiB / gzip 8.83 KiB |
+| コンテナイメージ | 初回と同じ sha256:a5a5726ea808fe8bee6bbb4507065a514341f2bef67646cdd7f086ea68cf67d5。リモートに存在するため push は省略 |
+| ローカルの image ID | 初回と同じ sha256:03d889b3fe26b5bd2ebaa766ab30caf01eaf5bfb76c49fefb17edf3d8fd107a7 |
+
+ビルド時のタグは cloudflare-build/b8366d8bfb35/raft-game-spike-server-server:5ce2f5a42db9。デプロイ完了時に untag された。後片付けでは、過去のタグを一括で決め打ちせず、実際に残るイメージを一覧で確かめる。
+
+### CPU / WS の再測定
+
+--instance lite --only cpu,ws --runs 1 --first 25 で実行し、規定順の ws→cpu になった。s-25 のコンテナ起動は 266 ms。出力先は spike/.cloudflare/cpu500-ws-lite.json。
+
+| 項目 | 結果 |
+|---|---|
+| WS 1 KiB RTT | p50 137 ms / p99 146 ms、200 回 |
+| WS 16 KiB | 20/20 |
+| 16 KiB 超過 | 破棄 |
+| 500 件の連続送信 | 500/500、順序 ok |
+| 120 秒無通信 | ok |
+| ブラウザ側からの切断 | ok |
+| コンテナ側からの切断 | 1011 |
+| Worker の CPU 試験 | 1e6〜3e8 は 200、1e9 は 503 |
+| DO の CPU 試験 | 1e6〜1e9 がすべて 200。今回の範囲では失敗なし |
+| 測定の終了コード | 0 |
+
+DO が 1e9 で成功したことだけで、CPU 制限が効かないとは結論しない。500 ms はバージョンのメタデータで確認できており、50 ms の測定では CPU 超過リセットを確認済み。反復回数と CPU 時間は同一ではなく、制限の許容範囲もある。503 の本文と実際の CPU 時間の追加取得は今回の出力には含まれない。
+
+50 ms で取得した通常処理の CPU p99 を根拠に、500 ms を本番向けの暫定候補とする。500 ms の設定で WS の中継が成功したことを再確認できた。500 ms の CPU p99 を新たに測った結果ではなく、500 ms が必要な最小値でもない。本体の処理・接続の長さ・メッセージ量に対する調整は T-605 に引き継ぐ。
+
+### H-6: 使用済み 20 セッションの停止確認へ
+
+クラウドで使った番号は s-1〜s-10 と s-16〜s-25 の計 20 個。再測定の開始・終了時刻と stopFailures の詳細、全番号の最終的な running=false は、次のコマンドの結果で確認する。
+
+```fish
+node --input-type=module -e '
+import fs from "node:fs";
+const token = JSON.parse(fs.readFileSync("spike/spike.secrets.json", "utf8")).SPIKE_TOKEN;
+if (!/^[0-9a-f]{64}$/.test(token ?? "")) throw new Error("Invalid SPIKE_TOKEN");
+const base = "https://raft-game-spike.kizuku.workers.dev";
+const ids = [...Array.from({length: 10}, (_, i) => i + 1), ...Array.from({length: 10}, (_, i) => i + 16)];
+const rows = [];
+for (const n of ids) {
+  let row;
+  try {
+    const options = {headers: {Authorization: "Bearer " + token}, signal: AbortSignal.timeout(30000)};
+    const a = await fetch(base + "/spike/s/" + n + "/stop", {...options, method: "POST"});
+    await a.text();
+    const b = await fetch(base + "/spike/s/" + n + "/status",
+      {headers: options.headers, signal: AbortSignal.timeout(30000)});
+    const body = await b.json();
+    row = {session: n, stopHTTP: a.status, statusHTTP: b.status, running: body.running};
+  } catch (e) {
+    row = {session: n, error: e.message};
+  }
+  rows.push(row);
+  console.log(JSON.stringify(row));
+}
+const ok = rows.every(r => r.stopHTTP === 200 && r.statusHTTP === 200 && r.running === false);
+fs.writeFileSync("spike/.cloudflare/final-stop.json", JSON.stringify({at: new Date().toISOString(), ok, rows}, null, 2));
+const m = JSON.parse(fs.readFileSync("spike/.cloudflare/cpu500-ws-lite.json", "utf8"));
+console.log(JSON.stringify({cpu500StartedAt: m.startedAt, cpu500FinishedAt: m.finishedAt, sessions: m.sessions, stopFailures: m.stopFailures, allStopped: ok}));
+if (!ok) process.exitCode = 1;
+'
+```
+
+続いて、削除対象のアプリケーション・イメージの一覧と、手元の CLI の削除コマンドのヘルプを取得する。実際の削除コマンドは、対象の ID と引数を確認して次に案内する。
+
+```fish
+pnpm -C spike exec cf containers applications list
+pnpm -C spike exec cf containers images list
+pnpm -C spike exec cf workers delete --help
+pnpm -C spike exec cf containers applications delete --help
+pnpm -C spike exec cf containers images delete --help
+```
+
+停止スクリプトは固定のスパイク URL と既知の番号だけに要求する。トークンはローカルファイルから読み、表示しない。エラーの番号があっても残りの番号の停止を試し、final-stop.json に結果を保存する。JavaScript の構文は確認したが、API 要求と一覧取得はユーザーの実行結果をまだ受領していない。
+
+H-6 の資源削除、ローカルの後片付け、2026-11-08 (JST) の費用確認は未完了。測定の記録と ADR をまとめる PR も引き続き作成予定。
 
 ## 測定前に確定・確認する事項
 
