@@ -269,7 +269,7 @@ Worker が返すエラー:
       "departAt": 58000, "arriveAt": 67000, "readyAt": 68500, "cargo": [31, 32] }
   ],
   "routesState": [ { "id": "1-2", "blockedUntil": null } ],
-  "letters": [ /* Letter（§5.2）をすべて */ ],
+  "letters": [ /* 港と船の上にある Letter（§5.2）。P1 では中継倉庫も。配達済み・破棄は含めない */ ],
   "requests": [ /* Request（§5.3）をすべて */ ],
   "nodes": [ { "id": 1, "role": "leader", "term": 2, "lead": 1, "commit": 14, "applied": 14, "lastIndex": 15 } ],
   "islandsState": [ { "id": 1, "satisfaction": 64, "lastDeliveredAt": 60500 } ],
@@ -368,7 +368,7 @@ Worker が返すエラー:
 
 | type | フィールド | 発生するとき |
 |---|---|---|
-| `phase.changed` | `phase` | 開会式・航行・終了 |
+| `phase.changed` | `phase`（`opening` / `sailing` / `ended`） | 開会式・航行・終了 |
 | `letter.created` | `letter`（Letter 全体） | Raft が出力した / 依頼書を書いた |
 | `letter.moved` | `letterId`, `loc` | 積む・降ろす・預ける |
 | `letter.delivered` | `letterId`, `islandId`, `accepted`（`Step` がエラーを返さなかったか） | 船が着いて配達した |
@@ -379,12 +379,12 @@ Worker が返すエラー:
 | `ferry.broken` / `ferry.repaired` | `ferryId`, `until` | 故障（P1） |
 | `route.blocked` / `route.unblocked` | `routeIds`, `until` | 嵐 |
 | `forecast` | `event`, `at`, `routeIds` | 嵐の予報 |
-| `node.state` | `id`, `role`, `term`, `lead`, `commit`, `applied`, `lastIndex` | いずれかの値が変わった（同じステップ内の変化はまとめる） |
+| `node.state` | `id`, `role`（`follower` / `pre_candidate` / `candidate` / `leader`）, `term`, `lead`, `commit`, `applied`, `lastIndex` | いずれかの値が変わった（同じステップ内の変化はまとめる） |
 | `node.leader_elected` | `id`, `term` | 新しい Leader が誕生した（開会式を含む） |
 | `node.stepped_down` | `id`, `term`, `reason`（`check_quorum` / `higher_term`） | Leader でなくなった |
 | `request.created` | `request`（Request 全体） | 依頼の発生 |
 | `request.updated` | `id`, `status`, `expired`, `result` | 状態の変化 |
-| `ledger.applied` | `islandId`, `index`, `reqId`, `result` | 台帳への適用（エンジニアモード・トレース用） |
+| `ledger.applied` | `islandId`, `index`, `reqId`, `result`（`ok` / `rejected` / `duplicate`）, `reason`（`rejected` のときだけ） | 台帳への適用（エンジニアモード・トレース用） |
 | `island.updated` | `id`, `satisfaction`, `lastDeliveredAt` | 満足度の変化 |
 | `score.updated` | `total`, `successes`, `criticalSecured` | スコアの変化 |
 | `notice` | `islandId`, `key`, `params` | 島のキャラクターの通知。文言はクライアントが `key` から組み立てる |
