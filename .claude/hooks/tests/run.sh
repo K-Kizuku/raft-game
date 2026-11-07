@@ -235,10 +235,10 @@ for cmd in \
   "scripts/agents/agentctl.sh state 5 merged" \
   "go -C tools/agentctl run . state 5 ready-to-merge --pr 12" \
   "agentctl state --repo o/r 5 status:merged" \
+  "scripts/agents/agentctl.sh state 5 in-review --pr 12" \
   "gh pr review 12 --approve"; do
   expect_bash 2 worker "$wt" "$cmd"
 done
-expect_bash 0 worker "$wt" "scripts/agents/agentctl.sh state 5 in-review --pr 12"
 # Worktree issue-6 では Issue 6 のブランチに push できる（AGENT_ISSUE がなければディレクトリ名から）
 expect_bash 0 worker "$wt6" "git push origin agent/issue-6"
 got="$(AGENT_ISSUE=6 run guard-bash.sh worker "$wt" "$(bash_input "git push origin agent/issue-6")")"
@@ -345,6 +345,126 @@ for cmd in \
   "awk '{ print \$1 }' a.txt" \
   "shellcheck a.sh"; do
   expect_bash 0 reviewer "$wt" "$cmd"
+done
+
+# ---------------- agentctl の書き込み（Issue #86） ----------------
+# comment（PR へのコメント）・state・claim・attempt は Worker・Reviewer では拒否し、Orchestrator では許す。
+agentctl_write_cmds=(
+  "agentctl comment --repo o/r --pr 12 --body-file b.md"
+  "scripts/agents/agentctl.sh comment --repo o/r --pr 12 --body-file b.md"
+  "./scripts/agents/agentctl.sh comment --pr 12"
+  "bash scripts/agents/agentctl.sh comment --pr 12"
+  ".agents/bin/agentctl comment --pr 12"
+  "$repo/.agents/bin/agentctl comment --pr 12"
+  "go -C tools/agentctl run . comment --repo o/r --pr 12"
+  "go run ./tools/agentctl comment --pr 12"
+  "cd tools/agentctl && go run . comment --pr 12"
+  "env GH_TOKEN=x agentctl comment --pr 12"
+  "timeout 60 scripts/agents/agentctl.sh comment --pr 12"
+  ". scripts/agents/lib.sh && agentctl comment --pr 12"
+  "agentctl state 5 in-review --repo o/r --pr 12"
+  "scripts/agents/agentctl.sh state 5 changes-requested --repo o/r"
+  "go -C tools/agentctl run . state 5 ready --repo o/r --reason x"
+  "agentctl claim 5 --repo o/r"
+  "scripts/agents/agentctl.sh claim 5 --resume --repo o/r"
+  "go -C tools/agentctl run . claim 5 --repo o/r"
+  "agentctl attempt 5 --cause ci:ci-ok --repo o/r"
+  "scripts/agents/agentctl.sh attempt 5 --cause review:F1 --repo o/r"
+  "go -C tools/agentctl run . attempt 5 --cause x --repo o/r"
+  "agentctl comment --dry-run=false --pr 12"
+  # Worker・Reviewer では --dry-run の例外がない（PR #87 の Codex の P1 を受けて安全側に倒した）
+  "agentctl comment --repo o/r --pr 12 --body-file b.md --dry-run"
+  "scripts/agents/agentctl.sh state 5 in-review --repo o/r --pr 12 --dry-run"
+  "go -C tools/agentctl run . claim 5 --repo o/r --dry-run"
+  "scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r --dry-run"
+  "agentctl state 5 in-review --repo o/r --dry-run=true"
+  "agentctl claim 5 --resume --dry-run --worker issue-5 --session s --repo o/r"
+  # シェルのコメントの中の --dry-run・値をとるシェルのオプション（PR #87 の Codex の P1）
+  "agentctl state 5 in-review --repo o/r # --dry-run"
+  "bash -o pipefail scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r"
+  "bash -o pipefail scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r --dry-run"
+  # 引用符で語を分けても、引用符を取り除いてから読む
+  "agentctl st''ate 5 in-review --repo o/r"
+  "agentctl \"comment\" --pr 12"
+  "'agentctl' claim 5"
+  "agentctl\\ state 5 in-review"
+  # 行の継続（\ と改行）は Bash と同じく丸ごと取り除いてから読む
+  "agentctl st\\"$'\n'"ate 5 in-review --repo o/r"
+  "agent\\"$'\n'"ctl state 5 in-review --repo o/r"
+  "agentctl \\"$'\n'"  state 5 in-review --repo o/r"
+  # 改行・タブも語の区切り
+  "agentctl"$'\t'"state 5 in-review --repo o/r"
+  "agentctl plan"$'\n'"state"
+  # ANSI-C 引用（\$'...'）・\$"..." の \$ を取り除いてから読む。正規化しきれないエスケープは拒否する
+  "agentctl st\$'a'te 5 in-review --repo o/r"
+  "agentctl st\$\"a\"te 5 in-review --repo o/r"
+  "agent\$'ctl' state 5 in-review --repo o/r"
+  "agentctl \$'\\x73tate' 5 in-review --repo o/r"
+  "scripts/agents/agentctl.sh \$'\\143omment' --pr 12"
+  "\$'\\x61gentctl' state 5 in-review --repo o/r"
+  # gate の --comment・--set-status
+  "go -C tools/agentctl run . gate --repo o/r --pr 12 --comment"
+  "agentctl gate --repo o/r --pr 12 --set-status"
+  "agentctl gate --repo o/r --pr 12 -comment=true"
+  "agentctl gate --repo o/r --pr 12 --set-status=true --json"
+  # 字句の判定なので、agentctl の語と書き込みの語があれば読み取りの形でも拒否する（安全側）
+  "grep -n comment tools/agentctl/main.go"
+  "agentctl plan --repo o/r | grep state"
+  # 前回までの --dry-run の読み違いの例（いまは --dry-run の有無を問わず拒否）
+  "agentctl state 5 in-review --repo o/r --reason '--dry-run'"
+  "agentctl state 5 in-review --repo o/r --reason --dry-run"
+  "agentctl state 5 in-review --repo o/r --dry-run --dry-run=false"
+  "agentctl state 5 in-review --repo o/r --dry-run=false"
+  "scripts/agents/agentctl.sh claim 5 --worker --dry-run --repo o/r"
+  "agentctl attempt 5 --cause --dry-run --repo o/r"
+  "agentctl comment --pr 12 --body --dry-run"
+  "agentctl comment --pr 12 --body-file --dry-run"
+  "agentctl state 5 in-review --repo o/r --session=x --config --dry-run"
+  "agentctl state 5 in-review --repo o/r --dry-run=1"
+  "agentctl state 5 in-review --repo o/r --dry-run=yes"
+  "agentctl state 5 in-review --repo o/r --reason \"a --dry-run\""
+  "agentctl state 5 in-review --repo o/r --reason 'a' --dry-run"
+  "agentctl state 5 in-review --repo o/r -- --dry-run"
+  "agentctl state 5 in-review --repo o/r \$DRY"
+  "agentctl state 5 in-review --repo o/r --dry-run=\$X"
+  "agentctl --dry-run state 5 in-review --repo o/r"
+  "agentctl comment 12 --dry-run"
+)
+for role in worker reviewer; do
+  for cmd in "${agentctl_write_cmds[@]}"; do
+    expect_bash 2 "$role" "$wt" "$cmd"
+  done
+done
+# 役割が未設定（Worktree の中＝worker）でも同じ
+got="$(run guard-bash.sh - "$wt" "$(bash_input "scripts/agents/agentctl.sh comment --pr 12")")"
+[ "$got" = 2 ] && pass || fail "役割が未設定の Worker でも agentctl comment を拒否する（got=$got）"
+for cmd in "${agentctl_write_cmds[@]}"; do
+  expect_bash 0 orchestrator "$repo" "$cmd"
+done
+# 読み取りのサブコマンドは、Worker・Reviewer でも許す
+for role in worker reviewer orchestrator; do
+  for cmd in \
+    "scripts/agents/agentctl.sh plan --repo o/r --json" \
+    "agentctl plan --repo o/r" \
+    "scripts/agents/agentctl.sh recover --repo o/r --json" \
+    ".agents/bin/agentctl pr view 12 --repo o/r --json" \
+    "agentctl pr codex-record --repo o/r --pr 12" \
+    "bash -o pipefail scripts/agents/agentctl.sh pr protected-files --repo o/r --pr 12" \
+    "go -C tools/agentctl run . gate --repo o/r --pr 12 --json --input $tmp/pass.json" \
+    "agentctl gate --repo o/r --pr 12 --json" \
+    "go -C tools/agentctl run . review validate $tmp/review.json" \
+    "go -C tools/agentctl run . review render $tmp/review.json" \
+    "go -C tools/agentctl test -race ./..." \
+    "go test ./tools/agentctl/... -run TestComment" \
+    "go -C tools/agentctl test ./internal/state/..." \
+    "grep -n plan tools/agentctl/main.go" \
+    "echo 'fix: state を comment にする'" \
+    "go test ./server/... -run TestClaim" \
+    "agentctl plan --repo o/r \\"$'\n'"  --json" \
+    "printf \$'a\\tb\\n'" \
+    "git log --oneline -- tools/agentctl"; do
+    expect_bash 0 "$role" "$wt" "$cmd"
+  done
 done
 
 # ---------------- guard-write ----------------
