@@ -11,21 +11,24 @@ import (
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
-// リポジトリのステージを greedy ボットで遊ばせる（T-207）。
+// リポジトリのステージを greedy・steady のボットで遊ばせる（T-207・T-501c）。
 // M2 の完了条件「greedy で Stage 1 の★1 が 90% 以上のシードで取れる」は repo_greedy_balance_test.go（ビルドタグ balance）にある。
 // シードの数は repo_greedy_race_test.go・repo_greedy_norace_test.go にある（-race で変える）。
 
 // greedyChunk は 1 つのサブテストで回すシードの数。
 const greedyChunk = 50
 
-// playGreedy は st を seed で greedy に 1 ラウンド遊ばせ、結果とイベントの列を返す。
-func playGreedy(t *testing.T, st *stage.Stage, seed uint64) (sim.RoundResult, []sim.DomainEvent) {
+// repoBots は、リポジトリのステージで回すボット（乱数を引かない 2 つ）。
+var repoBots = []string{"greedy", "steady"}
+
+// playGreedy は st を seed でボット name に 1 ラウンド遊ばせ、結果とイベントの列を返す。
+func playGreedy(t *testing.T, name string, st *stage.Stage, seed uint64) (sim.RoundResult, []sim.DomainEvent) {
 	t.Helper()
 	cfg, err := stage.SimConfig(st)
 	if err != nil {
 		t.Fatalf("%s: seed %d: SimConfig: %v", st.ID, seed, err)
 	}
-	b, err := bot.New("greedy", seed)
+	b, err := bot.New(name, seed)
 	if err != nil {
 		t.Fatalf("%s: seed %d: bot.New: %v", st.ID, seed, err)
 	}
@@ -70,9 +73,9 @@ func summarizeRun(res sim.RoundResult, events []sim.DomainEvent) greedyRun {
 	return r
 }
 
-// playGreedySeeds は st をシード 1..n で遊ばせ、seed-1 の添字に結果を入れて返す。
+// playGreedySeeds は st をシード 1..n でボット name に遊ばせ、seed-1 の添字に結果を入れて返す。
 // シードを greedyChunk 個ずつに分けて並列に回す。Engine はシードごとに作るので、並列にしても結果は変わらない。
-func playGreedySeeds(t *testing.T, st *stage.Stage, n int) []greedyRun {
+func playGreedySeeds(t *testing.T, name string, st *stage.Stage, n int) []greedyRun {
 	t.Helper()
 	runs := make([]greedyRun, n)
 	t.Run("play", func(t *testing.T) {
@@ -81,7 +84,7 @@ func playGreedySeeds(t *testing.T, st *stage.Stage, n int) []greedyRun {
 			t.Run(fmt.Sprintf("seeds-%d-%d", lo, hi), func(t *testing.T) {
 				t.Parallel()
 				for seed := lo; seed <= hi; seed++ {
-					res, events := playGreedy(t, st, uint64(seed))
+					res, events := playGreedy(t, name, st, uint64(seed))
 					runs[seed-1] = summarizeRun(res, events) // 塊ごとに書く添字が違うので、ロックは要らない
 				}
 			})
@@ -144,39 +147,48 @@ func logGreedySummary(t *testing.T, id string, runs []greedyRun) {
 // T-207 の時点で満たせなかったため、必須のテスト（CI）から外している（原因は T-207b #203 で直した。調整は T-501）。
 func TestRepoGreedyStage1(t *testing.T) {
 	t.Parallel()
-	st := repoStage(t, "stage1")
-	runs := playGreedySeeds(t, st, stage1GreedySeeds)
-	logGreedySummary(t, st.ID, runs)
+	for _, name := range repoBots {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := repoStage(t, "stage1")
+			runs := playGreedySeeds(t, name, st, stage1GreedySeeds)
+			logGreedySummary(t, name+"/"+st.ID, runs)
+		})
+	}
 }
 
 // GR-2 stage2・demo-goto・demo-izu がエラー・不変条件の違反なしで終わる。★の割合は比べず、集計を出すだけ。
 func TestRepoGreedyOthers(t *testing.T) {
 	t.Parallel()
-	for _, id := range []string{"stage2", "demo-goto", "demo-izu"} {
-		t.Run(id, func(t *testing.T) {
-			t.Parallel()
-			st := repoStage(t, id)
-			runs := playGreedySeeds(t, st, otherGreedySeeds)
-			logGreedySummary(t, st.ID, runs)
-		})
+	for _, name := range repoBots {
+		for _, id := range []string{"stage2", "demo-goto", "demo-izu"} {
+			t.Run(name+"/"+id, func(t *testing.T) {
+				t.Parallel()
+				st := repoStage(t, id)
+				runs := playGreedySeeds(t, name, st, otherGreedySeeds)
+				logGreedySummary(t, name+"/"+st.ID, runs)
+			})
+		}
 	}
 }
 
 // GR-3 ステージ定義から作った設定でも、同じシードなら結果とイベントの列が一致する（全体は T-111）。
 func TestRepoGreedyDeterministic(t *testing.T) {
 	t.Parallel()
-	for _, id := range []string{"stage1", "stage2"} {
-		t.Run(id, func(t *testing.T) {
-			t.Parallel()
-			st := repoStage(t, id)
-			res1, ev1 := playGreedy(t, st, 1)
-			res2, ev2 := playGreedy(t, st, 1)
-			if !reflect.DeepEqual(res1, res2) {
-				t.Errorf("RoundResult が一致しない: %+v / %+v", res1, res2)
-			}
-			if !reflect.DeepEqual(ev1, ev2) {
-				t.Errorf("イベントの列が一致しない（%d 件 / %d 件）", len(ev1), len(ev2))
-			}
-		})
+	for _, name := range repoBots {
+		for _, id := range []string{"stage1", "stage2", "demo-izu"} {
+			t.Run(name+"/"+id, func(t *testing.T) {
+				t.Parallel()
+				st := repoStage(t, id)
+				res1, ev1 := playGreedy(t, name, st, 1)
+				res2, ev2 := playGreedy(t, name, st, 1)
+				if !reflect.DeepEqual(res1, res2) {
+					t.Errorf("RoundResult が一致しない: %+v / %+v", res1, res2)
+				}
+				if !reflect.DeepEqual(ev1, ev2) {
+					t.Errorf("イベントの列が一致しない（%d 件 / %d 件）", len(ev1), len(ev2))
+				}
+			})
+		}
 	}
 }
