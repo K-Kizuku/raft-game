@@ -85,6 +85,7 @@ func stageView(st *stage.Stage, islands []stage.IslandDisplay) protocol.StageVie
 	for i, r := range st.Resources {
 		v.Resources[i] = protocol.Resource{ID: r.ID, Kind: string(r.Kind), Label: r.Label, Critical: r.Critical}
 	}
+	v.DemoStorm = demoStormView(st)
 	return v
 }
 

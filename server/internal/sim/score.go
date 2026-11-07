@@ -66,6 +66,7 @@ type scoreBook struct {
 	settled   []bool        // e.reqs.list と同じ添字。精算済み
 	islands   []islandScore // 添字 = ID - 1
 	last      ScoreUpdated  // 最後に出した（まだなら初期の）score.updated の値
+	endQueued bool          // ラウンドの終わりを積んだ（★2 で終える。demo_end.go）か、終わりの精算を始めた
 }
 
 // islandScore は島 1 つの満足度と配達の記録。
@@ -201,6 +202,7 @@ func (e *Engine) finishScore() {
 	if !e.score.on {
 		return
 	}
+	e.score.endQueued = true
 	m := int64(game.SatisfactionMax)
 	for _, is := range e.score.islands {
 		m = min(m, is.sat)
@@ -242,6 +244,7 @@ func (e *Engine) refreshScore() {
 			e.addSatisfaction(entry.req.Origin, -sc.SatRejectedPenalty)
 		}
 	}
+	e.queueStar2End()
 
 	for i := range b.islands {
 		is := &b.islands[i]

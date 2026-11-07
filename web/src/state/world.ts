@@ -1,6 +1,7 @@
 // 世界の状態の型（T-403 / DesignDoc §13.2）。サーバーの snapshot と events を写したもので、
 // Raft の結果をここで決めない（ADR-0009）。型はすべて ../protocol/index.ts（T-301）のもの。
 import type {
+  DemoStormView,
   DropReason,
   Ferry,
   Island,
@@ -35,6 +36,7 @@ export type StageStatic = Readonly<{
   routes: Readonly<Record<string, Route>>;
   routeIds: readonly string[]; // snapshot の順
   resources: readonly Resource[];
+  demoStorm?: DemoStormView; // デモの嵐（snapshot.stage.demoStorm）。ないステージでは省く
 }>;
 
 // 船（故障は P1 で snapshot に無いので、brokenUntil はイベントだけが入れる）。

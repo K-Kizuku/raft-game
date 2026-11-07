@@ -70,6 +70,22 @@ func playSeed(st *stage.Stage, seed uint64, botName string, invariants bool) (re
 	return playSeedWith(st, seed, botName, invariants, nil)
 }
 
+// roundEndError は、ボットが遊び終えたラウンドが正しく終わったかを確かめる。stars・scored は Engine の Result() の値。
+// 終わっていなければ誤り。durationMs で終わっていれば nil。demo.endOnAllCriticalSecured のステージで、採点して
+// ★2 以上なら、durationMs より前に終わっても nil（★2 で早く終わった。T-305b）。それ以外は誤り。
+func roundEndError(st *stage.Stage, phase sim.Phase, now sim.SimTime, stars int, scored bool) error {
+	switch {
+	case phase != sim.PhaseEnded:
+		return fmt.Errorf("ラウンドが終わらない: phase %s（want %s）", phase, sim.PhaseEnded)
+	case now == sim.SimTime(st.DurationMs):
+		return nil
+	case now < sim.SimTime(st.DurationMs) && st.Demo != nil && st.Demo.EndOnAllCriticalSecured && scored && stars >= 2:
+		return nil
+	default:
+		return fmt.Errorf("ラウンドが終わらない: t %d が durationMs %d と違う", now, st.DurationMs)
+	}
+}
+
 // playSeedWith は playSeed の本体。afterNew が nil でなければ、Engine を作った直後（ボットを動かす前）に呼ぶ
 // （record が Snapshot を取るため）。afterNew は Engine の状態とハッシュを変えてはならない。
 func playSeedWith(st *stage.Stage, seed uint64, botName string, invariants bool, afterNew func(*sim.Engine)) (res seedResult, events []sim.DomainEvent, inputs []sim.InputEntry, err error) {
@@ -89,12 +105,8 @@ func playSeedWith(st *stage.Stage, seed uint64, botName string, invariants bool,
 	}
 	stack, err := safely(func() error { return bot.Play(e, b) })
 	if err == nil {
-		switch {
-		case e.Phase() != sim.PhaseEnded:
-			err = fmt.Errorf("ラウンドが終わらない: phase %s（want %s）", e.Phase(), sim.PhaseEnded)
-		case e.Now() != sim.SimTime(st.DurationMs):
-			err = fmt.Errorf("ラウンドが終わらない: t %d が durationMs %d と違う", e.Now(), st.DurationMs)
-		}
+		r, scored := e.Result()
+		err = roundEndError(st, e.Phase(), e.Now(), r.Stars, scored)
 	}
 	events = e.DrainEvents()
 	inputs = e.InputLog()

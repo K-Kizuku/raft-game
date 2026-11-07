@@ -1,6 +1,6 @@
 // テストのための Snapshot（T-411）。demo のテストだけが import する（本番のコードから import しない）。
 // デモのセッション（session.demo が真）の航行中で、速度は 1、8 倍速まで選べる。
-import type { Snapshot } from "../../../protocol/index.ts";
+import type { DemoStormView, Snapshot, StageText } from "../../../protocol/index.ts";
 
 export function makeSnapshot(
   overrides: Partial<Snapshot> = {},
@@ -57,4 +57,24 @@ export function makeSnapshot(
     ...overrides,
   };
   return { ...base, clock: { ...base.clock, ...clock } };
+}
+
+// デモの嵐（T-305b）の紹介の文と、stage.demoStorm のある Snapshot。既定では航路 1-2 を遮断する嵐。
+export const DEMO_STORM_FLAVOR: StageText = {
+  text: "台風が近づき、一の島と二の島の間の海が荒れています",
+  provenance: "derived",
+  source: {
+    dataset: "fixture-2026",
+    region: "デモ地域",
+    field: "DISASTER",
+    quote: "台風による被害",
+  },
+};
+
+export function makeDemoStormSnapshot(
+  demoStorm: DemoStormView = { routeIds: ["1-2"], flavor: DEMO_STORM_FLAVOR },
+  overrides: Partial<Snapshot> = {},
+): Snapshot {
+  const base = makeSnapshot(overrides);
+  return { ...base, stage: { ...base.stage, demoStorm } };
 }

@@ -27,6 +27,9 @@ func TestSimConfigScore(t *testing.T) {
 	if err := cfg.Score.Validate(); err != nil {
 		t.Errorf("Score.Validate() = %v", err)
 	}
+	if cfg.Score.EndOnStar2 {
+		t.Errorf("SimConfig(alpha).Score.EndOnStar2 = true, want false（alpha に demo がない）")
+	}
 
 	// beta の値が取り違えなく入る。
 	beta := parseStage(t, "beta.yaml", readTestdata(t, "stages/beta.yaml"))
@@ -35,6 +38,7 @@ func TestSimConfigScore(t *testing.T) {
 		FerryCostMsPerPoint: 1500, FairnessPerSatisfaction: 4, TargetSuccesses: 3, TargetScore3: 800,
 		SatInitial: 50, SatSucceeded: 8, SatRejectedPenalty: 2, SatExpiredPenalty: 9,
 		SilenceAfterMs: 25000, SilenceEveryMs: 5000, SilenceAmount: 1,
+		EndOnStar2: true, // beta.yaml の demo.endOnAllCriticalSecured: true（T-305b）
 	}
 	if got := scoreConfig(beta); got != wantBeta {
 		t.Errorf("scoreConfig(beta) = %+v, want %+v", got, wantBeta)
