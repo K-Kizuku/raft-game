@@ -88,7 +88,8 @@ func (t *Transport) PostRequest(now int64, from, to uint64, note RequestNote) (i
 }
 
 func (t *Transport) newLetter(l Letter) LetterID {
-	l.ID = LetterID(len(t.letters) + 1)
+	t.lastID++
+	l.ID = t.lastID
 	t.letters = append(t.letters, l)
 	return l.ID
 }
