@@ -1,0 +1,9 @@
+{
+  "id": 40,
+  "kind": "request",
+  "from": 2, "to": 1,
+  "createdAt": 10000,
+  "loc": { "type": "port", "islandId": 2 },
+  "label": "request",
+  "request": { "reqId": "stage2-0005", "hops": 1 }
+}

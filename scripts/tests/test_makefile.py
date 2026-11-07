@@ -22,7 +22,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TARGETS = ["test", "lint", "dev", "dev-env", "clean-docker", "gen", "sync-data", "demo-local", "help"]
 
 UNIMPLEMENTED = {
-    "gen": "T-301",
     "sync-data": "T-201/T-205",
     "demo-local": "T-504",
 }
