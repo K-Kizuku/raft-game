@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: lite の初回クラウド測定が終了コード 0 で完了。負荷模型の性能は目安内。inactivity の解釈・CPU の 502 と上限の適用は確認が残る。次は standard-1 (--first 16) と raw JSON の確認。
+- 状態: lite と standard-1 のクラウド測定がともに終了コード 0 で完了。次は未使用の --first 10 で M-9 の対照実験と、JSON の CPU エラー・停止の詳細の取得。H-5 の判断・後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -21,8 +21,8 @@
 | M-2・M-3 手元の基準値 | 取得済み | Apple M2 / Go 1.26.9。30 分の再計算 79.343 ms、8 倍速 step p99 0.289 ms。クラウドの性能とは区別する |
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
-| H-4 測定 / M-1〜M-14 | 途中 | lite / --first 1 / --runs 10 が終了コード 0。raw JSON は未受領。次に standard-1 / --first 16、M-9 の対照 |
-| H-5 limits.cpuMs の判断 | 未確定 | cpuMs=50 の構成だが Worker の 1e9 反復は成功、DO の 1e9 は 502。JSON の本文・設定の反映と Logs の CPU 時間を確認する |
+| H-4 測定 / M-1〜M-14 | 途中 | lite (s-1〜s-9) と standard-1 (s-16〜s-24) が終了コード 0。raw JSON は未受領。次に --first 10 で M-9 の対照 |
+| H-5 limits.cpuMs の判断 | 未確定 | 1e9 の反復は lite 測定で Worker 200 / DO 502、standard-1 測定で Worker 503 / DO 502。エラー本文・設定の反映と Logs の CPU 時間を確認する |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -660,6 +660,91 @@ printf 'measure exit status: %s\n' $status
 ```
 
 通常の割り当ては s-16〜s-24。結果を受け取ってから、未使用の s-10 などで M-9 の対照に進む。lite.json と standard-1.json も共有してもらい、丸める前の値・502 の本文・inactivity の結果・停止 API の結果を読む。このコマンドはまだ実行結果を受け取っていない。
+
+## 2026-11-07: standard-1 のクラウド測定
+
+共有されたプロンプトの開始時刻は 16:39:07 JST。ユーザーが --instance standard-1 / --runs 10 / --first 16 の測定を実行した。
+
+**終了コードは 0**。全項目の API の実行が終わったが、inactivity による停止や CPU 上限の原因確認を完了したとは扱わない。standard-1.json 自体はこの時点では未受領。
+
+### 測定値
+
+| ID | 項目 | standard-1 の初回結果 (コンソールの表示値) |
+|---|---|---|
+| M-1 | 起動 | DO 内 p50 230 / p95 396 / 最大 396 ms (10/10 回)。初回 359 ms。クライアント p50 686 ms。同時 3 つは全成功、最大 303 ms |
+| M-2 | 30 分相当の再計算 | wall 330 ms、90.9 分/秒、CPU 282 ms |
+| M-3 | ループの step / 遅れ / CPU | ×1: step p99 0.114 ms、遅れ p99 1.1 ms、CPU 0.002。×4: 0.556 ms / 1.1 ms / 0.003。×8: 0.275 ms / 1.1 ms / 0.004 |
+| M-4 | CPU テスト | Worker・DO とも 3e8 まで成功。1e9 では Worker 503 / DO 502。表ではどちらも [object Object] なので JSON の本文が必要 |
+| M-5 | WS | 1 KiB 200 回、RTT p50 130 / p99 335 ms。16 KiB 20/20。超過は破棄。500 件は 500/500・順序 ok。無通信 120 秒 ok。ブラウザ側切断の中継は ok、コンテナ側切断では 1011 |
+| M-6 | DO→コンテナの HTTP | 200/200 回、p50 2 / p99 5 ms |
+| M-7 | SQLite | 100 行 204 ms、1,000 行 219 ms (クライアント)。コンテナ再起動後も 1100 行が残った |
+| M-8 | 非継承 DO | PlainStore と ControlStore がともに ok。SpikeSession の SQLite・container・alarm が動作 |
+| M-9 | enableInternet: false | DNS・TCP・HTTPS がすべて失敗。TCP は i/o timeout。internet=true の対照はまだ未実施 |
+| M-10 | 停止 | destroy 48 ms、running=false。60000 ms のアラームで停止。inactivityMs=30000 の実験では、60 秒後の確認時点でまだ動いていた |
+| M-11 | 異常終了と再起動 | 検知 124 ms、再起動 216 ms |
+| M-12 | ローカル | 既に取得したローカルの結果を使う |
+| M-13 | デプロイ | lite と同じ Worker・同じイメージ。サイズは start の引数で指定しており、別途のデプロイはしていない |
+| M-14 | 資源 | CPU 1、GOMAXPROCS 1、cpu.max null、memory.max null、env MODE=single / PORT=8080、入口の Worker の colo=SJC |
+
+通常起動 10 回: 359、305、296、224、213、339、219、213、396、230 ms。同時起動は 264、206、303 ms。
+
+### lite と比較した暫定評価
+
+| 指標 | lite | standard-1 |
+|---|---|---|
+| 起動 p95 (DO の中) | 1112 ms | 396 ms |
+| 再計算 wall | 561 ms | 330 ms |
+| 8 倍速 step p99 | 1.2 ms | 0.275 ms |
+| 8 倍速 遅れ p99 | 1.8 ms | 1.1 ms |
+| 1 倍速 遅れ p99 | 202 ms | 1.1 ms |
+| WS RTT p50 / p99 | 140 / 171 ms | 130 / 335 ms |
+
+- 負荷模型の性能については両方とも、復元 3 秒 (現行 NFR) / 5 秒 (#15 の提案) と、8 倍速 step p99 25 ms (#15 の提案) を下回る。
+- 一般公開 lite / デモ standard-1 という既存の構成は、今回の予備測定では維持する候補。本体のエンジンとゲームの負荷を確認した後の判断は残る。
+- 起動は実行順・キャッシュ・通信経路などの条件がそろっていない。今回の差だけから、サイズによる起動時間の改善量を断定しない。
+- WS の p99 は standard-1 の方が大きい。通信経路や測定時間の違いを切り分けず、サイズの効果や国内向けの応答性を結論しない。
+- M-14 の CPU 数 1 や cgroup の null は、lite と standard-1 の割り当て資源が等しい証拠にはならない。アプリから見える値とサービスの割り当て仕様を区別する。
+- Worker/DO の CPU テストは Go コンテナ内では実行していない。Worker の 1e9 反復が前回 200 / 今回 503 だったことを、コンテナのサイズ変更による効果とは扱わない。
+- inactivity は両方で60秒後に動いていた。前節の monitor との相互作用の候補は残る。明示的な destroy とアラームは両方で動作した。
+
+### 使用した番号
+
+計画と起動の出力では s-16〜s-23 は各 3 回分を使用し、s-24 は inactivity の 1 回。stop 失敗の表示はなく、終了コードは 0。raw JSON と H-6 で最終停止状態を確認する。
+
+現時点のクラウドで使用済みの範囲は s-1〜s-9 と s-16〜s-24。未使用の --first 10 を M-9 の対照に使う。
+
+### 次の手順: M-9 の対照と JSON の詳細取得
+
+同じターミナル、リポジトリのルートで実行する。--only egress --internet-control は、外部通信を禁止した場合と許可した場合を比較する。宛先はコードで固定された example.com の DNS、1.1.1.1:443 の TCP、https://example.com/ の HTTPS のみ。
+
+```fish
+node spike/scripts/measure.ts \
+  --base https://raft-game-spike.kizuku.workers.dev \
+  --instance lite --only egress --internet-control \
+  --runs 1 --first 10 \
+  --out spike/.cloudflare/egress-control.json
+printf 'measure exit status: %s\n' $status
+```
+
+その後、lite・standard-1・egress-control の JSON から必要な詳細だけを表示する。認証トークンはこの抽出対象には含めない。
+
+```fish
+node -e '
+const fs = require("node:fs");
+for (const name of ["lite", "standard-1", "egress-control"]) {
+  const r = JSON.parse(fs.readFileSync("spike/.cloudflare/" + name + ".json", "utf8"));
+  console.log(JSON.stringify({
+    target: name, startedAt: r.startedAt, finishedAt: r.finishedAt,
+    sessions: r.sessions, stopFailures: r.stopFailures,
+    cpu: r.items.cpu, inactivity: r.items.inactivity, egress: r.items.egress,
+    startInfo: r.items.start?.data?.info,
+    inactivityTimeout: r.items.start?.data?.runs?.[0]?.inactivityTimeout
+  }, null, 2));
+}
+'
+```
+
+取得する内容は測定の開始・終了日時、使用番号、stopFailures、CPU のエラー本文と clientMs、inactivity の stopped、egress の両条件、コンテナの info、setInactivityTimeout の設定結果。これらは次に案内したコマンドで、まだ実行結果は受け取っていない。
 
 ## 測定前に確定・確認する事項
 
