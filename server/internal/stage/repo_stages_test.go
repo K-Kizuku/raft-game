@@ -1,7 +1,6 @@
 package stage_test
 
 import (
-	"fmt"
 	"os"
 	"reflect"
 	"slices"
@@ -37,14 +36,13 @@ func repoStage(t *testing.T, id string) *stage.Stage {
 
 // data/curated の抜き出しの引用（データ仕様 §3.3）。
 const (
-	quoteSetouchiClimate      = "温暖、小雨の典型的な瀬戸内式気候"                                             // setouchi-climate
-	quoteSetouchiTeshimaTono  = "豊島~小豊島~土庄(8km・25分"                                            // setouchi-teshima-tonosho-minutes
-	quoteSetouchiTakamatsu    = "高松~直島~豊島(22.6km・35分"                                          // setouchi-takamatsu-naoshima-teshima-minutes
-	quoteNagasakiHeritage     = "世界遺産登録された「長崎と天草地方の潜伏キリシタン関連遺産」"                               // nagasaki-world-heritage
-	quoteNagasakiTyphoon      = "台風等の自然災害の影響を受けやすい"                                            // nagasaki-typhoon
-	quoteIzuCancellation      = "令和2(2020)年利島17%、御蔵島・青ヶ島41%"                                   // izu-cancellation-2020
-	quoteIzuHelicommuter      = "青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航" // izu-helicommuter
-	quoteIzuTyphoon2013       = "平成25年台風26号による大島町の被害"                                          // izu-typhoon-2013
+	quoteSetouchiClimate      = "温暖、小雨の典型的な瀬戸内式気候"               // setouchi-climate
+	quoteSetouchiTeshimaTono  = "豊島~小豊島~土庄(8km・25分"              // setouchi-teshima-tonosho-minutes
+	quoteSetouchiTakamatsu    = "高松~直島~豊島(22.6km・35分"            // setouchi-takamatsu-naoshima-teshima-minutes
+	quoteNagasakiHeritage     = "世界遺産登録された「長崎と天草地方の潜伏キリシタン関連遺産」" // nagasaki-world-heritage
+	quoteNagasakiTyphoon      = "台風等の自然災害の影響を受けやすい"              // nagasaki-typhoon
+	quoteIzuCancellation      = "令和2(2020)年利島17%、御蔵島・青ヶ島41%"     // izu-cancellation-2020
+	quoteIzuTyphoon2013       = "平成25年台風26号による大島町の被害"            // izu-typhoon-2013
 	repoStageDataset          = "mlit-ritou-2026"
 	repoStageRegionShodoshima = "小豆島地域"
 )
@@ -155,18 +153,33 @@ var wantStages = []wantStage{
 		id: "demo-izu", title: "嵐の離島共和国（デモ・伊豆版）", durationMs: 120000, unlock: "", tutorial: "",
 		refs:         []string{"tokyo-oshima", "tokyo-toshima", "tokyo-miyakejima", "tokyo-mikurajima", "tokyo-hachijojima", "tokyo-aogashima"},
 		weights:      []int64{318, 68, 180, 68, 317, 49},
-		electionTick: 16,
+		electionTick: 28, // T-501e で 16 から 28 に
+		// 6 島のすべての組（フルメッシュ。ゲームデザイン §3.5）。65 + 1.1 × 配置の距離、10 ms 単位（データ仕様 §4.5）。
 		routes: []wantRoute{
-			{2, 1, 1800, stage.Derived},
-			{1, 3, 6000, stage.Derived},
-			{3, 4, 2400, stage.Derived},
-			{4, 5, 5400, stage.Derived},
-			{5, 6, 3600, stage.Derived},
+			{1, 2, 220, stage.Creative},
+			{1, 3, 260, stage.Creative},
+			{1, 4, 380, stage.Creative},
+			{1, 5, 580, stage.Creative},
+			{1, 6, 730, stage.Creative},
+			{2, 3, 210, stage.Creative},
+			{2, 4, 290, stage.Creative},
+			{2, 5, 480, stage.Creative},
+			{2, 6, 620, stage.Creative},
+			{3, 4, 190, stage.Creative},
+			{3, 5, 390, stage.Creative},
+			{3, 6, 540, stage.Creative},
+			{4, 5, 270, stage.Creative},
+			{4, 6, 410, stage.Creative},
+			{5, 6, 210, stage.Creative},
 		},
+		// 計画書の 6 つの船名をすべて使い、各島に 1 隻（T-501e）。
 		ferries: []wantFerry{
 			{"f1", "橘丸", 1, 4, 1000, stage.Fact},
 			{"f2", "くろしお丸", 3, 3, 1000, stage.Fact},
 			{"f3", "あおがしま丸", 5, 3, 1000, stage.Fact},
+			{"f4", "フェリーあぜりあ", 4, 3, 1000, stage.Fact},
+			{"f5", "新さるびあ丸", 2, 3, 1000, stage.Fact},
+			{"f6", "セブンアイランド結", 6, 3, 1000, stage.Fact},
 		},
 		critical:      []string{fwA, fwB},
 		stallCapacity: 3,
@@ -407,11 +420,14 @@ func TestRepoStagesSources(t *testing.T) {
 		t.Parallel()
 		st := get(t, "demo-izu")
 		checkSource(t, "intro", st.Intro.Source, regionIzu, "MARITIME_TRANSPORT", quoteIzuCancellation)
-		if len(st.Routes) != 5 {
-			t.Fatalf("航路の数 = %d, want 5", len(st.Routes))
+		// 航路は creative（T-501e）。ヘリコミューターの引用は、つながりの根拠に使わない（データ仕様 §4.5）。
+		if len(st.Routes) != 15 {
+			t.Fatalf("航路の数 = %d, want 15", len(st.Routes))
 		}
 		for i, rt := range st.Routes {
-			checkSource(t, fmt.Sprintf("routes[%d]", i), rt.Source, regionIzu, "MARITIME_TRANSPORT", quoteIzuHelicommuter)
+			if rt.Source != nil {
+				t.Errorf("routes[%d]: Source = %+v, want nil（creative）", i, *rt.Source)
+			}
 		}
 		if st.Demo == nil || st.Demo.Storm == nil || st.Demo.Storm.Flavor == nil {
 			t.Fatalf("Demo = %+v, want flavor のある demo.storm", st.Demo)
@@ -434,19 +450,13 @@ func TestRepoStagesSources(t *testing.T) {
 	})
 }
 
-// ST-4 警告。stage1・stage2・demo-goto はなし（demo-goto は T-501b で electionTick を 32 にして警告が消えた）。
-// demo-izu は raft.electionTick の警告がちょうど 1 件（データ仕様 §5.4。値は docs のとおり）。
+// ST-4 警告。4 つのステージとも、なし（demo-goto は T-501b で electionTick を 32 に、demo-izu は T-501e で
+// 航路をフルメッシュにして electionTick を 28 にし、警告が消えた。データ仕様 §5.4）。
 func TestRepoStagesWarnings(t *testing.T) {
 	t.Parallel()
-	for _, id := range []string{"stage1", "stage2", "demo-goto"} {
+	for _, id := range []string{"stage1", "stage2", "demo-goto", "demo-izu"} {
 		if st := repoStage(t, id); len(st.Warnings) != 0 {
 			t.Errorf("%s: Warnings = %+v, want なし", id, st.Warnings)
-		}
-	}
-	for _, id := range []string{"demo-izu"} {
-		st := repoStage(t, id)
-		if len(st.Warnings) != 1 || st.Warnings[0].Path != "raft.electionTick" {
-			t.Errorf("%s: Warnings = %+v, want raft.electionTick の 1 件", id, st.Warnings)
 		}
 	}
 }
@@ -493,8 +503,8 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 		routes     [][2]uint64
 		durationMs int64
 	}{
-		{"demo-izu", [][2]uint64{{1, 3}}, 20000},
-		{"demo-goto", [][2]uint64{{1, 2}, {1, 3}}, 40000}, // T-501b で 40 秒に延ばした
+		{"demo-izu", [][2]uint64{{1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}}, 40000}, // T-501e で大島を孤立させる 5 本・40 秒に
+		{"demo-goto", [][2]uint64{{1, 2}, {1, 3}}, 40000},                        // T-501b で 40 秒に延ばした
 	} {
 		id, routes, durationMs := d.id, d.routes, d.durationMs
 		st := get(t, id)
@@ -530,5 +540,43 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 		if cfg.Score.TargetSuccesses != w.targetSuccesses {
 			t.Errorf("%s: cfg.Score.TargetSuccesses = %d, want %d", w.id, cfg.Score.TargetSuccesses, w.targetSuccesses)
 		}
+	}
+}
+
+// ST-6 demo-izu の航路の形（T-501e。ゲームデザイン §3.5・データ仕様 §4.5）。
+// 6 島のすべての組に航路が 1 本ずつあり、travelMs は「65 + 1.1 × 配置（layout）の距離」を 10 ms 単位に丸めた値で、
+// 一番短い航路と一番長い航路の比が 4 倍以内。小数を使わないよう、距離は 2 乗のまま整数で比べる。
+func TestRepoStagesDemoIzuFullMesh(t *testing.T) {
+	t.Parallel()
+	st := repoStage(t, "demo-izu")
+	n := uint64(len(st.Islands))
+	seen := map[[2]uint64]bool{}
+	var minMs, maxMs int64
+	for i, rt := range st.Routes {
+		a, b := min(rt.A, rt.B), max(rt.A, rt.B)
+		if seen[[2]uint64{a, b}] {
+			t.Errorf("routes[%d]: %d-%d が 2 本ある", i, a, b)
+		}
+		seen[[2]uint64{a, b}] = true
+		ia, ib := st.Islands[a-1], st.Islands[b-1]
+		dx, dy := ia.X-ib.X, ia.Y-ib.Y
+		d2 := dx*dx + dy*dy
+		// |travelMs - 65 - 1.1 × d| ≤ 5 ⇔ (travelMs - 70)² × 100 ≤ 121 × d² ≤ (travelMs - 60)² × 100（travelMs > 70 のとき）
+		lo, hi := rt.TravelMs-70, rt.TravelMs-60
+		if lo < 0 || lo*lo*100 > 121*d2 || 121*d2 > hi*hi*100 {
+			t.Errorf("routes[%d] %d-%d: travelMs = %d, want 65 + 1.1 × 距離（距離の 2 乗 %d）を 10 ms 単位に丸めた値", i, a, b, rt.TravelMs, d2)
+		}
+		if i == 0 || rt.TravelMs < minMs {
+			minMs = rt.TravelMs
+		}
+		if i == 0 || rt.TravelMs > maxMs {
+			maxMs = rt.TravelMs
+		}
+	}
+	if want := int(n * (n - 1) / 2); len(seen) != want {
+		t.Errorf("航路のある島の組 = %d, want %d（6 島のすべての組）", len(seen), want)
+	}
+	if maxMs > 4*minMs {
+		t.Errorf("travelMs の最長 %d が最短 %d の 4 倍より長い", maxMs, minMs)
 	}
 }
