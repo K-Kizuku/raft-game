@@ -10,17 +10,20 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
+
+from test_dev_env import make_fake_docker, read_log
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-TARGETS = ["test", "lint", "dev", "gen", "sync-data", "demo-local", "help"]
+TARGETS = ["test", "lint", "dev", "dev-env", "clean-docker", "gen", "sync-data", "demo-local", "help"]
 
 UNIMPLEMENTED = {
     "gen": "T-301",
     "sync-data": "T-201/T-205",
-    "dev": "T-008",
     "demo-local": "T-504",
 }
 
@@ -36,11 +39,13 @@ SKELETON_DIRS = [
 MAKE = shutil.which("make")
 
 
-def make(*args: str) -> subprocess.CompletedProcess:
+def make(*args: str, extra_env: Optional[dict] = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     # 外側の make から呼ばれたときのフラグ（-n など）を引き継がない。
-    for key in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES"):
+    # Worker は DEV_SLOT を渡されて動くので、DEV_SLOT・DOCKER なども毎回消す。
+    for key in ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES", "DEV_SLOT", "DOCKER", "DRY_RUN"):
         env.pop(key, None)
+    env.update(extra_env or {})
     return subprocess.run(
         [MAKE, "--no-print-directory", *args],
         cwd=REPO_ROOT,
@@ -120,6 +125,45 @@ class MakefileTest(unittest.TestCase):
                 self.assertEqual(res.returncode, 0, res.stderr)
                 self.assertIn("未実装", res.stdout)
                 self.assertIn(task, res.stdout)
+
+    # M-1
+    def test_dev_requires_dev_slot(self) -> None:
+        res = make("dev")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("DEV_SLOT", res.stdout + res.stderr)
+
+    # M-2
+    def test_dev_dry_run(self) -> None:
+        res = make("dev", "DRY_RUN=1", extra_env={"DEV_SLOT": "2"})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("--port 15193", res.stdout)
+        self.assertIn("--strictPort", res.stdout)
+        self.assertTrue(
+            "PORT=18100" in res.stdout or "server/cmd/server がない" in res.stdout,
+            res.stdout,
+        )
+
+    # M-3
+    def test_dev_env(self) -> None:
+        res = make("dev-env", extra_env={"DEV_SLOT": "2"})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("DEV_WEB_PORT=15193", res.stdout)
+        self.assertIn("DEV_SERVER_PORT=18100", res.stdout)
+
+    # M-4
+    def test_clean_docker_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            docker = make_fake_docker(Path(tmp))
+            log = Path(tmp) / "docker.log"
+            res = make(
+                "clean-docker",
+                "DRY_RUN=1",
+                extra_env={"DOCKER": str(docker), "FAKE_LOG": str(log), "FAKE_IMAGE": "raft-game-server:x"},
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            calls = read_log(log)
+            self.assertTrue(calls)
+            self.assertFalse(any("rm" in c for c in calls), calls)
 
 
 if __name__ == "__main__":
