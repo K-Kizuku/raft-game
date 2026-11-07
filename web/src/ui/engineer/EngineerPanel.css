@@ -1,0 +1,167 @@
+/* エンジニアパネル（T-407・ゲームデザイン §7.4）。マップの上に重ねる（非モーダル）。
+   背景は #111827（不透明度 0.92）、文字は白と #E5E7EB（コントラスト比 4.5:1 以上。NFR-10）。
+   右の「島の詳細」（最大 22rem）を隠さないよう、その左（マップの右下の隅）に置く。 */
+.engineer-toggle {
+  position: fixed;
+  right: 23.5rem;
+  bottom: 1rem;
+  z-index: 20;
+  color: #ffffff;
+  background: #111827;
+  border: 1px solid #6b7280;
+  border-radius: 4px;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+}
+
+.engineer-toggle[aria-expanded="true"] {
+  background: #1f2937;
+  border-color: #fbbf24;
+}
+
+.engineer-panel {
+  position: fixed;
+  right: 23.5rem;
+  bottom: 3.5rem;
+  z-index: 20;
+  box-sizing: border-box;
+  width: 28rem;
+  max-width: calc(100vw - 2rem);
+  max-height: 70vh;
+  overflow: auto;
+  padding: 0.75rem;
+  color: #ffffff;
+  background: rgb(17 24 39 / 0.92);
+  border: 1px solid #374151;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 52rem) {
+  .engineer-toggle,
+  .engineer-panel {
+    right: 1rem;
+  }
+}
+
+.engineer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.engineer-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.engineer-panel button {
+  color: #ffffff;
+  background: #1f2937;
+  border: 1px solid #6b7280;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.engineer-panel button[aria-pressed="true"] {
+  background: #374151;
+  border-color: #fbbf24;
+}
+
+.engineer-section h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1rem;
+  border-bottom: 1px solid #4b5563;
+}
+
+.engineer-section h4 {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.9rem;
+}
+
+.engineer-section p {
+  margin: 0.25rem 0;
+  color: #e5e7eb;
+}
+
+.engineer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.engineer-table th,
+.engineer-table td {
+  padding: 0.15rem 0.3rem;
+  text-align: left;
+  border-bottom: 1px solid #374151;
+  white-space: nowrap;
+}
+
+.engineer-table tr[data-role="leader"] td {
+  color: #fde68a;
+  font-weight: bold;
+}
+
+.engineer-note {
+  font-size: 0.8rem;
+}
+
+.engineer-letters ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engineer-letters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.engineer-letters .letter-icon {
+  background: #ffffff;
+  border-radius: 50%;
+}
+
+.engineer-stale {
+  padding: 0 0.3rem;
+  font-size: 0.75rem;
+  color: #111827;
+  background: #fbbf24;
+  border-radius: 3px;
+}
+
+.engineer-stale-note {
+  color: #fde68a;
+}
+
+.engineer-more {
+  color: #e5e7eb;
+}
+
+.engineer-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.75rem;
+  margin: 0.25rem 0;
+}
+
+.engineer-fields div {
+  display: contents;
+}
+
+.engineer-fields dt {
+  color: #d1d5db;
+}
+
+.engineer-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
