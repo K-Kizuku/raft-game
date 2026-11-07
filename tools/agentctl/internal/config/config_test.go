@@ -22,6 +22,10 @@ func TestRepoConfigIsValid(t *testing.T) {
 	if !c.IsTrustedAuthor("k-kizuku") || c.IsTrustedAuthor("other") {
 		t.Error("IsTrustedAuthor")
 	}
+	// Issue #282: AI 用の GitHub App（kizuku-claude）が書いたレビュー記録も C5 で数える（[bot] の付いた名前だけ）
+	if !c.IsTrustedAuthor("kizuku-claude[bot]") || c.IsTrustedAuthor("kizuku-claude") {
+		t.Error("IsTrustedAuthor（kizuku-claude[bot]）")
+	}
 	if !c.IsCodexBot("chatgpt-codex-connector[bot]") || c.IsCodexBot("chatgpt-codex-connector") || c.IsCodexBot("K-Kizuku") {
 		t.Error("IsCodexBot")
 	}
@@ -163,6 +167,33 @@ func TestMaxRounds(t *testing.T) {
 	}
 }
 
+// github_app（Issue #282）は、リポジトリの設定では App ID と鍵のパスがある。省略してもよい。
+func TestGithubApp(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GithubApp == nil || c.GithubApp.AppID != 5659452 || c.GithubApp.KeyPath != "~/.config/raft-game/agent-app.pem" {
+		t.Errorf("github_app = %+v", c.GithubApp)
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { delete(m, "github_app") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GithubApp != nil {
+		t.Errorf("省略したのに github_app = %+v", c.GithubApp)
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) {
+		m["github_app"] = map[string]any{"app_id": 1, "key_path": "/etc/agent.pem"}
+	}))
+	if err != nil {
+		t.Fatalf("絶対パスを受け付けない: %v", err)
+	}
+	if c.GithubApp.AppID != 1 || c.GithubApp.KeyPath != "/etc/agent.pem" {
+		t.Errorf("github_app = %+v", c.GithubApp)
+	}
+}
+
 // mutate はリポジトリの設定を map として書き換え、JSON にする。
 func mutate(t *testing.T, f func(m map[string]any)) []byte {
 	t.Helper()
@@ -215,6 +246,27 @@ func TestInvalid(t *testing.T) {
 		{"max_rounds が負", func(m map[string]any) { review(m)["max_rounds"] = -1 }, "review.max_rounds"},
 		{"max_rounds が 11", func(m map[string]any) { review(m)["max_rounds"] = 11 }, "review.max_rounds"},
 		{"max_rounds が整数でない", func(m map[string]any) { review(m)["max_rounds"] = "2" }, "max_rounds"},
+		{"github_app.app_id が 0", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 0, "key_path": "~/k.pem"}
+		}, "github_app.app_id"},
+		{"github_app.app_id がない", func(m map[string]any) {
+			m["github_app"] = map[string]any{"key_path": "~/k.pem"}
+		}, "github_app.app_id"},
+		{"github_app.app_id が文字列", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": "5659452", "key_path": "~/k.pem"}
+		}, "app_id"},
+		{"github_app.key_path が空", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": ""}
+		}, "github_app.key_path"},
+		{"github_app.key_path が相対パス", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": "keys/agent.pem"}
+		}, "github_app.key_path"},
+		{"github_app.key_path に改行", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": "~/a\nb.pem"}
+		}, "github_app.key_path"},
+		{"github_app の未知のキー", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": "~/k.pem", "private_key": "x"}
+		}, "unknown field"},
 		{"不正な glob", func(m map[string]any) { m["protected_paths"] = []any{"a/[b"} }, "protected_paths"},
 		{"skip_paths に不正な glob", func(m map[string]any) { review(m)["skip_paths"] = []any{"docs/[x"} }, "review.skip_paths"},
 		{"skip_paths に空の値", func(m map[string]any) { review(m)["skip_paths"] = []any{" "} }, "review.skip_paths"},

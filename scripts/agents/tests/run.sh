@@ -27,7 +27,8 @@ git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE AGENT_ROLE AGENT_ISSUE AGENT_ALLOW_PROTECTED AGENT_CONFIG \
   AGENT_REPO AGENTCTL AGENT_FALLBACK_REASON CLAUDE_PROJECT_DIR DEV_SLOT \
   GITHUB_TOKEN GH_TOKEN FAKE_GH_TOKEN AGENT_CODEX_GITHUB_TIMEOUT AGENT_CODEX_GITHUB_POLL \
-  AGENT_CODEX_GITHUB_FIRST_WAIT AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT AGENT_CODEX_TIMEOUT
+  AGENT_CODEX_GITHUB_FIRST_WAIT AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT AGENT_CODEX_TIMEOUT \
+  AGENT_APP_ID AGENT_APP_KEY AGENT_GH_REAL AGENT_GH_SHIM_DIR AGENT_GH_APP_ACTIVE
 export CLAUDE_CONFIG_DIR="$tmp/claude-config"
 
 # ---- 本物の agentctl（review validate・render の書式の確認に使う。go がなければ jq で代わりに確かめる）----
@@ -40,6 +41,10 @@ if command -v go >/dev/null 2>&1 && [ -f "$src_root/tools/agentctl/go.mod" ]; th
   fi
 fi
 export REAL_AGENTCTL="$real_agentctl"
+# Issue #282: GitHub App のトークンのキャッシュ（~/.config/raft-game/）と鍵を本物の HOME で探さない
+# （go のビルドのキャッシュは本物の HOME を使いたいので、ビルドの後で変える）
+export HOME="$tmp/home"
+mkdir -p "$HOME"
 
 # ---- 偽のコマンド ----
 fake="$tmp/fake"
@@ -133,7 +138,26 @@ EOF
 cat >"$fake/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 jq -cn --arg cwd "$PWD" '{cwd:$cwd, args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/gh.log"
+# Issue #282: どのトークンで呼ばれたか（テストの中だけの記録）
+printf '%s %s\n' "${GH_TOKEN:-none}" "$*" >>"$FAKE_LOG/gh-env.log"
 case "$1 $2" in
+  # Issue #282: GitHub App の JWT での呼び出し（FAKE_APP_MODE=noinstall で未インストール）
+  "api -H" | "api -X")
+    case "${@: -1}" in
+      /repos/*/installation)
+        if [ "${FAKE_APP_MODE:-ok}" = noinstall ]; then
+          echo '{"message":"Not Found"}'
+          echo "gh: Not Found (HTTP 404)" >&2
+          exit 1
+        fi
+        echo '{"id":42}'
+        ;;
+      /app/installations/42/access_tokens)
+        printf '{"token":"%s","expires_at":"2026-11-08T01:00:00Z"}\n' "${FAKE_APP_TOKEN:-ghs_test282}"
+        ;;
+      *) exit 1 ;;
+    esac
+    ;;
   "issue view")
     body="${FAKE_ISSUE_BODY:-本文}"
     case " $* " in
@@ -259,9 +283,12 @@ if [ "${AGENT_ROLE:-}" = "reviewer" ]; then
   bash_rc="$(probe Bash '{"command":"gh pr comment 12 --body x"}')"
   write_rc="$(probe Write "$(jq -cn --arg p "$PWD/a.txt" '{file_path:$p, content:"x"}')")"
 fi
+# Issue #282: 引き継いだトークンの環境変数と、PATH の先頭（gh-app のラッパーを置いたか）も記録する
 jq -cn --arg cwd "$PWD" --arg role "${AGENT_ROLE:-}" --arg settings "$settings" --argjson hooks "$hook_cmds" \
-  --arg bash_rc "$bash_rc" --arg write_rc "$write_rc" \
-  '{cwd:$cwd, role:$role, settings:$settings, hook_cmds:$hooks, bash_rc:$bash_rc, write_rc:$write_rc, args:$ARGS.positional}' \
+  --arg bash_rc "$bash_rc" --arg write_rc "$write_rc" --arg tok "${GH_TOKEN:-}${GITHUB_TOKEN:-}" \
+  --arg path0 "${PATH%%:*}" --arg ghreal "${AGENT_GH_REAL:-}" \
+  '{cwd:$cwd, role:$role, settings:$settings, hook_cmds:$hooks, bash_rc:$bash_rc, write_rc:$write_rc,
+    token_env:$tok, path0:$path0, gh_real:$ghreal, args:$ARGS.positional}' \
   --args -- "$@" >>"$FAKE_LOG/claude.log"
 case "${FAKE_CLAUDE_MODE:-good}" in
   good)
@@ -269,6 +296,14 @@ case "${FAKE_CLAUDE_MODE:-good}" in
     ;;
   fail) exit 1 ;;
 esac
+EOF
+# Issue #282: 偽の openssl（JWT の署名。鍵は読まない。FAKE_OPENSSL_FAIL=1 で失敗する）
+cat >"$fake/bin/openssl" <<'EOF'
+#!/usr/bin/env bash
+jq -cn '{args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/openssl.log"
+cat >/dev/null
+[ -z "${FAKE_OPENSSL_FAIL:-}" ] || { echo "unable to load key" >&2; exit 1; }
+printf 'fake-signature'
 EOF
 chmod +x "$fake/bin/"*
 for c in agentctl gh claude; do
@@ -352,7 +387,10 @@ mkdir -p "$repo/scripts" "$repo/.agents"
 cp -R "$src_root/scripts/agents" "$repo/scripts/agents"
 rm -rf "$repo/scripts/agents/tests"
 cp "$src_root/scripts/dev-slot.sh" "$repo/scripts/dev-slot.sh"
-cp "$src_root/.agents/config.json" "$repo/.agents/config.json"
+# github_app（#282）は外す（App のトークンは、下のテストで AGENT_APP_ID・AGENT_APP_KEY を付けて確かめる）
+jq 'del(.github_app)' "$src_root/.agents/config.json" >"$repo/.agents/config.json"
+check "config: リポジトリの設定に github_app（app_id と key_path）がある" \
+  jq -e '.github_app.app_id == 5659452 and .github_app.key_path == "~/.config/raft-game/agent-app.pem"' "$src_root/.agents/config.json"
 mkdir -p "$repo/.claude"
 cp -R "$src_root/.claude/agents" "$repo/.claude/agents"
 cp "$src_root/.claude/settings.json" "$repo/.claude/settings.json"
@@ -463,14 +501,323 @@ check "agentctl.sh: GH_TOKEN があればそのまま使う" test "$(cat "$tmp/r
   printf '%s\n' "$RC" >"$tmp/rc")
 check "agentctl.sh: gh が未ログインならトークンを入れない" test "$(cat "$tmp/rc"):$(cat "$tmp/out")" = "0:GH_TOKEN=none GITHUB_TOKEN=none args=plan"
 reset_logs
-# ensure_github_token: トークンがなければ gh auth token を GH_TOKEN に入れる。あれば gh を呼ばない
-run_rc env FAKE_GH_TOKEN=tok-from-gh bash -c '. "$1"; ensure_github_token; printf "%s" "${GH_TOKEN:-}"' _ "$lt/lib.sh"
-check "lib ensure_github_token: gh auth token を使う" test "$RC:$(cat "$tmp/out")" = "0:tok-from-gh"
+# ensure_gh_token（#282 で review.sh の ensure_github_token をまとめた）: トークンがなければ gh auth token を
+# GH_TOKEN に入れる。あれば gh を呼ばない
+run_rc env FAKE_GH_TOKEN=tok-from-gh bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}"' _ "$lt/lib.sh"
+check "lib ensure_gh_token: gh auth token を使う" test "$RC:$(cat "$tmp/out")" = "0:tok-from-gh"
 reset_logs
-run_rc env GITHUB_TOKEN=x FAKE_GH_TOKEN=tok-from-gh bash -c '. "$1"; ensure_github_token; printf "%s" "${GH_TOKEN:-}"' _ "$lt/lib.sh"
-check "lib ensure_github_token: GITHUB_TOKEN があれば何もしない" test "$RC:$(cat "$tmp/out")" = "0:" -a ! -s "$FAKE_LOG/gh.log"
-run_rc env FAKE_GH_TOKEN= bash -c '. "$1"; ensure_github_token; printf "%s" "${GH_TOKEN-unset}"' _ "$lt/lib.sh"
-check "lib ensure_github_token: gh がトークンを出さなければ GH_TOKEN を設定しない" test "$RC:$(cat "$tmp/out")" = "0:unset"
+run_rc env GITHUB_TOKEN=x FAKE_GH_TOKEN=tok-from-gh bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}"' _ "$lt/lib.sh"
+check "lib ensure_gh_token: GITHUB_TOKEN があれば何もしない" test "$RC:$(cat "$tmp/out")" = "0:" -a ! -s "$FAKE_LOG/gh.log"
+run_rc env FAKE_GH_TOKEN= bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN-unset}"' _ "$lt/lib.sh"
+check "lib ensure_gh_token: gh がトークンを出さなければ GH_TOKEN を設定しない" test "$RC:$(cat "$tmp/out")" = "0:unset"
+check "lib: ensure_github_token はもうない（ensure_gh_token にまとめた）" \
+  bash -c '. "$1"; ! declare -F ensure_github_token >/dev/null' _ "$lt/lib.sh"
+reset_logs
+
+# ================= GitHub App のトークン（#282） =================
+# 鍵は偽物（openssl は偽物なので中身は読まない）。鍵の中身・トークンが標準出力・標準エラー・ログに出ないことを確かめる。
+app_dir="$tmp/app"
+mkdir -p "$app_dir"
+app_key="$app_dir/agent-app.pem"
+key_secret="not-a-real-key-282"
+printf '%s\n' "$key_secret" >"$app_key"
+chmod 600 "$app_key"
+app_tok="ghs_test282"
+app_cache_dir="$HOME/.config/raft-game"
+app_cache="$app_cache_dir/agent-app-token-5659452-o_r"
+appenv=(AGENT_APP_ID=5659452 "AGENT_APP_KEY=$app_key" AGENT_REPO=o/r FAKE_GH_TOKEN=tok-owner)
+# no_secret <ファイル…>: トークンと鍵の中身を含まない
+no_secret() {
+  ! grep -q -e "$app_tok" -e "$key_secret" -e "tok-app-2" "$@"
+}
+# jwt_payload: gh.log の Authorization: Bearer の JWT のペイロード（JSON）
+jwt_payload() {
+  local p
+  p="$(jq -r '.args[] | select(startswith("Authorization: Bearer ")) | ltrimstr("Authorization: Bearer ")' "$FAKE_LOG/gh.log" |
+    head -n 1 | cut -d. -f2 | tr '_-' '/+')"
+  while [ $((${#p} % 4)) -ne 0 ]; do p="$p="; done
+  printf '%s' "$p" | { base64 -d 2>/dev/null || base64 -D; }
+}
+rm -rf "$app_cache_dir"
+reset_logs
+now_s="$(date +%s)"
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator \
+  bash -c '. "$1"; ensure_gh_token; bash -c "[ \"\$GH_TOKEN\" = ghs_test282 ]" && echo app' _ "$lt/lib.sh"
+check "app: Orchestrator の ensure_gh_token は App のトークンを GH_TOKEN に入れる" test "$RC:$(cat "$tmp/out")" = "0:app"
+check "app: 作れたら標準エラーに何も出さない" test ! -s "$tmp/err"
+check "app: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+check "app: JWT（Bearer）で /repos/o/r/installation を読む" \
+  log_has gh '.args[0] == "api" and (.args | last) == "/repos/o/r/installation" and any(.args[]; test("^Authorization: Bearer [A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))'
+check "app: インストールのトークンを POST で作る" \
+  log_has gh '.args[0:3] == ["api","-X","POST"] and (.args | last) == "/app/installations/42/access_tokens"'
+check "app: 鍵で RS256（SHA-256）の署名をする" log_has openssl '.args == ["dgst","-sha256","-sign","'"$app_key"'","-binary"]'
+payload="$(jwt_payload)"
+check "app: JWT の iss は App ID・iat は 60 秒前・exp は 9 分後" \
+  jq -e --argjson now "$now_s" '.iss == "5659452" and (.exp - .iat) == 600 and
+    ((.iat - ($now - 60)) | if . < 0 then -. else . end) <= 5' <<<"$payload"
+check "app: gh auth token（オーナーのトークン）を使わない" test -z "$(jq -c 'select(.args == ["auth","token"])' "$FAKE_LOG/gh.log")"
+check "app: キャッシュを ~/.config/raft-game/ に作る" test -f "$app_cache"
+check "app: キャッシュはほかの人が読めない（600）" \
+  test "$(stat -c %a "$app_cache" 2>/dev/null || stat -f %Lp "$app_cache")" = 600
+check "app: キャッシュのディレクトリもほかの人が読めない（700）" \
+  test "$(stat -c %a "$app_cache_dir" 2>/dev/null || stat -f %Lp "$app_cache_dir")" = 700
+check "app: キャッシュに鍵の中身を書かない" bash -c '! grep -q "$1" "$2"' _ "$key_secret" "$app_cache"
+# キャッシュが 50 分以内なら使い回す（gh も openssl も呼ばない）
+reset_logs
+printf '%s\n%s\n' "$((now_s - 2900))" "tok-app-cached" >"$app_cache"
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: キャッシュが 50 分以内（48 分前）なら使い回す" test "$RC:$(cat "$tmp/tokval")" = "0:tok-app-cached"
+check "app: キャッシュを使うときは gh を呼ばない" test ! -s "$FAKE_LOG/gh.log"
+check "app: キャッシュを使うときは openssl を呼ばない" test ! -s "$FAKE_LOG/openssl.log"
+check "app: キャッシュを使うときも何も出さない" test ! -s "$tmp/out" -a ! -s "$tmp/err"
+# 50 分を過ぎたら作り直す（1 時間を超えて動いても切れない）
+reset_logs
+printf '%s\n%s\n' "$((now_s - 3100))" "tok-app-cached" >"$app_cache"
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator FAKE_APP_TOKEN=tok-app-2 \
+  bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: キャッシュが 50 分を過ぎたら（52 分前）作り直す" test "$RC:$(cat "$tmp/tokval")" = "0:tok-app-2"
+check "app: 作り直したらキャッシュを書き換える" test "$(sed -n 2p "$app_cache")" = tok-app-2
+check "app: 作り直すときも標準出力・標準エラーにトークンを出さない" no_secret "$tmp/out" "$tmp/err"
+# 時計が戻った（キャッシュの時刻が未来）ら作り直す
+reset_logs
+printf '%s\n%s\n' "$((now_s + 600))" "tok-app-cached" >"$app_cache"
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: キャッシュの時刻が未来なら作り直す" test "$RC:$(cat "$tmp/tokval")" = "0:$app_tok"
+# Worker の役割でも App のトークン
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: Worker の ensure_gh_token も App のトークン" test "$RC:$(cat "$tmp/tokval")" = "0:$app_tok"
+# 設定は .agents/config.json の github_app からも読む（key_path の ~/ はホームディレクトリ）
+rm -rf "$app_cache_dir"
+mkdir -p "$HOME/.config/raft-game"
+cp "$app_key" "$HOME/.config/raft-game/agent-app.pem"
+chmod 600 "$HOME/.config/raft-game/agent-app.pem"
+cfg_app="$tmp/config-app.json"
+jq '.github_app = {app_id: 5659452, key_path: "~/.config/raft-game/agent-app.pem"}' "$repo/.agents/config.json" >"$cfg_app"
+reset_logs
+run_rc env AGENT_CONFIG="$cfg_app" AGENT_REPO=o/r AGENT_ROLE=orchestrator \
+  bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: .agents/config.json の github_app（~/ の鍵のパス）を読む" test "$RC:$(cat "$tmp/tokval")" = "0:$app_tok"
+check "app: config の鍵のパスで署名する" \
+  log_has openssl '.args == ["dgst","-sha256","-sign","'"$HOME/.config/raft-game/agent-app.pem"'","-binary"]'
+rm -rf "$app_cache_dir"
+# ---- 戻る場面: オーナーのトークン（gh auth token）に戻り、標準エラーに 1 行出す ----
+# app_fallback_case <説明> <env の追加…>: Orchestrator の ensure_gh_token がオーナーのトークンに戻ることを確かめる
+app_fallback_case() {
+  local desc="$1"
+  shift
+  rm -rf "$app_cache_dir"
+  reset_logs
+  run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator "$@" \
+    bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+  check "app（${desc}）: オーナーのトークンに戻る" test "$RC:$(cat "$tmp/tokval")" = "0:tok-owner"
+  check "app（${desc}）: 標準エラーに 1 行だけ出す" test "$(wc -l <"$tmp/err" | tr -d ' ')" = 1
+  check "app（${desc}）: オーナーのトークンに戻ることを出す" grep -q "GitHub App のトークンを使えない.*オーナーのトークンを使う" "$tmp/err"
+  check "app（${desc}）: 標準出力に何も出さない" test ! -s "$tmp/out"
+  check "app（${desc}）: トークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+  check "app（${desc}）: キャッシュを作らない" test ! -e "$app_cache"
+}
+app_fallback_case "鍵がない" AGENT_APP_KEY="$app_dir/missing.pem"
+check "app（鍵がない）: 理由に鍵のパスを出す" grep -q "秘密鍵がない.*missing.pem" "$tmp/err"
+check "app（鍵がない）: gh api を呼ばない" test -z "$(jq -c 'select(.args[0] == "api")' "$FAKE_LOG/gh.log")"
+chmod 644 "$app_key"
+app_fallback_case "鍵の権限が 644"
+check "app（鍵の権限が 644）: 理由に権限を出す" grep -q "600 より広い.*644" "$tmp/err"
+check "app（鍵の権限が 644）: 鍵を使わない（openssl を呼ばない）" test ! -s "$FAKE_LOG/openssl.log"
+chmod 640 "$app_key"
+app_fallback_case "鍵の権限が 640"
+chmod 600 "$app_key"
+app_fallback_case "App が未インストール" FAKE_APP_MODE=noinstall
+check "app（App が未インストール）: 理由に HTTP の状態を出す" grep -q "インストールが見つからない.*HTTP 404" "$tmp/err"
+check "app（App が未インストール）: 応答の本文を出さない" test -z "$(grep -o 'Not Found"' "$tmp/err" || true)"
+app_fallback_case "JWT を作れない" FAKE_OPENSSL_FAIL=1
+check "app（JWT を作れない）: 理由を出す" grep -q "JWT を作れない" "$tmp/err"
+app_fallback_case "App ID が整数でない" AGENT_APP_ID=abc
+# 鍵が使えないとき、オーナーのトークンもなければ何も入れない
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env AGENT_APP_ID=5659452 AGENT_APP_KEY="$app_dir/missing.pem" AGENT_REPO=o/r AGENT_ROLE=orchestrator \
+  bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN-unset}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: 鍵がなく gh も未ログインなら GH_TOKEN を入れない" test "$RC:$(cat "$tmp/tokval")" = "0:unset"
+# ---- 役割: AI（Orchestrator・Worker・Reviewer）は App、human はオーナー（オーナーの判断。2026-11-08）----
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=reviewer bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: 役割が reviewer でも App のトークン" test "$RC:$(cat "$tmp/tokval")" = "0:$app_tok"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=human bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: 役割が human ならオーナーのトークン" test "$RC:$(cat "$tmp/tokval")" = "0:tok-owner"
+check "app: 役割が human なら gh api を呼ばない" test -z "$(jq -c 'select(.args[0] == "api")' "$FAKE_LOG/gh.log")"
+check "app: 役割が human なら何も出さない" test ! -s "$tmp/err"
+# merge.sh（PROG=merge）・review.sh（PROG=review）も App のトークン
+for p in merge review; do
+  reset_logs
+  run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash -c 'PROG="$3"; . "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval" "$p"
+  check "app: PROG=${p} でも App のトークン" test "$RC:$(cat "$tmp/tokval")" = "0:$app_tok"
+done
+# ---- ghx（lib）: merge.sh・review.sh が直接呼ぶ gh。呼ぶたびに App のトークンを gh にだけ渡す ----
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator \
+  bash -c '. "$1"; ghx pr view 5 --json headRefName,body; printf "after=%s\n" "${GH_TOKEN-unset}"' _ "$lt/lib.sh"
+check "ghx: gh の出力をそのまま返す" test "$RC:$(head -n 1 "$tmp/out" | jq -r .headRefName)" = "0:agent/issue-5"
+check "ghx: App のトークンで gh を呼ぶ" grep -qx "$app_tok pr view 5 --json headRefName,body" "$FAKE_LOG/gh-env.log"
+check "ghx: 呼び出し側のシェルに GH_TOKEN を残さない" test "$(tail -n 1 "$tmp/out")" = "after=unset"
+check "ghx: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator FAKE_MERGE_RC=3 bash -c '. "$1"; ghx pr merge 1' _ "$lt/lib.sh"
+check "ghx: gh の終了コードを返す" test "$RC" = 3
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator GH_TOKEN=tok-explicit bash -c '. "$1"; ghx issue view 9' _ "$lt/lib.sh"
+check "ghx: GH_TOKEN があればそのまま使う" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:tok-explicit issue view 9"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=human bash -c '. "$1"; ghx issue view 9' _ "$lt/lib.sh"
+check "ghx: 役割が human なら gh のログインで実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENT_APP_KEY="$app_dir/missing.pem" bash -c '. "$1"; ghx issue view 9' _ "$lt/lib.sh"
+check "ghx: 鍵がなければ gh のログイン（オーナー）で実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+check "ghx: 鍵がなければ標準エラーに 1 行出す" \
+  test "$(wc -l <"$tmp/err" | tr -d ' ')" = 1 -a -n "$(grep 'オーナーのトークンを使う' "$tmp/err" || true)"
+# ---- gh（lib の関数）: lib.sh を読み込むスクリプト（merge-train.sh・autospawn.sh など）の直接の gh も ghx を通る（F7）----
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator \
+  bash -c '. "$1"; gh pr list --head x; gh issue view 9; printf "after=%s\n" "${GH_TOKEN-unset}"' _ "$lt/lib.sh"
+check "gh（lib）: 直接の gh も App のトークンで呼ぶ" \
+  test "$RC:$(grep -v ' api ' "$FAKE_LOG/gh-env.log" | tr '\n' ',')" = "0:$app_tok pr list --head x,$app_tok issue view 9,"
+check "gh（lib）: App の API はトークンなしで呼ぶ（入れ子にならない）" test "$(grep -c '^none api ' "$FAKE_LOG/gh-env.log")" = 2
+check "gh（lib）: 呼び出し側のシェルに GH_TOKEN を残さない" test "$(tail -n 1 "$tmp/out")" = "after=unset"
+check "gh（lib）: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash -c '. "$1"; gh auth token' _ "$lt/lib.sh"
+check "gh（lib）: gh auth はそのまま（App のトークンを入れない）" \
+  test "$RC:$(cat "$tmp/out"):$(cat "$FAKE_LOG/gh-env.log")" = "0:tok-owner:none auth token"
+reset_logs
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENT_APP_KEY="$app_dir/missing.pem" bash -c '. "$1"; gh issue view 9' _ "$lt/lib.sh"
+check "gh（lib）: 鍵がなければ gh のログイン（オーナー）で実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+check "gh（lib）: 鍵がなければ標準エラーに 1 行出す" \
+  test "$(wc -l <"$tmp/err" | tr -d ' ')" = 1 -a -n "$(grep 'オーナーのトークンを使う' "$tmp/err" || true)"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=human bash -c '. "$1"; gh issue view 9' _ "$lt/lib.sh"
+check "gh（lib）: 役割が human なら gh のログインで実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator FAKE_MERGE_RC=5 bash -c '. "$1"; gh pr "$2" 1' _ "$lt/lib.sh" merge
+check "gh（lib）: gh の終了コードを返す" test "$RC" = 5
+# need gh: gh が関数でも、実行ファイルがなければ止める（PATH には dirname だけを置く）
+mkdir -p "$tmp/nogh"
+ln -sf "$(command -v dirname)" "$tmp/nogh/dirname"
+run_rc env PATH="$tmp/nogh" "$BASH" -c '. "$1"; need gh' _ "$lt/lib.sh"
+check "gh（lib）: need gh は実行ファイルがなければ止める" test "$RC" = 1 -a -n "$(grep 'gh が見つからない' "$tmp/err" || true)"
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash -c '. "$1"; need gh' _ "$lt/lib.sh"
+check "gh（lib）: need gh は実行ファイルがあれば通る" test "$RC" = 0
+# merge.sh: gate（agentctl）と gh pr view を App のトークンで呼ぶ（gh pr merge は下の merge.sh の節で確かめる）
+cat >"$lt/gatecheck" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${GH_TOKEN:-none}" >>"$FAKE_LOG/gate-token.log"
+exec "$FAKE_BIN/agentctl" "$@"
+EOF
+chmod +x "$lt/gatecheck"
+gate_pass_app="$(jq -cn --arg s "$head_sha" '{verdict:"pass", repo:"K-Kizuku/raft-game", pr:12, head_sha:$s, results:[]}')"
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENTCTL="$lt/gatecheck" FAKE_BIN="$fake/bin" \
+  FAKE_GATE_JSON="$gate_pass_app" bash "$A/merge.sh" 12 --dry-run
+check "app: merge.sh --dry-run が成功する" test "$RC" = 0
+check "app: merge.sh の gate に App のトークンを渡す" test "$(sort -u "$FAKE_LOG/gate-token.log")" = "$app_tok"
+check "app: merge.sh の gh pr view は App のトークン" grep -qx "$app_tok pr view 12 --json headRefName,body" "$FAKE_LOG/gh-env.log"
+check "app: merge.sh --dry-run の表示は gh pr merge のまま" grep -q "^merge: gh pr merge 12 --squash " "$tmp/out"
+check "app: merge.sh はトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+# ---- agentctl（lib の関数）: 呼ぶたびに子にだけ渡し、呼び出し側のシェルには export しない ----
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENTCTL="$lt/tokcheck" \
+  bash -c '. "$1"; agentctl plan; printf "after=%s\n" "${GH_TOKEN-unset}"' _ "$lt/lib.sh"
+check "app: agentctl に App のトークンを GH_TOKEN で渡す" \
+  test "$RC:$(head -n 1 "$tmp/out")" = "0:GH_TOKEN=$app_tok GITHUB_TOKEN=none args=plan"
+check "app: agentctl は呼び出し側のシェルに GH_TOKEN を残さない" test "$(tail -n 1 "$tmp/out")" = "after=unset"
+check "app: agentctl は標準エラーにトークンを出さない" no_secret "$tmp/err"
+# 1 時間を超えて動くシェル: キャッシュが古くなったら次の呼び出しで作り直す
+printf '%s\n%s\n' "$((now_s - 3700))" "$app_tok" >"$app_cache"
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENTCTL="$lt/tokcheck" FAKE_APP_TOKEN=tok-app-2 \
+  bash -c '. "$1"; agentctl plan' _ "$lt/lib.sh"
+check "app: agentctl は古い（1 時間を超えた）トークンを使わず作り直す" \
+  test "$RC:$(cat "$tmp/out")" = "0:GH_TOKEN=tok-app-2 GITHUB_TOKEN=none args=plan"
+
+# ---- gh-app.sh: gh を呼ぶたびに App のトークンを GH_TOKEN に入れて本物の gh を実行する ----
+GA="$A/gh-app.sh"
+check "gh-app.sh: 実行のビットがある（Git でも 100755）" \
+  test -x "$src_root/scripts/agents/gh-app.sh" -a "$(git -C "$src_root" ls-files -s scripts/agents/gh-app.sh | awk '{ print $1 }')" = 100755
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker bash "$GA" pr view 5 --json headRefName,body
+check "gh-app.sh: gh の出力をそのまま返す" test "$RC:$(jq -r .headRefName "$tmp/out")" = "0:agent/issue-5"
+check "gh-app.sh: App のトークンで gh を呼ぶ" grep -qx "$app_tok pr view 5 --json headRefName,body" "$FAKE_LOG/gh-env.log"
+check "gh-app.sh: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+check "gh-app.sh: 作れたら標準エラーに何も出さない" test ! -s "$tmp/err"
+# 2 回目はキャッシュを使う（App の API を呼ばない）
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker bash "$GA" issue view 9
+check "gh-app.sh: 2 回目はキャッシュのトークンで呼ぶ" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:$app_tok issue view 9"
+# 1 時間を超えたら作り直す（Worker が長く動いても切れない）
+reset_logs
+printf '%s\n%s\n' "$((now_s - 3700))" "$app_tok" >"$app_cache"
+run_rc env "${appenv[@]}" AGENT_ROLE=worker FAKE_APP_TOKEN=tok-app-2 bash "$GA" issue view 9
+check "gh-app.sh: 古いトークンを使わず作り直して呼ぶ" grep -qx "tok-app-2 issue view 9" "$FAKE_LOG/gh-env.log"
+check "gh-app.sh: 作り直すときも標準出力・標準エラーにトークンを出さない" no_secret "$tmp/out" "$tmp/err"
+# gh auth と、GH_TOKEN がすでにあるときは、そのまま
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker bash "$GA" auth token
+check "gh-app.sh: gh auth はそのまま（App のトークンを入れない）" \
+  test "$RC:$(cat "$tmp/out"):$(cat "$FAKE_LOG/gh-env.log")" = "0:tok-owner:none auth token"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker GH_TOKEN=tok-explicit bash "$GA" issue view 9
+check "gh-app.sh: GH_TOKEN があればそのまま使う" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:tok-explicit issue view 9"
+# 鍵がなければ、gh のログイン（オーナーのトークン）でそのまま実行し、標準エラーに 1 行出す
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker AGENT_APP_KEY="$app_dir/missing.pem" bash "$GA" issue view 9
+check "gh-app.sh: 鍵がなければ gh のログインで実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+check "gh-app.sh: 鍵がなければ標準エラーに 1 行出す" \
+  test "$(wc -l <"$tmp/err" | tr -d ' ')" = 1 -a -n "$(grep 'オーナーのトークンを使う' "$tmp/err" || true)"
+run_rc env "${appenv[@]}" AGENT_ROLE=worker FAKE_APP_MODE=noinstall bash "$GA" issue view 9
+check "gh-app.sh: App が未インストールでも gh は実行する" test "$RC" = 0 -a -n "$(grep 'HTTP 404' "$tmp/err" || true)"
+# 役割が human ならそのまま（reviewer は AI の役割なので App のトークン）
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=human bash "$GA" issue view 9
+check "gh-app.sh: 役割が human なら App のトークンを使わない" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=reviewer bash "$GA" issue view 9
+check "gh-app.sh: 役割が reviewer なら App のトークン" test "$RC:$(tail -n 1 "$FAKE_LOG/gh-env.log")" = "0:$app_tok issue view 9"
+# 本物の gh の終了コードを返す
+run_rc env "${appenv[@]}" AGENT_ROLE=worker FAKE_MERGE_RC=7 bash "$GA" pr merge 1
+check "gh-app.sh: gh の終了コードを返す" test "$RC" = 7
+# PATH の先頭の gh（spawn-worker.sh が作るのと同じ形）から呼んでも、自分を除いた本物の gh を探す
+shim="$tmp/ghshim"
+mkdir -p "$shim"
+{
+  echo '#!/usr/bin/env bash'
+  printf 'export AGENT_GH_SHIM_DIR=%q\n' "$shim"
+  printf 'exec %q "$@"\n' "$GA"
+} >"$shim/gh"
+chmod +x "$shim/gh"
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker PATH="$shim:$PATH" "$shim/gh" issue view 9
+check "gh-app.sh: PATH の先頭のラッパーの gh から、本物の gh を App のトークンで呼ぶ" \
+  test "$RC:$(tail -n 1 "$FAKE_LOG/gh-env.log")" = "0:$app_tok issue view 9"
+check "gh-app.sh: App の API はラッパーを通さずに 1 回ずつ呼ぶ" test "$(grep -c '^none api ' "$FAKE_LOG/gh-env.log")" = 2
+# lib の ensure_gh_token も、ラッパーを通さずに本物の gh で App の API を呼ぶ（AGENT_GH_REAL）
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker PATH="$shim:$PATH" AGENT_GH_REAL="$fake/bin/gh" \
+  bash -c '. "$1"; ensure_gh_token; printf "%s" "${GH_TOKEN:-}" >"$2"' _ "$lt/lib.sh" "$tmp/tokval"
+check "app: PATH にラッパーがあっても ensure_gh_token は App のトークン" test "$RC:$(cat "$tmp/tokval")" = "0:$app_tok"
+check "app: AGENT_GH_REAL の gh で App の API を呼ぶ" test "$(grep -c ' api ' "$FAKE_LOG/gh-env.log")" = 2
+rm -rf "$app_cache_dir"
 reset_logs
 
 # ================= dev-slot.sh =================
@@ -689,6 +1036,48 @@ git -C "$repo" worktree remove "$wt7"
 git -C "$repo" branch -D agent/issue-7 >/dev/null
 rm -rf "$repo/.git/agent-slots" "$repo/.agents/run" "$repo/.agents/logs"
 check "spawn --help" bash "$A/spawn-worker.sh" --help
+# Issue #282: App の鍵が使えなければ（設定がない）、今までどおり PATH も GH_TOKEN も変えない
+check "spawn: App の設定がなければ gh のラッパーを作らない" test ! -e "$repo/.agents/bin/gh-app/gh"
+check "spawn: App の設定がなければ PATH を変えない" log_has claude '.path0 != "'"$repo/.agents/bin/gh-app"'"'
+# App の鍵が使えれば、gh-app.sh を呼ぶ gh を Worker の PATH の先頭に置き、GH_TOKEN・GITHUB_TOKEN を外す
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" GH_TOKEN=tok-inherited AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run
+cmdline="$(grep '^command:' "$tmp/out" || true)"
+check "spawn --dry-run（App）: 成功する" test "$RC" = 0
+check "spawn --dry-run（App）: GH_TOKEN と GITHUB_TOKEN を外す" grep -q -- "^command: env -u GH_TOKEN -u GITHUB_TOKEN AGENT_ROLE=worker " <<<"$cmdline"
+check "spawn --dry-run（App）: PATH の先頭に .agents/bin/gh-app" grep -q -- " PATH=$repo/.agents/bin/gh-app:" <<<"$cmdline"
+check "spawn --dry-run（App）: 本物の gh を AGENT_GH_REAL で渡す" grep -q -- " AGENT_GH_REAL=$fake/bin/gh " <<<"$cmdline"
+check "spawn --dry-run（App）: App ID と鍵のパスとリポジトリを渡す" \
+  grep -q -- " AGENT_APP_ID=5659452 AGENT_APP_KEY=$app_key AGENT_REPO=o/r claude " <<<"$cmdline"
+check "spawn --dry-run（App）: トークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+check "spawn --dry-run（App）: 引き継いだトークンをコマンドに書かない" test -z "$(grep -o tok-inherited "$tmp/out" || true)"
+check "spawn --dry-run（App）: ラッパーを作らない" test ! -e "$repo/.agents/bin/gh-app/gh"
+reset_logs
+run_rc env "${appenv[@]}" GH_TOKEN=tok-inherited AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7
+check "spawn（App）: 起動する" test "$RC" = 0
+check "spawn（App）: Worker の PATH の先頭がラッパー" log_has claude '.path0 == "'"$repo/.agents/bin/gh-app"'" and .gh_real == "'"$fake/bin/gh"'"'
+check "spawn（App）: Worker に GH_TOKEN・GITHUB_TOKEN を渡さない" log_has claude '.token_env == ""'
+check "spawn（App）: ラッパーの gh を作る（実行できる）" test -x "$repo/.agents/bin/gh-app/gh"
+check "spawn（App）: ラッパーにトークンと鍵の中身を書かない" no_secret "$repo/.agents/bin/gh-app/gh"
+check "spawn（App）: ラッパーは gh-app.sh を呼ぶ" grep -q "gh-app.sh" "$repo/.agents/bin/gh-app/gh"
+check "spawn（App）: ログ・状態のファイルにトークンと鍵の中身を書かない" \
+  no_secret "$repo/.agents/run/issue-7.json" "$repo/.agents/logs/"issue-7-*.jsonl "$tmp/out" "$tmp/err"
+# ラッパーの gh を、Worker と同じ環境で呼ぶと App のトークンで本物の gh を実行する
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=worker AGENT_GH_REAL="$fake/bin/gh" PATH="$repo/.agents/bin/gh-app:$PATH" \
+  "$repo/.agents/bin/gh-app/gh" pr list --head x
+check "spawn（App）: ラッパーの gh は App のトークンで本物の gh を呼ぶ" \
+  test "$RC:$(tail -n 1 "$FAKE_LOG/gh-env.log")" = "0:$app_tok pr list --head x"
+rm -rf "$repo/.git/agent-slots" "$repo/.agents/run" "$repo/.agents/logs" "$repo/.agents/bin/gh-app" "$app_cache_dir"
+# 鍵が使えなければ（権限が広い）、理由を出して今までどおり起動する
+chmod 644 "$app_key"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run
+check "spawn --dry-run（鍵の権限が広い）: 成功する" test "$RC" = 0
+check "spawn --dry-run（鍵の権限が広い）: PATH を変えない" test -z "$(grep -o 'gh-app' "$tmp/out" || true)"
+check "spawn --dry-run（鍵の権限が広い）: オーナーのトークンに戻ることを出す" grep -q "600 より広い.*オーナーのトークンを使う" "$tmp/err"
+chmod 600 "$app_key"
 
 # ================= merge.sh =================
 reset_logs
@@ -728,6 +1117,19 @@ check "merge: その後 agentctl state 5 merged" log_has agentctl '.args[0:3] ==
 reset_logs
 run_rc env AGENT_ROLE=orchestrator FAKE_GATE_JSON="$gate_pass" FAKE_MERGE_RC=1 bash "$A/merge.sh" 12
 check "merge: gh pr merge が失敗したら状態を変えない" test "$RC" = 1 -a -z "$(jq -c 'select(.args[0] == "state")' "$FAKE_LOG/agentctl.log")"
+# Issue #282: App の鍵が使えれば、gate・gh pr view・gh pr merge・state を App のトークンで行う
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENTCTL="$lt/gatecheck" FAKE_BIN="$fake/bin" \
+  FAKE_GATE_JSON="$gate_pass" bash "$A/merge.sh" 12
+check "merge（App）: マージする" test "$RC" = 0
+check "merge（App）: gh pr merge を App のトークンで呼ぶ" \
+  grep -qx "$app_tok pr merge 12 --squash --match-head-commit $head_sha --delete-branch" "$FAKE_LOG/gh-env.log"
+check "merge（App）: gh pr view を App のトークンで呼ぶ" grep -qx "$app_tok pr view 12 --json headRefName,body" "$FAKE_LOG/gh-env.log"
+check "merge（App）: gate と state に App のトークンを渡す" test "$(sort -u "$FAKE_LOG/gate-token.log")" = "$app_tok"
+check "merge（App）: state 5 merged を呼ぶ" log_has agentctl '.args[0:3] == ["state","5","merged"]'
+check "merge（App）: トークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+rm -rf "$app_cache_dir"
 
 # ================= review.sh =================
 # Codex の GitHub 連携の確認の間隔・最初の待ち・API の上限での待ちを 0 秒にする
@@ -773,6 +1175,19 @@ check "review: Codex を PR の HEAD の一時的な Worktree で動かす" \
 check "review: Codex を使えたら Claude Code を呼ばない" test ! -s "$FAKE_LOG/claude.log"
 check "review: 一時的な Worktree を消す" no_worktree_left
 check "review: プロンプトに Issue の本文と差分の概要が入る" log_has codex '(.args | last | contains("# Issue 5")) and (.args | last | contains("a.txt"))'
+
+# Issue #282: GH_TOKEN がなく App の鍵が使えれば、review.sh の agentctl（記録の投稿を含む）は App のトークンを使う
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env -u GH_TOKEN "${appenv[@]}" AGENT_ROLE=orchestrator AGENTCTL="$lt/gatecheck" FAKE_BIN="$fake/bin" \
+  FAKE_CODEX_MODE=good bash "$A/review.sh" 12 --base "$base_sha" --head "$head_sha" \
+  --issue-file "$tmp/issue.md" --out "$tmp/record.json"
+check "review（App）: 成功する" test "$RC" = 0
+check "review（App）: 記録を agentctl comment で投稿する" log_has agentctl '.args[0] == "comment" and (.args | index("--body-file")) != null'
+check "review（App）: agentctl にはすべて App のトークンを渡す" test "$(sort -u "$FAKE_LOG/gate-token.log")" = "$app_tok"
+check "review（App）: gh auth token（オーナーのトークン）を使わない" test -z "$(jq -c 'select(.args == ["auth","token"])' "$FAKE_LOG/gh.log")"
+check "review（App）: トークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err" "$FAKE_LOG/comment.md"
+rm -rf "$app_cache_dir"
 
 # 認証エラー → Claude Code に切り替える
 reset_logs
@@ -1235,6 +1650,8 @@ chmod +x "$TS/merge.sh" "$TS/review.sh" "$TS/spawn-worker.sh"
 cat >"$fake/bin-train/gh" <<'EOF'
 #!/usr/bin/env bash
 jq -cn --arg cwd "$PWD" '{cwd:$cwd, args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/gh.log"
+# Issue #282: 受け取った GH_TOKEN も記録する
+printf '%s %s\n' "${GH_TOKEN:-none}" "$*" >>"$FAKE_LOG/gh-env.log"
 n="${3:-}"
 case "$1 $2" in
   "pr list")
@@ -2099,6 +2516,57 @@ check "autospawn（親を止める）: プロセスグループに SIGTERM を�
 sleep 0.3
 check "autospawn（親を止める）: autospawn のプロセスグループごと止めても Worker は止まらない" kill -0 "$wp"
 kill "$wp" 2>/dev/null || true
+
+# ---- 見張り（merge-train.sh・autospawn.sh）の直接の gh も App のトークン（#282 のレビュー F7）----
+# キャッシュに有効な App のトークンを置き（App の API は呼ばない）、偽の gh が受け取った GH_TOKEN を見る
+app_watch_env=(AGENT_APP_ID=5659452 "AGENT_APP_KEY=$app_key" AGENT_REPO=o/r)
+# 上で export した GH_TOKEN があるとそのまま使うので、この節では外す（最後に戻す）
+saved_gh_token="${GH_TOKEN:-}"
+unset GH_TOKEN GITHUB_TOKEN
+put_app_cache() {
+  rm -rf "$app_cache_dir"
+  (umask 077 && mkdir -p "$app_cache_dir" && printf '%s\n%s\n' "$(date +%s)" "$app_tok" >"$app_cache")
+}
+put_app_cache
+train_reset
+mkprs "93:agent/issue-193"
+mkgate 93 pass pass pass pass pass pass
+train 1 "${app_watch_env[@]}" FAKE_RATE_REMAINING=4000 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train（App）: 判定してマージする" test "$RC:$(cat "$FAKE_LOG/merge.log")" = "0:93"
+check "train（App）: gh api rate_limit を App のトークンで呼ぶ" grep -q "^$app_tok api rate_limit " "$FAKE_LOG/gh-env.log"
+check "train（App）: gh pr list を App のトークンで呼ぶ" grep -q "^$app_tok pr list " "$FAKE_LOG/gh-env.log"
+check "train（App）: 直接の gh をすべて App のトークンで呼ぶ" test -z "$(grep -v "^$app_tok " "$FAKE_LOG/gh-env.log" || true)"
+check "train（App）: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+# 上限は App のトークンの gh api rate_limit で見る（App の残りが少なければ休む）
+train_reset
+mkprs "93:agent/issue-193"
+mkgate 93 pass pass pass pass pass pass
+train 1 "${app_watch_env[@]}" PATH="$fake/bin-sleep:$fake/bin-train:$PATH" FAKE_RATE_REMAINING=12 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train（App）: 上限は App のトークンの gh api rate_limit で見る" \
+  test ! -s "$FAKE_LOG/merge.log" -a -n "$(grep "^$app_tok api rate_limit " "$FAKE_LOG/gh-env.log" || true)"
+# 鍵がなければ gh のログイン（オーナー）で続け、標準エラーに理由を出す
+rm -rf "$app_cache_dir"
+train_reset
+mkprs "93:agent/issue-193"
+mkgate 93 pass pass pass pass pass pass
+train 1 AGENT_APP_ID=5659452 AGENT_APP_KEY="$app_dir/missing.pem" AGENT_REPO=o/r \
+  FAKE_RATE_REMAINING=4000 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train（鍵がない）: gh のログイン（オーナー）で続ける" \
+  test "$RC:$(cat "$FAKE_LOG/merge.log")" = "0:93" -a -z "$(grep -v '^none ' "$FAKE_LOG/gh-env.log" || true)"
+# （merge-train.sh は gh の標準エラーを 2>/dev/null で捨てるので、理由の 1 行は出ない。出すことは上の gh（lib）・ghx の節で確かめる）
+check "train（鍵がない）: 鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+# autospawn.sh の gh pr list（状態の直し）も App のトークン
+put_app_cache
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[], active:[{number:207, status:"in-progress"}], capacity:0}' >"$TRAIN_DIR/plan.json"
+echo 1207 >"$TRAIN_DIR/headpr-agent-issue-207"
+autospawn "${app_watch_env[@]}" FAKE_PLAN_STOP_AFTER=1
+check "autospawn（App）: gh pr list を App のトークンで呼ぶ" \
+  test "$RC" = 0 -a -n "$(grep "^$app_tok pr list .*agent/issue-207" "$FAKE_LOG/gh-env.log" || true)"
+check "autospawn（App）: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+rm -rf "$app_cache_dir"
+export GH_TOKEN="$saved_gh_token"
 
 echo "agents: $((total - failures))/$total ok"
 if [ "$failures" -ne 0 ]; then

@@ -16,6 +16,8 @@
 #   --permission-mode dontAsk --allowedTools <worker.md の tools> --session-id <uuid>
 #   --verbose --output-format stream-json "<prompt>"
 # - Issue の変更予定ファイルが protected_paths と重なるときは AGENT_ALLOW_PROTECTED=1 を付ける
+# - GitHub App の鍵が使えれば（#282）、gh-app.sh を呼ぶ gh（.agents/bin/gh-app/gh）を Worker の PATH の先頭に置き、
+#   GH_TOKEN・GITHUB_TOKEN を外す（Worker の gh は呼ぶたびに App のトークンを使う）。使えなければ今までどおり
 # - 状態は .agents/run/issue-<n>.json（issue・session・slot・worktree・branch・pid・mode・started_at・log）
 # - agentctl claim が拒否したら（同じ Issue の 2 回目など）、何もしないでその終了コードで終わる
 set -euo pipefail
@@ -227,6 +229,36 @@ fi
 envs=(AGENT_ROLE=worker "AGENT_ISSUE=$issue" "DEV_SLOT=$slot")
 [ "$allow_protected" = 1 ] && envs+=(AGENT_ALLOW_PROTECTED=1)
 
+# ---- GitHub App のトークン（#282）----
+# App の鍵が使えれば、gh-app.sh を呼ぶ gh（.agents/bin/gh-app/gh）を Worker の PATH の先頭に置き、
+# 引き継いだ GH_TOKEN・GITHUB_TOKEN を外す（gh を呼ぶたびに有効な App のトークンを作り直すため）。
+# 鍵が使えなければ、理由を標準エラーに出して今までどおり（gh のログイン＝オーナーのトークン）にする。
+env_opts=()
+gh_shim_dir="$root/.agents/bin/gh-app"
+app_rc=0
+app_key_usable || app_rc=$?
+if [ "$app_rc" = 0 ]; then
+  real_gh="$(type -P gh)" || die "gh が見つからない"
+  # _app_id・_app_key は app_key_usable（lib.sh）が設定する
+  # shellcheck disable=SC2154
+  envs+=("PATH=$gh_shim_dir:$PATH" "AGENT_GH_REAL=$real_gh" "AGENT_GH_SHIM_DIR=$gh_shim_dir"
+    "AGENT_APP_ID=$_app_id" "AGENT_APP_KEY=$_app_key" "AGENT_REPO=$(repo_slug)")
+  env_opts=(-u GH_TOKEN -u GITHUB_TOKEN)
+fi
+
+# install_gh_shim: .agents/bin/gh-app/gh（gh-app.sh を呼ぶだけ。トークンは書かない）を作る。
+install_gh_shim() {
+  local f="$gh_shim_dir/gh" t
+  mkdir -p "$gh_shim_dir" && t="$(mktemp "$f.XXXXXX")" || return 1
+  {
+    echo '#!/usr/bin/env bash'
+    echo '# scripts/agents/spawn-worker.sh が作る（Issue #282）。gh を GitHub App のトークンで実行する'
+    printf 'export AGENT_GH_SHIM_DIR=%q\n' "$gh_shim_dir"
+    # shellcheck disable=SC2016 # "$@" は作るファイルの中で展開する
+    printf 'exec %q "$@"\n' "$AGENTS_DIR/gh-app.sh"
+  } >"$t" && chmod 755 "$t" && mv -f "$t" "$f"
+}
+
 cmd=(claude -p)
 run_cwd="$root"
 if [ "$use_resume_flag" = 1 ]; then
@@ -259,7 +291,7 @@ if [ "$dry_run" = 1 ]; then
     echo
   fi
   printf 'command:'
-  printf ' %q' env "${envs[@]}" "${cmd[@]}"
+  printf ' %q' env ${env_opts[@]+"${env_opts[@]}"} "${envs[@]}" "${cmd[@]}"
   echo
   exit 0
 fi
@@ -275,9 +307,16 @@ if [ "${#claim_args[@]}" -gt 0 ]; then
   fi
 fi
 
+if [ "${#env_opts[@]}" -gt 0 ]; then
+  install_gh_shim || {
+    release_slot
+    die "$gh_shim_dir/gh を作れない"
+  }
+fi
+
 mkdir -p "$run_dir" "$log_dir"
 log="$log_dir/issue-$issue-$(date -u +%Y%m%dT%H%M%SZ).jsonl"
-(cd "$run_cwd" && exec nohup env "${envs[@]}" "${cmd[@]}") </dev/null >"$log" 2>&1 &
+(cd "$run_cwd" && exec nohup env ${env_opts[@]+"${env_opts[@]}"} "${envs[@]}" "${cmd[@]}") </dev/null >"$log" 2>&1 &
 pid=$!
 
 jq -n --argjson issue "$issue" --arg session "$session" --arg slot "$slot" --arg worktree "$wt" \
