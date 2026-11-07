@@ -28,6 +28,14 @@
 
 本番では、§2 の API はすべて Cloudflare の Worker が受けます。WebSocket は Worker から Durable Object `GameSession` に転送され、Durable Object がコンテナ（Go）との間を中継します。§3〜§7 の電文は、ブラウザと Go の間でそのまま通ります（Durable Object は中身を書き換えない）。ローカルの `standalone` モードでは、Go サーバーが §2 の API を自分で提供します。
 
+`standalone` の Go サーバー（T-302）は、§2 と同じパス・メソッド・`Origin`・本文の規則で動きます（許可リストは `ALLOWED_ORIGINS`。`make dev` は Vite のオリジンを渡す）。Worker との違いは次のとおりです。
+
+- `sessionId` は `s_` ＋ 乱数 128 bit の base64url（22 文字）で、署名を付けない（ローカル専用）。Turnstile の確認と IP ごとのレート制限をしない（`turnstileToken` は形だけ確かめて使わない）
+- `seed` は整数の字句だけを受け付ける（`1.0`・`1e3` も `400`）
+- 生きているセッションが上限（`MAX_SESSIONS`、既定 16）に達したら `503 sessions_disabled`（`message`: `too many sessions`）。接続のないまま 5 分たったセッションは消す
+- `GET /healthz`（`GET /api/healthz` と同じ）もある
+- Go が Durable Object の役も兼ねるので、ブラウザから届いた `internal.*` を何も返さずに捨てる（`internal.result` も送らない）
+
 ### 共通の応答とエラー
 
 Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダーは `content-type: application/json; charset=utf-8` と `cache-control: no-store` です（`201` でトークンを返すため、すべての応答に付ける）。CORS のヘッダーは返しません（画面と API は同じオリジン）。
@@ -253,7 +261,7 @@ Worker が返すエラー:
 |---|---|---|
 | `v` | 双方向 | プロトコルバージョン。一致しなければサーバーは `error` を返して切断する |
 | `type` | 双方向 | メッセージの種類 |
-| `seq` | サーバー → クライアント | サーバーからのメッセージの連番（1 から）。抜けを検出したらクライアントは `cmd.sync` を送る。規則は [§10.2](#102-seq) |
+| `seq` | サーバー → クライアント | サーバーからのメッセージの連番（1 から）。Go のサーバーは接続ごとに 1 から数える（つなぎ直した接続の最初の電文は `snapshot`）。抜けを検出したらクライアントは `cmd.sync` を送る。規則は [§10.2](#102-seq) |
 | `cmdId` | クライアント → サーバー | クライアントが付けるコマンドの ID（任意の文字列）。`ack` で返る |
 | `payload` | 双方向 | 種類ごとの中身 |
 
@@ -309,12 +317,33 @@ Worker が返すエラー:
 | `error` | `{ "code": "…", "message": "…", "fatal": true }` | `fatal` なら直後に切断する |
 | `pong` | `{ "clientTime": 123456, "simTime": 61200 }` | — |
 
+`error` の `code`（Go の `server/internal/server/errcodes.go`。`message` は短い英語。`fatal` の `error` は、それより前の電文を送ってから最後に送り、表のコードで閉じる）:
+
+| `code` | `fatal` | いつ | 閉じるコード |
+|---|---|---|---|
+| `bad_request` | 偽 | 電文が読めない・`cmdId` がない Engine のコマンド・知らない `type`（`cmdId` がないとき） | — |
+| `bad_request` | 真 | バイナリのフレーム（`1003`）・`internal.init`・`internal.restore` の payload が読めない・sessionId の形が不正（`1008`） | `1003`・`1008` |
+| `version_mismatch` | 真 | `v` が `1` でない | `1008` |
+| `not_initialized` | 真 | `single` で、最初の電文が `internal.init`・`internal.restore` でない・10 秒のうちに来ない | `1008` |
+| `already_initialized` | 偽 | `single` で、初期化した後の接続にもう一度 `internal.init`・`internal.restore` | — |
+| `session_mismatch` | 真 | `single` で、生きているセッションと違う sessionId | `1008` |
+| `stage_not_found` | 真 | `internal.init`・`internal.restore` の `stageId` がない | `1011` |
+| `restore_failed` | 真 | `internal.restore` の入力ログを復元できない（§9） | `1011` |
+| `internal_error` | 真 | `sim.New` の失敗・Engine の panic | `1011` |
+| `replaced` | 真 | 同じセッションに新しい接続がつながった | `1000` |
+| `shutting_down` | 真 | プロセスを止める（SIGTERM など） | `1001` |
+
+- `cmdId` のある電文には、`hello`・`ping` を除いて必ず `ack` を 1 つ返す（`ok: true` を返すのは Engine のコマンドと `cmd.sync` だけ。まだ処理しない種類は `ok: false`・`bad_request`・`not implemented`、知らない種類は `ok: false`・`bad_request`・`unknown type`）
+- Engine のコマンド（`cmd.game.start`・`cmd.ferry.*`）は `cmdId` が必須。ない電文は適用せず、`error`（`bad_request`、偽）を返す（DO は `cmdId` で `ack` と組にして入力ログに記録するため）
+- 送信キュー（接続ごとに 256 件）があふれたら、接続を `1013` で閉じる（セッションは残る。つなぎ直して `snapshot` を受ける）
+
 ### 5.1 Snapshot
 
 ```json
 {
   "protocol": 1,
-  "session": { "id": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "restored": false },
+  "session": { "id": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "restored": false,
+               "stageHash": "sha256:…", "build": "git:3f2c1ab" },
   "phase": "sailing",
   "clock": { "t": 61200, "speed": 1, "paused": false, "endsAt": 210000, "allowedSpeeds": [0.5, 1, 2, 4] },
   "stage": {
@@ -350,6 +379,11 @@ Worker が返すエラー:
 - `islandId` は `docked` のときの島
 - `from`・`to` は `sailing` のときだけ。`departAt`・`arriveAt` は `docked` のとき `0`
 - `readyAt` は、`docked` なら出航できるようになる時刻、`sailing` なら着いてから出航できる時刻（`arriveAt + dockMs`）
+
+`session` の注記（後方互換なフィールドの追加、§8）:
+
+- `stageHash` はステージ定義のハッシュ（`"sha256:"` ＋ 64 桁の 16 進）、`build` はコンテナのビルドの識別子（`/healthz` の `build` と同じ）。DO はこの 2 つを保存して、入力ログの `stageHash`・`build` に入れる（§9）。Go は常に送る（TS の生成した型では、既存の例との互換のため省略可能にしている）
+- `restored` は `internal.restore` で作り直したセッションなら `true`
 
 ### 5.2 Letter
 
@@ -498,11 +532,24 @@ Durable Object だけが送る電文です。ブラウザから届いた `intern
 | type | 方向 | payload | 説明 |
 |---|---|---|---|
 | `internal.init` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false }` | 新しいゲームを始める。コンテナは `snapshot` を返す |
-| `internal.restore` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "inputLog": InputLog }` | コンテナが止まった後の復元。コンテナは `sim.Replay` で入力ログの最後の時刻まで進め、一時停止の状態で `snapshot`（`session.restored: true`）を返す |
+| `internal.restore` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "inputLog": InputLog, "until": 61200 }` | コンテナが止まった後の復元。コンテナは `sim.Replay` で入力ログの最後の時刻（`until` があればその時刻）まで進め、一時停止の状態で `snapshot`（`session.restored: true`）を返す |
 | `internal.result` | コンテナ → DO | `RoundResult`（§5.5） | ラウンドの終了時。DO が SQLite に保存する（ブラウザには別に `round.result` が届く） |
 | `internal.ping` / `internal.pong` | 双方向 | `{}` | 死活監視（5 秒ごと）。3 回続けて応答がなければ、DO はコンテナが止まったとみなして復元する |
 
-`InputLog` の形式は [DesignDoc §10.1](./03-design-doc.md) のとおりです。
+`InputLog` の形式は [DesignDoc §10.1](./03-design-doc.md) のとおりです。`until` は省略できます（ゲーム内のミリ秒。0 か省略なら入力ログの最後のコマンドの `t`）。DO は最後に中継した `clock.t` を入れます。入力ログの `stageHash`・`build` は、コンテナが `snapshot` の `session.stageHash`・`session.build`（§5.1）で知らせた値を DO が保存して入れます。
+
+コンテナ（Go の `single` モード、T-302）の振る舞い:
+
+- 受け口は `GET /healthz`（`200 {"status":"ok","build":"…"}`。ステージ定義を読み終えてから待ち受けるので、`200` は準備完了）と `GET /ws`（WebSocket）だけ。ほかのパスは `404`。`Origin` は検査しない。受信の上限は 1 電文 1 MiB（超えたら `1009`）で、`internal.*` 以外の電文は 16 KiB を超えたら `error`（`bad_request`）で拒否する
+- **接続の最初の電文**: `/ws` を開くたびに、10 秒のうちに `internal.init` か `internal.restore` を送る。来なければ `error`（`not_initialized`、`fatal`）で閉じる。それより前に来てよいのは `internal.ping`（`internal.pong` を返す）だけで、ほかの電文は `not_initialized`（`fatal`）
+- **枠は 1 つ**: 最初の `internal.init`・`internal.restore` でセッションを作り、以後はそのセッションだけを持つ。違う `sessionId` は `session_mismatch`（`fatal`）。`sessionId` は `[A-Za-z0-9._-]` の 1〜256 文字（違えば `bad_request`、`fatal`）。`stageId` がなければ `stage_not_found`（`fatal`）
+- **つなぎ直し**: 生きているセッションと同じ `sessionId` の `internal.init`・`internal.restore` は、Engine を作り直さずに新しい接続をつなぐ（`internal.restore` の入力ログは使わない。メモリの状態のほうが新しい）。古い接続には `error`（`replaced`、`fatal`）を送って閉じ、新しい接続に `snapshot` を送る。`seq` は新しい接続でまた 1 から数える
+- 初期化した後の `internal.init`・`internal.restore` は `error`（`already_initialized`、`fatal` でない。状態は変えない）。`internal.result`・`internal.pong` は無視する。それ以外は、ブラウザの電文（DO が中継したもの）として扱う
+- **`internal.restore` の検査の順序**: payload が読めない → `bad_request`（`fatal`）→ `sessionId` の形と枠（上のとおり）→ `stageId`（`stage_not_found`）→ `inputLog.format` が `1` でない・`inputLog.stageId` が `stageId` と違う・`inputLog.seed` が `seed` と違う → `restore_failed` → 入力ログのコマンドを Engine のコマンドにできない（`cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip`・`cmd.sync` は読み飛ばす。`hello` などは誤り）→ `restore_failed` → `sim.Replay`（`stageHash` の食い違い・空、時刻の順・`until` が最後の `t` より小さい、記録と違う結果）の誤り → `restore_failed`。`restore_failed`（`fatal`、`1011`）の `message` には、どれに当たったかを書く
+- 入力ログの `build` がコンテナの `build` と違っても、`warn` のログを出して復元を試みる（デプロイの直後の復元を止めないため。食い違えば `restore_failed`）
+- **`internal.result`**: ラウンドが終わったら、`round.result` に続けて同じ payload の `internal.result` を送る。終わった後につなぎ直した接続にも、`snapshot` の後に `round.result` と `internal.result` をもう一度送るので、DO は 2 回以上受けることがある（上書きで保存する）
+
+`standalone` モードの Go は Durable Object の役も兼ねるので、ブラウザから届いた `internal.*` を何も返さずに捨て、`internal.result` を送りません。
 
 ---
 

@@ -157,7 +157,7 @@ flowchart TB
 | `internal/stage` | ステージ定義（YAML）と島データ（JSON）の読み込み・検証 | なし |
 | `internal/protocol` | WebSocket の電文と公開 API の本文の型（TS の型を生成する元） | なし |
 | `internal/protocol/simconv` | `sim` の型と `protocol` の型の変換 | `internal/sim`、`internal/protocol` |
-| `internal/server` | HTTP / WS・セッションループ・`single` / `standalone` モード | `internal/sim`、`internal/protocol`、`internal/protocol/simconv` |
+| `internal/server` | HTTP / WS・セッションループ・`single` / `standalone` モード | `internal/sim`、`internal/protocol`、`internal/protocol/simconv`、`internal/stage`、`github.com/coder/websocket` |
 
 依存の向きは「`server` → `sim` → (`cluster`, `ferry`, `game`) → (`ledger`, `stage`)」の一方向です。`cluster` と `ferry` はお互いを知りません（`sim` がつなぎます）。
 
@@ -401,7 +401,7 @@ raft-game/
 └── .github/workflows/           # ci.yml / deploy.yml
 ```
 
-`data/` は `server/` から `go:embed` で取り込みます。Go の embed は親ディレクトリを参照できないため、ビルド時に `data/` を `server/internal/stage/embedded/` にコピーします（`make sync-data`）。コピー先は `.gitignore` に入れます。ステージの一覧（`/api/stages`）は、ビルド時に `data/stages/` から JSON を作り、Worker に同梱します。
+`make sync-data` で `data/` を `server/internal/stage/embedded/` にコピーし、`-tags embeddata` でビルドしたときだけ埋め込む（Go の embed は親ディレクトリを参照できない。コピー先は `.gitignore` に入れる）。タグなしのビルド（`make test`・CI）はコピーを要らない。`make dev` は `DATA_DIR` で作業ツリーの `data/` を読む（[ADR-0025](./adr/0025-stage-data-source.md)）。ステージの一覧（`/api/stages`）は、ビルド時に `data/stages/` から JSON を作り、Worker に同梱します。
 
 ---
 

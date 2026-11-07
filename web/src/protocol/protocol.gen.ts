@@ -445,6 +445,11 @@ export interface InternalInitPayload {
  */
 export interface InternalRestorePayload extends InternalInitPayload {
   inputLog: InputLog;
+  /**
+   * Until は復元で最後に進める時刻（ゲーム内のミリ秒）。0 か省略なら入力ログの最後のコマンドの t。
+   * DO は最後に中継した clock.t を入れる。
+   */
+  until?: number /* int64 */;
 }
 /**
  * InputLog は入力ログ（DesignDoc §10.1）。
@@ -603,6 +608,16 @@ export interface Session {
   seed: number /* uint64 */;
   demo: boolean;
   restored: boolean;
+  /**
+   * StageHash はステージ定義のハッシュ（stage.Stage.Hash。"sha256:…"）。DO が保存して入力ログの stageHash に入れる。
+   * Go は常に送る（JSON は omitempty にしない）。yaml のタグは tygo に TS の型で省略可能（?）と書かせるためだけのもので、
+   * protocol を YAML にすることはない。既存の web の Session の例（web/src/net・state・protocol のテスト）を壊さないため（T-302）。
+   */
+  stageHash?: string;
+  /**
+   * Build はコンテナのビルドの識別子（/healthz の build と同じ）。DO が保存して入力ログの build に入れる。
+   */
+  build?: string;
 }
 /**
  * StageView は Snapshot の stage（§5.1）。
