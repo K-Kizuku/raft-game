@@ -14,6 +14,9 @@ import (
 // izuStormAt はデモの嵐を起こす時刻（進行表 §8 の台本の 0:30）。
 const izuStormAt = 30000
 
+// izuBots は条件を確かめるボット（進行表 §8・T-501e の計測と同じ 2 つ）。novice（初心者の想定）は対象にしない。
+var izuBots = []string{"greedy", "steady"}
+
 // izuRun は 1 シードの結果のうち、条件に使う値。
 type izuRun struct {
 	star2      bool        // ラウンドの終わりに★2 以上
@@ -77,7 +80,7 @@ func TestRepoGreedyDemoIzu(t *testing.T) {
 	}
 	storm := izuWithStorm(t, base, izuStormAt)
 	n := otherGreedySeeds
-	for _, name := range repoBots {
+	for _, name := range izuBots {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			calm := playIzuSeeds(t, name, base, n, 0)
