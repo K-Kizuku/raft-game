@@ -1,7 +1,8 @@
 // ステージの一覧の取得（T-401・プロトコル §2 の GET /api/stages）。
-// 知らないフィールド（unlock など）は読まない（プロトコル §8）。
+// 知らないフィールドは読まない（プロトコル §8）。
 // demo（T-311）は真偽値でなければ、その要素を不正とする（T-413）。
 // intro・learning（T-311）は形を厳密に確かめ、違えば一覧全体を失敗にする（T-416・DesignDoc §13.6）。
+// unlock は null か、自分と違うステージの id。違えば一覧全体を失敗にする（T-703・DesignDoc §13.9）。
 import { STAGE_ID_PATTERN } from "../router/routes.ts";
 import type { StageCatalogEntry, StageSummary, StageText, StageTextSource } from "../types.ts";
 import type { Provenance } from "../../ui/provenance/ProvenanceLabel.tsx";
@@ -112,6 +113,17 @@ function toStageSummary(value: unknown): StageSummary | null {
   return { id, title, region, islands, ferries, durationMs, demo };
 }
 
+// 形が違えば undefined（キーが無いときも）。
+function toUnlock(value: unknown, selfId: string): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || !STAGE_ID_PATTERN.test(value) || value === selfId) {
+    return undefined;
+  }
+  return value;
+}
+
 function toStageCatalogEntry(value: unknown): StageCatalogEntry | null {
   const summary = toStageSummary(value);
   if (summary === null || !isRecord(value)) {
@@ -119,10 +131,11 @@ function toStageCatalogEntry(value: unknown): StageCatalogEntry | null {
   }
   const intro = toStageText(value.intro);
   const learning = toLearning(value.learning);
-  if (intro === null || learning === null) {
+  const unlock = toUnlock(value.unlock, summary.id);
+  if (intro === null || learning === null || unlock === undefined) {
     return null;
   }
-  return { ...summary, intro, learning };
+  return { ...summary, intro, learning, unlock };
 }
 
 function parseStages(body: unknown): StageCatalogEntry[] {

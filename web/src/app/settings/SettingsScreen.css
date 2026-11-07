@@ -123,3 +123,38 @@
     transition: none;
   }
 }
+
+/* ステージの進み具合（T-703）。紙のパネルに件数と「進み具合を消す」を置く。 */
+.app-settings .settings-progress {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-paper);
+  border: 2px solid color-mix(in srgb, var(--color-ink) 25%, transparent);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+}
+
+.app-settings .settings-progress > h2 {
+  margin: 0;
+  font-size: var(--font-size-h3);
+}
+
+.app-settings .settings-progress-count {
+  margin: var(--space-3) 0;
+}
+
+.app-settings .settings-progress-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.app-settings .settings-progress-confirm > p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.app-settings .settings-progress-done {
+  margin: var(--space-3) 0 0;
+}

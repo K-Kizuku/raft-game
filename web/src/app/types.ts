@@ -9,8 +9,8 @@ import type { Provenance } from "../ui/provenance/ProvenanceLabel.tsx";
 // プロトコル §2 の POST /api/sessions の 201 の本文（T-413）。
 export type SessionHandle = CreateSessionResponse;
 
-// プロトコル §2 の GET /api/stages の 1 件のうち、画面が読む欄。unlock（P1）は今は読まない。
-// 紹介文など（intro・learning）は StageCatalogEntry で足す。
+// プロトコル §2 の GET /api/stages の 1 件のうち、画面が読む欄。
+// 紹介文など（intro・learning）と解放の条件（unlock。T-703）は StageCatalogEntry で足す。
 export type StageSummary = Omit<ProtocolStageSummary, "unlock" | "intro" | "learning" | "demo"> & {
   // T-311。true なら POST /api/sessions で demo: true を送る。一覧の読み込み（toStageSummary）は
   // 必ず真偽値を入れる。省略できるのは、範囲の外のテスト（result・game）が作る値のため。
@@ -25,8 +25,15 @@ export type StageTextSource = {
   quote: string | null;
 };
 export type StageText = { text: string; provenance: Provenance; source: StageTextSource | null };
-// 一覧の 1 件（紹介文と学べることつき）。RoundContext の stage には StageSummary として渡せる。
-export type StageCatalogEntry = StageSummary & { intro: StageText; learning: readonly string[] };
+// 一覧の 1 件（紹介文と学べることと解放の条件つき）。RoundContext の stage には StageSummary として渡せる。
+// unlock は先に★1 以上でクリアするステージの id。最初から遊べるなら null（T-703・DesignDoc §13.9）。
+// 一覧の読み込み（toStageCatalogEntry）は必ず string か null を入れる。省略できる（null と同じ扱い）のは、
+// 範囲の外のテスト（stage-intro）と開発用のステージ（dev/mockRound.ts）が作る値のため。
+export type StageCatalogEntry = StageSummary & {
+  intro: StageText;
+  learning: readonly string[];
+  unlock?: string | null;
+};
 
 // ステージ選択で選んだもの。seed はそのセッションを作ったときに送ったシード。
 export type StageSelection = {
