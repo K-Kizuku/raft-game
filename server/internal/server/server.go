@@ -28,6 +28,7 @@ type Server struct {
 
 	// テストで差し替える内部の値。
 	now           func() time.Time
+	clock         loopClock // セッションループの実時間（T-303）
 	initTimeout   time.Duration
 	idleTTL       time.Duration
 	sweepInterval time.Duration
@@ -52,6 +53,7 @@ func New(cfg Config, cat *Catalog, log *slog.Logger) *Server {
 		cat:           cat,
 		log:           log,
 		now:           time.Now,
+		clock:         realClock{},
 		initTimeout:   defaultInitTimeout,
 		idleTTL:       defaultIdleTTL,
 		sweepInterval: defaultSweepInterval,
@@ -207,6 +209,7 @@ func (s *Server) sessionParams() sessionParams {
 		build: s.cfg.Build,
 		log:   s.log,
 		now:   s.now,
+		clock: s.clock,
 		hook:  s.handleHook,
 	}
 }

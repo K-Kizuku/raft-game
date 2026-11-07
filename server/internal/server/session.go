@@ -44,6 +44,7 @@ type sessionParams struct {
 	engine   *sim.Engine
 	log      *slog.Logger
 	now      func() time.Time
+	clock    loopClock               // セッションループの実時間。nil なら realClock
 	hook     func(protocol.Envelope) // テスト用。handle の最初に呼ぶ
 	onBroken func()                  // Engine が panic したとき（run の goroutine から呼ぶ）
 }
@@ -56,8 +57,6 @@ type session struct {
 	seed        uint64
 	demo        bool
 	restored    bool
-	paused      bool    // T-302 は restore で true にするだけ。意味を持たせるのは T-303
-	speed       float64 // 1。T-303 が変える
 	mode        Mode
 	build       string
 	engine      *sim.Engine // run の goroutine だけが触れる
@@ -71,10 +70,27 @@ type session struct {
 	hook     func(protocol.Envelope)
 	onBroken func()
 
+	// セッションループ（T-303）。run の goroutine だけが触れる。
+	wall          loopClock         // 実時間（DesignDoc §12.4。clock() と名前が重なるので wall）
+	pause         pauseState        // 一時停止
+	speedPermille int64             // 速度（1000 = 1 倍）
+	allowed       []int64           // 使える速度（千分率、昇順）
+	lastStep      time.Time         // 前のステップの実時刻
+	rem           int64             // advance の余り
+	pending       []sim.DomainEvent // Engine から取り出したが、まだ送っていないイベント
+	needSnapshot  bool              // 保留を捨てたので、次は snapshot を送る
+	snapshotSent  bool              // いまの接続に snapshot を送った
+	lastEventsAt  time.Time         // 最後に events（か snapshot）を送った実時刻
+	pendingLimit  int               // pendingEventLimit（テストで小さくする）
+	highWater     int               // eventsHighWater（テストで変える）
+	bucket        tokenBucket       // コマンドのレート制限
+	stepHook      func()            // テスト用。ステップの最初に呼ぶ
+
 	inbox  chan inbound
 	attach chan attachReq
 	detach chan *wsConn
-	call   chan func() // run の goroutine で関数を実行する（テスト用。T-303 も使ってよい）
+	call   chan func()         // run の goroutine で関数を実行する（テスト用。T-303 も使ってよい）
+	probe  chan func(*session) // テスト用。run の goroutine で関数を実行する（本番のコードからは送らない）
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -95,8 +111,6 @@ func newSession(parent context.Context, p sessionParams) *session {
 		seed:       p.seed,
 		demo:       p.demo,
 		restored:   p.restored,
-		paused:     p.paused,
-		speed:      1,
 		mode:       p.mode,
 		build:      p.build,
 		engine:     p.engine,
@@ -108,9 +122,21 @@ func newSession(parent context.Context, p sessionParams) *session {
 		attach:     make(chan attachReq),
 		detach:     make(chan *wsConn),
 		call:       make(chan func()),
+		probe:      make(chan func(*session)),
 		ctx:        ctx,
 		cancel:     cancel,
 		done:       make(chan struct{}),
+	}
+	s.wall = p.clock
+	if s.wall == nil {
+		s.wall = realClock{}
+	}
+	s.speedPermille = 1000
+	s.allowed = allowedSpeedsPermille(p.st, p.demo)
+	s.pendingLimit = pendingEventLimit
+	s.highWater = eventsHighWater
+	if p.paused {
+		s.pause.hold() // 復元したセッションは止めておく
 	}
 	s.lastSeen.Store(p.now().UnixNano())
 	return s
@@ -125,9 +151,14 @@ func (s *session) stop() {
 	<-s.done
 }
 
-// run は select で ctx・attach・detach・inbox を待つ。T-303 がここにステップと送信の ticker を足す。
+// run は select で ctx・attach・detach・inbox・ステップ・まとめ送りを待つ（DesignDoc §12.4）。
 func (s *session) run(ctx context.Context) {
 	defer close(s.done)
+	step := s.wall.NewTicker(stepInterval)
+	defer step.Stop()
+	flush := s.wall.NewTicker(flushInterval)
+	defer flush.Stop()
+	s.lastStep = s.wall.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -146,8 +177,14 @@ func (s *session) run(ctx context.Context) {
 				continue // いまの接続でない接続からの電文は捨てる
 			}
 			s.handle(m)
+		case now := <-step.C():
+			s.step(now)
+		case now := <-flush.C():
+			s.flushTick(now)
 		case f := <-s.call:
 			f()
+		case f := <-s.probe:
+			f(s)
 		}
 	}
 }
@@ -205,9 +242,14 @@ func (s *session) onAttach(a attachReq) {
 	s.conn = a.c
 	s.connected.Store(true)
 	s.lastSeen.Store(s.now().UnixNano())
+	s.snapshotSent = false // standalone は hello まで events を送らない
 	if s.broken {
 		s.closeBroken()
 		return
+	}
+	if s.pause.attach() {
+		s.resetStep()
+		s.log.Info("auto resume")
 	}
 	s.resultFor = nil
 	s.guard("attach", func() {
@@ -220,8 +262,16 @@ func (s *session) onAttach(a attachReq) {
 	})
 }
 
-// onDetach は接続が切れたとき。T-302 では何もしない（T-303 が自動一時停止を足す）。
-func (s *session) onDetach() {}
+// onDetach は、いまの接続が切れたとき。ラウンドの途中なら自動で一時停止する（FR-GAME-07）。
+// 古い接続・置き換えられた接続の切断では呼ばれない。
+func (s *session) onDetach() {
+	s.snapshotSent = false
+	if s.broken || s.engine.Phase() == sim.PhaseEnded || s.pause.isPaused() {
+		return
+	}
+	s.pause.detach()
+	s.log.Info("auto pause")
+}
 
 // closeBroken は、Engine が panic したセッションのいまの接続に internal_error を送って閉じる。
 func (s *session) closeBroken() {
@@ -260,7 +310,26 @@ func (s *session) handle(m inbound) {
 		if s.hook != nil {
 			s.hook(m.env)
 		}
+		if m.env.Type != protocol.MessageTypePing && !s.bucket.allow(s.wall.Now()) {
+			s.rateLimited(m.env)
+			return
+		}
 		s.handleEnvelope(m.env)
+	})
+}
+
+// rateLimited は、レート制限を超えた電文に、cmdId があれば ack（rate_limited）を返し、なければ捨てる。
+func (s *session) rateLimited(env protocol.Envelope) {
+	if env.CmdID == "" {
+		s.log.Debug("rate limited", "type", string(env.Type))
+		return
+	}
+	s.send(protocol.MessageTypeAck, protocol.Ack{
+		CmdID:   env.CmdID,
+		OK:      false,
+		T:       int64(s.engine.Now()),
+		Code:    protocol.AckCodeRateLimited,
+		Message: "too many commands",
 	})
 }
 
@@ -283,8 +352,10 @@ func (s *session) handleEnvelope(env protocol.Envelope) {
 		}
 		s.send(protocol.MessageTypePong, protocol.PongPayload{ClientTime: p.ClientTime, SimTime: int64(s.engine.Now())})
 		return
-	case protocol.MessageTypeCmdGamePause, protocol.MessageTypeCmdGameSpeed, protocol.MessageTypeCmdGameSkip, // T-303
-		protocol.MessageTypeSubEngineer,  // T-407
+	case protocol.MessageTypeCmdGamePause, protocol.MessageTypeCmdGameSpeed, protocol.MessageTypeCmdGameSkip:
+		s.handleControl(env)
+		return
+	case protocol.MessageTypeSubEngineer, // T-407
 		protocol.MessageTypeDemoTrigger,  // T-305
 		protocol.MessageTypeCmdRelayLoad: // P1
 		s.reject(env, "not implemented")
@@ -306,7 +377,7 @@ func (s *session) handleEnvelope(env protocol.Envelope) {
 	}
 	ack := s.engine.Apply(cmd)
 	s.send(protocol.MessageTypeAck, simconv.AckFromSim(env.CmdID, ack))
-	s.flush()
+	s.flushNow(true)
 	s.checkEnded()
 }
 
@@ -325,42 +396,20 @@ func (s *session) reject(env protocol.Envelope, message string) {
 	})
 }
 
-// flush は DrainEvents → events を 1 つ送る（イベントがなければ送らない）。T-303 が送る時機を変える。
-// 接続がなければイベントは捨てる（つなぎ直した接続は snapshot から始める）。
-func (s *session) flush() {
-	evs := s.engine.DrainEvents()
-	if len(evs) == 0 {
-		return
-	}
-	raw := make([]json.RawMessage, len(evs))
-	for i, ev := range evs {
-		b, err := json.Marshal(ev)
-		if err != nil {
-			panic(fmt.Sprintf("server: marshal event %d: %v", ev.Seq, err))
-		}
-		raw[i] = b
-	}
-	s.send(protocol.MessageTypeEvents, protocol.EventsPayload{Clock: s.clock(), Events: raw})
-}
-
-// advanceTo は RunUntil(t) → checkEnded（panic は回復する）。T-302 では呼ぶ場所がない（T-303 のステップが呼ぶ）。
+// advanceTo は runTo（RunUntil(t) → 終わったら events → checkEnded）を panic を回復して呼ぶ。
 func (s *session) advanceTo(t sim.SimTime) {
 	if s.broken {
 		return
 	}
-	s.guard("advance", func() {
-		s.engine.RunUntil(t)
-		s.checkEnded()
-	})
+	s.guard("advance", func() { s.runTo(t) })
 }
 
 // checkEnded は、Phase() == PhaseEnded になったら、いまの接続に round.result（single は internal.result も）を
-// 1 回だけ送る。送る前に、残っているイベント（phase.changed など）を flush する。
+// 1 回だけ送る。残っているイベント（phase.changed など）は、呼び出し側が先に flushNow(true) で送る。
 func (s *session) checkEnded() {
 	if s.resultSent || s.engine.Phase() != sim.PhaseEnded {
 		return
 	}
-	s.flush()
 	s.sendResult()
 }
 
@@ -375,11 +424,18 @@ func (s *session) sendResult() {
 }
 
 // sendSnapshot は snapshot を送る。つなぎ直した接続で、ラウンドが終わっていれば、続けて round.result も送る。
+// snapshot は lastSeq までのすべてのイベントを含むので、保留のイベントを捨てる（後で二重に送らない）。
+// snapshot を送るのは、すべてここを通す（hello・cmd.sync・つないだとき・保留の破棄の後）。
 func (s *session) sendSnapshot() {
 	if s.conn == nil {
 		return
 	}
+	s.engine.DrainEvents()
+	s.pending = nil
+	s.needSnapshot = false
 	s.send(protocol.MessageTypeSnapshot, s.buildSnapshot())
+	s.snapshotSent = true
+	s.lastEventsAt = s.wall.Now()
 	if s.resultFor != nil && s.resultFor == s.conn {
 		s.resultFor = nil
 		s.sendResult()
@@ -388,7 +444,12 @@ func (s *session) sendSnapshot() {
 
 // clock は、いまの時計（プロトコル §7）。
 func (s *session) clock() protocol.Clock {
-	return protocol.Clock{T: int64(s.engine.Now()), Speed: s.speed, Paused: s.paused, EndsAt: int64(s.durationMs)}
+	return protocol.Clock{
+		T:      int64(s.engine.Now()),
+		Speed:  float64(s.speedPermille) / 1000,
+		Paused: s.pause.isPaused(),
+		EndsAt: int64(s.durationMs),
+	}
 }
 
 // send は、いまの接続に電文を送る。接続がなければ捨てる。
