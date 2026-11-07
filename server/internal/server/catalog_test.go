@@ -111,6 +111,46 @@ func TestLoadCatalog(t *testing.T) {
 	}
 }
 
+// SV-2: islands.json の表示用の欄に誤りがあれば起動を止める（ステージが 0 個でも）。
+func TestLoadCatalogDisplayErrors(t *testing.T) {
+	t.Parallel()
+	islands := string(readTestdata(t, "islands.json"))
+	area := "\"areaKm2\": {\n        \"value\": 30.3,\n        \"asOf\": \"令和8年4月1日\",\n        \"provenance\": \"derived\",\n" +
+		"        \"note\": \"星砂町 10.1 km²と月影町 20.2 km²の合計\",\n        \"source\": \"fixture-2026\"\n      },\n"
+	if strings.Count(islands, area) != 1 {
+		t.Fatalf("testdata/islands.json に areaKm2 の置き換え元がない")
+	}
+	noArea := strings.Replace(islands, area, "", 1)
+
+	for _, tc := range []struct {
+		name   string
+		stages bool
+	}{{"stages", true}, {"no stages", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "islands.json"), []byte(noArea), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(dir, "stages"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if tc.stages {
+				if err := os.WriteFile(filepath.Join(dir, "stages", "alpha.yaml"), readTestdata(t, "stages/alpha.yaml"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cat, err := LoadCatalog(os.DirFS(dir))
+			if err == nil || cat != nil {
+				t.Fatalf("LoadCatalog(areaKm2 なし) = %v, %v", cat, err)
+			}
+			if !strings.Contains(err.Error(), "islands[0].areaKm2") {
+				t.Errorf("err = %v", err)
+			}
+		})
+	}
+}
+
 // CF-5: リポジトリの data/ を読める。
 func TestLoadCatalogRepoData(t *testing.T) {
 	t.Parallel()
