@@ -1,4 +1,4 @@
-/* 画面の共通の CSS（T-401）。見た目の作り込みは後続のタスク。 */
+/* 画面の共通の CSS（T-401）。色・文字などのトークンと下地は ../ui/theme/（T-420）。 */
 
 /* 見た目では隠し、支援技術には読ませる。 */
 .visually-hidden {
@@ -14,7 +14,7 @@
 }
 
 .app-main {
-  font-family: system-ui, sans-serif;
+  font-family: var(--font-body);
 }
 
 .app-screen {
