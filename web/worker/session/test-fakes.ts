@@ -30,17 +30,55 @@ export function deferred(): Deferred {
   return { promise, resolve, reject };
 }
 
-// 注入する時計。sleep は待たずに時刻を進める。
+interface FakeTimer {
+  readonly id: number;
+  readonly ms: number;
+  readonly callback: () => void;
+  next: number;
+}
+
+// 注入する時計。sleep は待たずに時刻を進める（タイマーは鳴らさない）。
+// setInterval は advanceTimers で時刻を進めたときだけ、期限の来たものを時刻の順に呼ぶ。
 export class FakeClock {
   t = 1_700_000_000_000;
   readonly sleeps: number[] = [];
+  readonly #timers: FakeTimer[] = [];
+  #nextTimerId = 0;
   readonly now = (): number => this.t;
   readonly sleep = async (ms: number): Promise<void> => {
     this.sleeps.push(ms);
     this.t += ms;
   };
+  readonly setInterval = (callback: () => void, ms: number): (() => void) => {
+    this.#nextTimerId += 1;
+    const timer: FakeTimer = { id: this.#nextTimerId, ms, callback, next: this.t + ms };
+    this.#timers.push(timer);
+    return () => {
+      const index = this.#timers.indexOf(timer);
+      if (index >= 0) this.#timers.splice(index, 1);
+    };
+  };
   advance(ms: number): void {
     this.t += ms;
+  }
+  // 時刻を ms 進め、その間に期限の来たタイマーを時刻の順（同じなら作った順）に呼ぶ。
+  advanceTimers(ms: number): void {
+    const end = this.t + ms;
+    for (;;) {
+      let due: FakeTimer | undefined;
+      for (const timer of this.#timers) {
+        if (timer.next > end) continue;
+        if (due === undefined || timer.next < due.next) due = timer;
+      }
+      if (due === undefined) break;
+      this.t = due.next;
+      due.next += due.ms;
+      due.callback();
+    }
+    this.t = end;
+  }
+  get activeTimers(): number {
+    return this.#timers.length;
   }
 }
 
