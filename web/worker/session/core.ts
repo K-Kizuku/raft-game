@@ -4,9 +4,12 @@
 //   GET  /connect  トークンの検証と WebSocket の中継（ルーターが verifySessionId の後でだけ呼ぶ。G3）
 //   alarm()        30 分の上限と切断から 5 分の打ち切り（G2。回数に上限）
 //
-// 状態: POST /init で starting → コンテナへの WebSocket を開いて internal.init を送ったら running →
-// 「終わり」で ended（戻らない）。ブラウザの接続 1 本に、コンテナへの WebSocket を 1 本張る。
-// 入力ログの記録と、コンテナが止まったときの復元は T-308b。
+// 状態: POST /init で starting → コンテナへの WebSocket を開いて internal.init（か internal.restore）を
+// 送ったら running → 「終わり」で ended（戻らない）。ブラウザの接続 1 本に、コンテナへの WebSocket を 1 本張る。
+//
+// 入力ログと復元（T-308b）: ブラウザのコマンドを cmdId ごとに覚え、コンテナの ack が ok: true なら
+// input_log に記録する。コンテナが止まったと判断したら（monitor の終わり・ソケットの close・死活監視など）
+// ブラウザを 1011 で閉じ、次の /connect（トークンの確認の後）で起動し直して internal.restore を送る。
 
 import type { CostGuardClient } from "../admin/client.ts";
 import { containerInstanceOf } from "../admin/ports.ts";
@@ -25,23 +28,37 @@ import {
   classifyBrowserText,
   classifyContainerText,
   exceedsBytes,
+  utf8Bytes,
+  type AckInfo,
   type ContainerMessage,
 } from "./envelope.ts";
 import {
+  CLOCK_PERSIST_INTERVAL_MS,
   CONTAINER_PORT,
   DESTROY_RETRY_MS,
   IDLE_MS,
   IMAGE_NAME,
   MAX_BUFFERED_MESSAGES,
+  MAX_CONTAINER_STARTS,
+  MAX_INPUT_LOG_BYTES,
+  MAX_INPUT_LOG_ROWS,
   MAX_MESSAGES_PER_SECOND,
+  MAX_PENDING_COMMANDS,
   MAX_RESULT_BYTES,
   MAX_WS_MESSAGE_BYTES,
+  PING_INTERVAL_MS,
+  PING_MAX_MISSED,
   READY_POLL_INTERVAL_MS,
   READY_POLL_REQUEST_MS,
 } from "./limits.ts";
+import { PendingCommands } from "./pending.ts";
+import { buildRestoreMessage, commandJson, recordDecision, restoreUntil } from "./restore.ts";
 import {
+  appendInputLog,
   ensureSessionSchema,
+  inputLogStats,
   insertSession,
+  readInputLog,
   readSession,
   updateSession,
   type SessionPatch,
@@ -56,7 +73,13 @@ export interface GameSessionDeps {
   readonly upgradeResponse: (client: WebSocketLike) => Response; // 本番は new Response(null, { status: 101, webSocket })
   readonly timeoutSignal: (ms: number) => AbortSignal | undefined;
   readonly costGuard: CostGuardClient | undefined; // 本番は getCostGuardClient(env)
+  // ms ごとに callback を呼ぶ。戻り値の関数で止める。本番は globalThis.setInterval・clearInterval
+  readonly setInterval: (callback: () => void, ms: number) => () => void;
 }
+
+// コンテナが止まったと判断した理由（DesignDoc §12.3「入力ログと復元」）。
+export type StopCause =
+  "monitor" | "socket_closed" | "ping_timeout" | "start_timeout" | "not_running";
 
 export type EndReason =
   | "round_ended"
@@ -86,6 +109,9 @@ const TOKEN_HASH_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_RUN_SECONDS = 86400; // CostGuard の settle が受ける上限
 const CONTAINER_ORIGIN = "http://container";
 const PONG = JSON.stringify({ v: 1, type: "internal.pong", payload: {} });
+const PING = JSON.stringify({ v: 1, type: "internal.ping", payload: {} });
+// snapshot を受ける前のこれらの fatal の error は internal.init・internal.restore の誤り（つなぎ直しても同じ）。
+const INIT_FAILURE_CODES: ReadonlySet<string> = new Set(["bad_request", "not_initialized"]);
 
 interface InitBody {
   readonly sessionId: string;
@@ -102,6 +128,17 @@ interface Dropped {
   malformed: number;
   internal: number;
   buffer: number;
+  duplicate: number;
+  pending_full: number;
+  log_full: number;
+}
+
+// コンテナに送るブラウザの電文（受けた文字列と、読んだ値）。
+interface Outgoing {
+  readonly data: string;
+  readonly type: string;
+  readonly cmdId: unknown;
+  readonly payload: unknown;
 }
 
 // ブラウザの接続 1 本（とコンテナへの WebSocket 1 本）。gen は接続ごとの世代の番号。
@@ -110,12 +147,22 @@ interface Connection {
   readonly browser: WebSocketLike;
   readonly connectedAt: number;
   container: WebSocketLike | null;
-  readonly buffer: string[];
+  readonly buffer: Outgoing[];
   lastSeq: number | null;
   closed: boolean;
   toContainer: number;
   toBrowser: number;
   readonly dropped: Dropped;
+  gotSnapshot: boolean; // コンテナへのソケットから snapshot を受けた
+  stopPing: (() => void) | null; // 死活監視を止める
+  pingOutstanding: boolean; // 送った internal.ping に internal.pong がまだない
+  pingMissed: number; // 続けて internal.pong がない回数
+}
+
+interface LogStats {
+  rows: number;
+  bytes: number;
+  lastT: number | null;
 }
 
 // 終わりの理由ごとに、ブラウザに送るもの（DO の error の code）と閉じるコード。
@@ -208,10 +255,25 @@ export class GameSessionCore {
   #conn: Connection | null = null;
   #gen = 0;
   #watching = false; // monitor() を見張っている（DO が作り直されると false に戻る）
-  #exited = false; // 見張っているコンテナが終わった
+  // 見張りの世代。#watch() のたびと、止まったと判断したときに 1 増やす。monitor() の終わり・ソケット・
+  // ack が「いまのコンテナのものか」を見分ける。
+  #watchGen = 0;
+  #stopped = false; // 止まったと判断し、まだ起動し直していない
+  #stopping: Promise<void> | null = null; // 動いている「止まったときの処理」（1 つずつ動かす）
   #rateWindow = -1; // Math.floor(now / 1000)。DO に 1 つで、接続をまたいで続く
   #rateCount = 0;
   #cleaning: Promise<void> | null = null; // 動いている後始末（同時に 2 つ動かさない）
+
+  // 入力ログ（DO に 1 つ）
+  readonly #awaitingAck = new PendingCommands();
+  #logStats: LogStats | null = null; // 最初に要るときに SQLite から読む
+  #logFullWarned = false;
+
+  // 最後に中継した clock.t（メモリ）と、SQLite に書いた値・時刻
+  #clockLoaded = false;
+  #clockT: number | null = null;
+  #clockSaved: number | null = null;
+  #clockSavedAt: number | null = null;
 
   constructor(ctx: GameSessionStateLike, env: Env, deps: GameSessionDeps) {
     this.#ctx = ctx;
@@ -343,21 +405,7 @@ export class GameSessionCore {
 
     const instance = containerInstanceOf(this.#env);
     const container = this.#ctx.container;
-    const image = container?.images[IMAGE_NAME];
-    let started = false;
-    if (alarmSet && container !== undefined && image !== undefined) {
-      try {
-        container.start({
-          image,
-          instance,
-          enableInternet: false,
-          env: { MODE: "single", PORT: String(CONTAINER_PORT) },
-        });
-        started = true;
-      } catch (error) {
-        this.#logError("start", error);
-      }
-    }
+    const started = alarmSet && this.#startContainer(container);
     if (container === undefined || !started) {
       // settle は呼ばない（ルーターが init の失敗で cancel を呼ぶ）。
       this.#update({ state: "ended", endReason: "start_failed", endedAt: now, alarmAt: null });
@@ -388,11 +436,31 @@ export class GameSessionCore {
     return sameInit(row, body) ? json({}, 200) : errorResponse(409, "conflict", "Session exists");
   }
 
+  // コンテナを起動する（POST /init と起動し直しで共通。引数は同じ）。起動できなければ false。
+  #startContainer(container: ContainerLike | undefined): boolean {
+    const image = container?.images[IMAGE_NAME];
+    if (container === undefined || image === undefined) return false;
+    try {
+      container.start({
+        image,
+        instance: containerInstanceOf(this.#env),
+        enableInternet: false,
+        env: { MODE: "single", PORT: String(CONTAINER_PORT) },
+      });
+      return true;
+    } catch (error) {
+      this.#logError("start", error);
+      return false;
+    }
+  }
+
   // ---- コンテナの見張り ----
 
   #watch(container: ContainerLike): void {
+    this.#watchGen += 1;
+    const watchGen = this.#watchGen;
     this.#watching = true;
-    this.#exited = false;
+    this.#stopped = false;
     let exit: Promise<void>;
     try {
       exit = container.monitor();
@@ -404,11 +472,120 @@ export class GameSessionCore {
         () => undefined,
         () => undefined,
       )
-      .then(() => {
-        this.#exited = true;
-        // 自分で destroy() した後の終わりは、すでに ended なので何もしない。
-        this.#track(this.#endSession("container_lost"));
-      });
+      .then(() => this.#onMonitorEnded(watchGen));
+  }
+
+  #onMonitorEnded(watchGen: number): void {
+    // 自分で destroy() した古いコンテナの終わり・終わった後の終わりは無視する。
+    if (watchGen !== this.#watchGen) return;
+    const row = this.#row();
+    if (row === null || row.state === "ended") return;
+    if (this.#ctx.container?.running === true) {
+      // monitor() だけで判断しない（DO が作り直されたときの振る舞いは未確認。ADR-0016）。
+      // 次の /connect で見張り直す。止まっていればソケットの close か死活監視で分かる。
+      this.#watching = false;
+      this.#log("warn", "container.monitor_ended");
+      return;
+    }
+    this.#track(this.#onContainerStopped("monitor", watchGen));
+  }
+
+  // ---- コンテナが止まったとき（何度呼ばれても 1 つずつ動く） ----
+
+  #onContainerStopped(cause: StopCause, watchGen: number): Promise<void> {
+    const previous = this.#stopping ?? Promise.resolve();
+    const next = previous
+      .then(() => this.#handleStopped(cause, watchGen))
+      .catch((error: unknown) => this.#logError("stopped", error));
+    this.#stopping = next;
+    void next.finally(() => {
+      if (this.#stopping === next) this.#stopping = null;
+    });
+    return next;
+  }
+
+  async #handleStopped(cause: StopCause, watchGen: number): Promise<void> {
+    if (watchGen !== this.#watchGen) return;
+    const row = this.#row();
+    if (row === null || row.state === "ended") return;
+    this.#persistClock();
+
+    // 試し直さない
+    if (this.#deps.now() >= row.deadlineAt) {
+      await this.#endSession("time_limit");
+      return;
+    }
+    if (row.containerStarts >= MAX_CONTAINER_STARTS) {
+      await this.#endSession("container_lost");
+      return;
+    }
+    if (row.stageHash === null && this.#stats().rows > 0) {
+      // internal.init で始め直すと、記録したコマンドが消える
+      await this.#endSession("container_lost");
+      return;
+    }
+
+    // ブラウザを閉じる（error は送らない。ブラウザはつなぎ直す）。not_running は /connect の中なので閉じない。
+    const conn = this.#conn;
+    if (cause !== "not_running" && conn !== null && !conn.closed) {
+      this.#detach(conn, { browser: [1011, "container restarting"] });
+    }
+
+    const container = this.#ctx.container;
+    if (container?.running === true) {
+      try {
+        await container.destroy();
+      } catch (error) {
+        this.#logError("destroy", error);
+        // container_started_at を残すので、後始末のやり直しが働く
+        await this.#endSession("container_lost");
+        return;
+      }
+    }
+
+    const current = this.#row();
+    if (current === null || current.state === "ended" || watchGen !== this.#watchGen) return;
+    const patch: { runMs?: number; containerStartedAt: null; readyAt: null } = {
+      containerStartedAt: null,
+      readyAt: null,
+    };
+    if (current.containerStartedAt !== null) {
+      patch.runMs = current.runMs + Math.max(0, this.#deps.now() - current.containerStartedAt);
+    }
+    this.#update(patch);
+    this.#watchGen += 1;
+    this.#watching = false;
+    this.#stopped = true;
+    this.#awaitingAck.clear(); // 止まったコンテナからは ack が来ない
+    this.#log("info", "container.stopped", { cause, containerStarts: current.containerStarts });
+  }
+
+  // 止まっているコンテナを起動し直す（/connect の後の #attachContainer の中だけ）。予約はしない。
+  async #restartContainer(): Promise<boolean> {
+    const row = this.#row();
+    if (row === null || row.state === "ended") return false;
+    if (this.#deps.now() >= row.deadlineAt) {
+      await this.#endSession("time_limit");
+      return false;
+    }
+    if (row.containerStarts >= MAX_CONTAINER_STARTS) {
+      await this.#endSession("container_lost");
+      return false;
+    }
+    const container = this.#ctx.container;
+    if (container === undefined || !this.#startContainer(container)) {
+      await this.#endSession("container_lost");
+      return false;
+    }
+    const containerStarts = row.containerStarts + 1;
+    this.#update({ containerStarts, containerStartedAt: this.#deps.now(), readyAt: null });
+    this.#log("info", "container.start", {
+      instance: containerInstanceOf(this.#env),
+      containerStarts,
+      restart: true,
+    });
+    this.#watch(container);
+    return true;
   }
 
   // ---- GET /connect ----
@@ -430,6 +607,7 @@ export class GameSessionCore {
     const old = this.#conn;
     if (old !== null && !old.closed) {
       old.closed = true;
+      this.#stopPing(old);
       safeClose(old.browser, 4001, "replaced");
       if (old.container !== null) safeClose(old.container, 1000, "replaced");
       this.#log("info", "session.replaced", this.#connectionStats(old));
@@ -448,7 +626,21 @@ export class GameSessionCore {
       closed: false,
       toContainer: 0,
       toBrowser: 0,
-      dropped: { binary: 0, oversize: 0, rate: 0, malformed: 0, internal: 0, buffer: 0 },
+      dropped: {
+        binary: 0,
+        oversize: 0,
+        rate: 0,
+        malformed: 0,
+        internal: 0,
+        buffer: 0,
+        duplicate: 0,
+        pending_full: 0,
+        log_full: 0,
+      },
+      gotSnapshot: false,
+      stopPing: null,
+      pingOutstanding: false,
+      pingMissed: 0,
     };
     this.#conn = conn;
     server.addEventListener("message", (event) => this.#onBrowserMessage(conn, event.data));
@@ -475,20 +667,35 @@ export class GameSessionCore {
 
   // ---- コンテナへの接続（/connect の後、非同期） ----
 
+  #attachable(conn: Connection): boolean {
+    const row = this.#row();
+    return row !== null && row.state !== "ended" && this.#isCurrent(conn);
+  }
+
   async #attachContainer(conn: Connection): Promise<void> {
+    // 1. 止まったときの処理が動いていれば、終わるのを待つ（start() を 2 回呼ばない）
+    while (this.#stopping !== null) await this.#stopping;
+    if (!this.#attachable(conn)) return;
+
+    // 2. 見張りがない（DO が作り直された・monitor() が running のまま終わった）
     const container = this.#ctx.container;
-    if (!this.#watching) {
-      // DO が作り直された。動いていれば見張りを付け直して続ける。
-      if (container === undefined || !container.running) {
-        await this.#endSession("container_lost");
-        return;
-      }
-      this.#watch(container);
-    }
-    if (this.#exited || container === undefined) {
+    if (container === undefined) {
       await this.#endSession("container_lost");
       return;
     }
+    if (!this.#watching && !this.#stopped) {
+      if (container.running) {
+        this.#watch(container);
+      } else {
+        await this.#onContainerStopped("not_running", this.#watchGen);
+        while (this.#stopping !== null) await this.#stopping;
+        if (!this.#attachable(conn)) return;
+      }
+    }
+
+    // 3. 止まっているなら起動し直す
+    if (this.#stopped && !(await this.#restartContainer())) return;
+    const watchGen = this.#watchGen;
 
     const row = this.#row();
     if (row === null || row.state === "ended" || !this.#isCurrent(conn)) return;
@@ -497,8 +704,11 @@ export class GameSessionCore {
       const ready = await this.#waitReady(container, row, conn);
       if (ready === "stale") return;
       if (ready === "timeout") {
-        const state = this.#row()?.state;
-        await this.#endSession(state === "starting" ? "start_timeout" : "container_lost");
+        if (this.#row()?.state === "starting") {
+          await this.#endSession("start_timeout");
+        } else {
+          await this.#onContainerStopped("start_timeout", watchGen);
+        }
         return;
       }
     }
@@ -526,30 +736,72 @@ export class GameSessionCore {
 
     socket.accept();
     conn.container = socket;
-    socket.addEventListener("message", (event) => this.#onContainerMessage(conn, event.data));
-    socket.addEventListener("close", () => this.#onContainerClosed(conn));
-    socket.addEventListener("error", () => this.#onContainerClosed(conn));
+    socket.addEventListener("message", (event) =>
+      this.#onContainerMessage(conn, watchGen, event.data),
+    );
+    socket.addEventListener("close", () => this.#onContainerClosed(conn, watchGen));
+    socket.addEventListener("error", () => this.#onContainerClosed(conn, watchGen));
 
-    // 同じ sessionId の 2 本目以降の /ws でも internal.init を送る（コンテナはつなぎ直すだけ。T-302）。
-    // T-308b は stage_hash があれば internal.restore に変える（DesignDoc §12.3「復元の約束」）。
-    safeSend(
-      socket,
-      JSON.stringify({
+    // stage_hash があれば internal.restore、なければ internal.init。生きているコンテナは、同じ sessionId の
+    // internal.init・internal.restore をつなぎ直しとして扱う（T-302）ので、起動し直したかどうかによらない。
+    safeSend(socket, this.#firstMessage(current));
+    if (current.state === "starting") this.#update({ state: "running" });
+    conn.stopPing = this.#deps.setInterval(
+      () => this.#onPingTick(conn, watchGen),
+      PING_INTERVAL_MS,
+    );
+
+    for (const item of conn.buffer.splice(0)) this.#sendToContainer(conn, socket, item);
+  }
+
+  #firstMessage(row: SessionRow): string {
+    if (row.stageHash === null) {
+      return JSON.stringify({
         v: 1,
         type: "internal.init",
         payload: {
-          sessionId: current.sessionId,
-          stageId: current.stageId,
-          seed: current.seed,
-          demo: current.demo,
+          sessionId: row.sessionId,
+          stageId: row.stageId,
+          seed: row.seed,
+          demo: row.demo,
         },
-      }),
-    );
-    if (current.state === "starting") this.#update({ state: "running" });
-
-    for (const message of conn.buffer.splice(0)) {
-      if (safeSend(socket, message)) conn.toContainer += 1;
+      });
     }
+    const commands = readInputLog(this.#ctx.storage.sql);
+    const until = restoreUntil(this.#clock(), commands.at(-1)?.t ?? null);
+    const message = buildRestoreMessage(row, commands, until);
+    this.#log("info", "session.restore", {
+      commands: commands.length,
+      until,
+      bytes: utf8Bytes(message),
+    });
+    return message;
+  }
+
+  // ---- 死活監視（internal.ping） ----
+
+  #onPingTick(conn: Connection, watchGen: number): void {
+    const socket = conn.container;
+    if (!this.#isCurrent(conn) || socket === null || this.#row()?.state !== "running") {
+      this.#stopPing(conn);
+      return;
+    }
+    if (conn.pingOutstanding) {
+      conn.pingMissed += 1;
+      if (conn.pingMissed >= PING_MAX_MISSED) {
+        this.#stopPing(conn);
+        this.#track(this.#onContainerStopped("ping_timeout", watchGen));
+        return;
+      }
+    }
+    conn.pingOutstanding = true;
+    safeSend(socket, PING);
+  }
+
+  #stopPing(conn: Connection): void {
+    const stop = conn.stopPing;
+    conn.stopPing = null;
+    if (stop !== null) stop();
   }
 
   async #waitReady(
@@ -616,20 +868,69 @@ export class GameSessionCore {
       return;
     }
     const verdict = classifyBrowserText(data);
-    if (verdict !== "forward") {
-      conn.dropped[verdict] += 1;
+    if (verdict.kind !== "forward") {
+      conn.dropped[verdict.kind] += 1;
       return;
     }
-    // 受けた文字列をそのまま送る（中身を書き換えない）。
+    const item: Outgoing = {
+      data,
+      type: verdict.type,
+      cmdId: verdict.cmdId,
+      payload: verdict.payload,
+    };
     if (conn.container === null) {
       if (conn.buffer.length >= MAX_BUFFERED_MESSAGES) {
         conn.dropped.buffer += 1;
         return;
       }
-      conn.buffer.push(data);
+      conn.buffer.push(item);
       return;
     }
-    if (safeSend(conn.container, data)) conn.toContainer += 1;
+    this.#sendToContainer(conn, conn.container, item);
+  }
+
+  // コンテナへ送る直前に、記録する種類か・送ってよいかを決める（DesignDoc §12.3「入力ログと復元」）。
+  // 受けた文字列をそのまま送る（中身を書き換えない）。
+  #sendToContainer(conn: Connection, socket: WebSocketLike, item: Outgoing): void {
+    const decision = recordDecision(item.type, item.cmdId);
+    if (decision === "forward") {
+      if (safeSend(socket, item.data)) conn.toContainer += 1;
+      return;
+    }
+    const cmdId = item.cmdId;
+    if (decision === "drop" || typeof cmdId !== "string") {
+      conn.dropped.malformed += 1; // 覚えられない cmdId（Go は適用するので送らない）
+      return;
+    }
+    if (this.#awaitingAck.has(cmdId)) {
+      conn.dropped.duplicate += 1;
+      return;
+    }
+    const now = this.#deps.now();
+    this.#awaitingAck.purge(now);
+    if (this.#awaitingAck.size >= MAX_PENDING_COMMANDS) {
+      conn.dropped.pending_full += 1;
+      return;
+    }
+    const cmd = commandJson(item.type, item.payload);
+    const bytes = utf8Bytes(cmd);
+    const stats = this.#stats();
+    if (
+      stats.rows + this.#awaitingAck.size >= MAX_INPUT_LOG_ROWS ||
+      stats.bytes + this.#awaitingAck.bytes + bytes > MAX_INPUT_LOG_BYTES
+    ) {
+      // 返事はしない（記録とコンテナの状態を食い違わせないため、コンテナに送らない）
+      conn.dropped.log_full += 1;
+      if (!this.#logFullWarned) {
+        this.#logFullWarned = true;
+        this.#log("warn", "input_log.full", { rows: stats.rows, bytes: stats.bytes });
+      }
+      return;
+    }
+    if (safeSend(socket, item.data)) {
+      conn.toContainer += 1;
+      this.#awaitingAck.add(cmdId, { cmd, bytes }, now);
+    }
   }
 
   #onBrowserClosed(conn: Connection): void {
@@ -637,9 +938,64 @@ export class GameSessionCore {
     this.#detach(conn, {});
   }
 
+  // ---- 入力ログ ----
+
+  #stats(): LogStats {
+    if (this.#logStats === null) {
+      const stats = inputLogStats(this.#ctx.storage.sql);
+      this.#logStats = { rows: stats.rows, bytes: stats.bytes, lastT: stats.lastT };
+    }
+    return this.#logStats;
+  }
+
+  #onAck(ack: AckInfo): void {
+    const entry = this.#awaitingAck.take(ack.cmdId);
+    if (entry === undefined || !ack.ok) return;
+    const stats = this.#stats();
+    if (stats.lastT !== null && ack.t < stats.lastT) {
+      // Go は Now() を返すので起きない。sim.Replay は時刻の逆転を誤りにするので記録しない。
+      this.#log("warn", "session.error", { op: "input_log_order" });
+      return;
+    }
+    appendInputLog(this.#ctx.storage.sql, ack.t, entry.cmd);
+    stats.rows += 1;
+    stats.bytes += entry.bytes;
+    stats.lastT = ack.t;
+  }
+
+  // ---- 最後の clock.t ----
+
+  // メモリの値。DO が作り直されたら last_clock_t から始める。
+  #clock(): number | null {
+    if (!this.#clockLoaded) {
+      this.#clockLoaded = true;
+      this.#clockT = this.#row()?.lastClockT ?? null;
+      this.#clockSaved = this.#clockT;
+    }
+    return this.#clockT;
+  }
+
+  #onClock(t: number): void {
+    this.#clock();
+    this.#clockT = t; // 小さくなっても上書きする
+    const savedAt = this.#clockSavedAt;
+    if (savedAt === null || this.#deps.now() - savedAt >= CLOCK_PERSIST_INTERVAL_MS) {
+      this.#persistClock();
+    }
+  }
+
+  // メモリの値が SQLite と違えば書く。
+  #persistClock(): void {
+    const t = this.#clock();
+    if (t === this.#clockSaved || t === null) return;
+    this.#update({ lastClockT: t });
+    this.#clockSaved = t;
+    this.#clockSavedAt = this.#deps.now();
+  }
+
   // ---- コンテナからの電文 ----
 
-  #onContainerMessage(conn: Connection, data: unknown): void {
+  #onContainerMessage(conn: Connection, watchGen: number, data: unknown): void {
     if (typeof data !== "string") return;
     const message = classifyContainerText(data);
     if (message.kind === "result") {
@@ -649,6 +1005,11 @@ export class GameSessionCore {
       this.#saveResult(message.payload);
       this.#track(this.#endSession("round_ended"));
       return;
+    }
+    // ack は、置き換えた・ブラウザが閉じた接続のソケットから届いても、いまのコンテナのものなら記録に使う
+    // （Go は ack を「いまの接続」に送るので、どちらのソケットにも届きうる）。
+    if (message.kind === "forward" && message.ack !== null && watchGen === this.#watchGen) {
+      this.#onAck(message.ack);
     }
     // ほかの電文は、置き換えた・ブラウザが閉じた接続のソケットから届いたら、すべて捨てる。
     if (!this.#isCurrent(conn)) return;
@@ -663,13 +1024,36 @@ export class GameSessionCore {
       case "ping":
         if (conn.container !== null) safeSend(conn.container, PONG);
         return;
-      case "internal":
-        return; // internal.pong・ほか（T-308b が internal.pong を死活監視に使う）
-      case "forward":
-        if (safeSend(conn.browser, data)) conn.toBrowser += 1;
-        if (message.endsSession) this.#track(this.#endSession("container_error"));
+      case "pong":
+        conn.pingOutstanding = false;
+        conn.pingMissed = 0;
         return;
+      case "internal":
+        return;
+      case "forward": {
+        this.#saveSessionInfo(message.stageHash, message.build);
+        if (message.clockT !== null) this.#onClock(message.clockT);
+        const initFailure =
+          !conn.gotSnapshot &&
+          message.fatalCode !== null &&
+          INIT_FAILURE_CODES.has(message.fatalCode);
+        if (message.type === "snapshot") conn.gotSnapshot = true;
+        if (safeSend(conn.browser, data)) conn.toBrowser += 1;
+        if (message.endsSession || initFailure) this.#track(this.#endSession("container_error"));
+        return;
+      }
     }
+  }
+
+  // snapshot の stageHash・build が保存してある値と違えば上書きする（読めない値では消さない）。
+  #saveSessionInfo(stageHash: string | null, build: string | null): void {
+    if (stageHash === null && build === null) return;
+    const row = this.#row();
+    if (row === null) return;
+    const patch: { stageHash?: string; build?: string } = {};
+    if (stageHash !== null && stageHash !== row.stageHash) patch.stageHash = stageHash;
+    if (build !== null && build !== row.build) patch.build = build;
+    this.#update(patch);
   }
 
   #saveResult(payload: unknown): void {
@@ -681,10 +1065,15 @@ export class GameSessionCore {
     this.#update({ resultJson: text, resultAt: this.#deps.now() });
   }
 
-  #onContainerClosed(conn: Connection): void {
+  #onContainerClosed(conn: Connection, watchGen: number): void {
     if (!this.#isCurrent(conn)) return;
     if (this.#row()?.state === "ended") return;
-    // 終わりにしない（ブラウザはつなぎ直す。コンテナが止まっていれば、見張りか次の /connect で終わる）。
+    if (this.#ctx.container?.running !== true) {
+      // コンテナが止まった。起動し直す準備をする（ブラウザは 1011 で閉じられ、つなぎ直す）。
+      this.#track(this.#onContainerStopped("socket_closed", watchGen));
+      return;
+    }
+    // 終わりにしない（ブラウザはつなぎ直す）。
     this.#detach(conn, { browser: [1011, "container closed"], containerAlreadyClosed: true });
   }
 
@@ -699,6 +1088,7 @@ export class GameSessionCore {
   ): void {
     if (conn.closed) return;
     conn.closed = true;
+    this.#stopPing(conn);
     if (how.browser !== undefined) safeClose(conn.browser, how.browser[0], how.browser[1]);
     // コンテナはこれで自動の一時停止をする（T-303 の onDetach）。
     if (conn.container !== null && how.containerAlreadyClosed !== true) {
@@ -709,6 +1099,7 @@ export class GameSessionCore {
     this.#conn = null;
     const row = this.#row();
     if (row === null || row.state === "ended") return;
+    this.#persistClock();
     this.#update({ idleSince: this.#deps.now() });
     this.#track(this.#scheduleAlarm().then(() => undefined));
   }
@@ -751,9 +1142,11 @@ export class GameSessionCore {
     if (row === null || row.state === "ended") return;
     const endedAt = this.#deps.now();
     // 最初に保存する（以後の /connect は 404、alarm() は何もしない）。
+    this.#persistClock();
     this.#update({ state: "ended", endReason: reason, endedAt });
 
     const conn = this.#conn;
+    if (conn !== null) this.#stopPing(conn);
     if (conn !== null && !conn.closed) {
       conn.closed = true;
       const notice = END_NOTICE[reason];

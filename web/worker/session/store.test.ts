@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { createTestState } from "../admin/test-sqlite.ts";
 import {
+  appendInputLog,
   countInputLog,
   ensureSessionSchema,
+  inputLogStats,
   insertSession,
+  readInputLog,
   readSession,
   updateSession,
 } from "./store.ts";
@@ -80,5 +83,33 @@ describe("S-1 SQLite", () => {
     ensureSessionSchema(storage.sql);
     insertSession(storage.sql, INIT);
     expect(() => insertSession(storage.sql, INIT)).toThrow();
+  });
+});
+
+describe("S-2 入力ログ", () => {
+  it("空なら { rows: 0, bytes: 0, lastT: null } で、読むと []", async () => {
+    const { storage } = await createTestState();
+    ensureSessionSchema(storage.sql);
+    expect(inputLogStats(storage.sql)).toEqual({ rows: 0, bytes: 0, lastT: null });
+    expect(readInputLog(storage.sql)).toEqual([]);
+  });
+
+  it("appendInputLog・readInputLog が seq の順。bytes は UTF-8 のバイト数、lastT は最後の行の t", async () => {
+    const { storage } = await createTestState();
+    ensureSessionSchema(storage.sql);
+    const a = '{"type":"cmd.a","payload":{}}';
+    const b = '{"type":"cmd.b","payload":{"s":"あ"}}';
+    appendInputLog(storage.sql, 1200, a);
+    appendInputLog(storage.sql, 5400, b);
+    appendInputLog(storage.sql, 3000, a); // t の順ではなく、足した順
+    expect(readInputLog(storage.sql)).toEqual([
+      { t: 1200, cmd: a },
+      { t: 5400, cmd: b },
+      { t: 3000, cmd: a },
+    ]);
+    const bytes = new TextEncoder().encode(a + b + a).byteLength;
+    expect(bytes).toBe(a.length * 2 + b.length + 2); // 「あ」は 3 バイト
+    expect(inputLogStats(storage.sql)).toEqual({ rows: 3, bytes, lastT: 3000 });
+    expect(countInputLog(storage.sql)).toBe(3);
   });
 });
