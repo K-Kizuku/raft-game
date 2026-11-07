@@ -19,6 +19,7 @@
 | 10 | [10-glossary.md](./10-glossary.md) | 用語集（ゲームの言葉 ⇔ Raft の言葉） | 全員 |
 | — | [adr/](./adr/README.md) | **ADR** — 技術判断の記録（21 件。うち 2 件は置き換え済み） | 全員 |
 | — | [agents/](./agents/README.md) | **AI エージェントによる並列開発** — 役割と権限・Issue からマージまでの流れ・Merge Gate・運用と障害の対応（[ADR-0021](./adr/0021-hootl-agent-development.md)） | 実装者・プロダクトオーナー |
+| — | [runbooks/](./runbooks/README.md) | 本番の運用の手順 — 前の版に戻す・`cf` の版を上げる | プロダクトオーナー |
 
 ## プロダクトオーナーの方へ
 
