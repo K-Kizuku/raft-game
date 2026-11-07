@@ -19,4 +19,11 @@ export {
   portPiles,
 } from "./selectors.ts";
 export { createGameStore, gameStore, useGameStore } from "./store.ts";
+export {
+  EMPTY_TIMELINE,
+  TIMELINE_LIMIT,
+  appendTimelineEvents,
+  timelineFromSnapshot,
+} from "./timeline.ts";
+export type { Timeline, TimelineItem, TimelineLeader } from "./timeline.ts";
 export type { GameState, GameStore, UiSelection } from "./store.ts";
