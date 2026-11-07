@@ -8,6 +8,7 @@ import { gameStore, useGameStore } from "../state/index.ts";
 import { RaftTerm } from "../ui/terms/RaftTerm.tsx";
 import { roleMarkOf } from "./model/scene.ts";
 import type { MapHandle } from "./pixi/mapRenderer.ts";
+import { PartitionLegend } from "./PartitionLegend.tsx";
 import "./MapView.css";
 
 export function MapView(): ReactElement {
@@ -55,6 +56,7 @@ function LoadedMap(): ReactElement {
         <div className="map-view__canvas" aria-hidden="true" ref={hostRef} />
       )}
       <IslandButtons />
+      <PartitionLegend />
     </div>
   );
 }

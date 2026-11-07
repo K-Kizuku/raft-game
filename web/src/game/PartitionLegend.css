@@ -1,0 +1,103 @@
+/* 分断の凡例（T-704・FR-ENG-08）。お知らせ（右上）・島のボタンとデモ操作のキー（左下）と重ならないよう、
+   マップの左上の隅に重ねる。紙の札に墨の文字（コントラスト比 9.9:1。NFR-10）。
+   クリックは受けず（pointer-events: none）、最大の幅を決めてマップの操作を隠さない。
+   過半数のグループの行は success の実線の縁、そうでない行は storm の破線の縁（マップの縁取りと同じ対応）。 */
+.map-partition {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 1;
+  box-sizing: border-box;
+  max-width: min(22rem, calc(100% - 2 * var(--space-2)));
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  /* 左上の島に重なることがあるので、紙を少し透かす（不透明度 0.9。墨の文字のコントラストは保つ） */
+  background: color-mix(in srgb, var(--color-paper) 90%, transparent);
+  box-shadow: var(--shadow-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.map-partition__title {
+  margin: 0 0 var(--space-1);
+  font-size: 0.875rem;
+  font-weight: bold;
+}
+
+.map-partition__groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.map-partition__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
+  overflow-wrap: anywhere;
+}
+
+.map-partition__group--majority {
+  border: 2px solid var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-paper));
+}
+
+.map-partition__group--minority {
+  border: 2px dashed var(--color-storm);
+  background: color-mix(in srgb, var(--color-storm) 10%, var(--color-paper));
+}
+
+/* 記号の丸い札（マップの縁取りの記号と同じ文字） */
+.map-partition__badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5em;
+  height: 1.5em;
+  border-radius: 999px;
+  background: var(--color-paper);
+  font-weight: bold;
+}
+
+.map-partition__group--majority .map-partition__badge {
+  border: 2px solid var(--color-success);
+}
+
+.map-partition__group--minority .map-partition__badge {
+  border: 2px dashed var(--color-storm);
+}
+
+.map-partition__island {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+}
+
+.map-partition__dot {
+  display: inline-block;
+  flex: none;
+  width: 0.7em;
+  height: 0.7em;
+  border: 1px solid var(--color-ink);
+  border-radius: 50%;
+}
+
+.map-partition__size {
+  font-family: var(--font-number);
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.map-partition__quorum {
+  font-weight: bold;
+}

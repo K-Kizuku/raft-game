@@ -442,4 +442,63 @@ describe("buildMapScene", () => {
     const second = buildMapScene(w, selection, 1000, size);
     expect(second).toEqual(first);
   });
+
+  describe("分断（T-704）", () => {
+    // 1-3 と 2-3 が 20000 まで止まる → 三の島が孤立する。
+    const split = (): World =>
+      world({
+        routesState: [
+          { id: "1-2", blockedUntil: null },
+          { id: "1-3", blockedUntil: 20000 },
+          { id: "2-3", blockedUntil: 20000 },
+        ],
+      });
+
+    it("SC-P1 嵐が無い・止まった航路があっても迂回できる → partition: null", () => {
+      expect(scene(world()).partition).toBeNull();
+      const detour = world({
+        routesState: [
+          { id: "1-2", blockedUntil: 20000 },
+          { id: "1-3", blockedUntil: null },
+          { id: "2-3", blockedUntil: null },
+        ],
+      });
+      expect(scene(detour, 1000).partition).toBeNull();
+    });
+
+    it("SC-P2 2 本の航路が止まって島が分かれる → グループ 2 つ・縁取りの位置と記号の位置", () => {
+      const p = scene(split(), 15000).partition;
+      expect(p).not.toBeNull();
+      expect(p?.total).toBe(3);
+      expect(p?.groups).toEqual([
+        { label: "A", islandIds: [1, 2], size: 2, majority: true },
+        { label: "B", islandIds: [3], size: 1, majority: false },
+      ]);
+      expect(p?.halos.map((h) => [h.label, h.majority])).toEqual([
+        ["A", true],
+        ["B", false],
+      ]);
+      const [a, b] = p?.halos ?? [];
+      expect(a?.islands).toHaveLength(2);
+      expectPoint(a?.islands[0], screenOf(1));
+      expectPoint(a?.islands[1], screenOf(2));
+      expect(b?.islands).toHaveLength(1);
+      expectPoint(b?.islands[0], screenOf(3));
+      // 一の島と二の島は同じ y → x が小さい一の島の真上。
+      expectPoint(a?.badgeAt, {
+        x: screenOf(1).x,
+        y: screenOf(1).y - MAP_STYLE.islandRadius * 2,
+      });
+      expectPoint(b?.badgeAt, {
+        x: screenOf(3).x,
+        y: screenOf(3).y - MAP_STYLE.islandRadius * 2,
+      });
+    });
+
+    it("SC-P3 推定時刻が blockedUntil を過ぎる → partition: null", () => {
+      expect(scene(split(), 19999).partition).not.toBeNull();
+      expect(scene(split(), 20000).partition).toBeNull();
+      expect(scene(split(), 25000).partition).toBeNull();
+    });
+  });
 });
