@@ -59,7 +59,7 @@ export interface SessionPorts {
 // 部品がない（undefined）ときは、ルーターが必ず拒否する側（503 か 404）に倒す。
 // 検証を飛ばす設定はここにも Env にも作らない。
 export interface WorkerDeps {
-  readonly stages: readonly StageSummary[];
+  readonly stages: readonly StageSummary[]; // 全モードのステージ（デモ用を含む）。見せる分は visibleStages で決める
   readonly security?: SecurityPorts;
   readonly costGuard?: CostGuardPorts;
   readonly session?: SessionPorts;

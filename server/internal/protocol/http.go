@@ -15,13 +15,31 @@ type StagesResponse struct {
 
 // StageSummary はステージ選択の 1 行。
 type StageSummary struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	Region     string  `json:"region"`
-	Islands    int     `json:"islands"`
-	Ferries    int     `json:"ferries"`
-	DurationMs int64   `json:"durationMs"`
-	Unlock     *string `json:"unlock" tstype:"string | null,required"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	Region     string    `json:"region"`
+	Islands    int       `json:"islands"`
+	Ferries    int       `json:"ferries"`
+	DurationMs int64     `json:"durationMs"`
+	Unlock     *string   `json:"unlock" tstype:"string | null,required"`
+	Intro      StageText `json:"intro"`    // ステージの紹介文（データ仕様 §5.2 の intro）
+	Learning   []string  `json:"learning"` // 学べることのキー（データ仕様 §5.4）。なければ []（null にしない）
+	Demo       bool      `json:"demo"`     // デモ用のステージ（定義に demo がある）。POST /api/sessions で demo: true を送る
+}
+
+// StageText は出典区分つきの文章（データ仕様 §1・§5.4 の Text）。
+type StageText struct {
+	Text       string      `json:"text"`
+	Provenance Provenance  `json:"provenance"`
+	Source     *TextSource `json:"source" tstype:"TextSource | null,required"`
+}
+
+// TextSource は文章の出典（データ仕様 §5.4 の Source）。
+type TextSource struct {
+	Dataset string  `json:"dataset"` // islands.json の sources のキー
+	Region  string  `json:"region"`
+	Field   string  `json:"field"`
+	Quote   *string `json:"quote" tstype:"string | null,required"` // 引用がなければ null
 }
 
 // CreateSessionRequest は POST /api/sessions の本文。

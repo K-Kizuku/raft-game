@@ -14,6 +14,7 @@ import type { Env } from "../routes/env.ts";
 import type { SessionPorts } from "../routes/ports.ts";
 import { createHandler } from "../routes/router.ts";
 import type { StageSummary } from "../routes/stages.ts";
+import { stageFixture } from "../routes/test-stages.ts";
 import { createGuardSettingsSource } from "./guard-settings.ts";
 import { createSecurityPortsWith } from "./ports.ts";
 import { createSessionSigner } from "./session-id.ts";
@@ -32,7 +33,7 @@ const ADMIN_TOKEN = "admin-token-0123456789abcdef-012345"; // 作り物の値
 const IP = "203.0.113.5";
 
 const STAGES: readonly StageSummary[] = [
-  {
+  stageFixture({
     id: "stage1",
     title: "はじめての郵便船",
     region: "瀬戸内（香川県）",
@@ -40,7 +41,7 @@ const STAGES: readonly StageSummary[] = [
     ferries: 1,
     durationMs: 180000,
     unlock: null,
-  },
+  }),
 ];
 
 interface Recorded {
