@@ -10,6 +10,7 @@
 .env
 .env.*
 *.secrets*
+.dev.vars*
 
 # テストなどで作られるもの（残ると git worktree remove が失敗する）
 __pycache__/
