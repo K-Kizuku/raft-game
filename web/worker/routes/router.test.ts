@@ -10,11 +10,12 @@ import type {
 import { createHandler } from "./router.ts";
 import { STAGE_CATALOG } from "./stage-catalog.ts";
 import type { StageSummary } from "./stages.ts";
+import { stageFixture } from "./test-stages.ts";
 
 const ORIGIN = "https://raft.example";
 
 const STAGES: readonly StageSummary[] = [
-  {
+  stageFixture({
     id: "stage1",
     title: "はじめての郵便船",
     region: "瀬戸内（香川県）",
@@ -22,8 +23,8 @@ const STAGES: readonly StageSummary[] = [
     ferries: 1,
     durationMs: 180000,
     unlock: null,
-  },
-  {
+  }),
+  stageFixture({
     id: "stage2",
     title: "嵐の海峡",
     region: "関門海峡",
@@ -31,7 +32,7 @@ const STAGES: readonly StageSummary[] = [
     ferries: 2,
     durationMs: 240000,
     unlock: "stage1",
-  },
+  }),
 ];
 
 // 呼ばれたら必ず失敗する部品（呼ばれないことを確かめる）。
@@ -146,13 +147,15 @@ describe("router", () => {
       expect(await res.json()).toEqual({ stages: STAGES });
     });
 
-    it("既定の STAGE_CATALOG では空", async () => {
+    it("既定の STAGE_CATALOG から demo を除いたもの", async () => {
       const res = await createHandler(() => ({ stages: STAGE_CATALOG }))(
         req("GET", "/api/stages"),
         {},
       );
 
-      expect(await res.text()).toBe('{"stages":[]}');
+      expect(await res.text()).toBe(
+        JSON.stringify({ stages: STAGE_CATALOG.filter((stage) => !stage.demo) }),
+      );
     });
   });
 
