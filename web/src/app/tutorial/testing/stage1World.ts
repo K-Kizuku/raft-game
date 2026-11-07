@@ -27,7 +27,7 @@ function island(id: number, name: string, x: number, y: number): Island {
 }
 
 function node(id: number, role: NodeSummary["role"] = "follower"): NodeSummary {
-  return { id, role, term: 1, lead: LEADER, commit: 0, applied: 0, lastIndex: 0 };
+  return { id, role, term: 1, vote: 0, lead: LEADER, commit: 0, applied: 0, lastIndex: 0 };
 }
 
 // stage1Snapshot は航行中（時計は止めていない）の Stage 1 の Snapshot。
