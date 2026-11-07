@@ -52,6 +52,7 @@ scripts/dev-slot.sh acquire       # 並列で動かすとき。ポートなど�
 make test       # Go と web のテスト
 make lint       # golangci-lint・ESLint・型チェック
 make gen        # Go のプロトコルの型から TS の型を生成
+make gen-check  # 生成した TS の型が Go の型と一致するか（CI の server ジョブ）
 make sync-data  # data/ を server/internal/stage/embedded/ にコピー
 make dev        # Go（standalone モード）と Vite を DEV_SLOT のポートで起動（DRY_RUN=1 で表示だけ）
 make dev-env    # この作業ツリーの DEV_SLOT・ポート・cf の状態・Docker の名前を出す
