@@ -1,0 +1,22 @@
+# gitleaks の設定（T-009 / Issue #17）。検査は scripts/check-secrets.sh（make check-secrets・CI の secrets ジョブ）。
+#
+# 方針:
+# - 既定の規則をそのまま使う（useDefault = true）。独自の規則は足さない
+#   （Cloudflare の API トークン・GitHub のトークンなどは既定の規則にある）。
+# - パスや規則を除く設定（allowlist）は書かない。広く除くと、本物のシークレットを見落とす。
+# - 除くのは次の 2 つだけ:
+#   1. 行ごとの gitleaks:allow のコメント（テストの偽のトークン・鍵。値を実行時に組み立ててもよい）
+#   2. .gitleaksignore の指紋（<コミット>:<ファイル>:<規則>:<行>）。足してよいのは main にあるコミットの
+#      指紋だけ（scripts/check-secrets.sh が origin/main の祖先かを確かめる）。PR のブランチの途中の
+#      コミットは、スカッシュでマージすると main に残らないので、指紋ではなくコミットを直す。
+# - gitleaks の版の正本は scripts/check-secrets.sh の GITLEAKS_VERSION。版を上げると既定の規則が変わり、
+#   新しい偽陽性が出ることがある。そのときは同じ PR で .gitleaksignore を作り直す:
+#     gitleaks git --log-opts=origin/main --redact --report-format json --report-path <一時ファイル> .
+#   を実行し、main にあるコミットの偽陽性の Fingerprint を写す（手で組み立てない）。
+#   本物のシークレットらしいものは足さずに、まず無効化する。
+# - 自己テスト（scripts/check-secrets.sh）は、この設定で偽のトークンが検出されることを確かめる。
+
+title = "raft-game"
+
+[extend]
+useDefault = true
