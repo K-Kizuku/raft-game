@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-1 の準備中。認証・OpenSSL・Go 1.26.9 の取得と起動・linux/amd64 コンテナの実行に成功。Workers Paid の契約と workers.dev は未確認。#134 のマージ後にスパイクのビルドを確認する。
+- 状態: #134 のマージ前にできる環境準備は完了。ユーザーが Workers Paid の有効化と kizuku.workers.dev を確認。スパイクの PR #138 は未マージ。マージ後に H-1 の依存のインストール・check.sh へ進む。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -16,7 +16,7 @@
 
 | 手順 | 状態 | 確認できたこと / 残り |
 |---|---|---|
-| H-1 準備 | 途中 | Node・pnpm・cf、Docker daemon、OAuth、OpenSSL、Go 1.26.9、linux/amd64 の実行を確認。契約一覧に Workers Paid がなく、workers.dev も未確認。#134 のマージ後に依存のインストールと check.sh を確認する |
+| H-1 準備 | 途中 | 環境準備は完了。Workers Paid の有効化と kizuku.workers.dev はユーザー報告で確認。#134 の PR #138 のマージ後に依存のインストールと check.sh を確認する |
 | H-2 トークンの準備 | 未実施 | 測定コードが main に入ってから実施する |
 | H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
 | H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
@@ -111,8 +111,8 @@ pnpm -C web exec cf auth whoami
 
 | 項目 | 方法 | 状態 |
 |---|---|---|
-| Workers の有料プラン | `cf accounts subscriptions get` の結果で Workers の契約を確認。権限不足や不明な結果なら、ダッシュボードの Workers の契約表示で補足する | 一覧の取得に成功。Workers Paid は含まれない。ダッシュボードで最終確認する |
-| workers.dev のサブドメイン | 対象アカウントの Workers & Pages に表示される `<サブドメイン>.workers.dev` を読む | 未確認 |
+| Workers の有料プラン | `cf accounts subscriptions get` の結果で Workers の契約を確認。権限不足や不明な結果なら、ダッシュボードの Workers の契約表示で補足する | 初回の一覧にはなかったが、その後ユーザーが Workers Paid を有効化したと報告 |
+| workers.dev のサブドメイン | 対象アカウントの Workers & Pages に表示される `<サブドメイン>.workers.dev` を読む | kizuku.workers.dev (ユーザー報告) |
 | linux/amd64 のビルド環境 | `docker buildx inspect` の Platforms を確認。実際のスパイクのイメージのビルド・実行は #134 の check.sh で確認する | Platforms にはないが、alpine:3.22 を linux/amd64 で実行して x86_64 が返った。スパイクのビルドは未確認 |
 | ローカルの Go | `go version`。#134 の仕様の go.mod は `go 1.26`。測定用のローカル実行に使えるツールチェーンか確認する | 既定は go1.25.5。コマンド単位で指定した go1.26.9 の取得・起動に成功 |
 | トークン生成用の OpenSSL | `openssl version`。この段階ではシークレットを生成しない | OpenSSL 3.4.0 の起動を確認 |
@@ -213,6 +213,33 @@ x86_64
 - 対象アカウントの workers.dev のサブドメイン。
 
 この 2 点が確認できれば、#134 のコードが必要になる前の環境確認は一通りそろう。H-1 全体の完了には、マージ済みのスパイクでの依存のインストールと check.sh の成功が必要。
+
+## 2026-11-07: Workers Paid の有効化と workers.dev の確認
+
+ユーザーから「Workers Paid を有効にしました」「kizuku.workers.dev」と報告を受けた。API の再取得結果ではなく、ユーザーが行った操作・確認として記録する。
+
+| 項目 | 状態 |
+|---|---|
+| Workers Paid | 有効化済み (ユーザー報告) |
+| アカウントの workers.dev サブドメイン | kizuku.workers.dev (ユーザー報告) |
+| 検証用 Worker の予定 URL | https://raft-game-spike.kizuku.workers.dev |
+| スパイクの実デプロイ・URL の応答確認 | 未実施。予定 URL を稼働済みとは扱わない |
+
+### #134 の進捗を GitHub で確認
+
+- Issue #134 は open / status:in-progress。
+- 実装の [PR #138](https://github.com/K-Kizuku/raft-game/pull/138) が作成されている。
+- 確認時は open / draft: false / merged: false。
+- head は `agent/issue-134`、SHA は `4dd737453f9156ad47e9beef5fc170689be644e1`。
+- こちらではこの PR のマージ・デプロイ・測定は実行しない。
+
+### 現在の到達点と次の手順
+
+#134 が必要になる前の環境準備はそろった。Node・pnpm・cf、Docker daemon、OAuth、Go 1.26.9 の起動、linux/amd64 コンテナの実行、OpenSSL、Workers Paid、workers.dev の確認が済んでいる。
+
+次は PR #138 のマージ待ち。マージ後に `spike/README.md` と実装されたスクリプトを確認し、ユーザーの測定用作業ツリーを最新化してから、`pnpm install` と `check.sh` を案内する。Go を呼ぶ手順では、必要に応じて `env GOTOOLCHAIN=go1.26.9` を付ける。
+
+H-1 全体はまだ途中であり、依存のインストール・スパイクのビルド・構成の検査・dry-run は未実施。シークレットの準備 (H-2) と実デプロイ (H-3) にもまだ進んでいない。
 
 ## 測定前に確定・確認する事項
 
