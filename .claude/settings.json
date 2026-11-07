@@ -45,7 +45,6 @@
       "Bash(scripts/**)",
       "Bash(bash scripts/:*)",
       "Bash(scripts/agents/merge.sh:*)",
-      "Bash(curl -s http://127.0.0.1:*)",
       "Bash(bash .claude/hooks/tests/run.sh)",
       "Bash(make:*)",
       "Bash(pnpm:*)"
