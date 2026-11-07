@@ -78,6 +78,7 @@ func SimConfig(st *Stage) (sim.Config, error) {
 		PerLinkAppCap: st.Transport.PerLinkAppCap,
 		Resources:     resources,
 		Requests:      requestConfig(st),
+		Score:         scoreConfig(st),
 	}, nil
 }
 
