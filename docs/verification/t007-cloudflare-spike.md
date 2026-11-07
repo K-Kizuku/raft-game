@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-1 完了。main の更新・依存のインストール・check.sh が成功。次は M-12 の cf dev によるローカル動作確認。実デプロイ・クラウドでの測定は未実施。
+- 状態: H-1 と M-12 のローカル必須項目は成功。次は M-2・M-3 の手元の基準値の測定。ローカルでは enableInternet: false でも TCP 接続が通った。実デプロイ・クラウドでの測定は未実施。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -17,8 +17,8 @@
 | 手順 | 状態 | 確認できたこと / 残り |
 |---|---|---|
 | H-1 準備 | 完了 | main d862bb78cbfea3fe0e476605b3b6d4996153f818、pnpm install --frozen-lockfile と check.sh が成功。shellcheck は未導入のため省略 |
-| M-12 ローカル動作確認 | 未実施 | DEV_SLOT を確保して local-smoke.sh を実行する |
-| M-2・M-3 手元の基準値 | 未実施 | ローカル動作確認後、Go の bench raft / bench loop で測る |
+| M-12 ローカル動作確認 | 成功 | 必須 8 項目すべて ok、measure.ts 終了コード 0。cf dev の準備完了 6 秒。TCP の外部接続が通る点はクラウドで再確認 |
+| M-2・M-3 手元の基準値 | 未実施 | 次に CPU の種類と Go の bench raft / bench loop の JSON を取得する |
 | H-2 トークンの準備 | 未実施 | 測定コードが main に入ってから実施する |
 | H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
 | H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
@@ -353,6 +353,88 @@ and env GOTOOLCHAIN=go1.26.9 SPIKE_CPU_MS=50 bash spike/scripts/local-smoke.sh
 結果は `spike/.cloudflare/local-smoke.json`。まず終了までのコンソール出力を受け取り、必要に応じて JSON の内容も確認する。終了時の cf dev の停止と Docker の残存一覧も記録する。DEV_SLOT の番号とスパイクが使うポートは実行出力から確認する。
 
 このコマンドは次に案内したもので、まだ実行結果は受け取っていない。枠の解放や、残ったコンテナ・イメージの削除は使用状況を確認してから行う。
+
+## 2026-11-07: local-smoke.sh 成功 (M-12)
+
+共有されたプロンプトの開始時刻は 15:48:53 JST。ユーザーが DEV_SLOT を確保し、案内済みの local-smoke.sh を実行した。
+
+- cf dev の準備完了は **6 秒**。
+- 使用したポートは **15184**。スクリプトの式 (15173 + DEV_SLOT × 10 + 1) から DEV_SLOT は **1** と読み取れる。番号そのものを echo した出力はない。
+- DOCKER_HOST は Docker context の Unix ソケットから自動設定された。ユーザーのローカルパスは転載しない。
+- ローカルで使った番号は **s-1〜s-5**、PlainStore/ControlStore はスクリプトの p-1。
+- measure.ts の終了コードは **0**。ローカルの必須 8 項目はすべて ok。
+- これはローカルの結果であり、Cloudflare 上での測定とは区別する。表示が instance=lite でも、コンテナから見た資源に CPU・メモリの上限はない。
+
+### 共有されたローカルの測定値
+
+| ID | 項目 | ローカルの結果 / 確認できる範囲 |
+|---|---|---|
+| M-1 | 起動 | DO 内の p50 166 / p95 593 / 最大 593 ms (3/3 回)。初回 593 ms。クライアント p50 186 ms。同時 3 つは全成功、最大 853 ms |
+| M-2 | 復元相当の負荷模型 | このスモークでは未実施。次に手元の Go で基準値を測る |
+| M-3 | 8 倍速 | このスモークでは未実施。次に手元の Go で基準値を測る |
+| M-4 | CPU 上限 | Worker・DO とも反復 1e6、1e7、3e7、1e8、3e8、1e9 がすべて HTTP 200。CPU 制限の効果はこの結果では確認できない。Cloudflare 上で再測定する |
+| M-5 | WS | 1 KiB 200 回、p50 0.6 / p99 1.7 ms。16 KiB 20/20。超過は破棄。500 件は 500/500、順序 ok。ブラウザ側切断の中継は ok、コンテナ側切断では 1011。無通信 120 秒は --idle 0 のため未実施 |
+| M-6 | HTTP 往復 | 200/200 回、p50 0 / p99 1 ms。workerd の Date.now() の分解能を含む値であり、実際の遅延がゼロとは扱わない |
+| M-7 | SQLite | 100 行 12.9 ms、1,000 行 38.4 ms (クライアント計測)。コンテナ再起動後も計 1100 行が残った |
+| M-8 | 継承しない DO | PlainStore と継承する ControlStore がともに ok。非継承の SpikeSession の SQLite・container も使用できた。アラームの実際の発火はこのスモークでは未測定 |
+| M-9 | 外部通信 | enableInternet: false で DNS 失敗、TCP 1.1.1.1:443 は ok、HTTPS は名前解決で失敗。internet=1 の対照は未実施 |
+| M-10 | 停止 | destroy 30 ms、running=false。アラーム・inactivity の停止はこのスモークでは未実施 |
+| M-11 | 異常終了と再起動 | 検知 123 ms、再起動 297 ms |
+| M-12 | cf dev | start / ws / sql / plain / stop の必須確認が成功。egress / crash / cpu も応答を記録できた |
+| M-13 | 実デプロイ | 未実施 |
+| M-14 | 資源 | CPU 8、GOMAXPROCS 8、cpu.max = max 100000、memory.max = max、env MODE=single / PORT=8080、colo=NRT。ローカルの colo 表示を実配置とは扱わない |
+
+個々の通常起動 (start の項目) は 593、166、163 ms。同時起動は 723、815、853 ms。初回以外はイメージ・実行環境のキャッシュの影響もあり得るため、本番の起動時間の判断にそのまま使わない。
+
+外部通信のエラー本文:
+
+```text
+dns=lookup example.com on 1.1.1.1:53: no such host
+tcp=ok
+https=Get "https://example.com/": dial tcp: lookup example.com on 1.1.1.1:53: no such host
+```
+
+egress: ok は測定 API の応答を取得できたことを表す。**外部通信がすべて遮断されたという意味ではない**。TCP が通った事実を残し、Cloudflare 上の M-9 と対照の結果を比較する。
+
+### 終了処理と残った Docker 資源
+
+cf dev の停止処理が行われた。以下の中継用コンテナ 5 個は動いたまま見つかり、local-smoke.sh が docker stop した。その後、すべて停止状態の一覧に出た。
+
+| ID | 名前の規則 | イメージ |
+|---|---|---|
+| ad41c5d45807 | workerd-raft-game-spike-SpikeSession-<ハッシュ>-proxy | cloudflare/proxy-everything:3cb1195 |
+| b2ba10714c83 | 同上 | 同上 |
+| 6dd1c6654b0c | 同上 | 同上 |
+| 273d7b10be25 | 同上 | 同上 |
+| e10610f6b999 | 同上 | 同上 |
+
+停止済みコンテナの削除はまだ実行していない。削除する際は、上記 ID の対象を通常の docker rm で消す (force や prune は使わない)。
+
+終了時に表示されたイメージ:
+
+| イメージ | ローカルの大きさ |
+|---|---|
+| cloudflare-build/b8366d8bfb35/raft-game-spike-server-server:c537d571e688 | 10.5 MB |
+| cloudflare-build/d708d772e6cb/raft-game-spike-server-server:248e6be09658 | 10.5 MB |
+| cloudflare-dev/spikesession-server-5c07eb541ff8:6e2d46e2 | 10.5 MB |
+| cloudflare-dev/spikesession-server-5c07eb541ff8:766f7f43 | 10.5 MB |
+| cloudflare/proxy-everything:<none> | 21.9 MB |
+
+これは終了時に見えた一覧であり、すべてが今回新しく作られたとは断定しない。共有の proxy-everything のイメージは、ほかの作業にも使うため消さなくてよい。DEV_SLOT の解放も未実施。
+
+### 次の手順: 手元の基準値 (M-2・M-3)
+
+Cloudflare の lite / standard-1 と比較するため、macOS 上のネイティブ Go の負荷模型を測る。リポジトリのルートで実行する。
+
+```fish
+sysctl -n machdep.cpu.brand_string
+env GOTOOLCHAIN=go1.26.9 go -C spike/container run . bench raft --nodes 7 --minutes 30
+env GOTOOLCHAIN=go1.26.9 go -C spike/container run . bench loop --nodes 7 --speed 8 --seconds 20
+```
+
+1 つ目で CPU の種類、残りの 2 つで基準値の JSON を受け取る。bench loop は約 20 秒実行する。このコマンドは次に案内したもので、まだ結果は受け取っていない。
+
+基準値の取得後に H-2 のトークン作成と H-3 の検証環境へのデプロイに進む。ここまででは、クラウドの資源は作成していない。
 
 ## 測定前に確定・確認する事項
 
