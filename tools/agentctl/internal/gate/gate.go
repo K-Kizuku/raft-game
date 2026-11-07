@@ -161,6 +161,8 @@ type evaluator struct {
 	codexLatest bool
 	// codexIDs は、Codex の指摘として出所を確かめられる ID（CodexFindingIDs）。
 	codexIDs map[string]bool
+	// carry は、HEAD より前の SHA の最新のレビューを引き継ぐかどうか（carryOver）。
+	carry CarryOver
 }
 
 func (e *evaluator) note(format string, a ...any) {
@@ -178,6 +180,10 @@ func (e *evaluator) run() Report {
 	}
 	e.collectReviews()
 	e.collectCodex()
+	e.carry = e.carryOver()
+	if !e.carry.OK && e.carry.SHA != "" && e.carry.SHA != e.in.PullRequest.HeadSHA {
+		e.note("レビュー（%s）を HEAD %s に引き継がない: %s", short(e.carry.SHA), short(e.in.PullRequest.HeadSHA), e.carry.Reason)
+	}
 
 	e.add("G0", Pass, "OK")
 	e.c1()
@@ -488,8 +494,14 @@ func (e *evaluator) codexStale() string {
 }
 
 func (e *evaluator) c6() {
+	head := e.in.PullRequest.HeadSHA
 	if e.codexLatest {
 		if s := e.codexStale(); s != "" {
+			if e.carry.OK {
+				e.add("C6", Pass, "Codex の GitHub 連携（コメント %d）の %s のレビューを引き継いだ: %s の取り込みだけ（HEAD %s）",
+					e.codex.Comment.ID, short(e.codex.SHA), e.cfg.DefaultBranch, short(head))
+				return
+			}
 			e.add("C6", Pending, "%s", s)
 			return
 		}
@@ -501,9 +513,14 @@ func (e *evaluator) c6() {
 		e.add("C6", Pending, noReview)
 		return
 	}
-	if l.rec.HeadSHA != e.in.PullRequest.HeadSHA {
+	if l.rec.HeadSHA != head {
+		if e.carry.OK {
+			e.add("C6", Pass, "round %d（%s）を引き継いだ: %s の取り込みだけ（HEAD %s）",
+				l.rec.Round, short(l.rec.HeadSHA), e.cfg.DefaultBranch, short(head))
+			return
+		}
 		e.add("C6", Pending, "最新の記録（round %d）は古い SHA %s のもの。HEAD %s の再レビュー待ち",
-			l.rec.Round, short(l.rec.HeadSHA), short(e.in.PullRequest.HeadSHA))
+			l.rec.Round, short(l.rec.HeadSHA), short(head))
 		return
 	}
 	if l.rec.Verdict != "approve" {
@@ -514,11 +531,19 @@ func (e *evaluator) c6() {
 }
 
 func (e *evaluator) c7() {
-	if e.codexLatest {
+	if e.codexLatest && !e.carry.OK {
 		if s := e.codexStale(); s != "" {
 			e.add("C7", Pending, "%s", s)
 			return
 		}
+	}
+	v, d := e.c7Eval()
+	e.add("C7", v, "%s", d)
+}
+
+// c7Eval は、最新のレビューに重大な指摘が残っていないかを判定する（SHA が HEAD のものかは見ない）。
+func (e *evaluator) c7Eval() (Verdict, string) {
+	if e.codexLatest {
 		var errs []string
 		for _, f := range e.codex.Blocking(e.cfg) {
 			p := f.Priority
@@ -531,8 +556,7 @@ func (e *evaluator) c7() {
 			errs = append(errs, fmt.Sprintf("%s（%s・%s）%s:%d %s", f.ID(), p, f.Severity, f.Path, f.Line, f.Title))
 		}
 		if len(errs) > 0 {
-			e.add("C7", Fail, "Codex の重大な指摘がある: %s", strings.Join(errs, "・"))
-			return
+			return Fail, "Codex の重大な指摘がある: " + strings.Join(errs, "・")
 		}
 		// Codex のレビューでは、前の agent-review/v1 の記録の重大な指摘を resolved にできない。
 		// Codex 以外の最新の記録で、それまでの重大な指摘が resolved になっていなければ fail。
@@ -540,18 +564,15 @@ func (e *evaluator) c7() {
 		// 判定し直したので除く。ID の形が C<数字> でも、対応する行コメントがなければ除かない。
 		if i := e.lastNonCodexRecord(); i >= 0 {
 			if errs := e.blockingErrs(i, true, map[string]bool{}); len(errs) > 0 {
-				e.add("C7", Fail, "前のレビューの重大な指摘が解決していない（Codex のレビューでは resolved にできない）: %s",
-					strings.Join(errs, "・"))
-				return
+				return Fail, "前のレビューの重大な指摘が解決していない（Codex のレビューでは resolved にできない）: " +
+					strings.Join(errs, "・")
 			}
 		}
-		e.add("C7", Pass, "Codex の指摘 %d 件に P0・P1 はない", len(e.codex.Findings))
-		return
+		return Pass, fmt.Sprintf("Codex の指摘 %d 件に P0・P1 はない", len(e.codex.Findings))
 	}
 	l := e.latest
 	if l == nil {
-		e.add("C7", Pending, noReview)
-		return
+		return Pending, noReview
 	}
 	reported := map[string]bool{}
 	errs := e.blockingErrs(len(e.records)-1, false, reported)
@@ -562,10 +583,9 @@ func (e *evaluator) c7() {
 		}
 	}
 	if len(errs) > 0 {
-		e.add("C7", Fail, "%s", strings.Join(errs, "・"))
-		return
+		return Fail, strings.Join(errs, "・")
 	}
-	e.add("C7", Pass, "OK")
+	return Pass, "OK"
 }
 
 // isCodexConverted は、rec が Codex の GitHub 連携のレビューを変換した記録かどうかを返す。
@@ -620,24 +640,27 @@ func (e *evaluator) blockingErrs(idx int, skipCodex bool, reported map[string]bo
 }
 
 func (e *evaluator) c8() {
+	v, d := e.c8Eval()
+	e.add("C8", v, "%s", d)
+}
+
+// c8Eval は、最新のレビューのレビュー役が正しいかを判定する。
+func (e *evaluator) c8Eval() (Verdict, string) {
 	if e.codexLatest {
-		e.add("C8", Pass, "%s（GitHub 連携）", config.ReviewerPrimary)
-		return
+		return Pass, config.ReviewerPrimary + "（GitHub 連携）"
 	}
 	l := e.latest
 	if l == nil {
-		e.add("C8", Pending, noReview)
-		return
+		return Pending, noReview
 	}
 	if err := l.rec.CheckReviewer(e.cfg); err != nil {
-		e.add("C8", Fail, "%v", err)
-		return
+		return Fail, err.Error()
 	}
 	d := l.rec.Reviewer
 	if l.rec.FallbackReason != "" {
 		d += "（" + l.rec.FallbackReason + "）"
 	}
-	e.add("C8", Pass, "%s", d)
+	return Pass, d
 }
 
 func (e *evaluator) c9() {
