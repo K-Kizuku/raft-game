@@ -1,32 +1,35 @@
 // ステージ選択（FR-UI-02 の一覧の部分）。
-// Turnstile とセッションの作成は T-413 がこの中に足し、`session` を渡す。
+// 選んだステージを onSelect で渡すだけ。Turnstile とセッションの作成は App が行う（T-413）。
+// 作成中（busy）は、すべての「<タイトル>を選ぶ」を押せなくする。
 import type { ReactElement } from "react";
 
 import { formatDuration } from "../format.ts";
 import { Link } from "../router/Link.tsx";
-import type { StageCatalogState, StageSelection } from "../types.ts";
+import type { StageCatalogState, StageSummary } from "../types.ts";
 
 export type StageSelectScreenProps = {
   catalog: StageCatalogState;
   onRetry: () => void;
-  onSelect: (selection: StageSelection) => void;
+  onSelect: (stage: StageSummary) => void;
+  busy: boolean;
 };
 
-export function StageSelectScreen({
-  catalog,
-  onRetry,
-  onSelect,
-}: StageSelectScreenProps): ReactElement {
+export function StageSelectScreen(props: StageSelectScreenProps): ReactElement {
   return (
     <div className="app-screen stage-select">
       <h1 tabIndex={-1}>ステージ選択</h1>
-      <StageCatalogBody catalog={catalog} onRetry={onRetry} onSelect={onSelect} />
+      <StageCatalogBody {...props} />
       <Link to={{ name: "title" }}>タイトルへ</Link>
     </div>
   );
 }
 
-function StageCatalogBody({ catalog, onRetry, onSelect }: StageSelectScreenProps): ReactElement {
+function StageCatalogBody({
+  catalog,
+  onRetry,
+  onSelect,
+  busy,
+}: StageSelectScreenProps): ReactElement {
   switch (catalog.status) {
     case "loading":
       return <p role="status">読み込み中…</p>;
@@ -46,7 +49,7 @@ function StageCatalogBody({ catalog, onRetry, onSelect }: StageSelectScreenProps
                 <span>島 {stage.islands}</span>・<span>船 {stage.ferries} 隻</span>・
                 <span>制限時間 {formatDuration(stage.durationMs)}</span>
               </p>
-              <button type="button" onClick={() => onSelect({ stageId: stage.id, session: null })}>
+              <button type="button" disabled={busy} onClick={() => onSelect(stage)}>
                 {stage.title}を選ぶ
               </button>
             </li>

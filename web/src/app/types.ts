@@ -1,7 +1,7 @@
-// 画面の間で受け渡すローカルの型（T-401）。
+// 画面の間で受け渡すローカルの型（T-401・T-413）。
 // T-301 の生成された型ができたら、StageSummary・SessionHandle を置き換える。
 
-// プロトコル §2 の GET /api/stages の 1 件。T-301 の生成された型ができたら置き換える。
+// プロトコル §2 の GET /api/stages の 1 件のうち、画面が読む欄。
 export type StageSummary = {
   id: string; // STAGE_ID_PATTERN に合う
   title: string;
@@ -9,18 +9,28 @@ export type StageSummary = {
   islands: number; // 1 以上の整数
   ferries: number; // 1 以上の整数
   durationMs: number; // 1 以上の整数
+  // T-311。true なら POST /api/sessions で demo: true を送る。一覧の読み込み（toStageSummary）は
+  // 必ず真偽値を入れる。省略できるのは、範囲の外のテスト（result・game）が作る値のため。
+  demo?: boolean;
 };
 
-// プロトコル §2 のセッションの作成（POST）の 201 の本文。作るのは T-413。
+// プロトコル §2 のセッションの作成（POST）の 201 の本文（T-413）。
 export type SessionHandle = { sessionId: string; token: string; wsPath: string };
 
-// ステージ選択で選んだもの。T-401 では session は常に null。
-export type StageSelection = { stageId: string; session: SessionHandle | null };
+// ステージ選択で選んだもの。seed はそのセッションを作ったときに送ったシード。
+export type StageSelection = {
+  stageId: string;
+  session: SessionHandle | null;
+  seed: number | null;
+};
 
-// 遊んでいる（遊び終えた）ラウンド。
+// 遊んでいる（遊び終えた）ラウンド。seed はサーバーなしで進んだときも、決めたシードを持つ
+// （「同じ条件でもう一度」に使う）。flowReducer は必ず入れる。省略できるのは、範囲の外の
+// テスト（game）が作る値のため。
 export type RoundContext = {
   stage: StageSummary;
   session: SessionHandle | null;
+  seed?: number | null;
   finished: boolean;
 };
 

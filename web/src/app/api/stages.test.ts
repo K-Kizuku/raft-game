@@ -9,6 +9,7 @@ const stage1 = {
   islands: 3,
   ferries: 1,
   durationMs: 180000,
+  demo: false,
 };
 const stage2 = {
   id: "stage2",
@@ -17,6 +18,7 @@ const stage2 = {
   islands: 5,
   ferries: 2,
   durationMs: 210000,
+  demo: false,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -95,6 +97,30 @@ describe("fetchStages", () => {
     await expect(fetchStages({ fetch: fakeFetch(respond) })).rejects.toBeInstanceOf(
       StagesLoadError,
     );
+  });
+
+  it("L-1 demo が true・false の要素を読む", async () => {
+    const demoStage = { ...stage2, id: "demo-izu", demo: true };
+    const stages = await fetchStages({
+      fetch: fakeFetch(() =>
+        jsonResponse({ stages: [stage1, { ...demoStage, intro: { text: "x" }, learning: [] }] }),
+      ),
+    });
+    expect(stages).toEqual([stage1, demoStage]);
+    expect(stages[0]?.demo).toBe(false);
+    expect(stages[1]?.demo).toBe(true);
+    expect(stages[1]).not.toHaveProperty("intro");
+    expect(stages[1]).not.toHaveProperty("learning");
+  });
+
+  it.each<[string, unknown]>([
+    ["demo が無い", { ...stage2, demo: undefined }],
+    ["demo が文字列の true", { ...stage2, demo: "true" }],
+    ["demo が 1", { ...stage2, demo: 1 }],
+  ])("L-1 %s 要素が 1 つでもあれば失敗", async (_label, broken) => {
+    await expect(
+      fetchStages({ fetch: fakeFetch(() => jsonResponse({ stages: [stage1, broken] })) }),
+    ).rejects.toBeInstanceOf(StagesLoadError);
   });
 
   it("ST-3 signal を中断すると AbortError で拒否する", async () => {

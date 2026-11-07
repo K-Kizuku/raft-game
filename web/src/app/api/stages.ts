@@ -1,5 +1,6 @@
 // ステージの一覧の取得（T-401・プロトコル §2 の GET /api/stages）。
-// 知らないフィールド（unlock など）は読まない（プロトコル §8）。
+// 知らないフィールド（unlock・intro・learning など）は読まない（プロトコル §8）。
+// demo（T-311）は真偽値でなければ、その要素を不正とする（T-413）。
 import { STAGE_ID_PATTERN } from "../router/routes.ts";
 import type { StageSummary } from "../types.ts";
 
@@ -32,7 +33,7 @@ function toStageSummary(value: unknown): StageSummary | null {
   if (!isRecord(value)) {
     return null;
   }
-  const { id, title, region, islands, ferries, durationMs } = value;
+  const { id, title, region, islands, ferries, durationMs, demo } = value;
   if (
     typeof id !== "string" ||
     !STAGE_ID_PATTERN.test(id) ||
@@ -40,11 +41,12 @@ function toStageSummary(value: unknown): StageSummary | null {
     !isNonEmptyString(region) ||
     !isPositiveInteger(islands) ||
     !isPositiveInteger(ferries) ||
-    !isPositiveInteger(durationMs)
+    !isPositiveInteger(durationMs) ||
+    typeof demo !== "boolean"
   ) {
     return null;
   }
-  return { id, title, region, islands, ferries, durationMs };
+  return { id, title, region, islands, ferries, durationMs, demo };
 }
 
 function parseStages(body: unknown): StageSummary[] {
