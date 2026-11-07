@@ -28,6 +28,7 @@ import type { SeaTone } from "../model/art/sea.ts";
 import { MAP_ART_STYLE } from "../model/art/style.ts";
 import { drawEnvelope } from "./envelope.ts";
 import { createLetterEffectsLayer } from "./letterEffects.ts";
+import { createPartitionLayer } from "./partition.ts";
 
 export type MapDeps = Readonly<{ store: GameStore; now: () => number }>; // now は performance.now
 export type MapHandle = Readonly<{ destroy(): void }>;
@@ -592,6 +593,7 @@ type Layers = Readonly<{
   sea: Container;
   routes: Container;
   storms: Container;
+  partition: Container; // 分断のグループの縁取り（T-704、./partition.ts）
   islands: Container;
   piles: Container;
   ferries: Container;
@@ -646,12 +648,13 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   }
   host.appendChild(app.canvas);
 
-  // 下から sea・routes・storms・islands・piles・ferries・effects。海は地の色（background）の上に、
+  // 下から sea・routes・storms・partition・islands・piles・ferries・effects。海は地の色（background）の上に、
   // にじみと波の記号を描く。effects は手紙の処分・差し替えのアニメーション（T-410、./letterEffects.ts）を描く。
   const layers: Layers = {
     sea: new Container(),
     routes: new Container(),
     storms: new Container(),
+    partition: new Container(),
     islands: new Container(),
     piles: new Container(),
     ferries: new Container(),
@@ -661,6 +664,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     layers.sea,
     layers.routes,
     layers.storms,
+    layers.partition,
     layers.islands,
     layers.piles,
     layers.ferries,
@@ -674,6 +678,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   };
   motionQuery?.addEventListener?.("change", onMotionChange);
   const effects = createLetterEffectsLayer(layers.effects, { reducedMotion });
+  const partition = createPartitionLayer(layers.partition);
 
   const sea = createSea(layers);
   const routeViews = new Map<string, RouteView>();
@@ -706,6 +711,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       },
       destroyRoute,
     );
+    partition.update(scene.partition);
     syncViews(
       islandViews,
       scene.islands,
@@ -764,6 +770,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       pileViews.clear();
       ferryViews.clear();
       effects.destroy();
+      partition.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };

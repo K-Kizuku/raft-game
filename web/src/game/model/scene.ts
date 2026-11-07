@@ -4,6 +4,8 @@
 import { portPiles } from "../../state/index.ts";
 import type { UiSelection, World } from "../../state/index.ts";
 import { ferryProgress, lerp } from "./ferry.ts";
+import { partitionOf } from "./partition.ts";
+import type { PartitionGroup } from "./partition.ts";
 import { MAP_STYLE } from "./style.ts";
 import { fitIslands, toScreen } from "./viewport.ts";
 import type { MapTransform, Point, Size } from "./viewport.ts";
@@ -45,6 +47,13 @@ export type FerrySprite = Readonly<{
   broken: boolean;
   selected: boolean;
 }>;
+// 分断のグループの縁取り（T-704・FR-ENG-08）。islands はグループの島の中心、badgeAt は記号（A・B…）の位置。
+export type PartitionHalo = Readonly<{
+  label: string;
+  majority: boolean;
+  islands: readonly Point[];
+  badgeAt: Point;
+}>;
 export type MapScene = Readonly<{
   size: Size;
   transform: MapTransform;
@@ -52,6 +61,12 @@ export type MapScene = Readonly<{
   islands: readonly IslandNode[];
   piles: readonly LetterPile[];
   ferries: readonly FerrySprite[];
+  // 島が分かれていないときは null。航路のつながりを示すだけで、代表・確定を決めない。
+  partition: Readonly<{
+    total: number;
+    groups: readonly PartitionGroup[];
+    halos: readonly PartitionHalo[];
+  }> | null;
 }>;
 
 // roleMarkOf は島の代表のマーク。leader のうち term が leader の中で最大のものを "leader"、
@@ -76,7 +91,8 @@ export function roleMarkOf(nodes: World["nodes"], islandId: number): RoleMark {
   }
 }
 
-function stormOf(world: World, routeId: string, simNow: number): RouteLine["storm"] {
+// 航路の嵐の状態。分断の凡例（PartitionLegend）も同じ規則で通れる航路を求めるので export する。
+export function stormOf(world: World, routeId: string, simNow: number): RouteLine["storm"] {
   const blockedUntil = world.routeStates[routeId]?.blockedUntil ?? null;
   if (blockedUntil !== null && blockedUntil > simNow) return "blocked";
   if (world.forecasts.some((f) => f.at > simNow && f.routeIds.includes(routeId))) {
@@ -239,5 +255,38 @@ export function buildMapScene(
     islands,
     piles,
     ferries,
+    partition: partitionScene(present, routeEnds, centers),
   };
+}
+
+// 分断（T-704）: 嵐で止まっていない航路（storm !== "blocked"）で島をつないだ連結成分。分かれていなければ null。
+function partitionScene(
+  present: readonly number[],
+  routeEnds: readonly { a: number; b: number; storm: RouteLine["storm"] }[],
+  centers: ReadonlyMap<number, Point>,
+): MapScene["partition"] {
+  const view = partitionOf(
+    present,
+    routeEnds.map((r) => ({ a: r.a, b: r.b, open: r.storm !== "blocked" })),
+  );
+  if (view === null) return null;
+  const halos: PartitionHalo[] = [];
+  for (const group of view.groups) {
+    const islands: Point[] = [];
+    let top: Point | null = null;
+    for (const id of group.islandIds) {
+      const at = centers.get(id);
+      if (at === undefined) continue;
+      islands.push(at);
+      if (top === null || at.y < top.y || (at.y === top.y && at.x < top.x)) top = at;
+    }
+    if (top === null) continue;
+    halos.push({
+      label: group.label,
+      majority: group.majority,
+      islands,
+      badgeAt: { x: top.x, y: top.y - MAP_STYLE.islandRadius * 2 },
+    });
+  }
+  return { total: view.total, groups: view.groups, halos };
 }

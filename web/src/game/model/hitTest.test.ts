@@ -42,6 +42,7 @@ function scene(islands: IslandNode[], ferries: FerrySprite[] = []): MapScene {
     islands,
     piles: [],
     ferries,
+    partition: null,
   };
 }
 
