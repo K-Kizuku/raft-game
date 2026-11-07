@@ -139,6 +139,70 @@ describe("router", () => {
     });
   });
 
+  describe("RT-1 /api/sessions/{id}/input-log（T-714）", () => {
+    const TOKEN = "Tok_en-abcdefghijklmno"; // 22 文字
+    const passing = (): WorkerDeps => ({
+      stages: [],
+      ...untouchable(),
+      security: {
+        ...untouchable().security,
+        verifySessionId: async (raw) => raw as VerifiedSessionId,
+      },
+      session: {
+        ...untouchable().session,
+        inputLog: async () => new Response('{"format":1}', { status: 200 }),
+      },
+    });
+
+    it("POST → 405 と Allow: GET", async () => {
+      const res = await createHandler(passing)(
+        req("POST", "/api/sessions/s_abc.def/input-log", { origin: ORIGIN }),
+        {},
+      );
+
+      expect(res.status).toBe(405);
+      expect(res.headers.get("allow")).toBe("GET");
+      expect(await res.json()).toMatchObject({ code: "method_not_allowed" });
+    });
+
+    it("許可されない Origin → 403 forbidden_origin", async () => {
+      const res = await createHandler(passing)(
+        req("GET", "/api/sessions/s_abc.def/input-log", {
+          origin: "https://evil.example",
+          "x-session-token": TOKEN,
+        }),
+        {},
+      );
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ code: "forbidden_origin" });
+    });
+
+    it.each<[string, Record<string, string>]>([
+      ["Origin がない", {}],
+      ["許可された Origin", { origin: ORIGIN }],
+    ])("%s → 通る", async (_name, headers) => {
+      const res = await createHandler(passing)(
+        req("GET", "/api/sessions/s_abc.def/input-log", { ...headers, "x-session-token": TOKEN }),
+        {},
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('{"format":1}');
+    });
+
+    it.each([
+      "/api/sessions/input-log",
+      "/api/sessions/a/b/input-log",
+      "/api/sessions/a/input-log/",
+    ])("%s → 404 not_found", async (path) => {
+      const res = await createHandler(passing)(req("GET", path), {});
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ code: "not_found" });
+    });
+  });
+
   describe("R-4 GET /api/stages", () => {
     it("渡した一覧を返す", async () => {
       const res = await createHandler(() => ({ stages: STAGES }))(req("GET", "/api/stages"), {});

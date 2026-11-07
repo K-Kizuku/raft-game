@@ -52,7 +52,13 @@ import {
   READY_POLL_REQUEST_MS,
 } from "./limits.ts";
 import { PendingCommands } from "./pending.ts";
-import { buildRestoreMessage, commandJson, recordDecision, restoreUntil } from "./restore.ts";
+import {
+  buildInputLogJson,
+  buildRestoreMessage,
+  commandJson,
+  recordDecision,
+  restoreUntil,
+} from "./restore.ts";
 import {
   appendInputLog,
   ensureSessionSchema,
@@ -93,6 +99,7 @@ export type EndReason =
 const ROUTES: ReadonlyMap<string, "GET" | "POST"> = new Map([
   ["/init", "POST"],
   ["/connect", "GET"],
+  ["/input-log", "GET"],
 ]);
 
 const MAX_INIT_BODY_BYTES = 4096;
@@ -291,7 +298,14 @@ export class GameSessionCore {
     if (request.method !== method) {
       return errorResponse(405, "method_not_allowed", "Method not allowed", { allow: method });
     }
-    return pathname === "/init" ? this.#init(request) : this.#connect(request);
+    switch (pathname) {
+      case "/init":
+        return this.#init(request);
+      case "/input-log":
+        return this.#inputLog(request);
+      default:
+        return this.#connect(request);
+    }
   }
 
   async alarm(): Promise<void> {
@@ -653,6 +667,35 @@ export class GameSessionCore {
 
     if (this.#isCurrent(conn)) this.#track(this.#attachContainer(conn));
     return this.#deps.upgradeResponse(client);
+  }
+
+  // ---- GET /input-log（T-714・FR-LOG-03） ----
+
+  // 入力ログ（形式 1）を添付ファイルの JSON で返す。トークンの確かめ方は #connect と同じ（行がない・
+  // トークンがない・形が違う・違う、を区別しない）。終わったセッションでも返す（ラウンドの後に取り出すため）。
+  // コンテナに触れない・アラームを設定しない・行を書き換えない。
+  async #inputLog(request: Request): Promise<Response> {
+    const row = this.#row();
+    if (row === null) return notFound();
+    const token = request.headers.get("x-session-token");
+    if (token === null || !SESSION_TOKEN_PATTERN.test(token)) return notFound();
+    const hash = await hashSessionToken(token);
+    if (!constantTimeEqual(hash, row.tokenHash)) return notFound();
+
+    const sql = this.#ctx.storage.sql;
+    const body = buildInputLogJson(row, readInputLog(sql));
+    const stats = inputLogStats(sql);
+    // トークン・本文は出さない（1 回の要求に 1 行）。
+    this.#log("info", "session.input_log", { rows: stats.rows, bytes: stats.bytes });
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        // stageId は STAGE_ID_PATTERN に合う値だけが入っている。seed は 10 進の整数。
+        "content-disposition": `attachment; filename="raft-game-${row.stageId}-${String(row.seed)}.json"`,
+      },
+    });
   }
 
   #connectionStats(conn: Connection): Record<string, unknown> {

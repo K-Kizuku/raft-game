@@ -472,6 +472,7 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
               onStageSelect={() => {
                 navigate({ name: "stageSelect" });
               }}
+              session={round.session}
             />
             <UnlockNotice stages={unlocked} />
           </>

@@ -7,9 +7,10 @@ import { useId, useMemo, type ReactElement } from "react";
 import type { FinalLog } from "../../protocol/index.ts";
 import { useGameStore, type World } from "../../state/index.ts";
 import { formatDuration } from "../format.ts";
-import type { StageSummary } from "../types.ts";
+import type { SessionHandle, StageSummary } from "../types.ts";
 import { tokens } from "../../ui/theme/tokens.ts";
 import { Fireworks } from "./Fireworks.tsx";
+import { InputLogDownload } from "./InputLogDownload.tsx";
 import { ResultEngineer } from "./ResultEngineer.tsx";
 import { ResultSeed } from "./ResultSeed.tsx";
 import {
@@ -45,6 +46,7 @@ export type ResultScreenProps = {
   onRetry: () => void;
   onNextStage: () => void;
   onStageSelect: () => void;
+  session?: SessionHandle | null; // T-714。入力ログのダウンロードに使う（サーバーなしなら null）
 };
 
 function starConditions(world: World | null): string[] {
@@ -297,6 +299,7 @@ export function ResultScreen({
   onRetry,
   onNextStage,
   onStageSelect,
+  session,
 }: ResultScreenProps): ReactElement {
   const roundResult = useGameStore((s) => s.roundResult);
   const world = useGameStore((s) => s.world);
@@ -323,6 +326,12 @@ export function ResultScreen({
         </>
       )}
       {view !== null && <ResultSeed stageId={stage.id} />}
+      {view !== null && (
+        <InputLogDownload
+          session={session ?? null}
+          available={roundResult?.inputLogAvailable === true}
+        />
+      )}
       <div className="result-actions">
         <button type="button" className="btn btn-primary" onClick={onRetry}>
           同じ条件でもう一度

@@ -360,6 +360,48 @@ describe("ResultScreen", () => {
     expect(screen.queryByRole("region", { name: "同じ条件で遊ぶ" })).toBeNull();
   });
 
+  describe("RS-L 入力ログのダウンロード（T-714）", () => {
+    const SESSION = { sessionId: "s_abc.def", token: "Tok_en-abcdefghijklmno", wsPath: "/ws/x" };
+    const LABEL = "入力ログをダウンロード（JSON）";
+
+    function renderWithSession(session: typeof SESSION | null) {
+      return render(
+        <ResultScreen
+          stage={STAGE}
+          nextStage={null}
+          onRetry={vi.fn()}
+          onNextStage={vi.fn()}
+          onStageSelect={vi.fn()}
+          session={session}
+        />,
+      );
+    }
+
+    it("結果に inputLogAvailable: true・session があれば、ボタンの列の直前にある", () => {
+      loadWorld(3);
+      setResult(FULL_RESULT);
+      const { container } = renderWithSession(SESSION);
+
+      const download = section("入力ログ");
+      expect(within(download).getByRole("button", { name: LABEL })).toBeDefined();
+      expect(download.nextElementSibling).toBe(container.querySelector(".result-actions"));
+      expect(download.previousElementSibling).toBe(section("同じ条件で遊ぶ"));
+      expect(container.innerHTML).not.toContain(SESSION.token);
+    });
+
+    it.each<[string, RoundResult | null, typeof SESSION | null]>([
+      ["standalone（inputLogAvailable: false）", resultWith({ inputLogAvailable: false }), SESSION],
+      ["サーバーなし（session: null）", FULL_RESULT, null],
+      ["結果がない", null, SESSION],
+    ])("%s → ボタンを出さない", (_name, result, session) => {
+      if (result !== null) setResult(result);
+      renderWithSession(session);
+
+      expect(screen.queryByRole("button", { name: LABEL })).toBeNull();
+      expect(screen.queryByRole("region", { name: "入力ログ" })).toBeNull();
+    });
+  });
+
   describe("RS-8 用語", () => {
     afterEach(() => {
       act(() => {

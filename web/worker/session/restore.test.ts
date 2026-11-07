@@ -7,7 +7,13 @@ import {
   MAX_RESTORE_MESSAGE_BYTES,
   MAX_SESSION_TEXT_LENGTH,
 } from "./limits.ts";
-import { buildRestoreMessage, commandJson, recordDecision, restoreUntil } from "./restore.ts";
+import {
+  buildInputLogJson,
+  buildRestoreMessage,
+  commandJson,
+  recordDecision,
+  restoreUntil,
+} from "./restore.ts";
 import type { SessionRow } from "./store.ts";
 
 function rowOf(change: Partial<SessionRow> = {}): SessionRow {
@@ -155,5 +161,46 @@ describe("R-5 commandJson", () => {
       '{"type":"cmd.ferry.load","payload":{"ferryId":"f1","letterIds":[3]}}',
     );
     expect(commandJson("cmd.game.skip", {})).toBe('{"type":"cmd.game.skip","payload":{}}');
+  });
+});
+
+describe("RE-1 buildInputLogJson（T-714）", () => {
+  const commands = [
+    { t: 1200, cmd: commandJson("cmd.ferry.load", { ferryId: "f1", letterIds: [3] }) },
+    { t: 5400, cmd: commandJson("cmd.game.pause", { paused: true }) },
+  ];
+
+  it("形式 1 の文字列で、cmd は保存した JSON をそのまま埋め込む", () => {
+    expect(buildInputLogJson(rowOf(), commands)).toBe(
+      '{"format":1,"build":"b1","stageId":"stage1","stageHash":"sha256:abc","seed":20261101,' +
+        '"commands":[{"t":1200,"cmd":{"type":"cmd.ferry.load","payload":{"ferryId":"f1","letterIds":[3]}}},' +
+        '{"t":5400,"cmd":{"type":"cmd.game.pause","payload":{"paused":true}}}]}',
+    );
+  });
+
+  it.each<[string, Partial<SessionRow>, number]>([
+    ["until あり", {}, 61200],
+    ["until なし", {}, 0],
+    ["build・stageHash が NULL", { build: null, stageHash: null, demo: true }, 0],
+  ])("%s: buildRestoreMessage の inputLog の部分と 1 バイトも違わない", (_name, change, until) => {
+    const row = rowOf(change);
+    const json = buildInputLogJson(row, commands);
+    const restore = buildRestoreMessage(row, commands, until);
+    const tail = until > 0 ? `,"until":${String(until)}}}` : "}}";
+    expect(restore.endsWith(`"inputLog":${json}${tail}`)).toBe(true);
+    const parsed = JSON.parse(restore) as { payload: { inputLog: unknown } };
+    expect(JSON.parse(json)).toStrictEqual(parsed.payload.inputLog);
+  });
+
+  it('build・stageHash が NULL なら ""、commands が空なら []', () => {
+    const row = rowOf({ build: null, stageHash: null });
+    expect(JSON.parse(buildInputLogJson(row, []))).toStrictEqual({
+      format: 1,
+      build: "",
+      stageId: "stage1",
+      stageHash: "",
+      seed: 20261101,
+      commands: [],
+    });
   });
 });

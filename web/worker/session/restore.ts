@@ -32,18 +32,12 @@ export function restoreUntil(clockT: number | null, lastT: number | null): numbe
   return Math.max(clockT ?? 0, lastT ?? 0);
 }
 
-// internal.restore の電文。cmd は保存した JSON をそのまま埋め込む。until が 0 ならキーを省く。
-export function buildRestoreMessage(
-  row: SessionRow,
-  commands: readonly { readonly t: number; readonly cmd: string }[],
-  until: number,
-): string {
-  const head = JSON.stringify({
-    sessionId: row.sessionId,
-    stageId: row.stageId,
-    seed: row.seed,
-    demo: row.demo,
-  });
+type LogEntries = readonly { readonly t: number; readonly cmd: string }[];
+
+// 入力ログ（DesignDoc §10.1 の形式 1）の JSON。cmd は保存した JSON をそのまま埋め込む（読み直さない）。
+// internal.restore の inputLog と GET /input-log（T-714・FR-LOG-03）の本文で共通に使う。
+// build・stageHash は snapshot を受ける前なら NULL なので "" にする。
+export function buildInputLogJson(row: SessionRow, commands: LogEntries): string {
   const logHead = JSON.stringify({
     format: 1,
     build: row.build ?? "",
@@ -52,7 +46,18 @@ export function buildRestoreMessage(
     seed: row.seed,
   });
   const entries = commands.map((entry) => `{"t":${String(entry.t)},"cmd":${entry.cmd}}`);
-  const inputLog = `${logHead.slice(0, -1)},"commands":[${entries.join(",")}]}`;
+  return `${logHead.slice(0, -1)},"commands":[${entries.join(",")}]}`;
+}
+
+// internal.restore の電文。cmd は保存した JSON をそのまま埋め込む。until が 0 ならキーを省く。
+export function buildRestoreMessage(row: SessionRow, commands: LogEntries, until: number): string {
+  const head = JSON.stringify({
+    sessionId: row.sessionId,
+    stageId: row.stageId,
+    seed: row.seed,
+    demo: row.demo,
+  });
+  const inputLog = buildInputLogJson(row, commands);
   const untilPart = until > 0 ? `,"until":${String(until)}` : "";
   const payload = `${head.slice(0, -1)},"inputLog":${inputLog}${untilPart}}`;
   return `{"v":1,"type":"internal.restore","payload":${payload}}`;

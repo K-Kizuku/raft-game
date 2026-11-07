@@ -49,7 +49,7 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
 | 401 | `unauthorized` | 管理用 API の `Authorization` がない・違う。`www-authenticate: Bearer` を付ける |
 | 403 | `forbidden_origin` | `Origin` が許可リストにない・必須のルートで `Origin` がない |
 | 403 | `turnstile_failed` | Turnstile の確認に失敗 |
-| 404 | `not_found` | 知らないパス、`/ws/sessions/{id}` の id が不正・検証に失敗・部品がない、管理用 API の部品がない・`ADMIN_TOKEN` が未設定や不正 |
+| 404 | `not_found` | 知らないパス、`/ws/sessions/{id}`・`/api/sessions/{id}/input-log` の id が不正・検証に失敗・部品がない、管理用 API の部品がない・`ADMIN_TOKEN` が未設定や不正 |
 | 405 | `method_not_allowed` | パスは知っているがメソッドが違う（`HEAD`・`OPTIONS` も）。`Allow` ヘッダーに許すメソッドを `, ` 区切りで入れる |
 | 426 | `upgrade_required` | `/ws/sessions/{id}` に `Upgrade: websocket` がない |
 | 429 | `rate_limited` | レート制限 |
@@ -67,6 +67,7 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
 | `/api/sessions` | `POST` | **必須** |
 | `/api/admin/guards` | `GET`・`PATCH` | あれば照合 |
 | `/ws/sessions/{id}` | `GET` | **必須** |
+| `/api/sessions/{id}/input-log` | `GET` | あれば照合 |
 
 `Origin` の規則（NFR-07）:
 
@@ -238,6 +239,35 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 - `seq` は、その接続でコンテナから受けた最後の `seq` + 1（なければ `1`）。DO とコンテナの間の WebSocket はブラウザの接続ごとに 1 本なので、コンテナの番号の続きになる
 - DO が自分で作る電文は、この `error` と、コンテナへの `internal.init`・`internal.restore`・`internal.ping`・`internal.pong` だけ
+
+### `GET /api/sessions/{id}/input-log`
+
+そのセッションの入力ログ（[DesignDoc §10.1](./03-design-doc.md#101-入力ログ) の形式 1）を JSON の添付ファイルで返します（FR-LOG-03・T-714）。入力ログは Durable Object `GameSession` の SQLite から読むので、ラウンドが終わってコンテナが止まった後でも、`sessionId` の有効期限（発行 + `gameTime.maxMinutes` + 5 分）までは取り出せます。遊んでいる途中に呼ぶと、その時点までの入力ログを返します。トレースは返しません（入力ログから `simcli` で作り直す。DesignDoc §10.2）。
+
+要求:
+
+- ヘッダー `X-Session-Token: <token>`（`POST /api/sessions` の `201` の `token`）。**トークンを URL に入れない**（ログに残らないように。`fetch` で送るのでヘッダーにできる。WebSocket の `?token=` と違う）
+- `{id}` の文字の範囲は `/ws/sessions/{id}` と同じ。`Origin` は、あれば許可リストと照合する（同じオリジンの `GET` はブラウザが `Origin` を付けないことがあるため、必須にしない）
+- 検査の順序は「`{id}` の形 → 部品 → 署名・期限・ホスト名（`/ws/sessions/{id}` と同じ確かめ方）→ トークンの形（`^[A-Za-z0-9_-]{22}$`）→ Durable Object」。署名を確かめる前と、トークンの形が違うときは Durable Object を呼ばない（コストガード G3）
+- レート制限（`SESSION_RATE_LIMIT`）は使わない（セッションの作成の枠を減らさないため）。Durable Object・コンテナを作らず、コンテナを起動しない・アラームを設定しない
+
+レスポンス `200`:
+
+```json
+{ "format": 1, "build": "git:3f2c1ab", "stageId": "stage2", "stageHash": "sha256:…", "seed": 20261101, "commands": [ { "t": 1200, "cmd": { "type": "cmd.ferry.load", "payload": { "ferryId": "f1", "letterIds": [3] } } } ] }
+```
+
+- ヘッダーは `content-type: application/json; charset=utf-8`・`cache-control: no-store`・`content-disposition: attachment; filename="raft-game-<stageId>-<seed>.json"`（`<seed>` は 10 進の整数）
+- 本文は `internal.restore` の `inputLog`（§9）と同じ組み立てで、`simcli replay --input` でそのまま読める。`cmd` は Durable Object が記録した JSON をそのまま埋め込む
+- コンテナが一度も `snapshot` を送らなかったセッションでは `build`・`stageHash` が `""`、記録が 0 件なら `commands` が `[]`。記録の上限（10,000 行・512 KiB）に達していたら、記録できた分だけを返す
+
+エラー:
+
+| HTTP | `code` | いつ |
+|---|---|---|
+| 403 | `forbidden_origin` | `Origin` があり、許可リストにない |
+| 404 | `not_found` | `{id}` の文字の範囲が不正・形式が違う・署名の検証に失敗・期限を過ぎた・別のホストで発行した・部品がない、トークンがない・形が違う・一致しない、セッションがない（区別しない。`/ws/sessions/{id}` と同じ）。終わったセッションは `404` にしない |
+| 405 | `method_not_allowed` | `GET` 以外 |
 
 ---
 
