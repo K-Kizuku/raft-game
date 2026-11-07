@@ -18,7 +18,7 @@
     "changed_files": 3
   },
   "files": [
-    {"filename": "docs/guide.md", "status": "modified", "patch": "@@ -12,6 +12,7 @@ ## 手順\n 文脈 A（main で変わった）\n 文脈 B\n 文脈 C\n+PR が足した行\n 文脈 D\n 文脈 E\n 文脈 F"},
+    {"filename": "docs/guide.md", "status": "modified", "patch": "@@ -12,6 +12,7 @@ ## 手順\n 文脈 A\n 文脈 B\n 文脈 C\n+PR が足した行\n 文脈 D\n 文脈 E\n 文脈 F"},
     {"filename": "server/internal/foo/foo.go", "status": "added", "patch": "@@ -0,0 +1,3 @@\n+package foo\n+\n+func F() int { return 1 }\n\\ No newline at end of file"},
     {"filename": "docs/new.md", "previous_filename": "docs/old.md", "status": "renamed", "patch": "@@ -1,3 +1,3 @@\n # 見出し\n-古い説明\n+新しい説明\n 末尾"}
   ],
@@ -64,6 +64,16 @@
       {"filename": "docs/guide.md", "status": "modified", "patch": "@@ -10,6 +10,7 @@ ## 手順\n 文脈 A\n 文脈 B\n 文脈 C\n+PR が足した行\n 文脈 D\n 文脈 E\n 文脈 F"},
       {"filename": "docs/new.md", "previous_filename": "docs/old.md", "status": "renamed", "patch": "@@ -1,3 +1,3 @@\n # 見出し\n-古い説明\n+新しい説明\n 末尾"},
       {"filename": "server/internal/foo/foo.go", "status": "added", "patch": "@@ -0,0 +1,3 @@\n+package foo\n+\n+func F() int { return 1 }\n\\ No newline at end of file"}
-    ]
+    ],
+    "modes": {
+      "s": {
+        "base": {"docs/guide.md": "100644", "docs/old.md": "100644"},
+        "tip": {"docs/guide.md": "100644", "docs/new.md": "100644", "server/internal/foo/foo.go": "100644"}
+      },
+      "head": {
+        "base": {"docs/guide.md": "100644", "docs/old.md": "100644"},
+        "tip": {"docs/guide.md": "100644", "docs/new.md": "100644", "server/internal/foo/foo.go": "100644"}
+      }
+    }
   }
 }

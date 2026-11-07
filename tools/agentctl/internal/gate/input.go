@@ -39,8 +39,27 @@ type CarryOverInput struct {
 	InBase map[string]bool `json:"in_base"`
 	// Files は、ベースとのマージベースから S までの変更ファイル（GET /compare/{base}...{S} の files。patch を含む）。
 	Files []File `json:"files"`
+	// Modes は、変更ファイルのモード（実行権限など。GET /git/trees/{tree}?recursive=1 の mode）。なければ引き継がない。
+	Modes *CarryOverModes `json:"modes,omitempty"`
 	// Error は、材料を集められなかった理由（API の誤りなど）。空でなければ引き継がない。
 	Error string `json:"error,omitempty"`
+}
+
+// CarryOverModes は、マージベースから S までの差分と、マージベースから HEAD までの差分の、変更ファイルのモード。
+type CarryOverModes struct {
+	// S は、マージベースから S までの差分の両端でのモード（Files のファイル）。
+	S DiffModes `json:"s"`
+	// Head は、マージベースから HEAD までの差分の両端でのモード（Input.Files のファイル）。
+	Head DiffModes `json:"head"`
+}
+
+// DiffModes は、差分の両端でのファイルのモード（パス → mode。その端にないファイルは載せない）。
+// 名前を変えたファイルは、Base では前の名前、Tip では新しい名前で引く。
+type DiffModes struct {
+	// Base は、マージベースでのモード。
+	Base map[string]string `json:"base"`
+	// Tip は、先端（S か HEAD）でのモード。
+	Tip map[string]string `json:"tip"`
 }
 
 // Commit はコミットとその親。

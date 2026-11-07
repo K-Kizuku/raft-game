@@ -319,22 +319,44 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 //   - commits: HEAD から GET /git/commits/{sha} で最初の親をたどり、sha に着くか、マージではないコミットに当たるまで
 //   - in_base: マージコミットの 2 番目以降の親ごとに、GET /compare/{base}...{親} の ahead_by が 0（ベースの履歴に含まれる）か
 //   - files: GET /compare/{base}...{sha} の files（ベースとのマージベースから sha までの変更。patch を含む）
+//   - modes: 変更ファイルの、差分の両端（ベースとのマージベースと、sha か HEAD）でのモード。
+//     GET /git/commits/{sha}・GET /compare/{base}...{sha か HEAD} の merge_base_commit からツリーを決め、
+//     GET /git/trees/{tree}?recursive=1 から取る（ツリーが大きすぎて切れていたら集めない）
 func (c *Client) FetchCarryOver(ctx context.Context, repo string, in *gate.Input, sha string) {
 	co := &gate.CarryOverInput{SHA: sha, Commits: []gate.Commit{}, InBase: map[string]bool{}, Files: []gate.File{}}
 	in.CarryOver = co
-	if err := c.fetchCarryOver(ctx, repo, in.PullRequest.BaseRef, in.PullRequest.HeadSHA, co); err != nil {
+	if err := c.fetchCarryOver(ctx, repo, in.PullRequest.BaseRef, in.PullRequest.HeadSHA, in.Files, co); err != nil {
 		co.Error = err.Error()
+		co.Modes = nil
 	}
 }
 
-func (c *Client) fetchCarryOver(ctx context.Context, repo, base, head string, co *gate.CarryOverInput) error {
+type gitCommit struct {
+	SHA  string `json:"sha"`
+	Tree struct {
+		SHA string `json:"sha"`
+	} `json:"tree"`
+	Parents []struct {
+		SHA string `json:"sha"`
+	} `json:"parents"`
+}
+
+// compareMergeBase は、GET /compare の応答のうち、変更ファイルとマージベースのツリー。
+type compareMergeBase struct {
+	Files           []gate.File `json:"files"`
+	MergeBaseCommit struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Tree struct {
+				SHA string `json:"sha"`
+			} `json:"tree"`
+		} `json:"commit"`
+	} `json:"merge_base_commit"`
+}
+
+func (c *Client) fetchCarryOver(ctx context.Context, repo, base, head string, headFiles []gate.File, co *gate.CarryOverInput) error {
 	rp := repoPath(repo)
-	type gitCommit struct {
-		SHA     string `json:"sha"`
-		Parents []struct {
-			SHA string `json:"sha"`
-		} `json:"parents"`
-	}
+	headTree := ""
 	for cur := head; cur != co.SHA; {
 		if len(co.Commits) >= gate.MaxCarryOverCommits {
 			return fmt.Errorf("HEAD から %s までのコミットが %d 個より多い", co.SHA, gate.MaxCarryOverCommits)
@@ -342,6 +364,9 @@ func (c *Client) fetchCarryOver(ctx context.Context, repo, base, head string, co
 		var gc gitCommit
 		if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/git/commits/%s", rp, esc(cur)), nil, &gc); err != nil {
 			return err
+		}
+		if cur == head {
+			headTree = gc.Tree.SHA
 		}
 		cm := gate.Commit{SHA: gc.SHA, Parents: []string{}}
 		for _, p := range gc.Parents {
@@ -364,16 +389,90 @@ func (c *Client) fetchCarryOver(ctx context.Context, repo, base, head string, co
 		}
 		cur = cm.Parents[0]
 	}
-	var cmp struct {
-		Files []gate.File `json:"files"`
-	}
+	var cmp compareMergeBase
 	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/compare/%s...%s?per_page=1", rp, esc(base), esc(co.SHA)), nil, &cmp); err != nil {
 		return err
 	}
 	if cmp.Files != nil {
 		co.Files = cmp.Files
 	}
+
+	// ファイルのモード（差分の両端）。
+	var sc gitCommit
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/git/commits/%s", rp, esc(co.SHA)), nil, &sc); err != nil {
+		return err
+	}
+	var hcmp compareMergeBase
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/compare/%s...%s?per_page=1", rp, esc(base), esc(head)), nil, &hcmp); err != nil {
+		return err
+	}
+	trees := map[string]map[string]string{}
+	modesOf := func(tree string, files []gate.File, tip bool) (map[string]string, error) {
+		if tree == "" {
+			return nil, fmt.Errorf("モードを調べるツリーの SHA がない")
+		}
+		all, ok := trees[tree]
+		if !ok {
+			var err error
+			if all, err = c.treeModes(ctx, rp, tree); err != nil {
+				return nil, err
+			}
+			trees[tree] = all
+		}
+		out := map[string]string{}
+		for _, f := range files {
+			p := f.Filename
+			if !tip && f.PreviousFilename != "" {
+				p = f.PreviousFilename
+			}
+			if m, ok := all[p]; ok {
+				out[p] = m
+			}
+		}
+		return out, nil
+	}
+	var modes gate.CarryOverModes
+	var err error
+	if modes.S.Base, err = modesOf(cmp.MergeBaseCommit.Commit.Tree.SHA, co.Files, false); err != nil {
+		return err
+	}
+	if modes.S.Tip, err = modesOf(sc.Tree.SHA, co.Files, true); err != nil {
+		return err
+	}
+	if modes.Head.Base, err = modesOf(hcmp.MergeBaseCommit.Commit.Tree.SHA, headFiles, false); err != nil {
+		return err
+	}
+	if modes.Head.Tip, err = modesOf(headTree, headFiles, true); err != nil {
+		return err
+	}
+	co.Modes = &modes
 	return nil
+}
+
+// treeModes は、ツリー tree の中のファイルのモード（パス → mode）を返す（GET /git/trees/{tree}?recursive=1）。
+// ツリーが大きすぎて応答が切れていたらエラーを返す。
+func (c *Client) treeModes(ctx context.Context, rp, tree string) (map[string]string, error) {
+	var t struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Mode string `json:"mode"`
+			Type string `json:"type"`
+		} `json:"tree"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/git/trees/%s?recursive=1", rp, esc(tree)), nil, &t); err != nil {
+		return nil, err
+	}
+	if t.Truncated {
+		return nil, fmt.Errorf("ツリー %s が大きすぎて、モードを確かめられない", tree)
+	}
+	out := map[string]string{}
+	for _, e := range t.Tree {
+		if e.Type != "tree" {
+			out[e.Path] = e.Mode
+		}
+	}
+	return out, nil
 }
 
 // SetStatus は sha にコミットステータスを付ける。

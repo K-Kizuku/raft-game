@@ -109,7 +109,9 @@ func TestCarryOverRejected(t *testing.T) {
 				in.Files[0].Patch = strings.Replace(in.Files[0].Patch, "+PR が足した行", "+PR が足した行（解消で変えた）", 1)
 			}},
 		{name: "(c) コンフリクトの解消で変更行が増えた", reason: "docs/guide.md の差分が違う",
-			mutate: func(t *testing.T, in *Input) { in.Files[0].Patch += "\n+足した行" }},
+			mutate: func(t *testing.T, in *Input) {
+				in.Files[0].Patch = strings.Replace(in.Files[0].Patch, "+12,7", "+12,8", 1) + "\n+足した行"
+			}},
 		{name: "変更ファイルの数が違う", reason: "変更ファイルの数が違う",
 			mutate: func(t *testing.T, in *Input) {
 				in.Files = append(in.Files, File{Filename: "docs/more.md", Status: "added", Patch: "@@ -0,0 +1 @@\n+x"})
@@ -229,14 +231,120 @@ func TestCarryOverRejected(t *testing.T) {
 	}
 }
 
-// main の取り込みで、PR が変えたファイルに main の変更が入った（文脈と行番号が変わった）が、patch-id が同じなら引き継ぐ。
-// 変更行の空白の違い（git patch-id と同じ考え方）も無視する。
-func TestCarryOverContextChanged(t *testing.T) {
+// main の取り込みで、PR が変えたファイルの離れた場所に main の変更が入った（行番号だけが変わった）なら、patch-id が同じなので引き継ぐ。
+// 空白の違い（git patch-id と同じ考え方）も無視する。
+func TestCarryOverLineNumbersChanged(t *testing.T) {
 	in := loadCarry(t)
-	in.Files[0].Patch = "@@ -40,9 +40,10 @@ func x() {\n main の行\n main の行\n 文脈 B\n+PR  が足した行\t\n 別の文脈"
-	in.Files[2].Patch = "@@ -3,4 +3,4 @@\n 文脈\n-古い説明\n+新しい説明\n"
+	in.Files[0].Patch = "@@ -40,6 +40,7 @@ ##  手順\n 文脈  A\n 文脈 B\n 文脈 C\n+PR  が足した行\t\n 文脈 D\n 文脈 E\n 文脈 F"
+	in.Files[2].Patch = "@@ -3,3 +3,3 @@\n # 見出し\n-古い説明\n+新しい説明\n 末尾\n"
 	rep := Evaluate(loadConfig(t), in)
 	mustResult(t, rep, "C6", Pass)
+}
+
+// 変更の場所に関わる差分の違いでは、変更行が同じでも引き継がない（F1）。
+func TestCarryOverChangeMoved(t *testing.T) {
+	// S では canRead の return false を return true に変えた。main の取り込みでそれを取り消し、canDelete に同じ変更を入れた。
+	const s = "@@ -10,7 +10,7 @@ package acl\n func canRead(u User) bool {\n \tif u.Admin {\n \t\treturn true\n \t}\n-\treturn false\n+\treturn true\n }\n "
+	const h = "@@ -20,7 +20,7 @@ func canRead(u User) bool {\n func canDelete(u User) bool {\n \tif u.Admin {\n \t\treturn true\n \t}\n-\treturn false\n+\treturn true\n }\n "
+	tests := []struct{ name, s, h string }{
+		{"変更が別の関数に移った", s, h},
+		{"見出しの関数名だけが違う", s, strings.Replace(s, "package acl", "func canDelete(u User) bool {", 1)},
+		{"文脈だけが違う（main の変更が文脈に入った）", s, strings.Replace(s, "\tif u.Admin {", "\tif u.Admin || u.Owner {", 1)},
+		{"ハンクの分かれ方が違う", "@@ -1,2 +1,2 @@\n a\n-b\n+c\n@@ -9,2 +9,2 @@\n d\n-e\n+f",
+			"@@ -1,4 +1,4 @@\n a\n-b\n-e\n+c\n+f\n d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := loadCarry(t)
+			in.CarryOver.Files[0].Patch = tt.s
+			in.Files[0].Patch = tt.h
+			rep := Evaluate(loadConfig(t), in)
+			mustResult(t, rep, "C6", Pending)
+			if !strings.Contains(notesOf(rep), "docs/guide.md の差分が違う") {
+				t.Errorf("notes = %v", rep.Notes)
+			}
+			if co := CarriesOver(loadConfig(t), in); co.OK {
+				t.Errorf("CarriesOver = %+v", co)
+			}
+		})
+	}
+}
+
+// ハンクの形が読めない patch では引き継がない。
+func TestCarryOverUnreadablePatch(t *testing.T) {
+	for name, p := range map[string]string{
+		"見出しがない":      "+PR が足した行",
+		"見出しより行が少ない":  "@@ -12,6 +12,7 @@\n 文脈 A\n+PR が足した行",
+		"見出しより行が多い":   "@@ -1 +1 @@\n-a\n+b\n+c",
+		"知らない形の行":     "@@ -1 +1 @@\n-a\n+b\n?c",
+		"見出しの行数が読めない": "@@ -1,99999999999999999999 +1 @@\n-a\n+b",
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := loadCarry(t)
+			in.Files[0].Patch = p
+			in.CarryOver.Files[0].Patch = p
+			rep := Evaluate(loadConfig(t), in)
+			mustResult(t, rep, "C6", Pending)
+			if !strings.Contains(notesOf(rep), "docs/guide.md の S の patch が読めない") {
+				t.Errorf("notes = %v", rep.Notes)
+			}
+		})
+	}
+}
+
+// ファイルのモード（実行権限など）の変更が違えば、patch が同じでも引き継がない（C4500123657）。
+func TestCarryOverModeChanged(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(m *CarryOverModes)
+		reason string
+	}{
+		{"取り込みで実行権限を落とした", func(m *CarryOverModes) {
+			m.S.Base["docs/guide.md"], m.S.Tip["docs/guide.md"] = "100755", "100755"
+			m.Head.Base["docs/guide.md"], m.Head.Tip["docs/guide.md"] = "100755", "100644"
+		}, "docs/guide.md のモードが違う（先端で S は \"100755\"、HEAD は \"100644\"）"},
+		{"取り込みで実行権限を足した", func(m *CarryOverModes) { m.Head.Tip["server/internal/foo/foo.go"] = "100755" },
+			"server/internal/foo/foo.go のモードが違う"},
+		{"マージベースのモードだけが違う", func(m *CarryOverModes) { m.Head.Base["docs/old.md"] = "100755" },
+			"docs/new.md のモードが違う（マージベースで"},
+		{"シンボリックリンクになった", func(m *CarryOverModes) { m.Head.Tip["docs/new.md"] = "120000" },
+			"docs/new.md のモードが違う"},
+		{"追加したファイルがマージベースにある", func(m *CarryOverModes) { m.Head.Base["server/internal/foo/foo.go"] = "100644" },
+			"server/internal/foo/foo.go のモードが違う"},
+		{"HEAD のモードがない", func(m *CarryOverModes) { delete(m.Head.Tip, "docs/guide.md") },
+			"docs/guide.md の先端のモードを確かめられない"},
+		{"S のマージベースのモードがない", func(m *CarryOverModes) { delete(m.S.Base, "docs/old.md") },
+			"docs/old.md のマージベースのモードを確かめられない"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := loadCarry(t)
+			tt.mutate(in.CarryOver.Modes)
+			rep := Evaluate(loadConfig(t), in)
+			mustResult(t, rep, "C6", Pending)
+			if !strings.Contains(notesOf(rep), tt.reason) {
+				t.Errorf("notes = %v, want %q", rep.Notes, tt.reason)
+			}
+			if co := CarriesOver(loadConfig(t), in); co.OK {
+				t.Errorf("CarriesOver = %+v", co)
+			}
+		})
+	}
+
+	// モードの材料がなければ引き継がない。
+	in := loadCarry(t)
+	in.CarryOver.Modes = nil
+	rep := Evaluate(loadConfig(t), in)
+	mustResult(t, rep, "C6", Pending)
+	if !strings.Contains(notesOf(rep), "ファイルのモードの材料がない") {
+		t.Errorf("notes = %v", rep.Notes)
+	}
+
+	// 両方で同じように実行権限を足したなら引き継ぐ。
+	in = loadCarry(t)
+	in.CarryOver.Modes.S.Tip["docs/guide.md"] = "100755"
+	in.CarryOver.Modes.Head.Tip["docs/guide.md"] = "100755"
+	mustResult(t, Evaluate(loadConfig(t), in), "C6", Pass)
 }
 
 // 2 回の main の取り込み（マージコミットが 2 つ）でも引き継ぐ。
@@ -349,33 +457,66 @@ func TestCarryOverCandidate(t *testing.T) {
 }
 
 func TestPatchID(t *testing.T) {
-	base := "@@ -1,4 +1,5 @@ func a() {\n ctx\n-old\n+new\n+more\n ctx"
+	id := func(t *testing.T, p string) string {
+		t.Helper()
+		v, err := PatchID(p)
+		if err != nil {
+			t.Fatalf("PatchID(%q): %v", p, err)
+		}
+		return v
+	}
+	base := "@@ -1,3 +1,4 @@ func a() {\n ctx\n-old\n+new\n+more\n ctx"
+	want := id(t, base)
 	same := []struct{ name, patch string }{
-		{"行番号が違う", "@@ -10,4 +12,5 @@ func b() {\n ctx\n-old\n+new\n+more\n ctx"},
-		{"文脈が違う", "@@ -1,4 +1,5 @@\n other\n-old\n+new\n+more\n other2\n other3"},
-		{"空白が違う", "@@ -1,4 +1,5 @@ func a() {\n ctx\n- old\t\n+n e w\n+more  \r\n ctx"},
-		{"ハンクの分かれ方が違う", "@@ -1,2 +1,2 @@\n ctx\n-old\n+new\n@@ -5,1 +5,2 @@\n+more"},
+		{"行番号が違う", "@@ -10,3 +12,4 @@ func a() {\n ctx\n-old\n+new\n+more\n ctx"},
+		{"行数の省略", "@@ -1,3 +1,4 @@ func a() {\n ctx\n-old\n+new\n+more\n ctx\n"},
+		{"空白が違う", "@@ -1,3 +1,4 @@ func  a() {\n ctx \n- old\t\n+n e w\n+more  \r\n ctx"},
 	}
 	for _, tt := range same {
-		if PatchID(tt.patch) != PatchID(base) {
+		if id(t, tt.patch) != want {
 			t.Errorf("%s: patch-id が違う", tt.name)
 		}
 	}
+	if id(t, "@@ -1 +1 @@\n-a\n+b") != id(t, "@@ -7,1 +9,1 @@\n-a\n+b") {
+		t.Errorf("省略した行数（1）で patch-id が変わった")
+	}
+	if id(t, "@@ -1,3 +1,3 @@\n a\n-b\n+c\n ") != id(t, "@@ -1,3 +1,3 @@\n a\n-b\n+c\n") {
+		t.Errorf("空の文脈の行（空白なし）で patch-id が変わった")
+	}
 	differ := []struct{ name, patch string }{
-		{"変更行が違う", "@@ -1,4 +1,5 @@\n ctx\n-old\n+new2\n+more\n ctx"},
-		{"追加と削除が入れ替わった", "@@ -1,4 +1,5 @@\n ctx\n+old\n-new\n-more\n ctx"},
-		{"変更行の順番が違う", "@@ -1,4 +1,5 @@\n ctx\n-old\n+more\n+new\n ctx"},
-		{"変更行が減った", "@@ -1,4 +1,5 @@\n ctx\n-old\n+new\n ctx"},
-		{"末尾の改行がない", "@@ -1,4 +1,5 @@\n ctx\n-old\n+new\n+more\n\\ No newline at end of file"},
-		{"変更行が文脈になった", "@@ -1,4 +1,5 @@\n ctx\n old\n+new\n+more\n ctx"},
+		{"変更行が違う", "@@ -1,3 +1,4 @@ func a() {\n ctx\n-old\n+new2\n+more\n ctx"},
+		{"追加と削除が入れ替わった", "@@ -1,4 +1,3 @@ func a() {\n ctx\n+old\n-new\n-more\n ctx"},
+		{"変更行の順番が違う", "@@ -1,3 +1,4 @@ func a() {\n ctx\n-old\n+more\n+new\n ctx"},
+		{"変更行が減った", "@@ -1,3 +1,3 @@ func a() {\n ctx\n-old\n+new\n ctx"},
+		{"末尾の改行がない", "@@ -1,2 +1,3 @@ func a() {\n ctx\n-old\n+new\n+more\n\\ No newline at end of file"},
+		{"変更行が文脈になった", "@@ -1,3 +1,5 @@ func a() {\n ctx\n old\n+new\n+more\n ctx"},
+		{"文脈が違う", "@@ -1,3 +1,4 @@ func a() {\n other\n-old\n+new\n+more\n ctx"},
+		{"文脈が増えた", "@@ -1,4 +1,5 @@ func a() {\n ctx\n-old\n+new\n+more\n ctx\n ctx2"},
+		{"見出しの関数名が違う", "@@ -1,3 +1,4 @@ func b() {\n ctx\n-old\n+new\n+more\n ctx"},
+		{"ハンクの分かれ方が違う", "@@ -1,2 +1,2 @@ func a() {\n ctx\n-old\n+new\n@@ -5,1 +5,2 @@\n+more\n ctx"},
+		{"文脈の行の末尾の改行", base + "\n\\ No newline at end of file"},
 	}
 	for _, tt := range differ {
-		if PatchID(tt.patch) == PatchID(base) {
+		if id(t, tt.patch) == want {
 			t.Errorf("%s: patch-id が同じ", tt.name)
 		}
 	}
-	// 文脈の行の「\ No newline at end of file」は数えない。
-	if PatchID(base+"\n\\ No newline at end of file") != PatchID(base) {
-		t.Errorf("文脈の行の末尾の改行で patch-id が変わった")
+	bad := []struct{ name, patch string }{
+		{"空", ""},
+		{"見出しがない", " ctx\n-old\n+new"},
+		{"見出しの前に行がある", "-old\n@@ -1 +1 @@\n-a\n+b"},
+		{"見出しの形が違う", "@@ -1 @@\n-a"},
+		{"行が見出しより少ない", "@@ -1,3 +1,4 @@\n ctx\n-old\n+new"},
+		{"行が見出しより多い", "@@ -1 +1 @@\n-a\n+b\n c"},
+		{"次のハンクの前に行が足りない", "@@ -1,2 +1,2 @@\n-a\n+b\n@@ -5 +5 @@\n-c\n+d"},
+		{"知らない形の行", "@@ -1 +1 @@\n-a\n+b\n~c"},
+		{"空の行が途中にある（ハンクの外）", "@@ -1 +1 @@\n-a\n+b\n\n"},
+		{"先頭の「\\」の行", "@@ -1 +1 @@\n\\ No newline at end of file\n-a\n+b"},
+		{"「\\」の行が続く", "@@ -1 +1 @@\n-a\n\\ No newline at end of file\n\\ No newline at end of file\n+b"},
+	}
+	for _, tt := range bad {
+		if v, err := PatchID(tt.patch); err == nil {
+			t.Errorf("%s: エラーにならない（%s）", tt.name, v)
+		}
 	}
 }

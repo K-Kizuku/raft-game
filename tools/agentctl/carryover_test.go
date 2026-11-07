@@ -148,6 +148,23 @@ func carryGitHub(t *testing.T, failCommits bool) {
 	for _, cr := range in.CheckRuns {
 		checkRuns = append(checkRuns, map[string]any{"name": cr.Name, "head_sha": cr.HeadSHA, "status": cr.Status, "conclusion": cr.Conclusion})
 	}
+	// マージベースとツリー（モードは carry-over.json の modes から）。
+	const baseS, baseH = "7777777777777777777777777777777777777777", "8888888888888888888888888888888888888888"
+	mergeBase := func(sha string) map[string]any {
+		return map[string]any{"sha": sha, "commit": map[string]any{"tree": map[string]any{"sha": "tree-" + sha}}}
+	}
+	tree := func(modes map[string]string) map[string]any {
+		entries := []any{}
+		for p, m := range modes {
+			entries = append(entries, map[string]any{"path": p, "mode": m, "type": "blob"})
+		}
+		return map[string]any{"truncated": false, "tree": entries}
+	}
+	m := in.CarryOver.Modes
+	trees := map[string]map[string]any{
+		"tree-" + baseS: tree(m.S.Base), "tree-" + carryS: tree(m.S.Tip),
+		"tree-" + baseH: tree(m.Head.Base), "tree-" + headSHA: tree(m.Head.Tip),
+	}
 	pre := "/repos/" + repoName
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		write := func(v any) { _ = json.NewEncoder(w).Encode(v) }
@@ -173,18 +190,26 @@ func carryGitHub(t *testing.T, failCommits bool) {
 		case pre + "/git/matching-refs/heads/agent/issue-":
 			write([]any{map[string]any{"ref": "refs/heads/agent/issue-3"}})
 		case pre + "/compare/main..." + headSHA:
-			write(in.Compare)
+			write(map[string]any{"status": in.Compare.Status, "ahead_by": in.Compare.AheadBy, "behind_by": in.Compare.BehindBy,
+				"merge_base_commit": mergeBase(baseH)})
 		case pre + "/git/commits/" + headSHA:
 			if failCommits {
 				w.WriteHeader(http.StatusBadGateway)
 				return
 			}
-			write(map[string]any{"sha": headSHA, "parents": []any{map[string]any{"sha": carryS}, map[string]any{"sha": carryMain}}})
+			write(map[string]any{"sha": headSHA, "tree": map[string]any{"sha": "tree-" + headSHA},
+				"parents": []any{map[string]any{"sha": carryS}, map[string]any{"sha": carryMain}}})
+		case pre + "/git/commits/" + carryS:
+			write(map[string]any{"sha": carryS, "tree": map[string]any{"sha": "tree-" + carryS}, "parents": []any{map[string]any{"sha": baseS}}})
 		case pre + "/compare/main..." + carryMain:
 			write(map[string]any{"status": "identical", "ahead_by": 0, "behind_by": 0})
 		case pre + "/compare/main..." + carryS:
-			write(map[string]any{"status": "behind", "ahead_by": 1, "behind_by": 1, "files": in.CarryOver.Files})
+			write(map[string]any{"status": "behind", "ahead_by": 1, "behind_by": 1, "files": in.CarryOver.Files, "merge_base_commit": mergeBase(baseS)})
 		default:
+			if t, ok := trees[strings.TrimPrefix(p, pre+"/git/trees/")]; ok && r.URL.Query().Get("recursive") == "1" {
+				write(t)
+				return
+			}
 			t.Errorf("想定外の要求 %s %s", r.Method, p)
 			w.WriteHeader(http.StatusNotFound)
 		}

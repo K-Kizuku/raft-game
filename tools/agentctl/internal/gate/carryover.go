@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/config"
@@ -19,7 +21,8 @@ import (
 //  1. HEAD から最初の親をたどると S に着き、その間のコミットはすべてマージコミットで、
 //     2 番目以降の親はベースのブランチの履歴に含まれる（S のあとに PR の作者の変更のコミットがない）
 //  2. マージベースから S までの変更ファイルと、マージベースから HEAD までの変更ファイルが、
-//     一覧（名前・前の名前・状態）でも、正規化した patch-id（PatchID）でも一致する。patch がないファイルがあれば引き継がない
+//     一覧（名前・前の名前・状態）でも、正規化した patch-id（PatchID。文脈の行とハンクの区切りを含め、行番号と空白は無視する）でも、
+//     ファイルのモード（差分の両端）でも一致する。patch がない・ハンクの形が読めない・モードを確かめられないファイルがあれば引き継がない
 //  3. S の最新のレビューが approve で、C7（重大な指摘が残っていない）と C8 を満たす
 //  4. PR が保護されたパスを変えていない
 //  5. 設定 review.carry_over_on_base_merge が true
@@ -145,7 +148,7 @@ func (e *evaluator) carryOver() CarryOver {
 	if hit := ProtectedFiles(e.cfg, m.Files); len(hit) > 0 {
 		return no("%s で保護されたパスを変えている（%s）", short(co.SHA), strings.Join(hit, ", "))
 	}
-	if err := sameChanges(m.Files, e.in.Files); err != "" {
+	if err := sameChanges(m.Files, e.in.Files, m.Modes); err != "" {
 		return no("%s", err)
 	}
 	co.OK = true
@@ -183,8 +186,8 @@ func checkMergeChain(head, s string, commits []Commit, inBase map[string]bool, b
 }
 
 // sameChanges は、マージベースから S までの変更ファイル a と、HEAD までの変更ファイル b が、
-// 一覧と patch-id で一致するかを確かめる。一致しなければ理由を返す。
-func sameChanges(a, b []File) string {
+// 一覧と patch-id とファイルのモードで一致するかを確かめる。一致しなければ理由を返す。
+func sameChanges(a, b []File, modes *CarryOverModes) string {
 	if len(a) >= MaxCompareFiles {
 		return fmt.Sprintf("S の変更ファイルが %d 件以上（一覧が不完全かもしれない）", MaxCompareFiles)
 	}
@@ -203,8 +206,52 @@ func sameChanges(a, b []File) string {
 		if x.Patch == "" || y.Patch == "" {
 			return fmt.Sprintf("%s の patch がない（大きすぎる・バイナリ・中身の変更がない）", x.Filename)
 		}
-		if PatchID(x.Patch) != PatchID(y.Patch) {
+		px, err := PatchID(x.Patch)
+		if err != nil {
+			return fmt.Sprintf("%s の S の patch が読めない（%v）", x.Filename, err)
+		}
+		py, err := PatchID(y.Patch)
+		if err != nil {
+			return fmt.Sprintf("%s の HEAD の patch が読めない（%v）", y.Filename, err)
+		}
+		if px != py {
 			return fmt.Sprintf("%s の差分が違う（patch-id が一致しない）", x.Filename)
+		}
+		if err := sameMode(x, modes); err != "" {
+			return err
+		}
+	}
+	return ""
+}
+
+// sameMode は、ファイル f のモード（実行権限など）の変更が、S の差分と HEAD の差分で同じかを確かめる。
+// 差分の両端（マージベースと先端）のモードがそれぞれ一致すること。確かめられなければ理由を返す。
+// f は S と HEAD で一覧（名前・前の名前・状態）が一致したファイル。
+func sameMode(f File, modes *CarryOverModes) string {
+	if modes == nil {
+		return "ファイルのモードの材料がない"
+	}
+	old := f.Filename
+	if f.PreviousFilename != "" {
+		old = f.PreviousFilename
+	}
+	type end struct {
+		name     string
+		s, head  map[string]string
+		path     string
+		required bool
+	}
+	for _, e := range []end{
+		{"マージベース", modes.S.Base, modes.Head.Base, old, f.Status != "added"},
+		{"先端", modes.S.Tip, modes.Head.Tip, f.Filename, f.Status != "removed"},
+	} {
+		ms, okS := e.s[e.path]
+		mh, okH := e.head[e.path]
+		switch {
+		case e.required && (!okS || !okH):
+			return fmt.Sprintf("%s の%sのモードを確かめられない", e.path, e.name)
+		case okS != okH || ms != mh:
+			return fmt.Sprintf("%s のモードが違う（%sで S は %q、HEAD は %q）", f.Filename, e.name, ms, mh)
 		}
 	}
 	return ""
@@ -225,30 +272,89 @@ func describeFile(f File) string {
 }
 
 // PatchID は、差分（GitHub の files[].patch）の正規化した patch-id を返す。
-// `git patch-id --stable` と同じ考え方で、ハンクの見出し（@@ の行番号）と空白の違いを無視し、変更行の中身で比べる。
-// 文脈の行（先頭が空白）は含めない（main の取り込みで文脈が変わっても、変更行が同じなら同じ ID になる）。
-// 変更行の直後の「\ No newline at end of file」は含める。
-func PatchID(patch string) string {
+// `git patch-id --stable` と同じ考え方で、ハンクの見出しの行番号と空白の違いだけを無視する。
+// ハンクの区切りと見出しの残り（関数名など）、文脈の行（先頭が空白）、変更行（+・-）、「\ No newline at end of file」を順に含める
+// （変更行が同じでも、変更の場所（文脈）が違えば別の ID になる。git patch-id --stable より厳しい）。
+// ハンクの形が読めない（見出しがない・見出しの行数と中身の行数が合わない・知らない形の行がある）ときはエラーを返す。
+func PatchID(patch string) (string, error) {
+	lines := strings.Split(patch, "\n")
 	h := sha256.New()
-	afterChange := false
-	for _, line := range strings.Split(patch, "\n") {
-		switch {
-		case strings.HasPrefix(line, "@@"):
-			afterChange = false
-		case strings.HasPrefix(line, "+"), strings.HasPrefix(line, "-"):
-			h.Write([]byte{line[0]})
-			h.Write([]byte(removeSpace(line[1:])))
-			h.Write([]byte{'\n'})
-			afterChange = true
-		case strings.HasPrefix(line, `\`):
-			if afterChange {
-				h.Write([]byte("\\\n"))
+	inHunk := false
+	oldLeft, newLeft := 0, 0
+	prevLine := false // 直前がハンクの中身の行（「\」の行を置ける）
+	for i, line := range lines {
+		if m := hunkHeaderRe.FindStringSubmatch(line); m != nil {
+			if inHunk && (oldLeft != 0 || newLeft != 0) {
+				return "", fmt.Errorf("%d 行目: 前のハンクの行数が見出しと合わない", i+1)
 			}
-		default:
-			afterChange = false
+			oldLeft, newLeft = hunkCount(m[2]), hunkCount(m[4])
+			if oldLeft < 0 || newLeft < 0 {
+				return "", fmt.Errorf("%d 行目: ハンクの見出しが読めない", i+1)
+			}
+			inHunk, prevLine = true, false
+			h.Write([]byte("@@"))
+			h.Write([]byte(removeSpace(m[5])))
+			h.Write([]byte{'\n'})
+			continue
 		}
+		if !inHunk {
+			return "", fmt.Errorf("%d 行目: ハンクの見出しの前に行がある", i+1)
+		}
+		if line == "" && oldLeft == 0 && newLeft == 0 && i == len(lines)-1 {
+			break // 末尾の改行
+		}
+		var kind byte
+		switch {
+		case line == "", line[0] == ' ':
+			kind, oldLeft, newLeft = ' ', oldLeft-1, newLeft-1
+		case line[0] == '-':
+			kind, oldLeft = '-', oldLeft-1
+		case line[0] == '+':
+			kind, newLeft = '+', newLeft-1
+		case line[0] == '\\':
+			if !prevLine {
+				return "", fmt.Errorf("%d 行目: 「\\」の行の前に中身の行がない", i+1)
+			}
+			h.Write([]byte("\\\n"))
+			prevLine = false
+			continue
+		default:
+			return "", fmt.Errorf("%d 行目: 知らない形の行", i+1)
+		}
+		if oldLeft < 0 || newLeft < 0 {
+			return "", fmt.Errorf("%d 行目: ハンクの行数が見出しより多い", i+1)
+		}
+		body := ""
+		if line != "" {
+			body = line[1:]
+		}
+		h.Write([]byte{kind})
+		h.Write([]byte(removeSpace(body)))
+		h.Write([]byte{'\n'})
+		prevLine = true
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	switch {
+	case !inHunk:
+		return "", fmt.Errorf("ハンクがない")
+	case oldLeft != 0 || newLeft != 0:
+		return "", fmt.Errorf("最後のハンクの行数が見出しと合わない")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hunkHeaderRe は、ハンクの見出し（@@ -a[,b] +c[,d] @@ 残り）。
+var hunkHeaderRe = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@(.*)$`)
+
+// hunkCount は、見出しの行数（省略なら 1）を返す。読めなければ -1。
+func hunkCount(s string) int {
+	if s == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n > 1<<20 {
+		return -1
+	}
+	return n
 }
 
 // removeSpace は、空白（git の isspace と同じ ASCII の空白）をすべて除く。
