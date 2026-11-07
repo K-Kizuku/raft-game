@@ -1,0 +1,176 @@
+/* リザルト（T-408）。.result の下にだけ効かせる。文字のコントラスト比は白の背景に 4.5:1 以上。 */
+
+.result {
+  color: #111827;
+}
+
+.result .result-section {
+  margin: 1.5rem 0;
+}
+
+.result .result-section h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+
+.result .result-stars {
+  margin: 0;
+  color: #92400e;
+  font-size: 2.5rem;
+  letter-spacing: 0.25rem;
+  line-height: 1.2;
+}
+
+.result .result-stage-message {
+  font-weight: bold;
+}
+
+.result .result-conditions {
+  list-style: none;
+  padding: 0;
+  color: #4b5563;
+}
+
+.result .result-conditions li[data-achieved="true"] {
+  color: #166534;
+  font-weight: bold;
+}
+
+.result .result-condition-mark {
+  display: inline-block;
+  width: 1.5em;
+}
+
+.result .result-total {
+  margin: 0 0 0.5rem;
+  font-size: 2rem;
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+}
+
+.result .result-breakdown {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.result .result-breakdown th,
+.result .result-breakdown td {
+  padding: 0.25rem 0.75rem;
+  border-bottom: 1px solid #d1d5db;
+}
+
+.result .result-breakdown th {
+  text-align: left;
+  font-weight: normal;
+}
+
+.result .result-breakdown td {
+  text-align: right;
+}
+
+.result .result-breakdown tfoot th,
+.result .result-breakdown tfoot td {
+  font-weight: bold;
+  border-bottom: none;
+}
+
+.result .result-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.375rem 1rem;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.result .result-list dt {
+  font-weight: bold;
+}
+
+.result .result-list dd {
+  margin: 0;
+}
+
+.result .result-letters,
+.result .result-logs,
+.result .result-story {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.result .result-log {
+  margin-bottom: 0.75rem;
+}
+
+.result .result-log-island {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-weight: bold;
+}
+
+.result .result-log-dot {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  border: 1px solid #374151;
+}
+
+.result .result-log-text,
+.result .result-log-empty {
+  margin: 0.125rem 0;
+}
+
+/* ログの帯。offset・各 Term・padding を flexGrow の比で並べる（scale は全島で共通）。 */
+.result .log-band {
+  display: flex;
+  height: 0.75rem;
+  margin: 0.25rem 0;
+  border: 1px solid #6b7280;
+  border-radius: 0.25rem;
+  overflow: hidden;
+  background: #f3f4f6;
+}
+
+.result .log-band > span {
+  flex-basis: 0;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* 未確定の記録は斜線の模様。 */
+.result .log-segment[data-committed="false"] {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgb(255 255 255 / 0.65) 0,
+    rgb(255 255 255 / 0.65) 0.25rem,
+    transparent 0.25rem,
+    transparent 0.5rem
+  );
+}
+
+.result .result-story time {
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+}
+
+.result .result-story p {
+  margin: 0.125rem 0;
+}
+
+.result .result-concepts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  list-style: none;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0;
+}
+
+.result .result-concepts li {
+  padding: 0 0.5rem;
+  border-radius: 0.75rem;
+  background: #e0e7ff;
+  color: #1e3a8a;
+  font-size: 0.875rem;
+}
