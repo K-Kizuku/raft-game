@@ -1,0 +1,269 @@
+/* SVG の絵の部品（T-424a・docs/11-visual-design.md §7）。温かい絵本・海図風。
+   色はすべてトークン（web/src/ui/theme/tokens.css）から引き、16 進の色を直接書かない。
+   半透明は opacity か color-mix() で作る。人の素材（Issue 131 のタイトルの絵）が届くまでの代わり。 */
+
+.art {
+  /* 線の色（墨を少し薄くして、水彩の絵の輪郭にする） */
+  --art-line: color-mix(in srgb, var(--color-ink) 85%, transparent);
+  /* 木の濃い緑（島の緑に墨を混ぜる） */
+  --art-tree: color-mix(in srgb, var(--color-land-green) 70%, var(--color-ink));
+  /* 浅瀬（海の淡い色を紙に少し寄せる） */
+  --art-shoal: color-mix(in srgb, var(--color-sea-light) 70%, var(--color-paper));
+
+  display: block;
+  overflow: visible;
+}
+
+/* 線 */
+.art-line {
+  fill: none;
+  stroke: var(--art-line);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 塗り（輪郭つき） */
+.art-paper,
+.art-sand,
+.art-green,
+.art-hull,
+.art-gold,
+.art-sea-deep,
+.art-sea-mid {
+  stroke: var(--art-line);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+
+.art-paper {
+  fill: var(--color-paper);
+}
+
+.art-sand {
+  fill: var(--color-land);
+}
+
+.art-green {
+  fill: var(--color-land-green);
+}
+
+.art-tree {
+  fill: var(--art-tree);
+}
+
+.art-hull,
+.art-postal {
+  fill: var(--color-postal);
+}
+
+.art-gold {
+  fill: var(--color-gold);
+}
+
+.art-ink {
+  fill: var(--art-line);
+}
+
+.art-sea-deep {
+  fill: var(--color-sea-deep);
+}
+
+.art-sea-mid {
+  fill: var(--color-sea-mid);
+}
+
+.art-shoal {
+  fill: var(--art-shoal);
+}
+
+/* 島の周りの白い波打ち際 */
+.art-foam {
+  fill: none;
+  stroke: var(--color-paper);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 10 9;
+  opacity: 0.9;
+}
+
+/* 船の後ろの航跡 */
+.art-wake {
+  fill: none;
+  stroke: var(--color-paper);
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+
+/* ===== タイトルの絵（TitleArt） ===== */
+
+.title-art-paper {
+  fill: var(--color-paper);
+}
+
+.title-art-stop-light {
+  stop-color: var(--color-sea-light);
+}
+
+.title-art-stop-mid {
+  stop-color: var(--color-sea-mid);
+}
+
+.title-art-stop-paper {
+  stop-color: var(--color-paper);
+}
+
+/* 水彩のにじみ（濃い色を薄く重ねる） */
+.title-art-wash-mid {
+  fill: var(--color-sea-mid);
+  opacity: 0.45;
+}
+
+.title-art-wash-light {
+  fill: var(--color-sea-light);
+  opacity: 0.7;
+}
+
+.title-art-wash-deep {
+  fill: var(--color-sea-deep);
+  opacity: 0.12;
+}
+
+/* 海図の経緯線と枠 */
+.title-art-grid {
+  fill: none;
+  stroke: var(--color-sea-deep);
+  stroke-width: 1.5;
+  opacity: 0.16;
+}
+
+.title-art-frame {
+  fill: none;
+  stroke: var(--color-ink-muted);
+  stroke-width: 2;
+  opacity: 0.55;
+}
+
+.title-art-frame-ticks {
+  fill: none;
+  stroke: var(--color-ink-muted);
+  stroke-width: 6;
+  stroke-dasharray: 40 40;
+  opacity: 0.35;
+}
+
+/* 航路（海図の点線） */
+.title-art-route {
+  fill: none;
+  stroke: var(--color-postal);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 16;
+  opacity: 0.75;
+}
+
+/* 波の印 */
+.title-art-wave {
+  fill: none;
+  stroke: var(--color-sea-deep);
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.4;
+}
+
+/* 中央を明るくして、タイトルの文字を読みやすくする（塗りは紙の色の放射グラデーション） */
+.title-art-glow {
+  opacity: 0.6;
+}
+
+/* 動き（動きを減らす設定のときは動かさない。docs/11-visual-design.md §10） */
+@media (prefers-reduced-motion: no-preference) {
+  .title-art-waves-a {
+    animation: title-art-drift 9s ease-in-out infinite alternate;
+  }
+
+  .title-art-waves-b {
+    animation: title-art-drift 12s ease-in-out -4s infinite alternate-reverse;
+  }
+
+  .title-art-ship {
+    transform-box: fill-box;
+    transform-origin: 50% 80%;
+    animation: title-art-bob 4.5s ease-in-out infinite;
+  }
+
+  .title-art-sail {
+    animation: title-art-sail 60s linear infinite;
+  }
+
+  .title-art-float {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: title-art-float 6s ease-in-out infinite;
+  }
+
+  .title-art-float-2 {
+    animation-delay: -2s;
+    animation-duration: 7s;
+  }
+
+  .title-art-float-3 {
+    animation-delay: -4s;
+    animation-duration: 8s;
+  }
+
+  .title-art-route {
+    animation: title-art-route 3s linear infinite;
+  }
+}
+
+@keyframes title-art-drift {
+  from {
+    transform: translateX(-14px);
+  }
+
+  to {
+    transform: translateX(14px);
+  }
+}
+
+@keyframes title-art-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+
+  50% {
+    transform: translateY(-6px) rotate(2deg);
+  }
+}
+
+/* 船が航路に沿って、左右にゆっくり行き来する */
+@keyframes title-art-sail {
+  0%,
+  100% {
+    transform: translateX(-60px);
+  }
+
+  50% {
+    transform: translateX(60px);
+  }
+}
+
+@keyframes title-art-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  50% {
+    transform: translateY(-10px) rotate(4deg);
+  }
+}
+
+@keyframes title-art-route {
+  to {
+    stroke-dashoffset: -16.1;
+  }
+}

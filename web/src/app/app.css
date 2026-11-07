@@ -17,14 +17,66 @@
   font-family: var(--font-body);
 }
 
+/* タイトルの絵を画面いっぱいに敷けるよう、ブラウザの既定の余白を消す（T-424a）。 */
+:where(body) {
+  margin: 0;
+}
+
+/* 画面の枠。中央にそろえる（T-424a）。 */
 .app-screen {
   max-width: 48rem;
   margin: 0 auto;
-  padding: 1rem;
+  padding: var(--space-6) var(--space-4);
 }
 
 .app-screen h1:focus {
   outline: none;
+}
+
+/* 紙のカードの画面（遊び方・クレジット・設定。T-424a）。重なった紙に、海図の枠のような点線を内側に引く。 */
+.app-card.app-screen {
+  position: relative;
+  box-sizing: border-box;
+  margin-block: var(--space-6);
+  padding: var(--space-6);
+  color: var(--color-ink);
+  background: var(--color-paper-deep);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-paper);
+}
+
+.app-card.app-screen::before {
+  position: absolute;
+  inset: var(--space-2);
+  content: "";
+  border: 2px dashed color-mix(in srgb, var(--color-ink-muted) 35%, transparent);
+  border-radius: calc(var(--radius-l) - var(--space-2));
+  pointer-events: none;
+}
+
+/* 狭い画面（768px まで）では、カードの外の余白を詰める。 */
+@media (max-width: 52rem) {
+  .app-card.app-screen {
+    margin-inline: var(--space-4);
+  }
+}
+
+/* カードの見出し。下に海図の点線を引く。 */
+.app-card > h1 {
+  margin: 0 0 var(--space-5);
+  padding-bottom: var(--space-3);
+  border-bottom: 3px dotted color-mix(in srgb, var(--color-sea-deep) 55%, transparent);
+  letter-spacing: 0.06em;
+}
+
+/* 戻るボタン（.btn の紙の札に、左向きの矢印）。 */
+.app-back.btn {
+  margin-top: var(--space-6);
+}
+
+.app-back .art-icon {
+  width: 1.25em;
+  height: 1.25em;
 }
 
 .app-menu,
@@ -40,6 +92,11 @@
   margin: 1rem 0;
 }
 
+/* 中身が無いときは場所を取らない（タイトルの絵が画面の高さちょうどに収まるように。T-424a）。 */
+.turnstile-host:empty {
+  margin: 0;
+}
+
 /* セッションの作成の状態（T-413）。 */
 .session-notice {
   max-width: 48rem;
@@ -48,5 +105,6 @@
 }
 
 .session-notice-error p {
-  color: #b91c1c;
+  /* 失敗の色（--color-danger に墨を混ぜ、紙の上で 4.5:1 以上にする） */
+  color: color-mix(in srgb, var(--color-danger) 75%, var(--color-ink));
 }

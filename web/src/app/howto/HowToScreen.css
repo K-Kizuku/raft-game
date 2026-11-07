@@ -1,0 +1,102 @@
+/* 遊び方（T-424a）。便箋のカードに、番号つきの手順を絵と並べる（docs/11-visual-design.md §8）。
+   共通の紙のカード（.app-card）を、罫線と赤い余白線の便箋にする。色はトークンだけを使う。 */
+
+.app-howto {
+  /* 便箋の行の高さ（罫線の間隔）。大きな画面では本文の文字とともに大きくなる */
+  --howto-line: calc(var(--font-size-body) * 2);
+  /* 便箋の罫線と、左の余白線 */
+  --howto-rule: color-mix(in srgb, var(--color-sea-mid) 45%, transparent);
+  --howto-margin: color-mix(in srgb, var(--color-postal) 45%, transparent);
+}
+
+.app-howto.app-card.app-screen {
+  padding-left: calc(var(--space-6) + var(--space-5));
+  background-color: var(--color-paper);
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent calc(var(--space-6) - 1px),
+      var(--howto-margin) calc(var(--space-6) - 1px),
+      var(--howto-margin) calc(var(--space-6) + 1px),
+      transparent calc(var(--space-6) + 1px)
+    ),
+    repeating-linear-gradient(
+      180deg,
+      transparent 0,
+      transparent calc(var(--howto-line) - 1px),
+      var(--howto-rule) calc(var(--howto-line) - 1px),
+      var(--howto-rule) var(--howto-line)
+    );
+}
+
+/* 右上の切手のような封筒（飾り） */
+.app-howto .howto-stamp {
+  position: absolute;
+  top: var(--space-5);
+  right: var(--space-5);
+  width: 3.5em;
+  height: auto;
+  transform: rotate(8deg);
+}
+
+.app-howto > h1 {
+  padding-right: 4em;
+}
+
+/* 手順。番号（CSS の連番）と絵を左に、文を右に置く。 */
+.app-howto .howto-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: howto-step;
+}
+
+.app-howto .howto-step {
+  position: relative;
+  box-sizing: border-box;
+  /* 1 行の文が絵の高さの真ん中に来るよう、上下の余白で寄せる（2 行以上なら行の高さが伸びる） */
+  min-height: 4.4em;
+  padding: 1.25em var(--space-4) 1.25em 8em;
+  background: var(--color-paper);
+  border: 2px solid color-mix(in srgb, var(--color-ink) 25%, transparent);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  counter-increment: howto-step;
+  font-size: calc(var(--font-size-body) * 1.1);
+  line-height: 1.7;
+}
+
+.app-howto .howto-step::before {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  display: grid;
+  place-items: center;
+  width: 1.8em;
+  height: 1.8em;
+  content: counter(howto-step);
+  color: var(--color-ink);
+  background: var(--color-gold);
+  border: 2px solid var(--color-ink);
+  border-radius: 50%;
+  font-family: var(--font-number);
+  font-weight: bold;
+  transform: translateY(-50%);
+}
+
+.app-howto .howto-step-icon {
+  position: absolute;
+  top: 50%;
+  left: 2.8em;
+  width: 4.8em;
+  height: 3.8em;
+  transform: translateY(-50%);
+}
+
+.app-howto .howto-note {
+  margin: var(--space-5) 0 0;
+  color: var(--color-ink-muted);
+}
