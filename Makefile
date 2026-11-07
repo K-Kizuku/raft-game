@@ -13,6 +13,11 @@ SHELL := bash
 
 .PHONY: help test lint gen sync-data dev dev-env clean-docker demo-local
 
+# golangci-lint の版。.github/workflow-sources/ci.yml の server ジョブの
+# GOLANGCI_LINT_VERSION と同じ版にする。PATH の golangci-lint は使わず、
+# `go run` で server/go.mod の Go でビルドして実行する（T-005 / #13）。
+GOLANGCI_LINT_VERSION := v2.15.0
+
 # レシピの先頭で読み込む小さな関数。
 #   run  <cmd...>  実行して、失敗したら status=1 にする
 #   skip <理由>    「（対象なし: 理由）」と出す
@@ -50,7 +55,7 @@ test: ## Go（tools/*・server）・web・scripts/ の Python・tests/run.sh の
 	if [ $$status -ne 0 ]; then echo "make test: 失敗したものがある" >&2; fi; \
 	exit $$status
 
-lint: ## go vet・gofmt（tools/*・server）・web の lint・shellcheck を実行する
+lint: ## go vet・gofmt（tools/*・server）・golangci-lint（server）・web の lint と typecheck・shellcheck を実行する
 	@$(PRELUDE); \
 	gofmt_check() { \
 	  local out; \
@@ -66,10 +71,13 @@ lint: ## go vet・gofmt（tools/*・server）・web の lint・shellcheck を実
 	  skip "Go のモジュールがない"; \
 	else \
 	  for d in "$${dirs[@]}"; do run go -C "$$d" vet ./...; run gofmt_check "$$d"; done; \
+	  if [ -f server/go.mod ]; then \
+	    run go -C server run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)" run ./...; \
+	  fi; \
 	fi; \
 	if [ ! -f web/package.json ]; then skip "web/package.json がない。T-004 で作る"; \
 	elif ! has pnpm; then skip "pnpm がない"; \
-	else run pnpm -C web lint; fi; \
+	else run pnpm -C web lint; run pnpm -C web typecheck; fi; \
 	files=(); \
 	while IFS= read -r -d '' f; do files+=("$$f"); done < <(git ls-files -z -- '*.sh'); \
 	if ! has shellcheck; then skip "shellcheck がない"; \
