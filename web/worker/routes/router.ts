@@ -11,6 +11,7 @@ import { handleAdminGuards } from "./admin.ts";
 import type { Env } from "./env.ts";
 import { handleHealthz } from "./health.ts";
 import { errorResponse } from "./http.ts";
+import { handleInputLog } from "./input-log.ts";
 import { isOriginAllowed, parseAllowedOrigins } from "./origin.ts";
 import type { RequestContext, WorkerDeps } from "./ports.ts";
 import { handleCreateSession } from "./sessions.ts";
@@ -46,11 +47,18 @@ const FIXED_ROUTES: ReadonlyMap<string, Route> = new Map<string, Route>([
 const WS_SESSION_ROUTE: Route = { methods: ["GET"], originRequired: true, handle: handleWebSocket };
 const WS_SESSION_PATH = /^\/ws\/sessions\/([^/]+)$/;
 
+// 同じオリジンの GET はブラウザが Origin を付けないことがあるので originRequired: false
+// （付いていれば今の規則で確かめる）。T-714。
+const INPUT_LOG_ROUTE: Route = { methods: ["GET"], originRequired: false, handle: handleInputLog };
+const INPUT_LOG_PATH = /^\/api\/sessions\/([^/]+)\/input-log$/;
+
 function matchRoute(pathname: string): { route: Route; param: string } | null {
   const fixed = FIXED_ROUTES.get(pathname);
   if (fixed !== undefined) return { route: fixed, param: "" };
   const id = WS_SESSION_PATH.exec(pathname)?.[1];
   if (id !== undefined) return { route: WS_SESSION_ROUTE, param: id };
+  const logId = INPUT_LOG_PATH.exec(pathname)?.[1];
+  if (logId !== undefined) return { route: INPUT_LOG_ROUTE, param: logId };
   return null;
 }
 

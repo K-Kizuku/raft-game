@@ -118,6 +118,29 @@ describe("P-3 connect", () => {
   });
 });
 
+describe("P-3b inputLog（T-714）", () => {
+  const TOKEN = "Tok_en-abcdefghijklmno"; // 22 文字
+
+  it("X-Session-Token を渡し、Cookie・クエリは渡さず、応答をそのまま返す", async () => {
+    const response = new Response('{"format":1}', { status: 200 });
+    const fake = fakeNamespace(() => response);
+    const ctx = ctxFor(`${ORIGIN}/api/sessions/${ID}/input-log?x=1`, {
+      "x-session-token": TOKEN,
+      cookie: "secret=1",
+    });
+    const ports = portsOf({ GAME_SESSION: fake.namespace });
+    expect(fake.calls).toEqual([]);
+    const result = await ports.inputLog?.(ID, ctx);
+    expect(result).toBe(response);
+    expect(fake.calls).toEqual([`idFromName(${ID})`, "get"]);
+    const [request] = fake.requests;
+    expect(request?.method).toBe("GET");
+    expect(request?.url).toBe("https://game-session.internal/input-log");
+    expect(request?.headers.get("x-session-token")).toBe(TOKEN);
+    expect(request?.headers.get("cookie")).toBeNull();
+  });
+});
+
 describe("P-4 部品を作っただけでは DO に触れない", () => {
   it("idFromName・get を呼ばない", () => {
     const fake = fakeNamespace(() => new Response("{}", { status: 201 }));
@@ -210,5 +233,37 @@ describe("P-5 ルーターとの組み合わせ", () => {
     expect(res.status).toBe(404);
     expect(fakes.calls).toEqual(["verifySessionId"]);
     expect(fake.calls).toEqual([]);
+  });
+
+  it.each<[string, VerifiedSessionId | null, Record<string, string>]>([
+    ["verifySessionId が null", null, { "x-session-token": "t".repeat(22) }],
+    ["トークンの形が違う", ID, { "x-session-token": "short" }],
+  ])("%s の /api/sessions/{id}/input-log は GAME_SESSION に触れない（G3）", async (_n, v, h) => {
+    const fakes = routerFakes(v);
+    const fake = fakeNamespace(() => new Response("{}", { status: 200 }));
+    const res = await handlerWith(fakes)(
+      new Request(`${ORIGIN}/api/sessions/${ID}/input-log`, { headers: h }),
+      { GAME_SESSION: fake.namespace },
+    );
+    expect(res.status).toBe(404);
+    expect(fakes.calls).toEqual(["verifySessionId"]);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("正しい要求の /api/sessions/{id}/input-log は DO の /input-log の応答を返す", async () => {
+    const fakes = routerFakes(ID);
+    const fake = fakeNamespace((request) => {
+      fakes.calls.push(`do:${new URL(request.url).pathname}`);
+      return new Response('{"format":1}', { status: 200 });
+    });
+    const res = await handlerWith(fakes)(
+      new Request(`${ORIGIN}/api/sessions/${ID}/input-log`, {
+        headers: { "x-session-token": "t".repeat(22) },
+      }),
+      { GAME_SESSION: fake.namespace },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"format":1}');
+    expect(fakes.calls).toEqual(["verifySessionId", "do:/input-log"]);
   });
 });

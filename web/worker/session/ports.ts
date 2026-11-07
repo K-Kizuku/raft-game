@@ -18,5 +18,8 @@ export const createSessionPorts: (env: Env) => SessionPorts | undefined = (env) 
     init: (sessionId, init) => client.init(sessionId, init),
     // 元の要求のほかのヘッダー（Cookie など）は渡さない。
     connect: (sessionId, ctx) => client.connect(sessionId, ctx.url.searchParams.get("token")),
+    // トークンは URL ではなくヘッダー（X-Session-Token）で受ける（T-714）。ほかのヘッダーは渡さない。
+    inputLog: (sessionId, ctx) =>
+      client.inputLog(sessionId, ctx.request.headers.get("x-session-token") ?? ""),
   };
 };

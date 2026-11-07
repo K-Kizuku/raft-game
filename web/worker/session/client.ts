@@ -14,6 +14,8 @@ export interface GameSessionClient {
   init(sessionId: VerifiedSessionId, init: SessionInit): Promise<void>;
   // DO の応答（101 など）を包み直さずにそのまま返す。token が null ならヘッダーを付けない。
   connect(sessionId: VerifiedSessionId, token: string | null): Promise<Response>;
+  // GET /input-log（T-714）。DO の応答（200・404 など）を包み直さずにそのまま返す。
+  inputLog(sessionId: VerifiedSessionId, token: string): Promise<Response>;
 }
 
 export function createGameSessionClient(namespace: DurableObjectNamespaceLike): GameSessionClient {
@@ -52,6 +54,15 @@ export function createGameSessionClient(namespace: DurableObjectNamespaceLike): 
       if (token !== null) headers["x-session-token"] = token;
       return stubOf(sessionId).fetch(
         new Request(`${BASE_URL}/connect`, { method: "GET", headers }),
+      );
+    },
+
+    async inputLog(sessionId, token) {
+      return stubOf(sessionId).fetch(
+        new Request(`${BASE_URL}/input-log`, {
+          method: "GET",
+          headers: { "x-session-token": token },
+        }),
       );
     },
   };

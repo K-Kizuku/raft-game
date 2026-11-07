@@ -676,6 +676,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 
 - **トレースのハッシュ** = 各イベントの JSON（`seq`・`t`・`type`、そのあと中身のフィールドの順に並べた平らなオブジェクト。`encoding/json` の出力で、余分な空白なし）の後ろに改行（`\n`）を 1 つ付けて、出した順に連結したものの SHA-256。最後のイベントの後ろにも改行を付ける。イベントが 0 件なら空のバイト列の SHA-256。`DrainEvents` で取り出したかどうかに関係なく、`New` からの全イベントが対象。決定性のテスト（V-6）に使います
 - リザルトの統計（Leader の交代回数、平均 Commit Latency など）はトレースから計算します。トレースを持っていれば、あとから別の統計を足すこともできます
+- トレースは保存しない。入力ログ（`GET /api/sessions/{id}/input-log`）から `simcli` で作り直す（決定性、V-6。T-714）
 
 ### 10.3 統計の定義
 
@@ -770,6 +771,7 @@ Go サーバーの起動の設定（`server/internal/server` の `ParseConfig`�
 | GET | `/api/stages` | ステージ一覧（ビルド時に `data/stages/` から作った JSON を Worker に同梱） |
 | POST | `/api/sessions` | セッションを作る（`{stageId, seed?, turnstileToken}` → `{sessionId, token}`）。Turnstile とレート制限を確認し、`CostGuard` で費用を予約してから、Durable Object を作り、コンテナの起動を始める |
 | GET | `/ws/sessions/{id}?token=…` | WebSocket に切り替え。**sessionId の署名を確認してから** Durable Object に転送する |
+| GET | `/api/sessions/{id}/input-log` | 入力ログ（§10.1 の形式 1）を JSON の添付ファイルで返す（ヘッダー `X-Session-Token`。FR-LOG-03・T-714）。**sessionId の署名とトークンの形を確認してから** Durable Object に転送する。コンテナが止まった後も sessionId の期限まで取り出せる |
 | GET / PATCH | `/api/admin/guards` | コストガードの設定の確認と切り替え（`ADMIN_TOKEN` が必要） |
 
 詳細は [06-protocol.md](./06-protocol.md)。Go 側の WebSocket ライブラリは `github.com/coder/websocket` を使います（`context` 対応で、依存が少ないため）。
@@ -800,6 +802,7 @@ ctx.container.start({
 |---|---|---|---|
 | `POST` | `/init` | `{ sessionId, stageId, seed, demo, tokenHash }`（JSON、4096 バイトまで。ほかのキーは不可） | `201 {}`・`200 {}`（同じ内容の 2 回目。起動し直さない）・`400 bad_request`・`409 conflict`（違う内容）・`500 start_failed` |
 | `GET` | `/connect` | `Upgrade: websocket`・`X-Session-Token: <token>` | `101`・`404 not_found`・`426 upgrade_required` |
+| `GET` | `/input-log` | `X-Session-Token: <token>` | `200`（入力ログの JSON。`restore.ts` の `buildInputLogJson`。`content-disposition: attachment`）・`404 not_found`（行がない・トークンがない・形が違う・違う。終わったセッションでも `200`。コンテナに触れず、アラームを設定せず、行を書き換えない。T-714） |
 
 - ルーター（§12.2）は `reserve` が `ok` のときだけ `init` を呼び（G1）、`verifySessionId` が通ったときだけ `connect` を呼ぶ（G3）。`createSessionPorts` は呼ばれるまで `idFromName`・`get` を呼ばない
 - トークンは URL ではなくヘッダー `X-Session-Token` で渡す（DO の要求の URL がログに残ってもトークンが出ないように）。DO はハッシュ（`token_hash`）だけを保存し、64 文字どうしを定数時間で比べる

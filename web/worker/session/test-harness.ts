@@ -97,6 +97,14 @@ export async function harness(options: HarnessOptions = {}) {
         new Request("https://game-session.internal/connect", { method: "GET", headers }),
       );
     },
+    // GET /input-log（T-714）。token が null ならヘッダーを付けない。
+    inputLog: (token: string | null = TOKEN, method = "GET") => {
+      const headers: Record<string, string> = {};
+      if (token !== null) headers["x-session-token"] = token;
+      return session.fetch(
+        new Request("https://game-session.internal/input-log", { method, headers }),
+      );
+    },
     drain: () => session.drain(),
     alarm: async () => {
       await session.alarm();

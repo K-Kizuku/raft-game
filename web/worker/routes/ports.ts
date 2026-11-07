@@ -54,6 +54,9 @@ export interface CostGuardPorts {
 export interface SessionPorts {
   init(sessionId: VerifiedSessionId, init: SessionInit, ctx: RequestContext): Promise<void>;
   connect(sessionId: VerifiedSessionId, ctx: RequestContext): Promise<Response>; // DO の fetch の応答をそのまま返す
+  // T-714。GET /input-log の応答をそのまま返す。トークンは ctx.request の X-Session-Token から読む。
+  // 省略できるのは、inputLog より前に作ったテストの偽物のため。ないときルーターは 404 にする。
+  inputLog?(sessionId: VerifiedSessionId, ctx: RequestContext): Promise<Response>;
 }
 
 // 部品がない（undefined）ときは、ルーターが必ず拒否する側（503 か 404）に倒す。
