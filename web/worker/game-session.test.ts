@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { DurableObjectNamespaceLike } from "./admin/cf-types.ts";
 import { GameSession, type GameSessionDeps } from "./game-session.ts";
 import type { Env } from "./routes/env.ts";
+import type { VerifiedSessionId } from "./routes/ports.ts";
+import { createHandler } from "./routes/router.ts";
 import { hashSessionToken } from "./security/token.ts";
+import { createSessionPorts } from "./session/ports.ts";
 import { readSession } from "./session/store.ts";
 import {
   FakeClock,
@@ -225,6 +229,75 @@ describe("G-2 init の失敗", () => {
     expect(await res.json()).toMatchObject({ code: "start_failed" });
     expect(h.row()).toMatchObject({ state: "ended", endReason: "start_failed", alarmAt: null });
     expect(h.storage.alarms).toEqual([h.t0 + 300_000, "delete"]);
+    expect(h.costGuard.settles).toEqual([]);
+  });
+
+  it("setAlarm が失敗 → コンテナを起動せず 500 start_failed、settle なし（fail closed）", async () => {
+    const h = await harness();
+    h.storage.setAlarmError = new Error("storage down");
+    const res = await h.init();
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ code: "start_failed" });
+    expect(h.container.starts).toEqual([]);
+    expect(h.count("monitor")).toBe(0);
+    expect(h.row()).toMatchObject({ state: "ended", endReason: "start_failed", alarmAt: null });
+    expect(h.costGuard.settles).toEqual([]);
+    expect((await h.connect()).status).toBe(404);
+  });
+
+  it("setAlarm が失敗 → ルーターが予約を cancel して 500 internal_error（コンテナは起動しない）", async () => {
+    const h = await harness();
+    h.storage.setAlarmError = new Error("storage down");
+    const routerCalls: string[] = [];
+    const namespace: DurableObjectNamespaceLike = {
+      idFromName: (name) => ({ name }),
+      get: () => ({ fetch: (request) => h.session.fetch(request) }),
+    };
+    const handler = createHandler((env) => {
+      const session = createSessionPorts(env);
+      return {
+        stages: [
+          {
+            id: "stage1",
+            title: "t",
+            region: "r",
+            islands: 3,
+            ferries: 1,
+            durationMs: 180000,
+            unlock: null,
+          },
+        ],
+        security: {
+          checkRateLimit: async () => "ok",
+          verifyTurnstile: async () => "ok",
+          issueSession: async () => ({
+            sessionId: SESSION_ID as VerifiedSessionId,
+            token: TOKEN,
+            tokenHash: h.tokenHash,
+          }),
+          verifySessionId: async () => null,
+        },
+        costGuard: {
+          reserve: async () => (routerCalls.push("reserve"), "ok"),
+          cancel: async () => void routerCalls.push("cancel"),
+          handleAdmin: async () => new Response("{}"),
+        },
+        ...(session === undefined ? {} : { session }),
+      };
+    });
+    const origin = "https://raft.example";
+    const res = await handler(
+      new Request(`${origin}/api/sessions`, {
+        method: "POST",
+        headers: { origin, "content-type": "application/json" },
+        body: JSON.stringify({ stageId: "stage1", seed: 1 }),
+      }),
+      { GAME_SESSION: namespace },
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ code: "internal_error" });
+    expect(routerCalls).toEqual(["reserve", "cancel"]);
+    expect(h.container.starts).toEqual([]);
     expect(h.costGuard.settles).toEqual([]);
   });
 
@@ -482,15 +555,147 @@ describe("G-8 ラウンドの終わり", () => {
     expect(h.row()).toMatchObject({ state: "ended", resultJson: null });
   });
 
-  it("settle の失敗・destroy の例外はログを出して続ける（やり直さない）", async () => {
+  it("settle の失敗はログを出して続ける（やり直さない）", async () => {
     const h = await started();
     h.costGuard.settleError = new Error("down");
-    h.container.destroyError = new Error("gone");
     h.lastContainerSocket().receive(msg("internal.result"));
     await h.drain();
     expect(h.row()).toMatchObject({ state: "ended", settled: false, alarmAt: null });
     expect(h.costGuard.settles).toHaveLength(1);
     expect(h.storage.alarms.at(-1)).toBe("delete");
+    const alarms = h.storage.alarms.length;
+    await h.alarm();
+    expect(h.costGuard.settles).toHaveLength(1);
+    expect(h.storage.alarms).toHaveLength(alarms);
+  });
+
+  it("ブラウザが round.result で閉じた後に届いた internal.result も保存し、終える", async () => {
+    const h = await started();
+    const browser = h.lastBrowser();
+    const socket = h.lastContainerSocket();
+    h.clock.t = h.t0 + 90_500;
+    const roundResult = msg("round.result", { seq: 5, payload: { score: 120 } });
+    socket.receive(roundResult);
+    browser.emit("close", { code: 1000, reason: "" });
+    await h.drain();
+    expect(socket.closes).toEqual([{ code: 1000, reason: "browser closed" }]);
+    expect(h.row()?.state).toBe("running");
+
+    socket.receive(msg("internal.result", { payload: { score: 120 } }));
+    await h.drain();
+    expect(browser.sent).toEqual([roundResult]);
+    expect(h.row()).toMatchObject({
+      state: "ended",
+      endReason: "round_ended",
+      resultJson: JSON.stringify({ score: 120 }),
+      settled: true,
+      containerStartedAt: null,
+      alarmAt: null,
+    });
+    expect(h.count("destroy")).toBe(1);
+    expect(h.costGuard.settles).toEqual([{ sessionId: SESSION_ID, runSeconds: 91 }]);
+  });
+
+  it("閉じた接続のソケットからの internal.result 以外の電文は捨てる", async () => {
+    const h = await started();
+    const browser = h.lastBrowser();
+    const socket = h.lastContainerSocket();
+    browser.emit("close", { code: 1000, reason: "" });
+    await h.drain();
+    socket.receive(msg("internal.ping"));
+    socket.receive(msg("snapshot", { seq: 1 }));
+    expect(socket.sent).toHaveLength(1); // internal.init だけ（pong を返さない）
+    expect(browser.sent).toEqual([]);
+    expect(h.row()?.state).toBe("running");
+  });
+});
+
+describe("G-8b コンテナの停止に失敗したときの後始末", () => {
+  it("destroy が 1 回目に失敗 → 精算せずアラームでやり直し、止まってから精算する", async () => {
+    const h = await started();
+    h.container.destroyErrors = [new Error("busy")];
+    h.clock.t = h.t0 + 90_500;
+    h.lastContainerSocket().receive(msg("internal.result", { payload: { score: 1 } }));
+    await h.drain();
+
+    expect(h.count("destroy")).toBe(1);
+    expect(h.container.running).toBe(true);
+    expect(h.costGuard.settles).toEqual([]);
+    expect(h.row()).toMatchObject({
+      state: "ended",
+      endReason: "round_ended",
+      settled: false,
+      containerStartedAt: h.t0,
+      alarmCount: 2,
+      alarmAt: h.t0 + 120_500,
+    });
+    expect(h.storage.alarms.at(-1)).toBe(h.t0 + 120_500);
+
+    h.clock.t = h.t0 + 120_500;
+    await h.alarm();
+    expect(h.count("destroy")).toBe(2);
+    expect(h.container.running).toBe(false);
+    expect(h.costGuard.settles).toEqual([{ sessionId: SESSION_ID, runSeconds: 121 }]);
+    expect(h.row()).toMatchObject({
+      settled: true,
+      containerStartedAt: null,
+      runMs: 120_500,
+      alarmAt: null,
+    });
+    expect(h.storage.alarms.at(-1)).toBe("delete");
+    const ends = h.logs.filter((line) => JSON.parse(line).event === "session.end");
+    expect(ends.map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ reason: "round_ended", runSeconds: 121, settled: true }),
+    ]);
+
+    // 止まった後のアラームは何もしない
+    const alarms = h.storage.alarms.length;
+    await h.alarm();
+    expect(h.count("destroy")).toBe(2);
+    expect(h.costGuard.settles).toHaveLength(1);
+    expect(h.storage.alarms).toHaveLength(alarms);
+  });
+
+  it("上限まで失敗し続けたら、精算しないまま（予約のまま）ログを 1 行出してあきらめる", async () => {
+    const h = await started({ maxAlarms: 3 });
+    h.container.destroyError = new Error("busy");
+    h.lastContainerSocket().receive(msg("internal.result"));
+    await h.drain();
+    for (let i = 0; i < 2; i++) {
+      const at = h.row()?.alarmAt;
+      expect(at).not.toBeNull();
+      h.clock.t = at ?? 0;
+      await h.alarm();
+    }
+    expect(h.count("destroy")).toBe(3);
+    expect(h.row()).toMatchObject({
+      state: "ended",
+      settled: false,
+      alarmCount: 3,
+      alarmAt: null,
+      containerStartedAt: h.t0,
+    });
+    expect(h.storage.alarms.filter((a) => a !== "delete")).toHaveLength(3);
+    expect(h.costGuard.settles).toEqual([]);
+    const exhausted = h.logs.filter((line) => line.includes("retry_exhausted"));
+    expect(exhausted.map((line) => JSON.parse(line))).toEqual([
+      {
+        level: "error",
+        event: "session.error",
+        sessionId: SESSION_ID,
+        op: "destroy",
+        error: "retry_exhausted",
+      },
+    ]);
+  });
+
+  it("後始末の途中で鳴ったアラームは、二重に destroy・settle しない", async () => {
+    const h = await started();
+    h.lastContainerSocket().receive(msg("internal.result"));
+    void h.session.alarm();
+    await h.drain();
+    expect(h.count("destroy")).toBe(1);
+    expect(h.costGuard.settles).toHaveLength(1);
   });
 });
 
@@ -601,6 +806,36 @@ describe("G-10 アラーム", () => {
       await reconnect(h);
     }
     expect(h.row()).toMatchObject({ alarmCount: 3, alarmAt: h.t0 + 11 * MIN, state: "running" });
+  });
+
+  it("切断したときの setAlarm の失敗 → 設定できていないアラームを記録せず、前のアラームを残す", async () => {
+    const h = await afterFirstAlarm();
+    h.storage.setAlarmError = new Error("storage down");
+    h.clock.t = h.t0 + 6 * MIN;
+    h.lastBrowser().emit("close", { code: 1001, reason: "" });
+    await h.drain();
+    expect(h.storage.alarms.at(-1)).toBe(h.t0 + 11 * MIN); // 試した
+    expect(h.row()).toMatchObject({ alarmAt: h.t0 + 30 * MIN, alarmCount: 3, state: "running" });
+
+    // 次に切れたときに、また早いほうへ設定しようとする
+    h.storage.setAlarmError = null;
+    await reconnect(h);
+    h.clock.t = h.t0 + 7 * MIN;
+    h.lastBrowser().emit("close", { code: 1001, reason: "" });
+    await h.drain();
+    expect(h.row()).toMatchObject({ alarmAt: h.t0 + 12 * MIN, alarmCount: 4 });
+  });
+
+  it("alarm() の中の setAlarm の失敗 → 記録せず例外にする（ランタイムが alarm() をやり直す）", async () => {
+    const h = await started();
+    h.storage.setAlarmError = new Error("storage down");
+    h.clock.t = h.t0 + 5 * MIN;
+    await expect(h.session.alarm()).rejects.toThrow();
+    expect(h.row()).toMatchObject({ alarmAt: null, alarmCount: 2, state: "running" });
+
+    h.storage.setAlarmError = null;
+    await h.alarm();
+    expect(h.row()).toMatchObject({ alarmAt: h.t0 + 30 * MIN, alarmCount: 3 });
   });
 
   it("init の後に誰もつながらない → 5 分で idle", async () => {

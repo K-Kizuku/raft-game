@@ -755,7 +755,7 @@ ctx.container.start({
 
 - ルーター（§12.2）は `reserve` が `ok` のときだけ `init` を呼び（G1）、`verifySessionId` が通ったときだけ `connect` を呼ぶ（G3）。`createSessionPorts` は呼ばれるまで `idFromName`・`get` を呼ばない
 - トークンは URL ではなくヘッダー `X-Session-Token` で渡す（DO の要求の URL がログに残ってもトークンが出ないように）。DO はハッシュ（`token_hash`）だけを保存し、64 文字どうしを定数時間で比べる
-- `POST /init` は、`view()` から `gameTime.maxMinutes`・`gameTime.maxAlarms` を 1 回だけ読み（読めないときは 30 分・20 回）、行を作り、**アラームを設定してから**コンテナを起動し、`monitor()` を見張って、`/healthz` を待たずに `201` を返す。起動に失敗したら行を `ended`（`start_failed`）にしてアラームを消し、`500` を返す（`settle` は呼ばない。ルーターが `cancel` する）
+- `POST /init` は、`view()` から `gameTime.maxMinutes`・`gameTime.maxAlarms` を 1 回だけ読み（読めないときは 30 分・20 回）、行を作り、**アラームを設定してから**コンテナを起動し、`monitor()` を見張って、`/healthz` を待たずに `201` を返す。アラームを設定できない（`setAlarm` が失敗した）ときは**コンテナを起動しない**（fail closed）。アラームを設定できない・起動に失敗したときは、行を `ended`（`start_failed`）にしてアラームを消し、`500` を返す（`settle` は呼ばない。ルーターが `cancel` する）
 - `GET /connect` は、行がない・トークンがない・形が違う・違う・終わったセッションを区別せずに `404` にする（ソケットを作らず、コンテナに触れない）
 
 **SQLite の表**（`session/store.ts`。`constructor` で `CREATE TABLE IF NOT EXISTS`）
@@ -786,9 +786,11 @@ ctx.container.start({
 
 3 で**キーを限る**のは、Go の `encoding/json` が構造体のフィールド名を大文字・小文字を区別せずに読むためです（`{"type":"cmd.sync","Type":"internal.init"}` を JS は `cmd.sync`、Go は `internal.init` と読みうる）。DO が読んだ `type` と、コンテナが読む `type` を必ず一致させます。捨てた電文は種類ごとに数え、接続が閉じたときのログ `session.disconnect` に数だけを出します。
 
-**コンテナからの電文**: `seq` を接続ごとの「最後の `seq`」として覚え、`internal.*` はブラウザに送りません（`internal.result` は「ラウンドの終わり」、`internal.ping` には `internal.pong` を返す）。それ以外は受けた文字列のままブラウザに送ります。`fatal` の `error` のうち `stage_not_found`・`internal_error`・`restore_failed`・`session_mismatch` は、中継した後で「終わり」（`container_error`）にします。
+**コンテナからの電文**: `seq` を接続ごとの「最後の `seq`」として覚え、`internal.*` はブラウザに送りません（`internal.result` は「ラウンドの終わり」、`internal.ping` には `internal.pong` を返す）。それ以外は受けた文字列のままブラウザに送ります。置き換えた・ブラウザが閉じた接続のソケットから届いた電文は捨てますが、`internal.result` だけは別です。ブラウザは `round.result` を受けるとすぐ閉じるので、`internal.result` はブラウザが閉じた後に届きえます。同じコンテナの結果なので、保存して「終わり」（`round_ended`）にします。`fatal` の `error` のうち `stage_not_found`・`internal_error`・`restore_failed`・`session_mismatch` は、中継した後で「終わり」（`container_error`）にします。
 
 **終わり**（何度呼んでも 1 回だけ動く）: `state = "ended"` を最初に保存 → ブラウザに知らせて閉じる → コンテナへのソケットを閉じる → `ctx.container.destroy()` → `run_ms`（実際に動いた時間）で `CostGuard.settle(sessionId, ceil(run_ms / 1000))` → `deleteAlarm()`。`settle` の失敗はログに出して**やり直さない**（帳簿は予約のまま＝最悪の費用で数えられる。安全側）。`internal.result` の payload（256 KiB まで）は `result_json` に上書きで保存します。
+
+`destroy()` が失敗したら、停止を確かめられるまで**精算しません**。`container_started_at` を残し、帳簿は予約のまま（最悪の費用）にします。そして 30 秒後（`DESTROY_RETRY_MS`）にアラームを設定し、鳴ったら `destroy()` からやり直します（後始末のやり直し）。止まったら、そこまでの時間で精算してアラームを消します。やり直しのアラームも `max_alarms` の中で数えます。すでに設定してあるアラームが先に鳴るなら、そのアラームでやり直します（数を増やさない）。上限に達して設定できなければ、ログ（`session.error`、`op: "destroy"`・`error: "retry_exhausted"`）を 1 行出してあきらめます（予約のままなので、最悪の費用で数えられる）。後始末は同時に 2 つ動きません。
 
 | 理由 | いつ | ブラウザに送るもの |
 |---|---|---|
@@ -806,8 +808,8 @@ DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"paylo
 
 - 鳴らしたい時刻は、接続中なら `deadline_at`、接続がなければ `min(deadline_at, idle_since + 5 分)`（`idle_since` が NULL で接続もなければ、いまを `idle_since` とみなす）
 - **早いほうにだけ動かす**: `alarm_at` が NULL か、鳴らしたい時刻が `alarm_at` より早いときだけ設定する（遅くしたいときはそのまま鳴らし、鳴ったときに決め直す。つなぎ直しを繰り返しても回数が増えにくい）
-- 設定するたびに `alarm_count` を 1 増やし、`max_alarms`（既定 20）に達していたら設定せずに「終わり」（`alarm_cap`）。数は `setAlarm` の前に保存し、失敗しても戻さない
-- 設定するのは `POST /init` の 1 回（コンテナを起動する前）・接続が切れるたびに最大 1 回・鳴るたびに最大 1 回。`alarm()` は、終わったセッションでは何もしない（設定し直さない）。鳴ったら `deadline_at` を過ぎていれば `time_limit`、接続がないまま 5 分なら `idle`、それ以外は設定し直す
+- 設定するたびに `alarm_count` を 1 増やし、`max_alarms`（既定 20）に達していたら設定せずに「終わり」（`alarm_cap`）。数は `setAlarm` の前に保存し、失敗しても戻さない。`setAlarm` が失敗したら、`alarm_at` を前の値に戻す（設定できていないアラームを「ある」と記録しない。前のアラームは残る）。`alarm()` の中で設定できなかったときは、例外を投げてランタイムに `alarm()` をやり直させる（やり直すたびに数えるので、`max_alarms` で `alarm_cap` になる）
+- 設定するのは `POST /init` の 1 回（コンテナを起動する前）・接続が切れるたびに最大 1 回・鳴るたびに最大 1 回・後始末のやり直し（上の「終わり」）。`alarm()` は、終わったセッションでは、停止を確かめられていないコンテナ（`container_started_at` が NULL でない）の後始末のやり直しだけをする（ほかは何もせず、設定し直さない）。鳴ったら `deadline_at` を過ぎていれば `time_limit`、接続がないまま 5 分なら `idle`、それ以外は設定し直す
 
 **復元の約束**（この Issue で決め、T-308b で実装する。T-302 の `internal.restore` に合わせる）
 

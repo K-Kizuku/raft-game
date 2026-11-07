@@ -29,6 +29,7 @@ import {
 } from "./envelope.ts";
 import {
   CONTAINER_PORT,
+  DESTROY_RETRY_MS,
   IDLE_MS,
   IMAGE_NAME,
   MAX_BUFFERED_MESSAGES,
@@ -210,6 +211,7 @@ export class GameSessionCore {
   #exited = false; // 見張っているコンテナが終わった
   #rateWindow = -1; // Math.floor(now / 1000)。DO に 1 つで、接続をまたいで続く
   #rateCount = 0;
+  #cleaning: Promise<void> | null = null; // 動いている後始末（同時に 2 つ動かさない）
 
   constructor(ctx: GameSessionStateLike, env: Env, deps: GameSessionDeps) {
     this.#ctx = ctx;
@@ -232,7 +234,16 @@ export class GameSessionCore {
 
   async alarm(): Promise<void> {
     const row = this.#row();
-    if (row === null || row.state === "ended") return; // アラームを設定しない
+    if (row === null) return;
+    if (row.state === "ended") {
+      // 停止を確かめられていないコンテナがあれば、後始末をやり直す（回数は max_alarms の中）。
+      // なければ何もしない（アラームを設定しない）。
+      if (row.containerStartedAt !== null) {
+        this.#update({ alarmAt: null });
+        await this.#cleanup();
+      }
+      return;
+    }
     this.#update({ alarmAt: null });
     const now = this.#deps.now();
     if (now >= row.deadlineAt) {
@@ -250,7 +261,11 @@ export class GameSessionCore {
         return;
       }
     }
-    await this.#scheduleAlarm();
+    if (!(await this.#scheduleAlarm()) && this.#row()?.state !== "ended") {
+      // 次のアラームがない（setAlarm が失敗した）。例外にしてランタイムに alarm() をやり直させる
+      // （やり直すたびに数えるので、max_alarms で alarm_cap になって終わる）。
+      throw new Error("alarm not scheduled");
+    }
   }
 
   // テスト用: 進行中の非同期の処理（コンテナへの接続・終わり）がすべて終わるまで待つ。
@@ -323,13 +338,14 @@ export class GameSessionCore {
     });
 
     // コンテナを起動する前にアラームを設定する（起動したコンテナには必ずアラームがある）。
-    await this.#scheduleAlarm();
+    // 設定できなければ起動しない（fail closed。500 を返し、ルーターが予約を cancel する）。
+    const alarmSet = await this.#scheduleAlarm();
 
     const instance = containerInstanceOf(this.#env);
     const container = this.#ctx.container;
     const image = container?.images[IMAGE_NAME];
     let started = false;
-    if (container !== undefined && image !== undefined) {
+    if (alarmSet && container !== undefined && image !== undefined) {
       try {
         container.start({
           image,
@@ -624,24 +640,26 @@ export class GameSessionCore {
   // ---- コンテナからの電文 ----
 
   #onContainerMessage(conn: Connection, data: unknown): void {
-    // 置き換えた・ブラウザが閉じた接続のコンテナへのソケットからの電文は、すべて捨てる。
-    if (this.#conn !== conn || typeof data !== "string") return;
+    if (typeof data !== "string") return;
     const message = classifyContainerText(data);
-    if (message.seq !== null) conn.lastSeq = message.seq;
-    if (conn.closed) {
-      // 終わりの処理の後に同じソケットから届いた internal.result は保存だけする。
-      if (message.kind === "result") this.#saveResult(message.payload);
+    if (message.kind === "result") {
+      // internal.result は、ブラウザが閉じた・置き換えた接続のソケットから届いても、同じコンテナの
+      // 結果なので保存し、セッションを終える（ブラウザは round.result を受けるとすぐ閉じるため、
+      // 閉じた後に届きうる）。終わりの処理は 1 回だけ動き、2 回目以降は保存だけになる。
+      this.#saveResult(message.payload);
+      this.#track(this.#endSession("round_ended"));
       return;
     }
+    // ほかの電文は、置き換えた・ブラウザが閉じた接続のソケットから届いたら、すべて捨てる。
+    if (!this.#isCurrent(conn)) return;
+    if (message.seq !== null) conn.lastSeq = message.seq;
     this.#handleContainerMessage(conn, data, message);
   }
 
   #handleContainerMessage(conn: Connection, data: string, message: ContainerMessage): void {
     switch (message.kind) {
       case "result":
-        this.#saveResult(message.payload);
-        this.#track(this.#endSession("round_ended"));
-        return;
+        return; // #onContainerMessage で扱う
       case "ping":
         if (conn.container !== null) safeSend(conn.container, PONG);
         return;
@@ -692,27 +710,37 @@ export class GameSessionCore {
     const row = this.#row();
     if (row === null || row.state === "ended") return;
     this.#update({ idleSince: this.#deps.now() });
-    this.#track(this.#scheduleAlarm());
+    this.#track(this.#scheduleAlarm().then(() => undefined));
   }
 
   // ---- アラーム ----
 
   // 早いほうにだけ動かす（遅くしたいときはそのまま鳴らし、鳴ったときに決め直す）。
-  async #scheduleAlarm(): Promise<void> {
+  // 戻り値: アラームが設定されている（今回設定した・前のものが残っている）なら true。
+  // 終わった・終わりになった（alarm_cap）・setAlarm が失敗して前のアラームもないなら false。
+  async #scheduleAlarm(): Promise<boolean> {
     const row = this.#row();
-    if (row === null || row.state === "ended") return;
+    if (row === null || row.state === "ended") return false;
     const at = desiredAlarmAt(row, this.#connected(), this.#deps.now());
-    if (row.alarmAt !== null && at >= row.alarmAt) return;
+    if (row.alarmAt !== null && at >= row.alarmAt) return true;
     if (row.alarmCount >= row.maxAlarms) {
       await this.#endSession("alarm_cap");
-      return;
+      return false;
     }
-    // 数を先に保存する（setAlarm が失敗しても戻さない。安全側）。
+    return this.#setAlarmAt(row, at);
+  }
+
+  // 数を先に保存する（setAlarm が失敗しても数は戻さない。安全側）。失敗したら alarm_at を前の値に戻し、
+  // 設定できていないアラームを「ある」と記録しない（前のアラームは置き換わらずに残る）。
+  async #setAlarmAt(row: SessionRow, at: number): Promise<boolean> {
     this.#update({ alarmCount: row.alarmCount + 1, alarmAt: at });
     try {
       await this.#ctx.storage.setAlarm(at);
+      return true;
     } catch (error) {
       this.#logError("setAlarm", error);
+      if (this.#row()?.alarmAt === at) this.#update({ alarmAt: row.alarmAt });
+      return row.alarmAt !== null;
     }
   }
 
@@ -749,26 +777,70 @@ export class GameSessionCore {
       this.#log("info", "session.disconnect", this.#connectionStats(conn));
     }
 
-    let runMs = row.runMs;
+    await this.#cleanup();
+  }
+
+  // ---- 後始末（コンテナの停止と精算） ----
+  //
+  // destroy() が成功したら（停止を確かめたら）精算してアラームを消す。失敗したら精算せず
+  // （container_started_at を残し、帳簿は予約のまま＝最悪の費用）、アラームで後始末をやり直す。
+  // やり直しのアラームも max_alarms の中に数える。上限に達したら、ログを 1 行出してあきらめる。
+  // 同時に 2 つ動かない（終わりの処理の途中で鳴ったアラームは、動いている後始末を待つ）。
+  #cleanup(): Promise<void> {
+    if (this.#cleaning === null) {
+      const running = this.#runCleanup().finally(() => {
+        this.#cleaning = null;
+      });
+      this.#cleaning = running;
+    }
+    return this.#cleaning;
+  }
+
+  async #runCleanup(): Promise<void> {
+    const row = this.#row();
+    if (row === null || row.state !== "ended") return;
     const container = this.#ctx.container;
-    if (container !== undefined) {
+    if (row.containerStartedAt !== null && container !== undefined) {
       try {
         await container.destroy();
       } catch (error) {
         this.#logError("destroy", error);
+        await this.#scheduleCleanupRetry();
+        return;
       }
     }
-    const stoppedAt = this.#deps.now();
+    await this.#settleAndClear();
+  }
+
+  async #scheduleCleanupRetry(): Promise<void> {
+    const row = this.#row();
+    if (row === null) return;
+    const retryAt = this.#deps.now() + DESTROY_RETRY_MS;
+    // すでに設定してあるアラームが鳴れば、そこでやり直す（数を増やさない）。
+    if (row.alarmAt !== null && (row.alarmAt <= retryAt || row.alarmCount >= row.maxAlarms)) {
+      return;
+    }
+    if (row.alarmCount < row.maxAlarms && (await this.#setAlarmAt(row, retryAt))) return;
+    // やり直す手段がない。帳簿は予約のまま（最悪の費用で数えられる）。
+    this.#log("error", "session.error", { op: "destroy", error: "retry_exhausted" });
+  }
+
+  // 停止を確かめた後でだけ呼ぶ。精算はやり直さない（失敗したら帳簿は予約のまま。安全側）。
+  async #settleAndClear(): Promise<void> {
+    const row = this.#row();
+    if (row === null) return;
+    let runMs = row.runMs;
     if (row.containerStartedAt !== null) {
-      runMs += Math.max(0, stoppedAt - row.containerStartedAt);
+      runMs += Math.max(0, this.#deps.now() - row.containerStartedAt);
       this.#update({ runMs, containerStartedAt: null });
     }
 
-    // 精算はやり直さない（失敗したら帳簿は予約のまま＝最悪の費用で数えられる。安全側）。
     const runSeconds = Math.min(Math.ceil(runMs / 1000), MAX_RUN_SECONDS);
-    let settled = false;
+    let settled = row.settled;
     const costGuard = this.#deps.costGuard;
-    if (costGuard === undefined) {
+    if (settled) {
+      // すでに精算した
+    } else if (costGuard === undefined) {
       this.#log("error", "session.error", { op: "settle", error: "no_cost_guard" });
     } else {
       try {
@@ -789,7 +861,7 @@ export class GameSessionCore {
 
     const final = this.#row();
     this.#log("info", "session.end", {
-      reason,
+      reason: final?.endReason ?? row.endReason,
       runSeconds,
       settled,
       alarmCount: final?.alarmCount ?? row.alarmCount,

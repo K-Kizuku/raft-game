@@ -115,6 +115,7 @@ export class FakeContainer implements ContainerLike {
   readonly fetches: { readonly url: string; readonly init: RequestInit | undefined }[] = [];
   startError: Error | null = null;
   destroyError: Error | null = null;
+  destroyErrors: Error[] = [];
   healthPlan: HealthStep[] = [];
   healthDefault: HealthStep = 200;
   wsFails = false;
@@ -140,11 +141,13 @@ export class FakeContainer implements ContainerLike {
     return this.exit.promise;
   }
 
+  // 失敗するときは、止まらずに動き続ける（destroyErrors を 1 回に 1 つずつ使い、なくなれば destroyError）。
   async destroy(): Promise<void> {
     this.calls.push("destroy");
+    const error = this.destroyErrors.shift() ?? this.destroyError;
+    if (error !== null) throw error;
     this.running = false;
     this.exit.resolve();
-    if (this.destroyError !== null) throw this.destroyError;
   }
 
   // コンテナが予期せず止まったことにする。

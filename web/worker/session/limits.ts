@@ -18,6 +18,9 @@ export const MAX_MESSAGES_PER_SECOND = 30; // 1 秒の枠ごとのブラウザ�
 export const MAX_BUFFERED_MESSAGES = 32; // コンテナにつながるまでに溜めるブラウザの電文の数
 export const MAX_RESULT_BYTES = 262144; // 保存する internal.result の payload の上限
 
+// destroy() が失敗したとき、後始末をやり直すアラームの間隔（回数は max_alarms の中に数える）。
+export const DESTROY_RETRY_MS = 30 * 1000;
+
 // T-308b が使う（入力ログの記録と復元）。
 export const MAX_CONTAINER_STARTS = 3; // 最初の 1 回＋復元 2 回
 export const MAX_INPUT_LOG_ROWS = 10000;
