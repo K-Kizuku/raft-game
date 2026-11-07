@@ -493,13 +493,24 @@ func Sub(seed uint64, name string) *rand.Rand {
 
 ### 9.2 決定性を壊すもの（実装上の禁止事項）
 
-`internal/sim` とその下のパッケージでは、次を禁止します。CI では `forbidigo` で検出します。
+`internal/sim` とその下のパッケージでは、次を禁止します。
 
 - `time.Now` / `time.Since` などの実時間
 - goroutine・チャネル・`select`
 - `map` の走査順に依存する処理（走査する場合はキーをソートしてから）
 - グローバルな `math/rand`（上記の派生乱数以外）
 - 浮動小数点の計算をスコアや判定に使うこと（スコアは整数で計算する）
+
+ここでの「その下」は、`sim.Engine` が組み立てて動かす世界（`internal/sim`・`internal/cluster`・`internal/ferry`・`internal/ledger`・`internal/game`）を指します。`stage`（YAML の小数を読む）・`protocol`・`server`（セッションループは実時間を使う）・`cmd` は対象外です。
+
+CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.golangci.yml`。テストのファイルも対象）で、上の 5 つのパッケージについて次を検出します。
+
+- 実時間の関数: `time.Now`・`Since`・`Until`・`Sleep`・`After`・`AfterFunc`・`Tick`・`NewTimer`・`NewTicker`（`time.Second` などの定数・型は使ってよい）
+- `math/rand`（v1）のすべて（別名で import しても検出する）
+- `math/rand/v2` のパッケージ全体で共有される乱数（`rand.IntN`・`rand.Shuffle` など）。`rand.New(rand.NewPCG(…))` と、その `*rand.Rand` のメソッドは使ってよい
+- `float32`・`float64` を型として書くこと（フィールド・変数・変換）
+
+`forbidigo` は識別子しか見ないので、goroutine・チャネル・`select`・`map` の走査順への依存・型を書かない浮動小数点（`x := 1.5`）は検出できません。これらはレビューと各タスクの AC で確かめます。
 
 `etcd-io/raft` の内部は、進捗の管理（`tracker`）で ID 順に走査するので決定的です。乱数だけがパッチの対象です。
 
