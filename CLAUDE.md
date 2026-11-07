@@ -54,6 +54,8 @@ make lint       # golangci-lint・ESLint・型チェック
 make gen        # Go のプロトコルの型から TS の型を生成
 make gen-check  # 生成した TS の型が Go の型と一致するか（CI の server ジョブ）
 make sync-data  # data/ を server/internal/stage/embedded/ にコピー
+make check-secrets  # gitleaks で git の履歴にシークレットがないか（CI の secrets ジョブ。初回は gitleaks をビルドする）
+make check-license  # LICENSE・NOTICE が同梱の OSS・提供データの出典と合っているか（CI の docs ジョブ）
 make dev        # Go（standalone モード）と Vite を DEV_SLOT のポートで起動（DRY_RUN=1 で表示だけ）
 make dev-env    # この作業ツリーの DEV_SLOT・ポート・cf の状態・Docker の名前を出す
 make clean-docker  # この作業ツリーの Docker のコンテナとイメージを消す（DRY_RUN=1 で表示だけ）
@@ -145,6 +147,7 @@ bash .claude/hooks/tests/run.sh && bash scripts/agents/tests/run.sh   # テス�
 - コンテナは `durable_object` 方式（`default` 方式は非推奨）。マシンの大きさは `ctx.container.start()` で指定する。イメージは `linux/amd64`
 - URL は `raft.kizuku-hackathon.work`（一般公開）と `raft-demo.kizuku-hackathon.work`（デモ用）。ゾーンの設定は、この 2 つのホスト名だけに効くようにする
 - 公開リポジトリなので、シークレットをコミットしない（`--secrets-file` 用のファイルは `.gitignore` に入れる）
+  - テストの偽のトークン・鍵は、その行に `gitleaks:allow` のコメントを付けるか、値を実行時に組み立てる（例: `"x".repeat(32)`）。`.gitleaksignore` に足してよいのは main にあるコミットの指紋だけ（`make check-secrets` が確かめる）
 - ブラウザから届いた `internal.*` の電文は、Durable Object で必ず破棄する
 
 ## etcd-io/raft v3.7 の注意点
