@@ -31,6 +31,10 @@ function defaultDeps(env: Env): GameSessionDeps {
       new Response(null, { status: 101, webSocket: client } as ResponseInit),
     timeoutSignal: (ms) => AbortSignal.timeout(Math.max(1, Math.ceil(ms))),
     costGuard: getCostGuardClient(env),
+    setInterval: (callback, ms) => {
+      const id = globalThis.setInterval(callback, ms);
+      return () => globalThis.clearInterval(id);
+    },
   };
 }
 
