@@ -1,0 +1,30 @@
+{
+  "zone": "kizuku-hackathon.work",
+  "hostnames": ["raft.kizuku-hackathon.work", "raft-demo.kizuku-hackathon.work"],
+  "phases": {
+    "http_request_firewall_custom": [
+      {
+        "ref": "raft-game-zone-ai-crawlers",
+        "description": "raft-game: block AI crawlers (T-606, ADR-0018 G4)",
+        "expression": "(http.host in {\"raft.kizuku-hackathon.work\" \"raft-demo.kizuku-hackathon.work\"}) and (cf.verified_bot_category in {\"AI Crawler\"})",
+        "action": "block",
+        "enabled": true
+      }
+    ],
+    "http_ratelimit": [
+      {
+        "ref": "raft-game-zone-ratelimit-api",
+        "description": "raft-game: per-IP rate limit for /api and /ws (T-606, ADR-0018 G4)",
+        "expression": "(http.host in {\"raft.kizuku-hackathon.work\" \"raft-demo.kizuku-hackathon.work\"}) and (starts_with(http.request.uri.path, \"/api/\") or starts_with(http.request.uri.path, \"/ws/\"))",
+        "action": "block",
+        "ratelimit": {
+          "characteristics": ["cf.colo.id", "ip.src"],
+          "period": 10,
+          "requests_per_period": 50,
+          "mitigation_timeout": 10
+        },
+        "enabled": true
+      }
+    ]
+  }
+}
