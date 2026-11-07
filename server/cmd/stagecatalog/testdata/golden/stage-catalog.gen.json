@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "stages": [
+    {
+      "id": "alpha",
+      "title": "テストの海",
+      "region": "波間県（架空）",
+      "islands": 3,
+      "ferries": 1,
+      "durationMs": 180000,
+      "unlock": null,
+      "intro": {
+        "text": "架空の穏やかな海です。<雨> & 風は少なめ。",
+        "provenance": "derived",
+        "source": {
+          "dataset": "fixture-2026",
+          "region": "星砂地域",
+          "field": "NATURAL_CLIMATE_FEATURES",
+          "quote": "温暖で、雨の少ない架空の気候"
+        }
+      },
+      "learning": [],
+      "demo": false
+    },
+    {
+      "id": "beta",
+      "title": "テストの群島",
+      "region": "波間県・潮見県・風見県（架空）",
+      "islands": 7,
+      "ferries": 2,
+      "durationMs": 240000,
+      "unlock": "alpha",
+      "intro": {
+        "text": "架空の島々を結ぶ、少し荒れた海です。",
+        "provenance": "creative",
+        "source": null
+      },
+      "learning": [
+        "log_replication",
+        "commit"
+      ],
+      "demo": true
+    }
+  ]
+}
