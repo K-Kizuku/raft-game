@@ -1,39 +1,68 @@
 /* ゲーム画面のレイアウト（ゲームデザイン §7.2）。
    上に「状況」、中央に「マップ」、右に「島の詳細」、下に「フェリー操作」。
    「お知らせ」はマップの隅に重ねる。
-   見た目（T-422・docs/11-visual-design.md）: 紙の地の上に、各領域を重なった紙のパネルとして置く。 */
+   見た目（T-422・docs/11-visual-design.md）: 紙の地の上に、各領域を重なった紙のパネルとして置く。
+   大きな画面（T-425・docs/11-visual-design.md §12）: 画面の高さちょうどに収め、ページ全体の縦のスクロールを出さない。
+   フェリー操作と島の詳細は、その領域の中で巻き取る。マップの行は高さの 45%（大きな画面では 55%）以上を取り、
+   残りをフェリー操作が中身の分だけ使う。画面が低い（36rem 未満。拡大したときなど）ときだけページを巻き取る。 */
 .game-screen {
+  /* 島の詳細の列の幅（画面の幅に合わせる）。エンジニアパネルの切り替えの位置（アンカー配置が無いとき）も使う。 */
+  --game-island-width: clamp(18rem, 24vw, 30rem);
+  /* マップの行の最小の高さ */
+  --game-map-min-height: 45vh;
+
   display: grid;
   grid-template-areas:
     "hud hud"
     "map island"
     "ferry ferry"
     "offline offline";
-  grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
-  grid-template-rows: auto minmax(20rem, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) var(--game-island-width);
+  grid-template-rows: auto minmax(var(--game-map-min-height), 1fr) minmax(0, auto) auto;
   gap: var(--space-3);
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 36rem;
   box-sizing: border-box;
   padding: var(--space-3);
   color: var(--color-ink);
   background-color: var(--color-paper);
 }
 
+@media (min-width: 1600px) {
+  .game-screen {
+    --game-map-min-height: 55vh;
+  }
+}
+
+/* デモ操作のキー（DemoKeys.css）は画面の下の端の帯。帯の分だけ下の余白を取り、ほかの領域を隠さない。
+   帯の高さは DemoKeys.css の .demo-keys の min-height と同じ式。 */
+.game-screen:has(> .demo-keys) {
+  padding-bottom: calc(var(--font-size-body) * 2.25 + 2 * var(--space-2));
+}
+
 .game-hud {
   grid-area: hud;
 }
 
+/* マップは、重ねる部品（エンジニアパネル・チュートリアル・嵐の紹介）がアンカー配置で位置を合わせる基準。
+   マップの上の部品のフォーカスの輪は、海の上で見える墨にする。 */
 .game-map {
   grid-area: map;
   position: relative;
   overflow: hidden;
+  anchor-name: --game-map;
+  --focus-ring-color: var(--focus-ring-color-on-sea);
 }
 
+/* お知らせ（右上）。右下のエンジニアパネルの切り替えに届かない高さまで（古いものから隠れる）。 */
 .game-notifications {
   position: absolute;
   top: var(--space-3);
   right: var(--space-3);
   max-width: 50%;
+  max-height: calc(100% - 2 * var(--space-3) - var(--font-size-body) * 3.5);
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -42,8 +71,34 @@
   overflow: auto;
 }
 
+/* フェリー操作は中身の分だけの高さ（上限はマップの行の残り）。入りきらないときは中で巻き取る。 */
 .game-ferry {
   grid-area: ferry;
+  overflow: auto;
+  scroll-padding-block: var(--space-3);
+}
+
+/* マップの上の部品（MapView.css・PartitionLegend.css）の文字の大きさを、トークンに合わせる
+   （大きな画面で 1.25 倍）。島のボタンのフォーカスの輪はトークンの輪（海の上の色）にそろえる。 */
+.game-map .map-view__islands {
+  anchor-name: --map-islands;
+}
+
+.game-map .map-view__islands button {
+  font-size: calc(var(--font-size-body) * 0.875);
+}
+
+.game-map .map-view__islands button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.game-map .map-partition {
+  font-size: calc(var(--font-size-body) * 0.8125);
+}
+
+.game-map .map-partition__title {
+  font-size: calc(var(--font-size-body) * 0.875);
 }
 
 .game-offline {

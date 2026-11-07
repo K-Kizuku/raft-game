@@ -84,11 +84,6 @@
   transform: translate(2em, -60%) rotate(45deg);
 }
 
-.app-settings .settings-switch:focus-visible {
-  outline: 3px solid var(--color-sea-deep);
-  outline-offset: 3px;
-}
-
 .app-settings .settings-description {
   margin: var(--space-3) var(--space-2) 0;
 }

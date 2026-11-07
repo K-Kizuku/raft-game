@@ -1,9 +1,7 @@
 /* 状況（T-406・ゲームデザイン §7.2 の上部）。見た目は T-422（docs/11-visual-design.md）:
    紙のパネルの上に、小さな紙の札として項目を並べる。文字は --color-ink（パネルの地とのコントラスト比 9:1）。
-   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 がトークンに入れるかを決める）。 */
+   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 の整理: 1 か所だけで使う色はローカルのまま。2 か所以上で使う失敗の文字の色は --color-danger-text にした）。 */
 .hud {
-  /* 失敗の文の色。郵便の赤（--color-danger）を墨で暗くし、紙の地で 4.5:1 以上（約 5.4:1）にする。 */
-  --hud-danger-text: color-mix(in srgb, var(--color-danger) 60%, var(--color-ink));
   /* フェス準備度の帯の縞（色が見えなくても、塗った長さが分かる）。 */
   --hud-meter-stripe: color-mix(in srgb, var(--color-gold) 70%, var(--color-ink));
 
@@ -28,12 +26,13 @@
   box-shadow: var(--shadow-paper);
 }
 
-/* 残り時間・スコア・確定の数は、等幅の丸い数字で大きめに。 */
+/* 残り時間・スコア・確定の数は、等幅の丸い数字で大きめに（T-425: 見出し h2 の大きさ。大きな画面で 30px。
+   プロジェクターで離れて読むため、墨と紙の札でコントラスト比 7:1 以上）。 */
 .hud-time,
 .hud-score,
 .hud-successes {
   font-family: var(--font-number);
-  font-size: var(--font-size-h3);
+  font-size: var(--font-size-h2);
   font-variant-numeric: tabular-nums;
   font-weight: bold;
   line-height: 1.2;
@@ -52,8 +51,8 @@
 .hud-fest meter {
   appearance: none;
   box-sizing: border-box;
-  width: 6rem;
-  height: 1rem;
+  width: 6em;
+  height: 1em;
   overflow: hidden;
   background: var(--color-paper);
   border: 2px solid var(--color-ink);
@@ -116,8 +115,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.75em;
+  height: 1.75em;
   border-radius: 50%;
   opacity: 0.35;
   filter: grayscale(1);
@@ -180,7 +179,7 @@
 .hud-status {
   flex-basis: 100%;
   margin: 0;
-  color: var(--hud-danger-text);
+  color: var(--color-danger-text);
   font-weight: bold;
 }
 

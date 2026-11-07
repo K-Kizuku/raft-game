@@ -29,6 +29,9 @@
   --color-success: #5b9a68;
   --color-warning: #e0a84f;
   --color-danger: #c0503a;
+  /* 失敗・期限切れの文字。郵便の赤（--color-danger）60% に墨を混ぜ、紙・パネルの地で 4.5:1 以上（T-425。
+     HUD・島の詳細・フェリー操作・船の一覧・セッションの知らせで使う） */
+  --color-danger-text: #8b4738;
 
   /* 文字（Web フォントは読み込まない） */
   --font-body:
@@ -52,6 +55,14 @@
   --radius-s: 6px;
   --radius-m: 12px;
   --radius-l: 20px;
+
+  /* フォーカスの輪（T-425）。:focus-visible のときだけ出す（base.css）。地によって色だけを変える:
+     紙の地は深い海の青、海（マップ・タイトルの絵）の上は墨、夜の配色（エンジニアパネル）の上は封筒の金 */
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--color-sea-deep);
+  --focus-ring-color-on-sea: var(--color-ink);
+  --focus-ring-color-on-night: var(--color-gold);
 
   /* 紙が重なる影 */
   --shadow-paper: 0 1px 0 rgba(59, 58, 54, 0.08), 0 4px 12px rgba(59, 58, 54, 0.12);

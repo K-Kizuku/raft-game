@@ -3,7 +3,7 @@
    （パネルの地で 4.5:1 以上。NFR-10）。T-409（チュートリアル）が指すので、ferry-panel・ferry-panel__tabs・
    ferry-panel__port・ferry-panel__cargo・ferry-panel__destinations・ferry-panel__autoload・
    ferry-panel__depart・ferry-panel__status の className を変えない。
-   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 がトークンに入れるかを決める）。 */
+   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 の整理: 1 か所だけで使う色はローカルのまま。2 か所以上で使う失敗の文字の色は --color-danger-text にした）。 */
 .ferry-panel {
   /* 封筒のふた・空きの輪郭の線（補足の文字の色を紙に寄せた淡い線）。 */
   --ferry-envelope-line: color-mix(in srgb, var(--color-ink-muted) 60%, var(--color-paper));
@@ -11,8 +11,6 @@
   --ferry-unknown-paper: color-mix(in srgb, var(--color-storm) 25%, var(--color-paper));
   /* 落とせる場所の枠（淡い線）。 */
   --ferry-area-line: color-mix(in srgb, var(--color-ink-muted) 40%, var(--color-paper));
-  /* 故障中の文字（郵便の赤を墨で暗くし、紙・パネル・海の淡い青の上で 4.5:1 以上）。 */
-  --ferry-danger-text: color-mix(in srgb, var(--color-danger) 60%, var(--color-ink));
   /* 「行き先宛て」の札の文字と線（深い海の青を墨で暗くし、紙の上で 4.5:1 以上）。 */
   --ferry-target-text: color-mix(in srgb, var(--color-sea-deep) 80%, var(--color-ink));
   /* 嵐で通れない行き先の札の地（嵐の灰を紙に混ぜた地。--color-storm-deep の文字は約 8.7:1）。 */
@@ -37,13 +35,6 @@
 
 .ferry-panel button:active {
   box-shadow: none;
-}
-
-.ferry-panel button:focus-visible,
-.ferry-panel h3:focus-visible,
-.ferry-panel input:focus-visible {
-  outline: 3px solid var(--color-sea-deep);
-  outline-offset: 2px;
 }
 
 /* 押せないボタンは disabled にせず aria-disabled にする（フォーカスを失わないため）。
@@ -106,7 +97,7 @@
 }
 
 .ferry-panel__broken {
-  color: var(--ferry-danger-text);
+  color: var(--color-danger-text);
   font-weight: bold;
 }
 
@@ -227,7 +218,7 @@
   justify-content: center;
   gap: var(--space-1);
   box-sizing: border-box;
-  width: 8rem;
+  width: max(8rem, 7.5em);
   min-width: 44px;
   min-height: 52px;
   padding: var(--space-4) var(--space-2) var(--space-1);
@@ -385,4 +376,35 @@
 .ferry-panel__status {
   min-height: 1.5em;
   margin: 0;
+}
+
+/* 幅のある画面（1200px 以上。T-425）: フェリー操作の領域は高さが限られる（マップの行の残り）ので、
+   左に船の名前・港と積み荷・結果の文、中に行き先、右に出航・おまかせを並べる（3 列）。
+   行き先と出航のボタンが領域の上の方に来て、巻き取らずに見える。左から右の順は要素の順番（読み上げ・Tab の順）と同じ。
+   左の列は 5 行まで中身の高さで並べ、中と右の列は全部の行にまたがる（最後の 1fr の行が余りを受けるので、
+   左の列の行の間に空きができない）。 */
+@media (min-width: 75rem) {
+  .ferry-panel__detail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 20rem) minmax(12rem, 20rem);
+    grid-template-rows: repeat(5, auto) 1fr;
+    align-items: start;
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .ferry-panel__detail > * {
+    grid-column: 1;
+  }
+
+  .ferry-panel__detail > .ferry-panel__destinations {
+    grid-row: 1 / -1;
+    grid-column: 2;
+  }
+
+  .ferry-panel__detail > .ferry-panel__actions {
+    grid-row: 1 / -1;
+    grid-column: 3;
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }

@@ -29,6 +29,14 @@
   padding: var(--space-6) var(--space-4);
 }
 
+/* 大きな画面（プロジェクター。T-425）では、文字が 1.25 倍になる分と、横に広い画面に合わせて枠を広げる。 */
+@media (min-width: 1600px) {
+  .app-screen,
+  .session-notice {
+    max-width: 72rem;
+  }
+}
+
 .app-screen h1:focus {
   outline: none;
 }
@@ -105,6 +113,6 @@
 }
 
 .session-notice-error p {
-  /* 失敗の色（--color-danger に墨を混ぜ、紙の上で 4.5:1 以上にする） */
-  color: color-mix(in srgb, var(--color-danger) 75%, var(--color-ink));
+  /* 失敗の文字の色（紙の上で 4.5:1 以上。T-425 でトークンにした） */
+  color: var(--color-danger-text);
 }

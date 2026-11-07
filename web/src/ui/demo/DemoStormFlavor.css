@@ -74,3 +74,15 @@
   border-radius: var(--radius-s);
   font-size: 0.75em;
 }
+
+/* 置き場所（T-425）: 画面の上の中央では HUD を隠すので、アンカー配置が使えるときはマップの下の方の中央
+   （左下の島のボタンの列・右下のエンジニアパネルの切り替えより上）に置く。右上のお知らせとも重ならない。
+   幅はマップの幅の半分まで（--game-map は GameScreen.css）。 */
+@supports (anchor-name: --a) {
+  .demo-storm-flavor {
+    top: auto;
+    bottom: calc(anchor(--game-map bottom, var(--space-4)) + var(--font-size-body) * 4);
+    left: anchor(--game-map center, 50%);
+    max-width: min(36em, calc(anchor-size(--game-map width, 72em) / 2));
+  }
+}

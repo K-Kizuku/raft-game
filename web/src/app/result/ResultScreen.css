@@ -2,7 +2,7 @@
    色・余白・角丸・影・文字の大きさは T-420 のトークン（web/src/ui/theme/tokens.css）を使う。
    文字のコントラスト比は、紙のカード（--color-paper-deep）・便箋（--color-paper）の上で 4.5:1 以上。 */
 
-/* トークンに無い色は、トークンから作ったローカルの変数として置く（T-425 がトークンに入れるかを決める）。 */
+/* トークンに無い色は、トークンから作ったローカルの変数として置く（T-425 の整理: 1 か所だけで使う色はローカルのまま。2 か所以上で使う失敗の文字の色は --color-danger-text にした）。 */
 .result {
   /* 達成の文字。--color-success は紙の上で 4.5:1 に届かないので、墨と半々に混ぜて濃くする */
   --result-success-ink: color-mix(in srgb, var(--color-success) 50%, var(--color-ink));
