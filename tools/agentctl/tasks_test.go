@@ -95,8 +95,33 @@ func writeSnapshot(t *testing.T, f func(s *snapshot.Snapshot)) string {
 	return p
 }
 
+// writeConfig は、実際の設定の max_workers だけを書き換えて一時ファイルに書く（ほかの値は実際の設定のまま）。
+func writeConfig(t *testing.T, maxWorkers int) string {
+	t.Helper()
+	data, err := os.ReadFile(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["max_workers"] = maxWorkers
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func TestPlanCommand(t *testing.T) {
-	code, out, errOut := runCmd(t, "plan", "--config", repoConfig, "--input", sampleSnapshot, "--json")
+	// 実際の設定の max_workers に依存しないよう、2 に固定した設定を使う。
+	cfg := writeConfig(t, 2)
+	code, out, errOut := runCmd(t, "plan", "--config", cfg, "--input", sampleSnapshot, "--json")
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, errOut)
 	}
@@ -123,11 +148,11 @@ func TestPlanCommand(t *testing.T) {
 		}
 	}
 
-	code, out, _ = runCmd(t, "plan", "--config", repoConfig, "--input", sampleSnapshot, "--mermaid")
+	code, out, _ = runCmd(t, "plan", "--config", cfg, "--input", sampleSnapshot, "--mermaid")
 	if code != 0 || !strings.HasPrefix(out, "flowchart TD\n") || !strings.Contains(out, "i3 --> i4") {
 		t.Errorf("mermaid: exit = %d\n%s", code, out)
 	}
-	code, out, _ = runCmd(t, "plan", "--config", repoConfig, "--input", sampleSnapshot)
+	code, out, _ = runCmd(t, "plan", "--config", cfg, "--input", sampleSnapshot)
 	if code != 0 || !strings.Contains(out, "capacity: 1") || !strings.Contains(out, "#5 [ready]") {
 		t.Errorf("text: exit = %d\n%s", code, out)
 	}
@@ -135,13 +160,13 @@ func TestPlanCommand(t *testing.T) {
 	cyc := writeSnapshot(t, func(s *snapshot.Snapshot) {
 		s.Issue(5).Body = strings.Replace(s.Issue(5).Body, "- #3", "- #9", 1)
 	})
-	if code, _, errOut := runCmd(t, "plan", "--config", repoConfig, "--input", cyc, "--json"); code != 3 || !strings.Contains(errOut, "循環") {
+	if code, _, errOut := runCmd(t, "plan", "--config", cfg, "--input", cyc, "--json"); code != 3 || !strings.Contains(errOut, "循環") {
 		t.Errorf("循環: exit = %d, %s", code, errOut)
 	}
-	if code, _, _ := runCmd(t, "plan", "--config", repoConfig, "--input", sampleSnapshot, "--json", "--mermaid"); code != 3 {
+	if code, _, _ := runCmd(t, "plan", "--config", cfg, "--input", sampleSnapshot, "--json", "--mermaid"); code != 3 {
 		t.Errorf("--json と --mermaid: exit = %d", code)
 	}
-	if code, _, _ := runCmd(t, "plan", "--config", repoConfig); code != 3 {
+	if code, _, _ := runCmd(t, "plan", "--config", cfg); code != 3 {
 		t.Errorf("--repo も --input もない: exit = %d", code)
 	}
 }
