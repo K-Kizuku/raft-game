@@ -91,6 +91,7 @@
 - 管理用 API は `Authorization: Bearer <ADMIN_TOKEN>` を必須にする。`ADMIN_TOKEN` は `--secrets-file` で渡し、リポジトリには入れない
 - 切り替えた記録（いつ・何を）は `CostGuard` の SQLite に残す
 - 例：デモの最中に 1 日の上限に達しそうになったら、その場で G1 を無効にする
+- G6 の予算アラートの設定と、緊急時の止め方・再開の手順は [コストの緊急停止](../runbooks/cost-emergency.md)。
 
 ## 結果
 
