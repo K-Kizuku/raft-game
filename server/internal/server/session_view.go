@@ -1,11 +1,10 @@
 package server
 
 import (
-	"strconv"
-
 	"github.com/K-Kizuku/raft-game/server/internal/game"
 	"github.com/K-Kizuku/raft-game/server/internal/protocol"
 	"github.com/K-Kizuku/raft-game/server/internal/protocol/simconv"
+	"github.com/K-Kizuku/raft-game/server/internal/replaykit"
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
@@ -47,57 +46,9 @@ func allowedSpeeds(permille []int64) []float64 {
 
 // stageView は snapshot の stage を作る。municipality・population の asOf・provenance・note・source は
 // islands（islands.json の表示用の値。T-201b）から埋める。len(islands) != len(st.Islands) なら空の文字列。
+// 本体は replaykit（ブラウザでのリプレイと共有する。ADR-0028）。
 func stageView(st *stage.Stage, islands []stage.IslandDisplay) protocol.StageView {
-	v := protocol.StageView{
-		Title:     st.Title,
-		Islands:   make([]protocol.Island, len(st.Islands)),
-		Routes:    make([]protocol.Route, len(st.Routes)),
-		Resources: make([]protocol.Resource, len(st.Resources)),
-	}
-	withDisplay := len(islands) == len(st.Islands)
-	for i, is := range st.Islands {
-		isl := protocol.Island{
-			ID:         is.NodeID,
-			Name:       is.Name,
-			Layout:     protocol.IslandLayout{X: int(is.X), Y: int(is.Y)},
-			Population: protocol.Population{Value: int(is.Population)},
-			Color:      is.Color,
-		}
-		if withDisplay {
-			d := islands[i]
-			isl.Municipality = d.MunicipalityLabel()
-			isl.Population.AsOf = d.Population.AsOf
-			isl.Population.Provenance = protocol.Provenance(d.Population.Provenance)
-			isl.Population.Note = d.Population.Note
-			isl.Population.Source = d.Population.Source
-		}
-		if pm := is.Postmaster; pm != nil {
-			isl.Postmaster = &protocol.Postmaster{Name: pm.Name, Tone: pm.Tone, Portrait: pm.Portrait}
-		}
-		v.Islands[i] = isl
-	}
-	for i, r := range st.Routes {
-		v.Routes[i] = protocol.Route{
-			ID:         routeID(r.A, r.B),
-			A:          r.A,
-			B:          r.B,
-			TravelMs:   r.TravelMs,
-			Provenance: protocol.Provenance(r.Provenance),
-		}
-	}
-	for i, r := range st.Resources {
-		v.Resources[i] = protocol.Resource{ID: r.ID, Kind: string(r.Kind), Label: r.Label, Critical: r.Critical}
-	}
-	v.DemoStorm = demoStormView(st)
-	return v
-}
-
-// routeID は航路の ID（"<小さい島 ID>-<大きい島 ID>"。プロトコル §1）。
-func routeID(a, b uint64) string {
-	if a > b {
-		a, b = b, a
-	}
-	return strconv.FormatUint(a, 10) + "-" + strconv.FormatUint(b, 10)
+	return replaykit.StageView(st, islands)
 }
 
 // buildResult は round.result・internal.result の payload（プロトコル §5.5）を作る。run の goroutine から呼ぶ。
@@ -112,16 +63,7 @@ func (s *session) buildResult() protocol.RoundResult {
 }
 
 // storyNames は文章に使う島（stage.Islands の順 = ノード ID の順）と資源（ID → Label）の名前。
+// 本体は replaykit（ブラウザでのリプレイと共有する。ADR-0028）。
 func storyNames(st *stage.Stage) game.StoryNames {
-	n := game.StoryNames{
-		Islands:   make([]string, len(st.Islands)),
-		Resources: make(map[string]string, len(st.Resources)),
-	}
-	for i, is := range st.Islands {
-		n.Islands[i] = is.Name
-	}
-	for _, r := range st.Resources {
-		n.Resources[r.ID] = r.Label
-	}
-	return n
+	return replaykit.StoryNames(st)
 }

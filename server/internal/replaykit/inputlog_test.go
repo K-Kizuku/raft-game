@@ -1,4 +1,4 @@
-package main
+package replaykit
 
 import (
 	"bytes"
@@ -11,8 +11,8 @@ import (
 )
 
 // sampleLog は 5 種類のコマンドを含む入力ログ。
-func sampleLog() inputLog {
-	return inputLog{
+func sampleLog() InputLog {
+	return InputLog{
 		Format:    1,
 		Build:     "git:3f2c1ab",
 		StageID:   "stage1",
@@ -29,8 +29,8 @@ func sampleLog() inputLog {
 }
 
 // normalized は比べるためのフィールドだけを残し、空の LetterIDs を nil にそろえる。
-func normalized(l inputLog) inputLog {
-	out := inputLog{Format: l.Format, Build: l.Build, StageID: l.StageID, StageHash: l.StageHash, Seed: l.Seed}
+func normalized(l InputLog) InputLog {
+	out := InputLog{Format: l.Format, Build: l.Build, StageID: l.StageID, StageHash: l.StageHash, Seed: l.Seed}
 	for _, c := range l.Commands {
 		if len(c.Cmd.LetterIDs) == 0 {
 			c.Cmd.LetterIDs = nil
@@ -40,17 +40,17 @@ func normalized(l inputLog) inputLog {
 	return out
 }
 
-func decodeString(s string) (inputLog, error) { return decodeInputLog(strings.NewReader(s)) }
+func decodeString(s string) (InputLog, error) { return DecodeInputLog(strings.NewReader(s)) }
 
 // I-1: 往復。
 func TestInputLogRoundTrip(t *testing.T) {
 	t.Parallel()
 	in := sampleLog()
-	data, err := encodeInputLog(in)
+	data, err := EncodeInputLog(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := decodeInputLog(bytes.NewReader(data))
+	out, err := DecodeInputLog(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("decode: %v\n%s", err, data)
 	}
@@ -65,11 +65,11 @@ func TestInputLogRoundTrip(t *testing.T) {
 // I-2: バイト列の形。
 func TestInputLogBytes(t *testing.T) {
 	t.Parallel()
-	a, err := encodeInputLog(sampleLog())
+	a, err := EncodeInputLog(sampleLog())
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := encodeInputLog(sampleLog())
+	b, err := EncodeInputLog(sampleLog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestInputLogBytes(t *testing.T) {
 
 	empty := sampleLog()
 	empty.Commands = nil
-	e, err := encodeInputLog(empty)
+	e, err := EncodeInputLog(empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestInputLogEncodeUnknown(t *testing.T) {
 	t.Parallel()
 	l := sampleLog()
 	l.Commands = append(l.Commands, sim.InputEntry{T: 4000, Cmd: sim.Command{Type: "cmd.game.pause"}})
-	if data, err := encodeInputLog(l); err == nil {
+	if data, err := EncodeInputLog(l); err == nil {
 		t.Errorf("encode = %s, want error", data)
 	} else if !strings.Contains(err.Error(), "commands[5]") {
 		t.Errorf("error = %v", err)
@@ -249,7 +249,7 @@ func TestInputLogDemoTrigger(t *testing.T) {
 		sim.InputEntry{T: 5000, Cmd: sim.Command{Type: sim.CmdDemoTrigger, Event: sim.DemoEventStorm}},
 		sim.InputEntry{T: 5000, Cmd: sim.Command{Type: sim.CmdDemoTrigger, Event: sim.DemoEventStorm}},
 	)
-	data, err := encodeInputLog(in)
+	data, err := EncodeInputLog(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,14 +257,14 @@ func TestInputLogDemoTrigger(t *testing.T) {
 	if !strings.HasSuffix(string(data), line+",\n"+line+"\n]}\n") {
 		t.Errorf("bytes:\n%s\nwant the last lines %s", data, line)
 	}
-	out, err := decodeInputLog(bytes.NewReader(data))
+	out, err := DecodeInputLog(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("decode: %v\n%s", err, data)
 	}
 	if !reflect.DeepEqual(normalized(out), normalized(in)) {
 		t.Errorf("round trip:\n got %+v\nwant %+v", out, in)
 	}
-	again, err := encodeInputLog(out)
+	again, err := EncodeInputLog(out)
 	if err != nil {
 		t.Fatal(err)
 	}

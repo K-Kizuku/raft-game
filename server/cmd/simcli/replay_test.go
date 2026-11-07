@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/K-Kizuku/raft-game/server/internal/replaykit"
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 )
 
@@ -33,7 +34,7 @@ func oneResult(t *testing.T, stdout string) seedResult {
 }
 
 // withCommands は l の Commands を cmds にした複製。
-func withCommands(l inputLog, cmds []sim.InputEntry) inputLog {
+func withCommands(l replaykit.InputLog, cmds []sim.InputEntry) replaykit.InputLog {
 	l.Commands = cmds
 	l.Pos = nil
 	return l
@@ -145,7 +146,7 @@ func TestReplayBadTimes(t *testing.T) {
 func TestReplayIgnoresSessionCommands(t *testing.T) {
 	t.Parallel()
 	l, run := baseInputLog(t)
-	data, err := encodeInputLog(l)
+	data, err := replaykit.EncodeInputLog(l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestReplayEmpty(t *testing.T) {
 func TestReplayStdin(t *testing.T) {
 	t.Parallel()
 	l, run := baseInputLog(t)
-	data, err := encodeInputLog(l)
+	data, err := replaykit.EncodeInputLog(l)
 	if err != nil {
 		t.Fatal(err)
 	}

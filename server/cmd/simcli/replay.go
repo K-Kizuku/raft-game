@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/K-Kizuku/raft-game/server/internal/replaykit"
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 )
 
@@ -85,14 +86,14 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	if *trace != "" {
-		return writeTrace(*trace, newRecordHeader(buildID(), st, l.Seed, "", len(events), res.TraceHash), snap, events, stderr)
+		return writeTrace(*trace, replaykit.NewRecordHeader(buildID(), st, l.Seed, "", len(events), res.TraceHash), snap, events, stderr)
 	}
 	return exitOK
 }
 
 // writeTrace は記録（DesignDoc §13.5）を path に書き、終了コードを返す。
-func writeTrace(path string, h recordHeader, snap sim.Snapshot, events []sim.DomainEvent, stderr io.Writer) int {
-	out, err := encodeRecord(h, snap, events)
+func writeTrace(path string, h replaykit.RecordHeader, snap sim.Snapshot, events []sim.DomainEvent, stderr io.Writer) int {
+	out, err := replaykit.EncodeRecord(h, snap, events)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "simcli: 記録を作れない（内部の誤り）: %v\n", err)
 		return exitFail
@@ -106,18 +107,18 @@ func writeTrace(path string, h recordHeader, snap sim.Snapshot, events []sim.Dom
 }
 
 // readInputLog は path（- なら stdin）の入力ログを読む。
-func readInputLog(path string, stdin io.Reader) (inputLog, error) {
+func readInputLog(path string, stdin io.Reader) (replaykit.InputLog, error) {
 	if path == "-" {
-		return decodeInputLog(stdin)
+		return replaykit.DecodeInputLog(stdin)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return inputLog{}, fmt.Errorf("入力ログを開けない: %w", err)
+		return replaykit.InputLog{}, fmt.Errorf("入力ログを開けない: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	l, err := decodeInputLog(f)
+	l, err := replaykit.DecodeInputLog(f)
 	if err != nil {
-		return inputLog{}, fmt.Errorf("%s: %w", path, err)
+		return replaykit.InputLog{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return l, nil
 }
