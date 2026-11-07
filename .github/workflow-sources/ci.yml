@@ -150,6 +150,11 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache: false
+      - name: make gen-check
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: make gen-check
       - name: gofmt / go vet / go mod tidy
         if: steps.find.outputs.found == 'true'
         env:
