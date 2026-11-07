@@ -133,7 +133,7 @@ PR の中の変更でガードを弱められないように、次の 2 つを�
 | スクリプト | `install-workflows.sh` | human 以外 |
 | スクリプト | `merge.sh`・`review.sh`・`spawn-worker.sh`・`wt.sh` | Worker・Reviewer |
 | スクリプト | `agentctl state … merged`・`ready-to-merge` | Worker・Reviewer |
-| スクリプト | `agentctl` の書き込み（サブコマンド `comment`・`state`・`claim`・`attempt` と `gate` の `--comment`・`--set-status`）。字句の安全側の判定で、コマンドの文字列のどこかに agentctl の語（`agentctl.sh`・`.agents/bin/agentctl`・`tools/agentctl` など。単語 `go` と `run` の両方があるときも）と書き込みの語の両方があれば拒否する。`--dry-run` の例外はなく、シェルのコメントや引用符の中の語でも拒否する。読み取り（`plan`・`recover`・`review`・`pr view`・`pr codex-record`・`pr protected-files`・フラグのない `gate`）は通る。`comment` は信頼する作者の認証情報で PR に書くため | Worker・Reviewer |
+| スクリプト | `agentctl` の書き込み（サブコマンド `comment`・`state`・`claim`・`attempt` と `gate` の `--comment`・`--set-status`）。字句の安全側の判定で、コマンドの文字列のどこかに agentctl の語（`agentctl.sh`・`.agents/bin/agentctl`・`tools/agentctl` など。単語 `go` と `run` の両方があるときも）と書き込みの語の両方があれば拒否する。`--dry-run` の例外はなく、シェルのコメントや引用符の中の語でも拒否する。行の継続（`\` と改行）と `$'...'`・`$"..."` の `$` を取り除いてから、改行・タブも区切りとして語を読み、正規化しきれない `$'...'` があるときは agentctl の語と書き込みの語のどちらか一方でもあれば拒否する。Worker がコミットメッセージや PR の本文に agentctl の語と書き込みの語を書くときは、`git commit -F <ファイル>` のようにファイルで渡す。読み取り（`plan`・`recover`・`review`・`pr view`・`pr codex-record`・`pr protected-files`・フラグのない `gate`）は通る。`comment` は信頼する作者の認証情報で PR に書くため | Worker・Reviewer |
 | インフラ | `wrangler`、`cf deploy`（`--dry-run` を除く） | 全員 |
 | ファイル | `.github/workflows/` への書き込み（Edit・Write、リダイレクト、`cp` などの Bash） | human 以外 |
 | ファイル | すべての書き込み | Reviewer |
