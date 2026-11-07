@@ -1,0 +1,108 @@
+/* 島の詳細（T-406・ゲームデザイン §7.2 の右）。文字は白地に #111827・#374151（コントラスト比 4.5:1 以上。NFR-10）。 */
+.island-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: #111827;
+}
+
+.island-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.island-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.island-municipality {
+  color: #374151;
+}
+
+.island-role,
+.island-satisfaction,
+.island-hint {
+  margin: 0;
+}
+
+.island-satisfaction {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.island-satisfaction meter {
+  width: 6rem;
+}
+
+.island-section h3 {
+  margin: 0.25rem 0;
+  font-size: 1rem;
+  border-bottom: 1px solid #c8d3dc;
+}
+
+.island-section p {
+  margin: 0.25rem 0;
+  color: #374151;
+}
+
+.island-piles,
+.island-requests {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.island-pile {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.island-pile-count {
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+}
+
+.island-pile-icons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.island-pile-rest {
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.island-request {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.island-request-mark {
+  color: #92400e;
+}
+
+.island-request-status {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.island-request-remaining {
+  font-variant-numeric: tabular-nums;
+}
+
+.island-request-expired {
+  color: #b91c1c;
+}

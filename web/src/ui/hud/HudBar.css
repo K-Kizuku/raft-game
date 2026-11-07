@@ -1,0 +1,69 @@
+/* 状況（T-406・ゲームデザイン §7.2 の上部）。文字は白地に #111827（コントラスト比 4.5:1 以上。NFR-10）。 */
+.hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.hud-time {
+  font-weight: bold;
+}
+
+.hud-fest meter {
+  width: 6rem;
+}
+
+.hud-critical-list {
+  display: inline-flex;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hud-critical {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+.hud-critical.is-secured {
+  opacity: 1;
+  filter: none;
+}
+
+.hud-speed button {
+  min-width: 2rem;
+  color: #111827;
+  background: #ffffff;
+  border: 1px solid #4b5563;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.hud-speed button:disabled {
+  color: #4b5563;
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.hud-speed-value {
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+.hud-status {
+  flex-basis: 100%;
+  margin: 0;
+  color: #b91c1c;
+}

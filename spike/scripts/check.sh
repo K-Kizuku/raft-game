@@ -56,7 +56,7 @@ images="$(printf '%s' "$summary" | node -e 'let s="";process.stdin.on("data",d=>
 while IFS= read -r image; do
   platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" || fail "docker image inspect $image"
   echo "$image: $platform"
-  [ "$platform" = "linux/amd64" ] || fail "$image が linux/amd64 でない（$platform）"
+  [ "$platform" = "linux/amd64" ] || fail "$image が linux/amd64 でない（${platform}）"
 done <<EOF
 $images
 EOF

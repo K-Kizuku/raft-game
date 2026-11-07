@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 / H-5 の測定を実施済み。H-6 で使用済み全 20 セッションの停止と、対象 Worker・アプリ・イメージタグの削除を確認。ADR と設定候補・引き継ぎ案を作成済み。ローカルの後片付け・ダッシュボードの残存確認・翌日の費用確認・引き継ぎの投稿は未完了。PR はこれらを残した draft として作成する。
+- 状態: H-4 / H-5 の測定を実施済み。H-6 で使用済み全 20 セッションの停止と、対象 Worker・アプリ・イメージタグの削除を確認。ADR と設定候補・引き継ぎ案を作成済み。ローカルの後片付け・ダッシュボードの残存確認・翌日の費用確認・引き継ぎの投稿は未完了。[draft PR #183](https://github.com/K-Kizuku/raft-game/pull/183) にまとめた。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -1388,6 +1388,10 @@ docker image inspect sha256:03d889b3fe26b5bd2ebaa766ab30caf01eaf5bfb76c49fefb17e
 ```
 
 最後の既知の image ID が見つからなければ、その ID は既に削除されている。Cloudflare の OAuth の認証情報には触れない。これらのローカル作業の結果は未受領。
+
+### Draft PR #183 と最新 main の取り込み
+
+[draft PR #183](https://github.com/K-Kizuku/raft-game/pull/183) を作成した。作業中の main の更新 8cbdcdf08b21d1082ec95cdfef31f3fcf32a5053 も取り込んだ。自動マージで競合はなく、差分は文書 6 件のまま。Issue #15 は未完了の確認を残して open のままとし、PR の本文は Refs #15 とした。
 
 ## 測定前に確定・確認する事項
 

@@ -51,7 +51,7 @@ expect() {
   if [ "$ok" -eq 1 ]; then
     pass "$desc"
   else
-    fail "$desc（終了コード $rc、期待 $want）"
+    fail "${desc}（終了コード ${rc}、期待 ${want}）"
     sed 's/^/    | /' "$tmp/out"
   fi
 }
