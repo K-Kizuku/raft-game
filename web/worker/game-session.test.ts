@@ -4,6 +4,7 @@ import type { DurableObjectNamespaceLike } from "./admin/cf-types.ts";
 import { GameSession } from "./game-session.ts";
 import type { VerifiedSessionId } from "./routes/ports.ts";
 import { createHandler } from "./routes/router.ts";
+import { stageFixture } from "./routes/test-stages.ts";
 import { createSessionPorts } from "./session/ports.ts";
 import {
   MIN,
@@ -130,17 +131,7 @@ describe("G-2 init の失敗", () => {
     const handler = createHandler((env) => {
       const session = createSessionPorts(env);
       return {
-        stages: [
-          {
-            id: "stage1",
-            title: "t",
-            region: "r",
-            islands: 3,
-            ferries: 1,
-            durationMs: 180000,
-            unlock: null,
-          },
-        ],
+        stages: [stageFixture({ id: "stage1", title: "t" })],
         security: {
           checkRateLimit: async () => "ok",
           verifyTurnstile: async () => "ok",

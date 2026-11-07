@@ -3,3 +3,4 @@ dist/
 coverage/
 node_modules/
 src/protocol/*.gen.ts
+worker/routes/*.gen.json
