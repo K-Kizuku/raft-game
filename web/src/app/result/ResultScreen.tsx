@@ -8,6 +8,7 @@ import type { FinalLog } from "../../protocol/index.ts";
 import { useGameStore, type World } from "../../state/index.ts";
 import { formatDuration } from "../format.ts";
 import type { StageSummary } from "../types.ts";
+import { tokens } from "../../ui/theme/tokens.ts";
 import { Fireworks } from "./Fireworks.tsx";
 import {
   deliveredRows,
@@ -34,7 +35,7 @@ const STAR_MESSAGES: Readonly<Record<Stars, string>> = {
 };
 
 const MAX_STARS = 3;
-const NO_COLOR = "#9CA3AF";
+const NO_COLOR = tokens["--color-ink-muted"];
 
 export type ResultScreenProps = {
   stage: StageSummary;
@@ -60,8 +61,17 @@ function StarsSection({ view, world }: { view: ResultView; world: World | null }
     <section className="result-section" aria-labelledby={id}>
       <h2 id={id}>クリアの段階</h2>
       <p className="result-stars" role="img" aria-label={`★ ${stars} / ${MAX_STARS}`}>
-        {"★".repeat(stars)}
-        {"☆".repeat(MAX_STARS - stars)}
+        {Array.from({ length: MAX_STARS }, (_, i) =>
+          i < stars ? (
+            <span key={i} className="result-star result-star-filled" aria-hidden="true">
+              ★
+            </span>
+          ) : (
+            <span key={i} className="result-star result-star-empty" aria-hidden="true">
+              ☆
+            </span>
+          ),
+        )}
       </p>
       <p className="result-stage-message">{STAR_MESSAGES[stars]}</p>
       <ul className="result-conditions" aria-label="★の条件">
@@ -252,7 +262,7 @@ function TechnicalSection({
 function StorySection({ view }: { view: ResultView }): ReactElement {
   const id = useId();
   return (
-    <section className="result-section" aria-labelledby={id}>
+    <section className="result-section result-letter" aria-labelledby={id}>
       <h2 id={id}>今日起きた分散システムの出来事</h2>
       {view.story.length === 0 ? (
         <p>今日は書き残す出来事がありませんでした。</p>
@@ -310,15 +320,15 @@ export function ResultScreen({
         </>
       )}
       <div className="result-actions">
-        <button type="button" onClick={onRetry}>
+        <button type="button" className="btn btn-primary" onClick={onRetry}>
           同じ条件でもう一度
         </button>
         {nextStage !== null && (
-          <button type="button" onClick={onNextStage}>
+          <button type="button" className="btn" onClick={onNextStage}>
             次のステージ
           </button>
         )}
-        <button type="button" onClick={onStageSelect}>
+        <button type="button" className="btn" onClick={onStageSelect}>
           ステージ選択
         </button>
       </div>

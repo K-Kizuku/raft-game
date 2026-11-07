@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { FinalLog, RoundResult } from "../../protocol/index.ts";
+import { tokens } from "../../ui/theme/tokens.ts";
 import {
   TERM_COLORS,
   clampStars,
@@ -244,5 +245,38 @@ describe("termColor", () => {
     expect(TERM_COLORS).toHaveLength(8);
     expect(termColor(1)).toBe(termColor(9));
     expect(termColor(1)).not.toBe(termColor(2));
+  });
+});
+
+// WCAG 2 の相対輝度とコントラスト比（tokens.test.ts と同じ計算。そちらは export していない）。
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+  const [r, g, b] = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+}
+
+function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return ((hi ?? 0) + 0.05) / ((lo ?? 0) + 0.05);
+}
+
+describe("TERM_COLORS の配色（T-423）", () => {
+  it("RV-8 8 色が互いに違う #RRGGBB", () => {
+    for (const color of TERM_COLORS) {
+      expect(color).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+    expect(new Set(TERM_COLORS.map((c) => c.toLowerCase())).size).toBe(8);
+  });
+
+  it.each(TERM_COLORS.map((color, i) => [i, color]))(
+    "RV-8 %i 番目（%s）は --color-paper の上で 3:1 以上",
+    (_, color) => {
+      expect(contrastRatio(color, tokens["--color-paper"])).toBeGreaterThanOrEqual(3);
+    },
+  );
+
+  it("RV-8 範囲外の Term でも色が決まる", () => {
+    expect(termColor(-1)).toBe(TERM_COLORS[7]);
+    expect(termColor(0)).toBe(TERM_COLORS[0]);
   });
 });
