@@ -813,6 +813,76 @@ for sh in "${bashes[@]}"; do
 done
 chmod 755 "$rotmp"
 
+# git の終了コード 128 を一律に「Git の外」と扱わない（F10）。128 は git の設定の読み込みの失敗でも返る。
+# 再現: リンクした Worktree で AGENT_ROLE を未設定にし、GIT_CONFIG_COUNT=broken を渡すと、役割が Orchestrator に
+# なり、guard-mcp.sh がマージの操作を許していた。bash 5（PATH の bash）と /bin/bash（macOS では 3.2）で確かめる
+# run_env <bash> <hook> <role|-> <cwd> <tool_input の JSON> <tool_name> <環境変数（名前=値）…>: 終了コードを出す
+run_env() {
+  local sh="$1" hook="$2" role="$3" cwd="$4" input="$5" tool="$6" json rc
+  shift 6
+  json="$(jq -cn --arg cwd "$cwd" --arg tool "$tool" --argjson ti "$input" \
+    '{session_id:"s", cwd:$cwd, hook_event_name:"PreToolUse", tool_name:$tool, tool_input:$ti}')"
+  set +e
+  if [ "$role" = "-" ]; then
+    printf '%s' "$json" | env -u AGENT_ROLE LC_ALL="$utf8" "$@" "$sh" "$hooks/$hook" >/dev/null 2>"$tmp/stderr"
+  else
+    printf '%s' "$json" | env AGENT_ROLE="$role" LC_ALL="$utf8" "$@" "$sh" "$hooks/$hook" >/dev/null 2>"$tmp/stderr"
+  fi
+  rc=$?
+  set -e
+  echo "$rc"
+}
+# expect_env_internal <説明> <run_env の引数…>: 内部エラー（2）で拒否されることを確かめる
+expect_env_internal() {
+  local desc="$1" got
+  shift
+  got="$(run_env "$@")"
+  if [ "$got" = 2 ] && grep -qF "$internal_msg" "$tmp/stderr"; then
+    pass
+  else
+    fail "fail-closed: ${desc}（got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+  fi
+}
+real_git="$(command -v git)"
+mkdir -p "$tmp/fake-symref128"
+printf '%s\n' '#!/bin/sh' 'case " $* " in' \
+  '  *" symbolic-ref "*) echo "$FAKE_GIT_MSG" >&2; exit 128 ;;' 'esac' "exec \"$real_git\" \"\$@\"" \
+  >"$tmp/fake-symref128/git"
+chmod +x "$tmp/fake-symref128/git"
+for sh in "${bashes[@]}"; do
+  for envs in "GIT_CONFIG_COUNT=broken" "GIT_DIR=$tmp/no-such-git-dir"; do
+    label="${sh}・${envs}"
+    expect_env_internal "${label}・AGENT_ROLE なしの guard-mcp" "$sh" guard-mcp.sh - "$wt" \
+      '{"pullNumber":1}' mcp__github__merge_pull_request "$envs"
+    # （guard-mcp は AGENT_ROLE があれば git を使わない。Worker は本来の理由で拒否する）
+    got="$(run_env "$sh" guard-mcp.sh worker "$wt" '{"pullNumber":1}' mcp__github__merge_pull_request "$envs")"
+    [ "$got" = 2 ] && pass || fail "${label}・AGENT_ROLE=worker の guard-mcp が拒否されない（got=${got}）"
+    for role in - worker; do
+      expect_env_internal "${label}・AGENT_ROLE=${role} の guard-bash" "$sh" guard-bash.sh "$role" "$wt" \
+        "$(bash_input "git status")" Bash "$envs"
+      expect_env_internal "${label}・AGENT_ROLE=${role} の guard-write" "$sh" guard-write.sh "$role" "$wt" \
+        "$(jq -cn --arg p "$wt/README.md" '{file_path:$p}')" Write "$envs"
+    done
+  done
+  # git push の元のブランチ（git symbolic-ref）の 128 も、Git の外のときだけ空として扱う
+  # （symbolic-ref だけが 128 で失敗する偽物の git。文言が「not a git repository」でも .git があれば内部エラー）
+  for msg in "fatal: bad config line 1 in file .git/config" "fatal: not a git repository (or any of the parent directories): .git"; do
+    expect_env_internal "${sh}・git symbolic-ref が 128（${msg}）の git push" "$sh" guard-bash.sh orchestrator "$repo" \
+      "$(bash_input "git push")" Bash PATH="$tmp/fake-symref128:$PATH" FAKE_GIT_MSG="$msg"
+  done
+  # 本当に Git の外のときは、今までどおり内部エラーにしない
+  got="$(run_env "$sh" guard-mcp.sh - "$nogit" '{"pullNumber":1}' mcp__github__merge_pull_request)"
+  [ "$got" = 0 ] && pass || fail "fail-closed: ${sh} で Git の外は内部エラーにしない（guard-mcp・got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+  got="$(run_env "$sh" guard-bash.sh - "$nogit" "$(bash_input "ls")" Bash)"
+  [ "$got" = 0 ] && pass || fail "fail-closed: ${sh} で Git の外は内部エラーにしない（guard-bash・got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+  got="$(run_env "$sh" guard-bash.sh - "$nogit" "$(bash_input "git push")" Bash)"
+  [ "$got" = 0 ] && pass || fail "fail-closed: ${sh} で Git の外の git push は内部エラーにしない（guard-bash・got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+  got="$(run_env "$sh" guard-bash.sh - "$nogit" "$(bash_input "rm -r /")" Bash)"
+  if [ "$got" = 2 ] && ! grep -qF "$internal_msg" "$tmp/stderr"; then pass; else
+    fail "fail-closed: ${sh} で Git の外の rm -r / は本来の理由で拒否する（got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+  fi
+done
+
 # 正しく拒否するときは、内部エラーではなく本来の理由を出す
 got="$(run guard-bash.sh worker "$wt" "$(bash_input "git push origin main")")"
 if [ "$got" = 2 ] && grep -qF 'main への push は禁止' "$tmp/stderr" && ! grep -qF "$internal_msg" "$tmp/stderr"; then

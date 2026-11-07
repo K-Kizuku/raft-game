@@ -209,7 +209,13 @@ check_push() {
   cur="$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null)" || rc=$?
   case "$rc" in
     0) ;;
-    1 | 128) cur="" ;; # 1: HEAD がブランチを指していない（detached）。128: Git の外
+    1) cur="" ;; # HEAD がブランチを指していない（detached）
+    128)
+      # Git の外のときだけ。設定の読み込みの失敗などの 128 は内部エラー（F10）
+      git_not_repo "$dir" symbolic-ref --quiet --short HEAD ||
+        internal_error "push の元のブランチが分からない（git symbolic-ref が終了コード 128 で失敗した）"
+      cur=""
+      ;;
     *) internal_error "push の元のブランチが分からない（git symbolic-ref が終了コード ${rc} で失敗した）" ;;
   esac
   local dsts=() r src dst i

@@ -149,15 +149,48 @@ hook_cwd() {
   abs_dir "$d"
 }
 
-# git_out <dir> <git の引数…>: git -C <dir> <引数…> の標準出力。Git の外（終了コード 128）なら空で 0。
-# それ以外の失敗（git がない 127・シグナルなど）では 1 を返す（呼び出し側で internal_error にする）。
+# dotgit_above <dir>: <dir> かその親のディレクトリのどれかに .git があれば 0、なければ 1。
+dotgit_above() {
+  local p
+  p="$(abs_dir "$1")" || p="$1"
+  while :; do
+    [ -e "$p/.git" ] && return 0
+    case "$p" in
+      '' | /) return 1 ;;
+    esac
+    p="${p%/*}"
+  done
+}
+
+# git_not_repo <dir> <git の引数…>: git -C <dir> <引数…> が終了コード 128 で失敗したとき、それが本当に
+# 「Git の外」によるものなら 0、そうでなければ（設定の読み込みの失敗・safe.directory・-C の先がないなど）1。
+# 128 は Git の外だけでなく、git の設定の読み込みの失敗（GIT_CONFIG_COUNT=broken など）でも返るので、
+# 終了コードだけでは見分けない（F10。Worker を Orchestrator と誤って判定し、マージの操作を許していた）。
+# 同じコマンドを LC_ALL=C でもう一度実行して標準エラーの文言を見る。文言が「not a git repository」でも、
+# <dir> か親に .git があれば Git の外とは扱わない（GIT_DIR・GIT_CEILING_DIRECTORIES などで見失ったとき）。
+git_not_repo() {
+  local d="$1" err rc=0
+  shift
+  err="$(LC_ALL=C LANGUAGE=C git -C "$d" "$@" 2>&1 >/dev/null)" || rc=$?
+  [ "$rc" = 128 ] || return 1
+  case "$err" in
+    "fatal: not a git repository"*) ;;
+    *) return 1 ;;
+  esac
+  dotgit_above "$d" && return 1
+  return 0
+}
+
+# git_out <dir> <git の引数…>: git -C <dir> <引数…> の標準出力。Git の外（git_not_repo）なら空で 0。
+# それ以外の失敗（設定の読み込みの失敗などの 128・git がない 127・シグナルなど）では 1 を返す
+# （呼び出し側で internal_error にする）。
 git_out() {
   local d="$1" out rc=0
   shift
   out="$(git -C "$d" "$@" 2>/dev/null)" || rc=$?
   case "$rc" in
     0) printf '%s\n' "$out" ;;
-    128) ;;
+    128) git_not_repo "$d" "$@" || return 1 ;;
     *) return 1 ;;
   esac
 }
