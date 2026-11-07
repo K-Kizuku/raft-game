@@ -26,6 +26,37 @@ type testCluster struct {
 	applied   map[uint64][]Applied
 	delivered int
 	hash      hash.Hash
+	sms       map[uint64]*fakeSM
+}
+
+// fakeSM は、受け取った (index, data) を記録し、"n<ID>:<index>" を返すテスト用の StateMachine。
+type fakeSM struct {
+	id  uint64
+	got []smCall
+}
+
+type smCall struct {
+	Index uint64
+	Data  string
+}
+
+func (s *fakeSM) Apply(index uint64, data []byte) any {
+	s.got = append(s.got, smCall{Index: index, Data: string(data)})
+	return fmt.Sprintf("n%d:%d", s.id, index)
+}
+
+func testNodeConfig(id uint64, ids []uint64, seed uint64, sm StateMachine) NodeConfig {
+	r := rand.New(rand.NewPCG(seed, fnv64a(fmt.Sprintf("raft/%d", id))))
+	return NodeConfig{
+		ID:              id,
+		Peers:           ids,
+		ElectionTick:    16,
+		HeartbeatTick:   2,
+		MaxSizePerMsg:   4096,
+		MaxInflightMsgs: 4,
+		RandIntn:        r.IntN,
+		StateMachine:    sm,
+	}
 }
 
 func fnv64a(s string) uint64 {
@@ -36,23 +67,30 @@ func fnv64a(s string) uint64 {
 
 func newTestCluster(t *testing.T, seed uint64) *testCluster {
 	t.Helper()
-	ids := []uint64{1, 2, 3}
+	return newTestClusterN(t, seed, 3)
+}
+
+func newTestClusterN(t *testing.T, seed uint64, size int) *testCluster {
+	t.Helper()
+	ids := make([]uint64, size)
+	for i := range ids {
+		ids[i] = uint64(i + 1)
+	}
+	return newTestClusterWith(t, seed, ids, NewNode)
+}
+
+func newTestClusterWith(t *testing.T, seed uint64, ids []uint64, mk func(NodeConfig) (*Node, error)) *testCluster {
+	t.Helper()
 	c := &testCluster{
 		byID:    make(map[uint64]*Node),
 		applied: make(map[uint64][]Applied),
 		hash:    sha256.New(),
+		sms:     make(map[uint64]*fakeSM),
 	}
 	for _, id := range ids {
-		r := rand.New(rand.NewPCG(seed, fnv64a(fmt.Sprintf("raft/%d", id))))
-		n, err := NewNode(NodeConfig{
-			ID:              id,
-			Peers:           ids,
-			ElectionTick:    16,
-			HeartbeatTick:   2,
-			MaxSizePerMsg:   4096,
-			MaxInflightMsgs: 4,
-			RandIntn:        r.IntN,
-		})
+		sm := &fakeSM{id: id}
+		c.sms[id] = sm
+		n, err := mk(testNodeConfig(id, ids, seed, sm))
 		if err != nil {
 			t.Fatalf("NewNode(%d): %v", id, err)
 		}
@@ -70,15 +108,15 @@ func (c *testCluster) settle(t *testing.T) int {
 	count := 0
 	for {
 		for _, n := range c.nodes {
-			out, applied, err := n.processReady()
+			out, err := n.processReady()
 			if err != nil {
 				t.Fatalf("node %d: processReady: %v", n.ID(), err)
 			}
-			queue = append(queue, out...)
-			for _, a := range applied {
+			queue = append(queue, out.Messages...)
+			for _, a := range out.Applied {
 				c.hashApplied(t, n.ID(), a)
 			}
-			c.applied[n.ID()] = append(c.applied[n.ID()], applied...)
+			c.applied[n.ID()] = append(c.applied[n.ID()], out.Applied...)
 		}
 		if len(queue) == 0 {
 			return count
@@ -118,6 +156,9 @@ func (c *testCluster) hashApplied(t *testing.T, id uint64, a Applied) {
 	c.writeUint64(a.Term)
 	c.writeUint64(uint64(len(a.Data)))
 	_, _ = c.hash.Write(a.Data)
+	r, _ := a.Result.(string)
+	c.writeUint64(uint64(len(r)))
+	_, _ = c.hash.Write([]byte(r))
 }
 
 func (c *testCluster) writeUint64(v uint64) {
@@ -191,7 +232,7 @@ func checkCommitApplied(t *testing.T, c *testCluster, want uint64) {
 
 func appliedEqual(a, b []Applied) bool {
 	return slices.EqualFunc(a, b, func(x, y Applied) bool {
-		return x.Index == y.Index && x.Term == y.Term && string(x.Data) == string(y.Data)
+		return x.Index == y.Index && x.Term == y.Term && string(x.Data) == string(y.Data) && x.Result == y.Result
 	})
 }
 
@@ -212,12 +253,12 @@ func TestThreeNodesElectProposeCommitApply(t *testing.T) {
 
 	// E-2
 	c.proposeABC(t, c.byID[1])
-	want := []Applied{
-		{Index: 5, Term: term, Data: []byte("a")},
-		{Index: 6, Term: term, Data: []byte("b")},
-		{Index: 7, Term: term, Data: []byte("c")},
-	}
 	for _, n := range c.nodes {
+		want := []Applied{
+			{Index: 5, Term: term, Data: []byte("a"), Result: fmt.Sprintf("n%d:5", n.ID())},
+			{Index: 6, Term: term, Data: []byte("b"), Result: fmt.Sprintf("n%d:6", n.ID())},
+			{Index: 7, Term: term, Data: []byte("c"), Result: fmt.Sprintf("n%d:7", n.ID())},
+		}
 		if got := c.applied[n.ID()]; !appliedEqual(got, want) {
 			t.Errorf("node %d: applied = %+v, want %+v", n.ID(), got, want)
 		}
