@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.4 |
+| 版 | v0.5 |
 | 更新日 | 2026-11-07 |
 | 状態 | レビュー済み。提供データの実ファイルを確認して反映した |
 | 関連 | [ADR-0013](./adr/0013-open-data-build-time-etl.md) / [ADR-0022](./adr/0022-yaml-library.md) / [要件 FR-DATA](./01-requirements.md#410-オープンデータfr-data) / [判断の記録 A-05・A-06・A-21](./09-assumptions-and-open-questions.md) |
@@ -312,11 +312,17 @@ excerpts:
 ステージ内の島 `i` の重みを、人口の 0.5 乗で決めます。
 
 ```text
-w_i = round( 1000 × sqrt(pop_i) / Σ_j sqrt(pop_j) )   # 千分率の整数。合計が 1000 になるよう最大剰余法で調整
+v_i    = populationSqrt_i を 0.01 単位の整数にしたもの（islands.json の 160.88 → 16088）
+S      = Σ_j v_j
+base_i = ⌊1000 × v_i / S⌋
+rem_i  = 1000 × v_i mod S
+w_i    = base_i + (1000 − Σ base_j 個の島に 1 ずつ足す。足す島は rem_i の大きい順、同じなら島の順)
 ```
 
-- 0.5 乗にするのは、人口の大きい島に依頼が集中しすぎて、小さい島が「何も起きない島」になるのを防ぐためです（指数はステージ定義の `populationExponent` で変えられます。既定 0.5）
-- 浮動小数点の計算はステージの**読み込み時に 1 回だけ**行い、以降のシミュレーションでは整数の `w_i` だけを使います（CPU アーキテクチャによる浮動小数点の差で決定性が崩れるのを防ぐため。[DesignDoc §9.2](./03-design-doc.md)）
+- 0.5 乗にするのは、人口の大きい島に依頼が集中しすぎて、小さい島が「何も起きない島」になるのを防ぐためです
+- 指数はステージ定義の `requests.random.populationExponent` で決めます。**必須**で、`0`・`0.5`・`1` のどれかだけを受け付けます（既定値はありません）。`0` は全島の `v_i = 1`、`0.5` は上の `populationSqrt`、`1` は人口そのもの（`population.value`）です
+- **浮動小数点を使わずに、整数だけで計算します**（最大剰余法。合計は必ず 1000）。`islands.json` の `populationSqrt` は ETL が整数だけで計算した値で、0.01 単位の整数として正確に持てるので、読み込み時にも浮動小数点は要りません。任意の指数には `math.Pow` が要るので、指数を 3 つの値に限っています（CPU アーキテクチャによる浮動小数点の差で決定性が崩れるのを防ぐため。[DesignDoc §9.2](./03-design-doc.md)）
+- 全島の `v_i` の合計が 0 なら、重みを決められないのでエラーにします。`v_i = 0` の島が混ざるのはよい（重みが 0 になりうる）
 
 確定した島での計算結果は次のとおりです。
 
@@ -331,7 +337,7 @@ w_i = round( 1000 × sqrt(pop_i) / Σ_j sqrt(pop_j) )   # 千分率の整数。�
 
 ### 4.2 ランダムな依頼の発生
 
-ラウンドを `slotMs`（既定 10 秒）ごとの区間に分け、各区間・各島で次の確率で依頼を 1 件発生させます。
+ラウンドを `slotMs`（ステージ定義で必須。例は 10 秒）ごとの区間に分け、各区間・各島で次の確率で依頼を 1 件発生させます。
 
 ```text
 p_i [ppm] = w_i × rateMilliPerMin × (slotMs / 1000) / 60
@@ -404,6 +410,8 @@ rng("events").IntN(1000) < 欠航の確率 なら durationMs（10 秒）の間�
 
 ### 5.2 例（Stage 1）
 
+必須の欄には既定値がありません（書いていなければエラー。§5.4）。整数は 10 進で書き、`speed`・`populationExponent`・`speed.allowed` などの小数は**小数第 3 位まで**で書きます。小数は読み込み時に、浮動小数点を通さずに千分率の整数へ直します（`1.2` → 1200）。
+
 ```yaml
 format: 1
 id: stage1
@@ -413,7 +421,7 @@ intro:
   text: 温暖で雨の少ない瀬戸内の海。小豆島・豊島・直島を結ぶ郵便船の、はじめての航海です。
   provenance: derived           # 計画書の記述（NATURAL_CLIMATE_FEATURES）をもとにした紹介文
   source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: NATURAL_CLIMATE_FEATURES }
-learning: [log_replication, commit, quorum]   # リザルト後に解放するヘルプのキー
+learning: [log_replication, commit, quorum]   # 任意。リザルト後に解放するヘルプのキー
 durationMs: 180000
 unlock: null
 
@@ -440,8 +448,8 @@ routes:
     provenance: derived
     source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: MARITIME_TRANSPORT, quote: "高松~直島~豊島(22.6km・35分" }
 
-ferries:
-  - { id: f1, name: せとうち丸, home: kagawa-shodoshima, capacity: 4, speed: 1.0 }
+ferries:                        # provenance は fact か creative（省略は creative）
+  - { id: f1, name: せとうち丸, home: kagawa-shodoshima, capacity: 4, speed: 1.0 }   # speed は千分率の 1000
 
 raft:
   initialLeader: kagawa-shodoshima
@@ -466,7 +474,7 @@ resources:
 requests:
   deadlineMs: { normal: 60000, critical: 90000 }
   retryMs: 25000
-  script:
+  script:                       # 任意（省略は空）。書いた順のまま使う
     - { at: 5000,   island: kagawa-shodoshima, kind: stall.reserve,    resource: "stall:main" }
     - { at: 30000,  island: kagawa-naoshima,   kind: firework.reserve, resource: "firework:a" }
     - { at: 60000,  island: kagawa-teshima,    kind: stall.reserve,    resource: "stall:main" }
@@ -476,12 +484,12 @@ requests:
   random:
     rateMilliPerMin: 0          # Stage 1 ではランダムな依頼なし
     slotMs: 10000
-    populationExponent: 0.5
+    populationExponent: 0.5     # 必須。0・0.5・1 のどれか（§4.1）
     kinds: [ { kind: stall.reserve, resource: "stall:main", weight: 1 } ]
 
-events: []                      # Stage 1 ではイベントなし
+events: []                      # 任意（省略は空）。Stage 1 ではイベントなし
 
-scoring:                        # 省略時は既定値（04-game-design.md §5）
+scoring:                        # 必須。いまは target だけ。配点のキー（04-game-design.md §5.1）は T-203 で足す
   target: { successes: 4, score3: 900 }
 
 satisfaction:
@@ -490,9 +498,9 @@ satisfaction:
   silencePenalty: { everyMs: 10000, amount: 2 }
 
 speed:                          # A-17
-  allowed: [0.5, 1, 2, 4]
+  allowed: [0.5, 1, 2, 4]       # 小数第 3 位まで。狭義の昇順で、1 を含む
 
-tutorial: stage1                # クライアントのチュートリアル台本のキー
+tutorial: stage1                # 任意。クライアントのチュートリアル台本のキー
 ```
 
 ### 5.3 イベントの書き方
@@ -545,17 +553,148 @@ demo:
 
 ### 5.4 読み込み時の検証
 
-ステージの読み込み（`internal/stage`）は、次のどれかに当てはまればエラーにします。CI では全ステージを読み込むテストを行います。
+ステージの読み込み（`internal/stage`、§5.6）は、次の検査のどれかに当てはまればエラーにします。CI では全ステージを読み込むテストを行います。エラーは、ファイル名と YAML の場所（`Path`。例: `routes[1].travelMs`、添字は 0 始まり）と日本語の説明の一覧です。
 
-- `islands` の `ref` が `islands.json` にない / 重複している
-- 島が 3 つ未満、または 7 つより多い
-- 航路グラフが連結でない
-- `initialLeader`・`ferries[].home`・`requests.script[].island`・イベントの `island` / `routes` が `islands` にない
-- `resources` にない資源を参照している / `firework` に `capacity` がある / `stall` に `capacity` がない
-- `at` や `window` が `durationMs` を超えている
-- `electionTick ≤ heartbeatTick`（`etcd-io/raft` の制約）
-- `provenance: derived` の値に `source` がない
-- 選挙タイムアウト（`electionTick × tickMs`）が、Leader と最も近い Follower の往復時間（`2 × travelMs + dockMs`）の 2 倍より短い → **警告**（エラーにはしない。自由実験モードではわざと短くするため）
+**すべての必須の欄に既定値はありません。** 書いていなければ、その欄の `Path` で「必須」のエラーにします（コードはゲームの数値を持ちません）。任意の欄の「書いていないとき」は、空の列・`false`・`creative`・`""` だけです。
+
+#### YAML の読み込み（[ADR-0022](./adr/0022-yaml-library.md)）
+
+- `go.yaml.in/yaml/v3` の `KnownFields(true)` で読みます。未知のキー（`travelms` などの書き間違い）・重複したキー・型の違いはエラーです。文書は 1 つだけ（2 つ目の文書があればエラー）で、空のファイルもエラーです。このときのエラーは `Path` が空で、説明に yaml のエラーの文（`line N:` を含む）を入れます。読み込みのエラーがあれば、下の検査はしません
+- 整数: タグが `!!int` で、値が `^-?(0|[1-9][0-9]*)$` に合うものだけ（`1.5`・`"1"`・`0x10`・`1_000`・`010`・`+1`・`1e3`・`true` は誤り）
+- 小数: タグが `!!int` か `!!float` で、値が `^(0|[1-9][0-9]{0,5})(\.[0-9]{1,3})?$` に合うものだけ。千分率の整数にします（`1` → 1000、`1.2` → 1200、`0.001` → 1）。`1.2345`・`-1`・`.5`・`1.`・`1e3`・`"1.2"`・`.inf` は誤り。浮動小数点は使いません
+- 真偽値: タグが `!!bool` で、値が `true` か `false` のものだけ（`yes`・`on`・`True`・`"true"`・`1` は誤り）
+- 整数・小数・真偽値の型の誤りは、yaml の読み込みのエラーと同じ扱いです
+- 文字列は yaml/v3 の既定のまま読みます。`unlock` の `null`・`~`・省略は「最初から遊べる」です
+- 必須のマッピング（`intro`・`raft` など）を書いていないときは、そのマッピングの `Path` で 1 件だけ出し、中の欄は検査しません
+- **すべての整数は 0 以上 1,000,000,000 以下**です（下の表で範囲を書いたものはその範囲。掛け算のあふれを防ぐため）
+
+#### 検査の進め方
+
+- 1 つの欄には、エラーを最大 1 件だけ出します（最初に当てはまった条件）
+- 参照（島の `ref`・資源の `id`・船の `id`・航路）が解決できない欄は、その欄のエラーだけを出し、それを使うほかの検査は飛ばします（同じ原因のエラーを増やさない）
+- エラーの順序は決定的です: 下のトップレベルの表の行の順に検査します。`events` は各イベントを添字の順に（1 つのイベントの中はイベントの表の行の順に）、`demo` はデモの表の順に検査します。列の要素は添字の順です。同じ入力なら、エラーの文の順序と内容は毎回同じです
+
+#### 共通の型
+
+- Text（`intro`・`flavor`）: `text` は必須で、前後の空白を除いて空でない。`provenance` は必須で `fact`・`derived`・`creative` のどれか。`source` は任意で、`provenance` が `derived` なら必須
+- Source（`source`）: `dataset` は必須で、`islands.json` の `sources` のキーにある。`region`・`field` は必須で空でない。`quote` は任意
+  - `quote` があるとき: `islands.json` の `excerpts` に、`region`・`field`・`quote` の 3 つが完全に一致する要素がある（正規化しない。`~` と `～` も区別する）。なければ `….source.quote` のエラー
+  - `quote` がないとき: `region` が、`islands.json` の島の `plan.region` か `excerpts[].region` のどれかと一致する。なければ `….source.region` のエラー
+  - **設計書にない判断（T-201）**: ステージで引用する文は、必ず `data/curated/*.yaml`（§3.4）に抜き出しとして書きます。抜き出しは ETL が計画書の文章に含まれることを確かめているので、ステージの引用もデータまでたどれます
+
+#### トップレベル
+
+| キー | 型 | 必須 | 検査 |
+|---|---|---|---|
+| `format` | 整数 | 必須 | `1` |
+| `id` | 文字列 | 必須 | `^[a-z0-9][a-z0-9-]{0,31}$`（web の `stageId` と同じ）。`LoadDir` ではファイル名（拡張子を除く）と一致 |
+| `title`・`region` | 文字列 | 必須 | 空でない |
+| `intro` | Text | 必須 | 上の Text |
+| `learning` | 文字列の列 | 任意 | 各要素が `^[a-z][a-z0-9_]*$`、重複なし（2 つ目の添字） |
+| `durationMs` | 整数 | 必須 | 1 以上 |
+| `unlock` | 文字列か null | 任意 | 文字列なら `id` と同じ形式で、自分の `id` でない。`LoadDir` では読んだステージのどれかで、`unlock` をたどって循環しない |
+| `tutorial` | 文字列 | 任意 | `^[a-z0-9][a-z0-9-]*$` |
+| `islands` | 列 | 必須 | 3 個以上 7 個以下（`islands`）。全島の重みの値の合計が 0 なら誤り（`islands`。§4.1） |
+| `islands[].ref` | 文字列 | 必須 | `islands.json` にある。重複なし（2 つ目の添字） |
+| `islands[].layout` | `{x, y}` | 必須 | `x`・`y` は整数で必須 |
+| `islands[].color` | 文字列 | 必須 | `^#[0-9A-Fa-f]{6}$` |
+| `routes` | 列 | 必須 | 航路のグラフが連結（`routes`。島が 1 つでもほかとつながらなければ誤り） |
+| `routes[].a`・`b` | 文字列 | 必須 | `islands` の `ref` にある。`a ≠ b`（`b` のエラー）。順序を問わずに同じ組が 2 つない（2 つ目の `routes[i]`） |
+| `routes[].travelMs` | 整数 | 必須 | 1 以上 |
+| `routes[].provenance` | 文字列 | 必須 | `fact`・`derived`・`creative` |
+| `routes[].source` | Source | 任意 | `provenance` が `derived` なら必須 |
+| `ferries` | 列 | 必須 | 1 個以上 |
+| `ferries[].id` | 文字列 | 必須 | `^[a-z0-9][a-z0-9-]*$`、`any` でない（`breakdown` の予約語）、重複なし |
+| `ferries[].name` | 文字列 | 必須 | 空でない |
+| `ferries[].home` | 文字列 | 必須 | `islands` の `ref` にある |
+| `ferries[].capacity` | 整数 | 必須 | 1 以上 |
+| `ferries[].speed` | 小数 | 必須 | 0 より大きい（千分率で 1 以上） |
+| `ferries[].provenance` | 文字列 | 任意 | `fact` か `creative`（`derived` は `source` を書けないので不可）。省略は `creative` |
+| `raft` | マッピング | 必須 | — |
+| `raft.initialLeader` | 文字列 | 必須 | `islands` の `ref` にある |
+| `raft.tickMs`・`heartbeatTick`・`maxInflightMsgs`・`maxSizePerMsg` | 整数 | 必須 | 1 以上 |
+| `raft.electionTick` | 整数 | 必須 | `heartbeatTick` より大きい（etcd-io/raft の制約） |
+| `raft.checkQuorum`・`preVote` | 真偽値 | 必須 | — |
+| `transport` | マッピング | 必須 | — |
+| `transport.dockMs`・`relayCap` | 整数 | 必須 | 0 以上 |
+| `transport.perLinkAppCap`・`portCap` | 整数 | 必須 | 1 以上 |
+| `resources` | 列 | 必須 | 1 個以上 |
+| `resources[].id` | 文字列 | 必須 | 空でない、重複なし |
+| `resources[].kind` | 文字列 | 必須 | `firework` か `stall`（`budget` は P1。いまは誤り） |
+| `resources[].label` | 文字列 | 必須 | 空でない |
+| `resources[].critical` | 真偽値 | 任意 | 省略は `false` |
+| `resources[].capacity` | 整数 | `stall` だけ必須 | `firework` では書かない。`stall` では 1 以上 |
+| `requests` | マッピング | 必須 | — |
+| `requests.deadlineMs.normal`・`critical` | 整数 | 必須 | 1 以上 |
+| `requests.retryMs` | 整数 | 必須 | 1 以上 |
+| `requests.script` | 列 | 任意 | 省略は空。書いた順のまま（並べ替えない） |
+| `requests.script[].at` | 整数 | 必須 | `durationMs` 以下 |
+| `requests.script[].island` | 文字列 | 必須 | `islands` の `ref` にある |
+| `requests.script[].kind` | 文字列 | 必須 | `firework.reserve` か `stall.reserve` |
+| `requests.script[].resource` | 文字列 | 必須 | `resources` にあり、種類が `kind` と合う（`firework.reserve` → `firework`、`stall.reserve` → `stall`）。合わなければ `resource` のエラー |
+| `requests.random` | マッピング | 必須 | — |
+| `requests.random.rateMilliPerMin` | 整数 | 必須 | `rateMilliPerMin × slotMs ≤ 60,000,000`（重みが最大の 1000 でも `p_i` が 1,000,000 ppm を超えないため。§4.2） |
+| `requests.random.slotMs` | 整数 | 必須 | 1 以上 |
+| `requests.random.populationExponent` | 小数 | 必須 | `0`・`0.5`・`1` のどれか（千分率で 0・500・1000） |
+| `requests.random.kinds` | 列 | 必須 | `rateMilliPerMin > 0` なら 1 個以上 |
+| `requests.random.kinds[].kind`・`resource` | 文字列 | 必須 | `script` と同じ |
+| `requests.random.kinds[].weight` | 整数 | 必須 | 1 以上 |
+| `events` | 列 | 任意 | 省略は空。下の「イベント」 |
+| `demo` | マッピング | 任意 | 下の「デモ」 |
+| `scoring.target.successes` | 整数 | 必須 | 1 以上 |
+| `scoring.target.score3` | 整数 | 必須 | 0 以上 |
+| `satisfaction.initial` | 整数 | 必須 | 0 以上 100 以下 |
+| `satisfaction.silenceAfterMs` | 整数 | 必須 | 1 以上 |
+| `satisfaction.silencePenalty.everyMs` | 整数 | 必須 | 1 以上 |
+| `satisfaction.silencePenalty.amount` | 整数 | 必須 | 0 以上 |
+| `speed.allowed` | 小数の列 | 必須 | 1 個以上（`speed.allowed`）。各要素が 0 より大きい（`speed.allowed[i]`）。狭義の昇順（崩れた要素の `speed.allowed[i]`）。`1` を含む（`speed.allowed`） |
+
+`scoring`・`scoring.target`・`satisfaction`・`satisfaction.silencePenalty`・`speed`・`requests.deadlineMs` のマッピング自体も必須です（書いていなければ、そのマッピングの `Path` で 1 件）。
+
+#### イベント（`events[i]`）
+
+`○` は必須、`△` は任意、空欄は「書かない」（書いたら、そのキーの `Path` でエラー）です。
+
+| キー | 型 | `storm` | `cancellation` | `breakdown` | `rush` | `drift` | 検査 |
+|---|---|---|---|---|---|---|---|
+| `kind` | 文字列 | ○ | ○ | ○ | ○ | ○ | 5 つのどれか。違えば `kind` のエラーだけを出し、ほかの欄は検査しない |
+| `at` か `window` | 整数か整数 2 つの列 | ○ | | ○ | ○ | ○ | ちょうど一方を書く（両方 → `window`、どちらもない → `at`）。`at ≤ durationMs`。`window` は要素が 2 つで、`start ≤ end ≤ durationMs` |
+| `durationMs` | 整数 | ○ | ○ | ○ | | | 1 以上 |
+| `routes` | 2 つの `ref` の列の列 | ○ | | | | | 1 個以上。各要素が 2 つの `ref` で、`routes` にある航路（順序は問わない）。同じ航路を 2 回書かない |
+| `forecastMs` | 整数 | ○ | | | ○ | | 開始の時刻（`at` か `window` の `start`）以下 |
+| `flavor` | Text | △ | | | | | 上の Text |
+| `island` | 文字列 | | ○ | | | | `islands` の `ref` にある |
+| `probabilityPermille` | 整数 | | ○ | | | | 0 以上 1000 以下 |
+| `slotMs` | 整数 | | ○ | | | | 1 以上 |
+| `provenance` | 文字列 | | ○ | | | | `fact`・`derived`・`creative` |
+| `source` | Source | | △ | | | | `provenance` が `derived` なら必須 |
+| `ferry` | 文字列 | | | ○ | | | `ferries` の `id` か `any` |
+| `requests` | 整数 | | | | ○ | | 1 以上 |
+| `letters` | 整数 | | | | | ○ | 1 以上 |
+| `minAgeMs` | 整数 | | | | | ○ | 0 以上 |
+
+- `events[i].routes[j]` の誤り（要素が 2 つでない・`ref` がない・航路がない・重複）は `events[i].routes[j]` のエラーです
+- 嵐が `durationMs` を超えて続くのはよい（開始の時刻だけを検査する）
+
+#### デモ（`demo`）
+
+| キー | 型 | 必須 | 検査 |
+|---|---|---|---|
+| `demo.endOnAllCriticalSecured` | 真偽値 | 必須 | — |
+| `demo.storm` | マッピング | 任意 | — |
+| `demo.storm.routes` | 2 つの `ref` の列の列 | `storm` があれば必須 | イベントの `routes` と同じ（`demo.storm.routes[j]`） |
+| `demo.storm.durationMs` | 整数 | `storm` があれば必須 | 1 以上 |
+| `demo.storm.flavor` | Text | 任意 | 上の Text |
+
+#### ファイルをまたぐ検査（`LoadDir`）
+
+- `data/stages/` の直下の `*.yaml` だけを読みます（サブディレクトリは見ない）。`*.yml` があれば、そのファイルのエラー（「拡張子は .yaml にする」）にします（読み落としを防ぐため。§3.4 の `data/curated/` と同じ）。それ以外のファイル（`.gitkeep` など）は無視します
+- `id` がファイル名から `.yaml` を除いたものと一致する（`id`）
+- `unlock` が、読めたステージの `id` のどれか（`unlock`）。`unlock` をたどって循環しない（循環に含まれる各ファイルの `unlock`）
+
+#### 警告（エラーにしない）
+
+- 選挙タイムアウトの目安: `t_min` を「`raft.initialLeader` に直接つながる航路の `travelMs` の最小」とし、`electionTick × tickMs < 2 × (2 × t_min + dockMs)`（Leader と最も近い Follower の往復時間の 2 倍）なら、`raft.electionTick` の警告を 1 件出します。船の `speed` は使いません。自由実験モードではわざと短くするため、エラーにはしません
 
 ---
 
@@ -573,6 +712,39 @@ ferries:
 
 - 積載量・速度・母港は `creative` です
 - ステージ紹介とクレジットに「計画書に記載された船名を使用しており、運航会社とは関係ありません」と書きます
+
+### 5.6 読み込み（`internal/stage`）
+
+`server/internal/stage` は、ETL が作った `islands.json`（§3.1）とステージ定義（§5.2〜§5.5）を読んで検証し、整数だけで表した `Stage` を返します（T-201）。浮動小数点・実時間・乱数・goroutine を使わず、map の走査で出力やエラーの順序を決めません（`sim` と同じ規則。[DesignDoc §9.2](./03-design-doc.md)）。`sim` などリポジトリのほかのパッケージは import しません。
+
+| 関数 | 役割 |
+|---|---|
+| `ParseIslands(name, data)` | `islands.json` を読んで検証する |
+| `Parse(name, data, islands)` | 1 つのステージ定義を読んで検証し（§5.4）、重み（§4.1）・警告・ハッシュを計算する。I/O をしない純粋な関数 |
+| `LoadDir(fsys, islandsPath, stagesDir)` | `io/fs.FS` から `islands.json` とディレクトリの直下の `*.yaml` を読み、ファイルをまたぐ検査（§5.4）をする。ステージはファイルの名前の順。呼び出し側が `os.DirFS` か `embed.FS` を渡す |
+| `Weights(values)` | 整数の最大剰余法で、合計 1000 の千分率の重みを計算する（§4.1） |
+
+エラーは、ファイルごとの `*stage.Error`（ファイル名と、`Path`・説明の一覧）です。`LoadDir` は複数のファイルのエラーを `errors.Join` でまとめて返します。
+
+#### `islands.json` の読み込み
+
+- 読む欄は `format`・`sources`（キーだけ）・`islands[].id`・`name`・`prefecture`・`population.value`・`populationSqrt`・`plan.region`・`excerpts[].id`・`region`・`field`・`quote` だけです。**ほかのキーは無視します**（ETL が欄を足しても壊れないように）
+- 数は浮動小数点を通さずに、JSON の文字列のまま読みます。`format`・`population.value` は `^(0|[1-9][0-9]*)$`（`25881.0`・`2.5e4`・負の数・`"1"` は誤り）。`populationSqrt` は `^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$` を 0.01 単位の整数にします（`160.88` → 16088、`13` → 1300）
+- 検査: JSON のオブジェクトが 1 つだけで後ろに空白以外がない／`format` が `1`／`sources` が 1 つ以上のキーを持つオブジェクト／`islands` が 1 つ以上で、`id`・`name` が空でなく、`id` が一意／`population.value` と `populationSqrt` が上の形式／`excerpts` はなくてもよいが、あれば各要素の `id`・`region`・`field`・`quote` が空でない
+- `populationSqrt` は、人口から §3.1 の整数の方法で計算した値と一致しなければエラーにします（ETL と同じ式。手で書き換えた `islands.json` を見つけるため）
+
+#### ハッシュ（入力ログの `stageHash`、[DesignDoc §10.1](./03-design-doc.md)）
+
+```text
+stageHash = "sha256:" + hex( SHA-256( SHA-256(ステージの YAML のバイト列) ‖ SHA-256(islands.json のバイト列) ) )
+```
+
+内側の 2 つは 32 バイトずつで、つないだ 64 バイトをもう一度ハッシュします（16 進は小文字）。バイト列で決めるので、YAML のコメントや空白を変えてもハッシュは変わります。リプレイで「同じ定義で作ったか」を確かめるために使います。
+
+#### 後のタスクで扱うこと
+
+- `go:embed` での取り込みと `make sync-data`（`data/` を `server/internal/stage/embedded/` にコピーする）は、サーバー（T-302）と Dockerfile（T-306）で扱います。`embedded/` は `.gitignore` に入っていて CI では作らないので、`internal/stage` には `//go:embed` を書きません
+- `Stage` から `sim.Config` への変換は、T-106 のマージの後の別のタスクで作ります
 
 ---
 
