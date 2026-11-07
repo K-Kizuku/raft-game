@@ -181,6 +181,7 @@ Durable Object `GameSession` の振る舞い（[DesignDoc §12.3](./03-design-do
 - 同じセッションに 2 本目の接続が来たら、古い接続を `4001`（`replaced`）で閉じる。ブラウザは `4001` でつなぎ直さない
 - DO は、ブラウザから届いた電文のうち、`type` が `internal.` で始まるもの（大文字・小文字を区別しない）、JSON のオブジェクトでないもの、`type` が文字列でないもの、キーに `v`・`type`・`cmdId`・`payload` 以外（`seq`・`Type` など）を含むものを、返事をせずに捨てる。1 秒の枠で 30 通を超えた電文も、返事をせずに捨てる。ほかの電文は書き換えずにコンテナに送る
 - コンテナの準備ができるまで（`/healthz` が `200` を返すまで）に届いた電文は、32 通まで溜めて、つながった後に順に送る
+- DO は、`cmdId` を持つ記録する種類の電文（`type` が `hello`・`ping`・`cmd.sync`・`sub.engineer` でないもの。入力ログに記録する。DesignDoc §12.3「入力ログと復元」）を、次のときに返事をせずに捨てる: `cmdId` が 129 文字以上・空・文字列でない、同じ `cmdId` が `ack` を待っている、`ack` を待つコマンドが 256 件ある、入力ログが 10,000 行・512 KiB に達した。ブラウザの側では `ack` の待ちが時間切れになる
 
 DO が閉じるときのコード:
 
@@ -190,7 +191,7 @@ DO が閉じるときのコード:
 | `1000` | ラウンドが終わった（`round.result` の後）・時間の上限・切断のまま 5 分・アラームの上限（`session_ended` の `error` の後） |
 | `1003` | ブラウザがバイナリの電文を送った |
 | `1009` | ブラウザの電文が UTF-8 で 16 KiB を超えた |
-| `1011` | コンテナが起動しない・止まった（`container_unavailable` の `error` の後）、コンテナの致命的な `error` を中継した後、コンテナへの接続が開けない・閉じた（このときはつなぎ直してよい） |
+| `1011` | コンテナが起動しない・止まった（`container_unavailable` の `error` の後）、コンテナの致命的な `error` を中継した後、コンテナへの接続が開けない・閉じた（このときはつなぎ直してよい）、コンテナを起動し直す（`reason: "container restarting"`。`error` は送らない。つなぎ直すと、一時停止の状態の `snapshot`（`session.restored: true`）から続く） |
 
 DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。ブラウザはつなぎ直さない）:
 
@@ -204,7 +205,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `container_unavailable` | コンテナが期限（`CONTAINER_START_TIMEOUT_MS`）までに準備できない・止まった |
 
 - `seq` は、その接続でコンテナから受けた最後の `seq` + 1（なければ `1`）。DO とコンテナの間の WebSocket はブラウザの接続ごとに 1 本なので、コンテナの番号の続きになる
-- DO が自分で作る電文は、この `error` と、コンテナへの `internal.init`・`internal.pong` だけ
+- DO が自分で作る電文は、この `error` と、コンテナへの `internal.init`・`internal.restore`・`internal.ping`・`internal.pong` だけ
 
 ---
 

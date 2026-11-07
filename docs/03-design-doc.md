@@ -762,7 +762,7 @@ Go サーバーの起動の設定（`server/internal/server` の `ParseConfig`�
 
 ### 12.3 Durable Object `GameSession`
 
-1 ゲームに 1 つの Durable Object です（`idFromName(sessionId)`）。コンテナは、推奨の `durable_object` 方式で、Durable Object のコードから起動します（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)）。`DurableObject` を継承せず、`fetch` のハンドラーで内部の API を受けます（[ADR-0023](./adr/0023-durable-object-fetch-handler.md)）。実装は `web/worker/game-session.ts`（薄いクラス）と `web/worker/session/`（`core.ts` が中身）。入力ログの記録と、コンテナが止まったときの復元は T-308b で作ります（下の「復元の約束」）。
+1 ゲームに 1 つの Durable Object です（`idFromName(sessionId)`）。コンテナは、推奨の `durable_object` 方式で、Durable Object のコードから起動します（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)）。`DurableObject` を継承せず、`fetch` のハンドラーで内部の API を受けます（[ADR-0023](./adr/0023-durable-object-fetch-handler.md)）。実装は `web/worker/game-session.ts`（薄いクラス）と `web/worker/session/`（`core.ts` が中身）。ブラウザのコマンドを入力ログに記録し、コンテナが止まったら次の `/connect` で起動し直して `internal.restore` で同じ局面から再開します（T-308b。下の「入力ログと復元」）。
 
 ```ts
 // web/worker/game-session.ts（形だけ）
@@ -802,10 +802,10 @@ ctx.container.start({
 
 **コンテナへの接続**（`/connect` で `101` を返した後、非同期）
 
-1. 見張りがない（DO が作り直された）なら、`ctx.container.running` が真のときだけ `monitor()` を見張り直して続ける。偽なら「終わり」（`container_lost`）
-2. `ready_at` がなければ、`getTcpPort(8080).fetch("http://container/healthz")` が `200` を返すまで 100ms ごとに試す（1 回の要求は 2 秒と残り時間の小さいほうで打ち切る）。期限は `container_started_at + CONTAINER_START_TIMEOUT_MS`。過ぎたら「終わり」（`starting` なら `start_timeout`、`running` なら `container_lost`）。初めて `200` を受けたら `ready_at` を保存し、ログ `container.ready` に `startMs` を出す（§15 の起動時間）
+1. 「止まったときの処理」（下の「入力ログと復元」）が動いていれば、終わるのを待つ。見張りがない（DO が作り直された・`monitor()` が `running` のまま終わった）なら、`ctx.container.running` が真のときは `monitor()` を見張り直して続け、偽なら止まったと判断する（`not_running`）。止まっているなら、ここで起動し直す（`POST /init` と同じ引数。3 回まで）
+2. `ready_at` がなければ、`getTcpPort(8080).fetch("http://container/healthz")` が `200` を返すまで 100ms ごとに試す（1 回の要求は 2 秒と残り時間の小さいほうで打ち切る）。期限は `container_started_at + CONTAINER_START_TIMEOUT_MS`。過ぎたら、`starting` なら「終わり」（`start_timeout`）、`running`（起動し直したコンテナ）なら止まったと判断する（`start_timeout`）。初めて `200` を受けたら `ready_at` を保存し、ログ `container.ready` に `startMs` を出す（§15 の起動時間）
 3. コンテナの `/ws` を開く。開けなければブラウザを `1011` で閉じるだけ（終わりにしない。ブラウザがつなぎ直す）
-4. 最初に `internal.init` を送る（ブラウザの接続ごとに 1 本のコンテナへの WebSocket を張り、**毎回** `internal.init` を送る。コンテナは同じ sessionId なら作り直さずにつなぎ直す）。準備の間に溜めたブラウザの電文（32 通まで）を、受けた順に送る
+4. 最初に、`stage_hash` があれば `internal.restore`、なければ `internal.init` を送る（ブラウザの接続ごとに 1 本のコンテナへの WebSocket を張り、**毎回**送る。生きているコンテナは同じ sessionId なら作り直さずにつなぎ直し、`internal.restore` の入力ログを使わない）。死活監視（`internal.ping`）を始め、準備の間に溜めたブラウザの電文（32 通まで）を、受けた順に送る
 5. どの `await` の後でも、接続が置き換わった・ブラウザが閉じた・終わったなら、開いたソケットを閉じて終える（接続ごとの世代で見分ける）
 
 同じセッションに 2 本目の接続が来たら、古いブラウザの接続を `4001`（`replaced`）、古いコンテナへのソケットを `1000` で閉じます。古いソケットから後で届いた電文は捨てます。ブラウザの接続が閉じたら、コンテナへのソケットを `1000` で閉じ（コンテナはこれで自動の一時停止をする）、`idle_since` を保存します。コンテナへのソケットだけが閉じたら、ブラウザを `1011` で閉じます（終わりにしない）。
@@ -833,10 +833,10 @@ ctx.container.start({
 | `idle` | ブラウザの接続がないまま 5 分 | （接続がないので送らない） |
 | `alarm_cap` | アラームの回数が `max_alarms` に達した後で、設定が要る | `error`（`session_ended`）→ `close(1000)` |
 | `start_timeout` | 初回の `/healthz` が期限までに `200` にならない | `error`（`container_unavailable`）→ `close(1011)` |
-| `container_lost` | `monitor()` が終わった・作り直した DO でコンテナが動いていない・一度準備ができた後の `/healthz` の期限切れ | `error`（`container_unavailable`）→ `close(1011)` |
-| `container_error` | コンテナの `fatal` の `error`（上の 4 つの `code`） | （コンテナの `error` を中継済み）`close(1011)` |
+| `container_lost` | 3 回目に起動したコンテナが止まった・`stage_hash` がないのに記録がある・起動し直せない（`ctx.container`・イメージがない・`start()` が例外・止めるための `destroy()` が失敗） | `error`（`container_unavailable`）→ `close(1011)` |
+| `container_error` | コンテナの `fatal` の `error`（上の 4 つの `code`。`snapshot` を受ける前の `bad_request`・`not_initialized` も） | （コンテナの `error` を中継済み）`close(1011)` |
 
-DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"payload":{"code":…,"message":…,"fatal":true}}` です（プロトコル §2）。DO が自分で作る電文は、この `error`・`internal.init`・`internal.pong` だけです。
+DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"payload":{"code":…,"message":…,"fatal":true}}` です（プロトコル §2）。DO が自分で作る電文は、この `error`・`internal.init`・`internal.restore`・`internal.ping`・`internal.pong` だけです。
 
 **アラーム**（`session/alarm.ts` の `desiredAlarmAt`）
 
@@ -845,13 +845,25 @@ DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"paylo
 - 設定するたびに `alarm_count` を 1 増やし、`max_alarms`（既定 20）に達していたら設定せずに「終わり」（`alarm_cap`）。数は `setAlarm` の前に保存し、失敗しても戻さない。`setAlarm` が失敗したら、`alarm_at` を前の値に戻す（設定できていないアラームを「ある」と記録しない。前のアラームは残る）。`alarm()` の中で設定できなかったときは、例外を投げてランタイムに `alarm()` をやり直させる（やり直すたびに数えるので、`max_alarms` で `alarm_cap` になる）
 - 設定するのは `POST /init` の 1 回（コンテナを起動する前）・接続が切れるたびに最大 1 回・鳴るたびに最大 1 回・後始末のやり直し（上の「終わり」）。`alarm()` は、終わったセッションでは、停止を確かめられていないコンテナ（`container_started_at` が NULL でない）の後始末のやり直しだけをする（ほかは何もせず、設定し直さない）。鳴ったら `deadline_at` を過ぎていれば `time_limit`、接続がないまま 5 分なら `idle`、それ以外は設定し直す
 
-**復元の約束**（この Issue で決め、T-308b で実装する。T-302 の `internal.restore` に合わせる）
+**入力ログと復元**（T-308b。FR-GAME-09・FR-LOG-01・NFR-06、[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)。上限は `session/limits.ts`、純粋な部分は `session/restore.ts`・`session/pending.ts`）
 
-- 保存するもの: `stage_hash`・`build`（コンテナの `snapshot` の `payload.session.stageHash`・`payload.session.build`、1〜128 文字の文字列のときだけ）、`last_clock_t`（中継した `snapshot`・`events` の `payload.clock.t`。SQLite には 5 秒に 1 回まで・接続が閉じたとき・終わりのときに書く）、`input_log`（`cmdId` を持ち、`hello`・`ping`・`cmd.sync`・`sub.engineer` でないブラウザの電文を `cmdId` ごとに 256 件まで覚え、コンテナの `ack` が `ok: true` で `t` が 0 以上の整数なら `(t, {"type","payload"})` を追記する。10,000 行・合計 512 KiB に達したら、覚える種類の電文をコンテナに送らずに捨てる）
-- `internal.restore` の中身: `{ sessionId, stageId, seed, demo, inputLog: { format: 1, build: build ?? "", stageId, stageHash: stage_hash, seed, commands: [{t, cmd}]（seq の順） }, until }`。`until = max(last_clock_t ?? 0, 最後の input_log の t ?? 0)`、0 なら省く
-- いつ送るか: コンテナへの `/ws` を開いたとき、`stage_hash` があれば `internal.restore`、なければ `internal.init`
-- 何回まで試すか: コンテナが止まったとき（見張りの終わり・`/connect` で動いていない・ソケットが閉じて `running` が偽・`internal.ping` を 5 秒ごとに送り 3 回続けて `internal.pong` がない）、`container_starts < 3` なら同じ設定で起動し直す（新しい予約はしない・`run_ms` に足していく）。3 回目が止まったら `container_lost`。`restore_failed` などの決定的な失敗は試し直さずに `container_error`
-- `build` が違っても試す（T-302 が `warn` を出して続ける）。`internal.restore` は 16 KiB を超えうるので、`single` モードの受信の上限を広げる必要がある（T-302 への確認事項）
+- **記録する種類**: `type` が `hello`・`ping`・`cmd.sync`・`sub.engineer` のどれでもなく、`cmdId` のキーがあるブラウザの電文。コンテナへ**送る直前**（溜めた電文はつながった後に送る直前）に、上から順に判定する
+  1. 記録する種類でない → そのまま送る（覚えない）
+  2. `cmdId` が 1〜128 文字の文字列でない → 捨てる（Go は 129 文字以上でも適用するので、覚えられない電文を送らない）
+  3. 同じ `cmdId` が `ack` を待っている → 捨てる
+  4. 待ちのうち 30 秒（`PENDING_COMMAND_TTL_MS`）を過ぎたものを捨て、それでも 256 件ある → 捨てる
+  5. `cmd = JSON.stringify({type, payload})` の UTF-8 のバイト数を `b` として、`行数 + 待ちの件数 >= 10,000`、または `バイト数の合計 + 待ちのバイト数 + b > 512 KiB` → 捨てる（DO のインスタンスで初めてのときだけ `warn` のログ `input_log.full`）
+  6. 送り、送れたら `cmd` を `cmdId` で覚える
+
+  捨てるときは返事をしない（記録とコンテナの状態を食い違わせないため）。捨てた数は `session.disconnect` の `dropped`（`malformed`・`duplicate`・`pending_full`・`log_full`）に出す
+- **`ack` の扱い**: 待ちは接続ごとではなく **DO に 1 つ**。コンテナの `ack`（`payload.cmdId` が文字列・`ok` が真偽値・`t` が 0 以上の整数）を受けたら、その `cmdId` を待ちから外し、`ok: true` なら `input_log` に `(t, cmd)` を追記する（`t` が最後に記録した `t` より小さければ記録せず `warn`）。置き換えた・ブラウザが閉じた接続のソケットから届いた `ack` も、いまのコンテナ（見張りの世代が同じ）のものなら記録に使う（Go は `ack` を「いまの接続」に送るので、どちらのソケットにも届きうる）。待っていない `cmdId` の `ack` は何もしない（中継はする）。行数・バイト数は DO のインスタンスで最初に要るときに SQLite から読み、以後はメモリで足す
+- **保存するもの**: `stage_hash`・`build`（いまの接続の `snapshot` の `payload.session.stageHash`・`build`。1〜128 文字の文字列で、保存した値と違うときだけ上書きする。読めない値では消さない）。`last_clock_t`（いまの接続の `snapshot`・`events` の `payload.clock.t` をメモリに持ち、SQLite には前に書いてから 5 秒以上たったとき・ブラウザの接続が閉じたとき・止まったと判断したとき・「終わり」の最初にだけ書く。DO が作り直されたら `last_clock_t` から始める）
+- **`internal.restore` の中身**: `{ sessionId, stageId, seed, demo, inputLog: { format: 1, build: build ?? "", stageId, stageHash: stage_hash, seed, commands: [{t, cmd}]（seq の順。cmd は保存した JSON をそのまま） }, until }`。`until = max(最後の clock.t ?? 0, 最後の input_log の t ?? 0)`、0 なら省く。送るたびにログ `session.restore`（`commands`・`until`・`bytes`）。最大の入力ログ（10,000 行・512 KiB）でも 1 MiB（Go の `single` の受信の上限）に収まる。`build` が違っても試す（T-302 が `warn` を出して続ける）
+- **止まったと判断する場合**（`cause`）: `monitor`（見張っている `monitor()` が終わり、`running` が偽）・`socket_closed`（いまの接続のコンテナへのソケットが閉じ、`running` が偽。真ならブラウザを `1011` で閉じるだけ）・`ping_timeout`（下の死活監視）・`start_timeout`（起動し直したコンテナの `/healthz` の期限切れ）・`not_running`（`/connect` の後でコンテナが動いていない）。`monitor()` が終わっても `running` が真なら判断せず、`warn` のログ `container.monitor_ended` を出して見張りがない状態に戻す（DO が作り直されたときの `monitor()` の振る舞いはクラウドで未確認のため）。見張りの世代（`#watch()` のたびと、止まったと判断したときに 1 増やす）で、自分で `destroy()` した古いコンテナの `monitor()` の終わり・古いソケットからの知らせを無視する
+- **止まったときの処理**（1 つずつ動く）: `last_clock_t` を書く → 試し直さない場合は「終わり」（`deadline_at` を過ぎた → `time_limit`、`container_starts >= 3` → `container_lost`、`stage_hash` がないのに記録がある → `container_lost`）→ ブラウザを `1011`（`"container restarting"`）で閉じる（`error` は送らない。ブラウザはつなぎ直す）→ 動いていれば `destroy()`（失敗したら `container_lost` で終わり、後始末のやり直しに任せる）→ `run_ms` に動いた時間を足し、`container_started_at`・`ready_at` を NULL にし、`ack` の待ちを捨てる → ログ `container.stopped`（`cause`・`containerStarts`）
+- **起動し直す**のは、トークンを確かめた後の `/connect` の中（上の「コンテナへの接続」の 1）だけ。その場では起動しない（誰もつないでいなければ、切断から 5 分のアラームで `idle` になる）。1 セッションで起動は 3 回まで（最初の 1 回＋起動し直し 2 回）。`CostGuard` の予約はせず、`deadline_at` も変えない（コンテナは DO に 1 つなので同時に 2 つ動かず、`run_ms` は予約した時間を超えない）。精算は「終わり」で、動いた時間の合計で 1 回だけ。ログ `container.start` に `restart: true` を付ける
+- **試し直さない失敗**: `restore_failed`・`stage_not_found`・`internal_error`・`session_mismatch`（`fatal`）と、`snapshot` を受ける前の `bad_request`・`not_initialized`（`fatal`。`internal.init`・`internal.restore` の誤りなので、つなぎ直しても同じ）→ 中継した後で `container_error`
+- **死活監視**: コンテナへのソケットに最初の電文を送った後、5 秒ごとに `internal.ping` を送る。前の `internal.ping` に `internal.pong` がないまま 3 回続いたら止まったと判断する（`ping_timeout`）。`internal.pong` が届けば回数を 0 に戻す。接続が閉じた・置き換えた・「終わり」のときに止める
 
 ### 12.3.1 Durable Object `CostGuard`
 
