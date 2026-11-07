@@ -9,6 +9,7 @@
 //	  "pulls":    [{"number", "state", "merged", "author", "head_ref", "head_sha", "body", "labels",
 //	                "comments": [...]}],   // comments は省略できる（in-review のレビュー記録の確認に使う）
 //	                                       // author（PR の作者）が信頼する作者でない PR は、Issue との関係を数えない
+//	                "gate": {...}},        // gate は省略できる（gate.Input。レビュー記録の引き継ぎの確認に使う）
 //	  "branches": ["agent/issue-12", ...],
 //	  "statuses": {"<sha>": {"merge-gate": "success"}}
 //	}
@@ -26,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/gate"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/issuebody"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/prbody"
 )
@@ -62,6 +64,9 @@ type Pull struct {
 	Body     string    `json:"body"`
 	Labels   []string  `json:"labels"`
 	Comments []Comment `json:"comments,omitempty"`
+	// Gate は、この PR の Merge Gate の判定の材料（gate.Input）。recover が、HEAD のレビュー記録のない
+	// in-review の PR について、前の SHA のレビューを引き継げるか（gate.CarriesOver）を確かめるのに使う。省略できる。
+	Gate *gate.Input `json:"gate,omitempty"`
 }
 
 // Worktree はローカルの作業ディレクトリ（`git worktree`）。

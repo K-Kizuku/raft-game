@@ -30,6 +30,24 @@ func TestRepoConfigIsValid(t *testing.T) {
 	}
 }
 
+// review.carry_over_on_base_merge（Issue #120）は、リポジトリの設定では true、書かなければ false。
+func TestCarryOverOnBaseMerge(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Review.CarryOverOnBaseMerge {
+		t.Error("リポジトリの設定の carry_over_on_base_merge が true ではない")
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { delete(review(m), "carry_over_on_base_merge") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.CarryOverOnBaseMerge {
+		t.Error("既定が false ではない")
+	}
+}
+
 // mutate はリポジトリの設定を map として書き換え、JSON にする。
 func mutate(t *testing.T, f func(m map[string]any)) []byte {
 	t.Helper()
