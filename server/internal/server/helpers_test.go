@@ -11,7 +11,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,35 +52,27 @@ func (b *logBuffer) String() string {
 	return b.buf.String()
 }
 
-// fakeClock は差し替えられる時刻。
-type fakeClock struct{ ns atomic.Int64 }
-
-func newFakeClock() *fakeClock {
-	c := &fakeClock{}
-	c.ns.Store(time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC).UnixNano())
-	return c
-}
-
-func (c *fakeClock) Now() time.Time          { return time.Unix(0, c.ns.Load()) }
-func (c *fakeClock) Advance(d time.Duration) { c.ns.Add(int64(d)) }
-
 // testServer はテスト用のサーバー。
 type testServer struct {
-	srv  *Server
-	http *httptest.Server
-	logs *logBuffer
+	srv   *Server
+	http  *httptest.Server
+	logs  *logBuffer
+	clock *fakeClock // セッションループの時計（既定では発火させない偽の時計。edit で差し替えたら nil）
 }
 
 // newTestServer は mode のサーバーを httptest で動かす。edit で Config と内部の値を変えられる（Handler の前）。
+// セッションループの時計は、既定で偽の時計（発火させない）にする（実時間で進むとテストが不安定になるため）。
 func newTestServer(t *testing.T, mode Mode, edit func(*Config, *Server)) *testServer {
 	t.Helper()
 	cfg := Config{Mode: mode, MaxSessions: defaultMaxSessions, Build: testBuild, Invariants: true}
 	logs := &logBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	srv := New(cfg, testCatalog(t), log)
+	srv.clock = newFakeClock(testStart)
 	if edit != nil {
 		edit(&srv.cfg, srv)
 	}
+	clock, _ := srv.clock.(*fakeClock)
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(func() {
 		srv.shutdownConns()
@@ -91,7 +82,7 @@ func newTestServer(t *testing.T, mode Mode, edit func(*Config, *Server)) *testSe
 		hs.Close()
 		srv.closeSessions()
 	})
-	return &testServer{srv: srv, http: hs, logs: logs}
+	return &testServer{srv: srv, http: hs, logs: logs, clock: clock}
 }
 
 // origin は、このサーバー自身のオリジン（http:// ＋ Host）。
