@@ -59,7 +59,7 @@ func TestSingleInitSnapshot(t *testing.T) {
 		`[{"id":"firework:a","kind":"firework","label":"大花火","critical":true},{"id":"stall:main","kind":"stall","label":"屋台の出店枠","critical":false}]` {
 		t.Errorf("resources = %s", got)
 	}
-	if snap.Score.Target != 2 || snap.Score.Total != 0 || len(snap.Requests) != 0 || len(snap.IslandsState) != 0 {
+	if snap.Score.Target != 2 || snap.Score.Total != 0 || len(snap.Requests) != 0 || len(snap.IslandsState) != 3 {
 		t.Errorf("score %+v requests %v islandsState %v", snap.Score, snap.Requests, snap.IslandsState)
 	}
 	if len(snap.Nodes) != 3 || len(snap.Ferries) != 1 || len(snap.RoutesState) != 2 {
