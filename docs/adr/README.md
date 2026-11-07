@@ -43,7 +43,7 @@
 | [0024](./0024-worker-rate-limit-binding.md) | Worker の IP ごとのレート制限に、Workers の Rate Limiting の束縛を使う | Proposed | 容易（`security/rate-limit.ts`・`cloudflare.config.ts` の束縛） |
 | [0025](./0025-stage-data-source.md) | ステージ定義は、ビルドタグ `embeddata` を付けたときだけバイナリに埋め込み、ローカルでは `DATA_DIR` で読む | Proposed | 容易（`stage/embed*.go`・`Makefile` の `sync-data`・`server.OpenData`） |
 | [0026](./0026-vite-dev-backend.md) | standalone の開発サーバーでは `@cloudflare/vite-plugin` を読み込まず、Vite の `server.proxy` で `/api`・`/ws` を Go に中継する | Proposed | 容易（`vite.config.ts`・`src/devserver/`・`scripts/dev-env.sh`） |
-| [0028](./0028-browser-replay.md) | ブラウザでのリプレイは、同じ Go のコード（`sim`）を WebAssembly にしてブラウザで再シミュレーションし、出てきた記録を web の記録の再生で流す | Proposed | 容易（`server/cmd/replaywasm`・`web/src/app/replay/`。`sim` は変えない） |
+| [0028](./0028-browser-replay.md) | ブラウザでのリプレイは、同じ Go のコード（`sim`）を WebAssembly にしてブラウザで再シミュレーションし、出てきた記録を web の記録の再生で流す | Accepted | 容易（`server/cmd/replaywasm`・`web/src/app/replay/`。`sim` は変えない） |
 
 ## 判断を差し替える手順
 
