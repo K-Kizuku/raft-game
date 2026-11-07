@@ -1,6 +1,8 @@
 // 出典区分のラベル（FR-DATA-04・データ仕様 §1）。
 import type { ReactElement } from "react";
 
+import "./ProvenanceLabel.css";
+
 export type Provenance = "fact" | "derived" | "creative";
 
 const LABELS: Readonly<Record<Provenance, string>> = {

@@ -1,24 +1,44 @@
-/* 島の詳細（T-406・ゲームデザイン §7.2 の右）。文字は白地に #111827・#374151（コントラスト比 4.5:1 以上。NFR-10）。 */
+/* 島の詳細（T-406・ゲームデザイン §7.2 の右）。見た目は T-422（docs/11-visual-design.md）:
+   紙のパネルの上に、海図風の点線の小見出し。文字は --color-ink・--color-ink-muted（パネルの地で 4.5:1 以上。NFR-10）。
+   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 がトークンに入れるかを決める）。 */
 .island-panel {
+  /* 依頼の ★（封筒の金を墨で暗くし、文字として紙の地で 4.5:1 以上。約 4.8:1）。 */
+  --island-gold-text: color-mix(in srgb, var(--color-gold) 35%, var(--color-ink));
+  /* 期限切れの文字（郵便の赤を墨で暗くし、紙の地で 4.5:1 以上。約 5.4:1）。 */
+  --island-danger-text: color-mix(in srgb, var(--color-danger) 60%, var(--color-ink));
+  /* 満足度の帯の縞（色が見えなくても、塗った長さが分かる）。 */
+  --island-meter-stripe: color-mix(in srgb, var(--color-success) 70%, var(--color-ink));
+
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  color: #111827;
+  gap: var(--space-2);
+  color: var(--color-ink);
 }
 
 .island-header {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+/* 島の色の丸（飾り）。紙の色の縁と墨の細い輪で、明るい色でも暗い色でも見分けられる。 */
+.island-color-dot {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-paper);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--color-ink);
 }
 
 .island-header h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: var(--font-size-h3);
 }
 
 .island-municipality {
-  color: #374151;
+  color: var(--color-ink-muted);
 }
 
 .island-role,
@@ -27,33 +47,91 @@
   margin: 0;
 }
 
+.island-hint {
+  color: var(--color-ink-muted);
+}
+
 .island-satisfaction {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-2);
+  font-family: var(--font-number);
   font-variant-numeric: tabular-nums;
 }
 
+/* 満足度の帯（成功の緑）。枠の線と縞で、色が見えなくても長さが分かる。 */
 .island-satisfaction meter {
+  appearance: none;
+  box-sizing: border-box;
   width: 6rem;
+  height: 1rem;
+  overflow: hidden;
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: 999px;
 }
 
+.island-satisfaction meter::-webkit-meter-bar {
+  height: 100%;
+  background: var(--color-paper);
+  border: 0;
+  border-radius: 999px;
+}
+
+.island-satisfaction meter::-webkit-meter-optimum-value {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-success) 0 6px,
+    var(--island-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
+}
+
+.island-satisfaction meter::-webkit-meter-suboptimum-value {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-success) 0 6px,
+    var(--island-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
+}
+
+.island-satisfaction meter::-webkit-meter-even-less-good-value {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-success) 0 6px,
+    var(--island-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
+}
+
+.island-satisfaction meter::-moz-meter-bar {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-success) 0 6px,
+    var(--island-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
+}
+
+/* 小見出しは、海図の航路のような点線の下線。 */
 .island-section h3 {
-  margin: 0.25rem 0;
-  font-size: 1rem;
-  border-bottom: 1px solid #c8d3dc;
+  margin: var(--space-2) 0 var(--space-1);
+  padding-bottom: var(--space-1);
+  font-size: var(--font-size-body);
+  border-bottom: 2px dotted var(--color-ink-muted);
 }
 
 .island-section p {
-  margin: 0.25rem 0;
-  color: #374151;
+  margin: var(--space-1) 0;
+  color: var(--color-ink-muted);
 }
 
 .island-piles,
 .island-requests {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -63,11 +141,16 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem 0.5rem;
+  gap: var(--space-1) var(--space-2);
+}
+
+.island-pile-to {
+  overflow-wrap: anywhere;
 }
 
 .island-pile-count {
-  color: #374151;
+  color: var(--color-ink-muted);
+  font-family: var(--font-number);
   font-variant-numeric: tabular-nums;
 }
 
@@ -79,30 +162,34 @@
 }
 
 .island-pile-rest {
-  font-size: 0.85rem;
-  color: #374151;
+  color: var(--color-ink-muted);
+  font-size: 0.85em;
+  font-family: var(--font-number);
 }
 
 .island-request {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem 0.5rem;
+  gap: var(--space-1) var(--space-2);
 }
 
 .island-request-mark {
-  color: #92400e;
+  color: var(--island-gold-text);
+  font-weight: bold;
 }
 
 .island-request-status {
   display: inline-flex;
-  gap: 0.2rem;
+  gap: var(--space-1);
 }
 
 .island-request-remaining {
+  font-family: var(--font-number);
   font-variant-numeric: tabular-nums;
 }
 
 .island-request-expired {
-  color: #b91c1c;
+  color: var(--island-danger-text);
+  font-weight: bold;
 }

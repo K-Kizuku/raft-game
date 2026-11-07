@@ -4,11 +4,13 @@ import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Ack, Snapshot } from "../../protocol/index.ts";
+import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
 import { gameStore } from "../../state/index.ts";
 import { GameCommandProvider } from "../commands/GameCommands.tsx";
 import type { GameCommandSender } from "../commands/GameCommands.tsx";
 import { setShowRaftTerms } from "../terms/preference.ts";
 import { HudBar } from "./HudBar.tsx";
+import { Notifications } from "./Notifications.tsx";
 import { makeSnapshot } from "./testing/world.ts";
 
 let nowMs = 1000;
@@ -371,5 +373,32 @@ describe("HudBar", () => {
       gameStore.getState().reset();
     });
     expect(screen.getByText("状況（準備中）")).toBeDefined();
+  });
+});
+
+// 記録（web/src/net/fixtures の mini-record）をストアに入れて、状況とお知らせが描かれることを確かめる（T-422）。
+describe("記録を入れたときの状況とお知らせ（T-422）", () => {
+  it("HB-T422-1 数字の札・フェス準備度の帯・郵便局長の吹き出しが出る", () => {
+    const { snapshot, events } = loadMiniRound();
+    const list = events.filter((e) => e.seq <= 29);
+    act(() => {
+      gameStore.getState().applySnapshot(snapshot, performance.now());
+      gameStore
+        .getState()
+        .applyEvents({ t: 30000, speed: 1, paused: false, endsAt: 60000 }, list, performance.now());
+    });
+    const view = render(
+      <>
+        <HudBar />
+        <Notifications />
+      </>,
+    );
+    for (const selector of [".hud-time", ".hud-score", ".hud-successes"]) {
+      expect(view.container.querySelector(selector)?.classList.contains("hud-item")).toBe(true);
+    }
+    expect(view.container.querySelector(".hud-fest meter")).not.toBeNull();
+    const notice = view.container.querySelector(".notices > .notice");
+    expect(notice?.querySelector(".notice-face")?.getAttribute("aria-hidden")).toBe("true");
+    expect(notice?.querySelector(".notice-body .notice-speaker")?.textContent).toMatch(/郵便局長$/);
   });
 });

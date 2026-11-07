@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { LetterLabel } from "../../protocol/index.ts";
+import { tokens } from "../theme/tokens.ts";
 import { LETTER_KINDS, letterKind } from "./letterKinds.ts";
 
 const NAMES: Record<LetterLabel, string> = {
@@ -38,5 +39,27 @@ describe("letterKinds", () => {
   it("LK-2 知らない label は other と同じ値", () => {
     expect(letterKind("future_label")).toEqual(LETTER_KINDS.other);
     expect(letterKind("toString")).toEqual(LETTER_KINDS.other);
+  });
+
+  it("LK-3 種類ごとの色はデザイントークンの値", () => {
+    const colors: Record<LetterLabel, string> = {
+      heartbeat: tokens["--color-ink-muted"],
+      heartbeat_resp: tokens["--color-ink-muted"],
+      append: tokens["--color-sea-deep"],
+      append_probe: tokens["--color-sea-deep"],
+      append_resp: tokens["--color-sea-deep"],
+      append_reject: tokens["--color-sea-deep"],
+      prevote: tokens["--color-postal"],
+      prevote_resp: tokens["--color-postal"],
+      vote: tokens["--color-postal"],
+      vote_resp: tokens["--color-postal"],
+      request: tokens["--color-gold"],
+      other: tokens["--color-paper"],
+    };
+    const tokenValues = new Set<string>(Object.values(tokens));
+    for (const [label, color] of Object.entries(colors)) {
+      expect(letterKind(label).color, label).toBe(color);
+      expect(tokenValues.has(letterKind(label).color), label).toBe(true);
+    }
   });
 });

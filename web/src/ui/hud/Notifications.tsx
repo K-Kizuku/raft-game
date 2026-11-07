@@ -7,6 +7,7 @@ import type { ReactElement } from "react";
 import { useGameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { useShowRaftTerms } from "../terms/preference.ts";
+import { tokens } from "../theme/tokens.ts";
 import { islandName, noticeText } from "./noticeText.ts";
 import { useSimNow } from "./useSimNow.ts";
 import "./Notifications.css";
@@ -15,7 +16,8 @@ import "./Notifications.css";
 export const NOTICE_VISIBLE_MS = 10000;
 export const NOTICE_VISIBLE_COUNT = 3;
 
-const FALLBACK_COLOR = "#4B5563";
+// 島がステージに無いときの顔の丸の色（補足の文字の色）。
+const FALLBACK_COLOR = tokens["--color-ink-muted"];
 
 type Line = Readonly<{
   seq: number;

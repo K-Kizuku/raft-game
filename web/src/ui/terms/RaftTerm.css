@@ -1,3 +1,7 @@
+/* 用語の併記（T-412）。見た目は T-422（docs/11-visual-design.md）: 補足の文字の色で小さく添える
+   （--color-ink-muted は紙の地で 5.1:1・パネルの地で 4.6:1。NFR-10）。 */
 .raft-term-note {
-  font-size: 0.75em;
+  color: var(--color-ink-muted);
+  font-size: calc(var(--font-size-body) * 0.8);
+  font-weight: normal;
 }

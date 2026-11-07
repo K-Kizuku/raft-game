@@ -1,0 +1,34 @@
+/* 出典区分のラベル（FR-DATA-04・データ仕様 §1）。見た目は T-422（docs/11-visual-design.md）:
+   切手か消印のような小さな札。区分ごとに枠の形を変える（色だけで区別しない）。
+   文字は --color-ink-muted（紙の地で 5.1:1・パネルの地で 4.6:1。NFR-10）。 */
+.provenance-label {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-ink-muted);
+  font-size: calc(var(--font-size-body) * 0.8);
+  line-height: 1.4;
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink-muted);
+  border-radius: var(--radius-s);
+}
+
+/* 出典（事実）: 切手。ミシン目のような点線の縁を内側に重ねる。 */
+.provenance-label[data-provenance="fact"] {
+  border-style: solid;
+  outline: 2px dotted var(--color-ink-muted);
+  outline-offset: 2px;
+  margin: var(--space-1);
+}
+
+/* もとに作成（加工）: 破線の札。 */
+.provenance-label[data-provenance="derived"] {
+  border-style: dashed;
+}
+
+/* ゲーム上の設定（創作）: 消印。丸い二重の線。 */
+.provenance-label[data-provenance="creative"] {
+  border-style: double;
+  border-width: 4px;
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+}
