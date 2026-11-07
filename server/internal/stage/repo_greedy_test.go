@@ -11,15 +11,16 @@ import (
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
-// リポジトリのステージを greedy・steady のボットで遊ばせる（T-207・T-501c）。
-// M2 の完了条件「greedy で Stage 1 の★1 が 90% 以上のシードで取れる」は repo_greedy_balance_test.go（ビルドタグ balance）にある。
+// リポジトリのステージを greedy・steady・novice のボットで遊ばせる（T-207・T-501c・T-501f）。
+// M2 の完了条件「greedy で Stage 1 の★1 が 90% 以上のシードで取れる」と、Stage 1 の難しさ（novice の★1 の割合など）は
+// repo_greedy_balance_test.go（ビルドタグ balance）にある。
 // シードの数は repo_greedy_race_test.go・repo_greedy_norace_test.go にある（-race で変える）。
 
 // greedyChunk は 1 つのサブテストで回すシードの数。
 const greedyChunk = 50
 
-// repoBots は、リポジトリのステージで回すボット（乱数を引かない 2 つ）。
-var repoBots = []string{"greedy", "steady"}
+// repoBots は、リポジトリのステージで回すボット（乱数を引かない 3 つ）。
+var repoBots = []string{"greedy", "novice", "steady"}
 
 // playGreedy は st を seed でボット name に 1 ラウンド遊ばせ、結果とイベントの列を返す。
 func playGreedy(t *testing.T, name string, st *stage.Stage, seed uint64) (sim.RoundResult, []sim.DomainEvent) {

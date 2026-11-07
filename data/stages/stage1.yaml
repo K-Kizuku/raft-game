@@ -79,7 +79,7 @@ requests:
 events: []
 
 scoring:
-  target: { successes: 4, score3: 900 }
+  target: { successes: 3, score3: 900 }   # ★1 の目標は初心者のボット novice で決める（T-501f #311・ゲームデザイン §5.5）
   points: { normal: 100, critical: 300, late: 30, rejected: 0, expiredPenalty: 50 }
   ferryCostMsPerPoint: 2000
   fairnessPerSatisfaction: 5

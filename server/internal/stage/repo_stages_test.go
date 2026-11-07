@@ -125,7 +125,7 @@ var wantStages = []wantStage{
 			sr(105000, 3, stall, stMn),
 			sr(130000, 2, stall, stMn),
 		},
-		rateMilliPerMin: 0, targetSuccesses: 4, targetScore3: 900,
+		rateMilliPerMin: 0, targetSuccesses: 3, targetScore3: 900, // 目標は novice で決める（T-501f #311）
 	},
 	{
 		id: "stage2", title: "島から返事が来ない！", durationMs: 210000, unlock: "stage1", tutorial: "",
