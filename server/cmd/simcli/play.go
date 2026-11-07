@@ -24,6 +24,8 @@ type seedResult struct {
 	Events    *int         `json:"events,omitempty"`
 	Commands  *int         `json:"commands,omitempty"`
 	TraceHash string       `json:"traceHash,omitempty"`
+	Stars     *int         `json:"stars,omitempty"`
+	Score     *int64       `json:"score,omitempty"`
 	Error     string       `json:"error,omitempty"`
 
 	stacks [][]byte // panic のスタックトレース（JSON に出さない）
@@ -36,6 +38,7 @@ func (res *seedResult) fail(err error) {
 }
 
 // observe は Engine の今の状態（フェーズ・時刻・件数・ハッシュ）を res に入れる。
+// ラウンドの結果があるとき（Result() の ok が true）だけ、★とスコアの合計も入れる。
 func (res *seedResult) observe(e *sim.Engine, events, commands int) {
 	t := e.Now()
 	res.Phase = e.Phase()
@@ -43,6 +46,11 @@ func (res *seedResult) observe(e *sim.Engine, events, commands int) {
 	res.Events = &events
 	res.Commands = &commands
 	res.TraceHash = formatHash(e.TraceHash())
+	if r, ok := e.Result(); ok {
+		stars, score := r.Stars, r.Score.Total
+		res.Stars = &stars
+		res.Score = &score
+	}
 }
 
 // writeLine は res を JSON の 1 行にして w に書く。

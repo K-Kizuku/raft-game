@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
+	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
 const recordSynopsis = "simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR]"
@@ -82,18 +83,7 @@ func runRecord(args []string, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 
-	out, err := encodeRecord(recordHeader{
-		Format:     recordFormat,
-		Kind:       recordKind,
-		Build:      build,
-		StageID:    st.ID,
-		StageHash:  st.Hash,
-		Seed:       seed,
-		Bot:        *botName,
-		DurationMs: st.DurationMs,
-		EventCount: len(events),
-		TraceHash:  res.TraceHash,
-	}, snap, events)
+	out, err := encodeRecord(newRecordHeader(build, st, seed, *botName, len(events), res.TraceHash), snap, events)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "simcli: 記録を作れない（内部の誤り）: %v\n", err)
 		return exitFail
@@ -105,6 +95,23 @@ func runRecord(args []string, stdout, stderr io.Writer) int {
 	_, _ = fmt.Fprintf(stderr, "simcli record: %s bot=%s seed=%d events=%d traceHash=%s\n",
 		st.ID, *botName, seed, len(events), res.TraceHash)
 	return exitOK
+}
+
+// newRecordHeader は記録のヘッダーを組み立てる（record と replay --trace が使う）。
+// replay --trace では botName は空文字列（ボットではなく入力ログから作ったことを表す）。
+func newRecordHeader(build string, st *stage.Stage, seed uint64, botName string, eventCount int, traceHash string) recordHeader {
+	return recordHeader{
+		Format:     recordFormat,
+		Kind:       recordKind,
+		Build:      build,
+		StageID:    st.ID,
+		StageHash:  st.Hash,
+		Seed:       seed,
+		Bot:        botName,
+		DurationMs: st.DurationMs,
+		EventCount: eventCount,
+		TraceHash:  traceHash,
+	}
 }
 
 // encodeRecord は記録の全体をメモリの上で組み立てる。1 行目にヘッダー（末尾に ,）、2 行目に "snapshot":…,、
