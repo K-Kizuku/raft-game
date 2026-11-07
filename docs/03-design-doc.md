@@ -712,6 +712,24 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 | Go サーバー `single` モード | Go（`server/cmd/server --mode single`）。コンテナの中で動く | 1 プロセス＝1 ゲーム。Durable Object からの WebSocket だけを受け、セッションループでシミュレーションを動かす |
 | Go サーバー `standalone` モード | 同じバイナリ（`--mode standalone`） | ローカル開発とデモの保険（`make demo-local`）。1 プロセスで複数のゲームを持ち、§12.2 の公開 API を自分で提供する |
 
+`single` は `/healthz` と `/ws` だけを持つ。`standalone` は §12.2 の公開 API と `/healthz` を持つ（署名・Turnstile・レート制限はしない）。
+
+Go サーバーの起動の設定（`server/internal/server` の `ParseConfig`。フラグが環境変数より優先し、環境変数の空は未設定と同じ。T-302）:
+
+| フラグ | 環境変数 | 既定 |
+|---|---|---|
+| `--mode` | `MODE` | なし（必須。`single` か `standalone`） |
+| `--host` | `HOST` | `single` は `""`（すべてのアドレス）、`standalone` は `127.0.0.1` |
+| `--port` | `PORT` | `8080` |
+| `--data` | `DATA_DIR` | `""`（埋め込んだステージ定義。[ADR-0025](./adr/0025-stage-data-source.md)） |
+| `--allowed-origins` | `ALLOWED_ORIGINS` | `""`（`standalone` だけ。規則はプロトコル §2 の「`Origin` の規則」） |
+| `--demo-controls` | `DEMO_CONTROLS` | `false`（`standalone` だけ。環境変数は `1` だけが真） |
+| `--max-sessions` | `MAX_SESSIONS` | `16`（`standalone` だけ。`1`〜`256`） |
+| `--invariants` | `SIM_INVARIANTS` | `false`（`sim.Options.CheckInvariants`） |
+| `--log-level` | `LOG_LEVEL` | `info` |
+
+ビルドの識別子（`/healthz` の `build`・`snapshot` の `session.build`）は `go build -ldflags "-X main.build=git:3f2c1ab"` で入れる（なければ VCS の情報か `dev`）。終了コードは 0（シグナルで止めた）・1（起動の失敗）・2（使い方の誤り）。
+
 インフラの構成は [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) を参照してください。
 
 ### 12.2 公開 API（Worker が受ける）
@@ -882,7 +900,7 @@ CREATE TABLE IF NOT EXISTS audit (
   "gameTime":    { "maxMinutes": 30, "maxAlarms": 20 },
   "turnstile":   { "enabled": true },
   "rateLimit":   { "enabled": true, "perIpPerMinute": 10 },
-  "cpuMs":       50,
+  "cpuMs":       500,
   "acceptGames": true,
   "unitCostUsd": { "lite": 0.0065, "standard-1": 0.04 }
 }
@@ -937,7 +955,7 @@ func (s *Session) run(ctx context.Context) {
 - `Engine` に触れるのはこの goroutine だけ（ロック不要）
 - 速度はセッションループの中だけの値で、エンジンの結果には影響しません。8 倍速でも、1 ステップで進めるのは 400ms（＜上限の 1 秒）です
 - 送信キューが詰まった場合（クライアントが遅い）は、イベントを捨てずに次回まとめて送ります。一定量（1,000 件）を超えたらイベント列を捨て、代わりにスナップショットを送ります
-- `internal.restore` を受けたら、`sim.Replay` で入力ログの最後の時刻（または呼び出し側が渡す `Until`）まで一気に進め、残ったイベントを捨ててから、一時停止の状態でスナップショットを返します
+- `internal.restore` を受けたら、`sim.Replay` で入力ログの最後の時刻（`until` があればその時刻）まで一気に進め、`Replay` の Engine に残ったイベントを捨て、一時停止の状態で `snapshot`（`session.restored: true`）を返します。入力ログの `build` が違っても復元を試みます（食い違えば `restore_failed`。T-302。検査の順序は[プロトコル §9](./06-protocol.md#9-内部の電文durable-object--コンテナ)）
 
 ### 12.5 寿命と上限
 
@@ -952,7 +970,7 @@ func (s *Session) run(ctx context.Context) {
 | セッション作成のレート制限 | 1 IP（IPv6 は /64）あたり 10 回/分 ＋ Turnstile | Worker（G4。Rate Limiting の束縛 `SESSION_RATE_LIMIT`、拠点ごとの近似の値。[ADR-0024](./adr/0024-worker-rate-limit-binding.md)） |
 | sessionId の有効期限 | 発行 + `gameTime.maxMinutes` + 5 分（期限は sessionId に入れて署名する） | Worker（G2・G3。期限を過ぎた sessionId は Durable Object を呼ばずに `404`） |
 | コマンドのレート制限 | 1 セッションあたり 30 回/秒。DO は 1 秒の枠で 30 通を超えた電文を捨てる（返事はしない） | Durable Object |
-| コンテナの起動を待つ上限 | `CONTAINER_START_TIMEOUT_MS`（仮に 30 秒。T-007 の結果で見直す） | Durable Object（`/healthz` が `200` を返すまで） |
+| コンテナの起動を待つ上限 | `CONTAINER_START_TIMEOUT_MS` (T-007 の設定候補は 10 秒。本体の T-605 で再確認) | Durable Object（`/healthz` が `200` を返すまで） |
 | WS の受信メッセージの最大サイズ | 16 KiB | Durable Object と Go の両方 |
 | Worker 1 回あたりの CPU 時間 | `limits.cpuMs`（値は T-007 で測って決める） | Cloudflare（G5） |
 
@@ -1054,6 +1072,19 @@ function withClock(world: World, clock: Clock, receivedAt: number): World;
 - PixiJS のティッカーは、毎フレーム zustand のストアを直接読む（`gameStore.getState()`（`web/src/state/store.ts`））。React の再描画は経由しない
 - 手紙は島ごとに「宛先別の山」として描き、数をバッジで表示する。1 通ずつのアイコンは島のパネル（DOM）に出す
 - 手紙の種類は**色と形の両方**で区別する（[04-game-design.md §2](./04-game-design.md)）
+
+マップ（T-404、スロット `MapView`）の作りは次のとおりです。PixiJS は 8.22.0（`web/package.json` の `dependencies`、ADR-0010）。
+
+- **2 つの層に分ける。** `buildMapScene(world, selection, simNow, size)`（`web/src/game/model/scene.ts`）が描くもの（`MapScene`: 島・航路・手紙の山・船。座標は画面の px）を作る純粋な関数で、`web/src/game/pixi/mapRenderer.ts` の `mountMap(host, { store, now })` が `MapScene` を PixiJS の表示物に写す。`pixi.js` を import するのは `web/src/game/pixi/` だけで、`MapView` が `world` を受けたときに動的 `import` で読み込む（最初の bundle に入れない）。`world` が `null` の間は「マップ（準備中）」だけを出して PixiJS を読み込まず、`reset()` されたら壊す。WebGL・WebGPU が使えず `init` が失敗したら、「このブラウザではマップを描けませんでした。」と島のボタンの列を出す
+- **時刻。** 毎フレーム `estimateSimTime` の推定を `smoothSimTime`（`web/src/game/model/time.ts`）に通して表示に使う。推定が `timeHoldMs` 以内で戻ったら前の値で止めて待ち（船が後ろに跳ねない）、それより大きく戻ったら（スナップショットの置き換え・同期）跳ぶ
+- **座標。** `fitIslands`（`web/src/game/model/viewport.ts`）が島の `layout` の外接矩形を、余白 `padding` を残して画面に収め、中心を画面の中心に置く（拡大率は `[minScale, maxScale]`。島が 1 つ・画面が余白より小さくても有限の値）
+- **船。** 航行中は `from` と `to` の島を結ぶ直線の上を `(simNow − departAt) / (arriveAt − departAt)` で補間する。到着の時刻を過ぎても `ferry.arrived` が来なければ行き先の島で止まって待ち、`arriveAt ≤ departAt` なら行き先に置く。停泊中は、同じ島の船を `ferryIds` の順に、島の右上（中心から `(islandRadius + dockOffset + k·dockStep, −islandRadius)`）に並べる。積み荷の数「n/定員」・航行中の「あと m:ss」・故障の 🔧 を添える
+- **手紙の山。** 港の手紙だけを `portPiles` で島ごと・宛先ごとの山にし（船の上の手紙は数えない）、島の中心から**宛先の島の方向**へ `pileOffset` の位置に、縁が宛先の島の色の封筒と通数のバッジで描く（色に頼らず宛先が分かる。NFR-10）。宛先の島がステージに無い山は島の真下に縦に並べる。依頼書を含む山には `★` を添える
+- **嵐と予報。** `routeStates[id].blockedUntil > simNow` の航路は点線と雲（⛈）、そうでなく `at > simNow` の予報がある航路は薄い雲（☁）。時刻を過ぎたものは、`route.unblocked`・`route.blocked` が届く前でも描かない
+- **代表のマーク。** `node.state` の `role` から、`leader` のうち `term` が最大のものに 👑、それより `term` が小さい `leader` に薄い 👑（嵐で孤立した古い代表。届いた値を見せるだけで、どちらが正しいかを決めない）、`candidate` に 📣、`pre_candidate` に 💭
+- **選択と候補。** 選んでいる島は実線の輪、選んでいる船の行き先の候補（停泊中ならつながる航路のうち嵐で止まっていない先の島、航行中なら `to` の島）は破線の輪で、色だけでなく線の形でも区別する。候補は表示だけで、出航できるかの判定はサーバーとフェリー操作パネル（T-405）に任せる
+- **入力。** キャンバスの `pointerdown` を、最後に描いた `MapScene` で `hitTest`（`web/src/game/model/hitTest.ts`。船を先に見る。海は選択を変えない）で判定し、ストアの `selectFerry`・`selectIsland` を呼ぶ（PixiJS の `eventMode` は使わない）。キーボードと支援技術のために、マップの左下に島を選ぶボタンの列（`<nav aria-label="島を選ぶ">`、`aria-pressed`）を置く。マップがストアに書くのは選択だけ
+- **層と表示物。** 子の `Container` を下から `sea`・`routes`・`storms`・`islands`・`piles`・`ferries`・`effects` の順に置く。`effects` は空で、手紙の処分・差し替えのアニメーション（T-410）が使う。表示物は島・航路・船・山の ID ごとに作って使い回し（無くなったものだけ壊す）、`Graphics` の描き直しと `Text` の差し替えは値が変わったときだけ行う。表示物の数は手紙の数に比例しない（NFR-01）。描画の定数は `MAP_STYLE`（`web/src/game/model/style.ts`）にまとめる（画面のための値で、ステージ定義には置かない）
 
 ### 13.4 エンジニアパネル
 

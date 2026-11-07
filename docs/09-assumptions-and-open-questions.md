@@ -286,7 +286,7 @@
 | ID | 決定 | ADR |
 |---|---|---|
 | [R-01](#r-01) | 同時に遊べるゲームの数には上限を設けない（IP ごとのレート制限のみ） | [0018](./adr/0018-cost-guard.md) |
-| [R-02](#r-02) | コンテナの大きさは、一般公開は `lite` で始めて測ってから決める。デモ用は `standard-1` | [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) |
+| [R-02](#r-02) | コンテナの大きさは、T-007 の予備測定後も一般公開 `lite`・デモ `standard-1`。本体の負荷は T-605 で再確認 | [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) |
 | [R-03](#r-03) | 開発者は Docker Desktop を使う。人間 1 人＋AI エージェントの並列開発のため、ローカル環境を作業ディレクトリ単位で分ける | [0019](./adr/0019-parallel-local-development.md) |
 | [R-04](#r-04) | 未確認だった Containers の仕様を公式ドキュメントで確定し、推奨の `durable_object` 方式に改めた | [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) |
 | [R-05](#r-05) | コストガード（6 つの仕組み）を最初から有効にして導入する。追加料金の上限は月 30 USD。いつでも無効にできる | [0018](./adr/0018-cost-guard.md) |
@@ -304,7 +304,10 @@
 
 ### R-02
 
-**決定**: 一般公開は `lite`（1/16 vCPU・256 MiB）で始め、実装計画 T-007 と負荷テストで、8 倍速と復元の速さを測ってから決める。デモ用は `standard-1`（1/2 vCPU・4 GiB）
+**決定**: 一般公開は `lite` (1/16 vCPU・256 MiB)、デモ用は `standard-1` (1/2 vCPU・4 GiB) を維持する。2026-11-07 の T-007 の負荷模型では、lite の 30 分の再計算は 561 ms、8 倍速 step p99 は 1.2 ms だった。本体のエンジン・入力・復元の負荷は T-605 と負荷テストで再確認する。
+
+- 起動は lite の p95 1112 ms、同時 3 件の最大 1706 ms。起動待ちの設定候補は 10000 ms
+- CPU 上限の暫定候補は 500 ms。測定値・WS の集計範囲・制約は [ADR-0016 の T-007 の結果](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) と [実行記録](./verification/t007-cloudflare-spike.md) を参照
 
 - 足りなければ一般公開も `standard-1` に上げ、コストガードの見積もり（ADR-0018）を直す
 - 変更箇所: `web/cloudflare.config.ts` の `CONTAINER_INSTANCE`
