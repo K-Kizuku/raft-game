@@ -179,7 +179,8 @@ func TestSingleMessages(t *testing.T) {
 		if ack.CmdID != "c-2" || ack.OK || ack.Code != protocol.AckCodeNoRoute || ack.T != 0 {
 			t.Errorf("ack = %+v", ack)
 		}
-		c.pingPong() // events は送らない
+		expectEmptyEvents(t, c) // コマンドの後は clock のために events を送る（T-303）
+		c.pingPong()
 	})
 	t.Run("2 回目の start", func(t *testing.T) {
 		t.Parallel()
@@ -190,6 +191,7 @@ func TestSingleMessages(t *testing.T) {
 		if ack.OK || ack.Code != protocol.AckCodePhaseInvalid {
 			t.Errorf("ack = %+v", ack)
 		}
+		expectEmptyEvents(t, c)
 		c.pingPong()
 	})
 	t.Run("壊れた JSON", func(t *testing.T) {
@@ -235,6 +237,16 @@ func TestSingleMessages(t *testing.T) {
 		c.sendRaw(websocket.MessageText, pingWithSize(t, singleReadLimit+1))
 		c.expectClose(websocket.StatusMessageTooBig)
 	})
+}
+
+// expectEmptyEvents は、次の電文が events: [] であることを確かめる。
+func expectEmptyEvents(t *testing.T, c *client) {
+	t.Helper()
+	var ev protocol.EventsPayload
+	env := c.expect(protocol.MessageTypeEvents, &ev)
+	if ev.Events == nil || len(ev.Events) != 0 {
+		t.Errorf("events = %s, want []", env.Payload)
+	}
 }
 
 // WS-4: 接続の最初の電文。

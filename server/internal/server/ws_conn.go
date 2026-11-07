@@ -86,6 +86,9 @@ func (w *wsConn) send(typ protocol.MessageType, payload any) bool {
 	}
 }
 
+// queued は送信キューにいま積まれている電文の数（len）。どの goroutine から呼んでもよい。
+func (w *wsConn) queued() int { return len(w.out) }
+
 // sendError は fatal でない error の電文を送る。
 func (w *wsConn) sendError(code, message string) {
 	w.send(protocol.MessageTypeError, protocol.ErrorPayload{Code: code, Message: message, Fatal: false})
