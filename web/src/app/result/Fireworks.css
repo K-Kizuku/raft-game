@@ -1,13 +1,25 @@
-/* 花火大会の演出（T-408）。素材（#131）が届くまでは絵文字と CSS の火花だけで描く。 */
+/* 花火大会の演出（T-408・T-423）。素材（#131）が届くまでは絵文字と CSS の火花だけで描く。
+   帯は夜空の札（--color-storm-deep の地に封筒の金の文字。コントラスト比 5.7:1）。 */
 
 .fireworks-banner {
-  margin: 1rem 0;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  background: #1e1b4b;
-  color: #fef9c3;
-  font-size: 1.25rem;
+  position: relative;
+  margin: var(--space-5) 0 0;
+  padding: var(--space-3) var(--space-5);
+  overflow: hidden;
+  color: var(--color-gold);
+  background:
+    radial-gradient(circle at 12% 30%, var(--color-gold) 0 1px, transparent 2px),
+    radial-gradient(circle at 28% 75%, var(--color-paper) 0 1px, transparent 2px),
+    radial-gradient(circle at 70% 25%, var(--color-paper) 0 1px, transparent 2px),
+    radial-gradient(circle at 88% 70%, var(--color-gold) 0 1px, transparent 2px),
+    var(--color-storm-deep);
+  border: 3px double var(--color-gold);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--font-size-h2);
   font-weight: bold;
+  letter-spacing: 0.1em;
+  line-height: 1.3;
   text-align: center;
 }
 

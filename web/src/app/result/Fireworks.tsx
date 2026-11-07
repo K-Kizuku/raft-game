@@ -4,6 +4,7 @@
 // 位置・色・遅れは固定の値（毎回同じ見た目で、テストできる）。タイマーを使わず、CSS で 3 回くり返して止まる。
 import type { ReactElement } from "react";
 
+import { tokens } from "../../ui/theme/tokens.ts";
 import "./Fireworks.css";
 
 export type FireworkBurst = Readonly<{
@@ -14,15 +15,17 @@ export type FireworkBurst = Readonly<{
   color: string;
 }>;
 
+// 火花の色は、紙の地の上でも映える温かい色（郵便の赤・封筒の金を中心に、区別のための数色）。
+// トークンにある色はトークンの値を使う。
 export const FIREWORK_BURSTS: readonly FireworkBurst[] = [
-  { x: 18, y: 22, delayMs: 0, emoji: "🎆", color: "#F97316" },
-  { x: 72, y: 16, delayMs: 200, emoji: "🎇", color: "#FACC15" },
-  { x: 45, y: 30, delayMs: 400, emoji: "🎆", color: "#EC4899" },
-  { x: 86, y: 40, delayMs: 600, emoji: "🎇", color: "#22D3EE" },
-  { x: 10, y: 48, delayMs: 800, emoji: "🎆", color: "#A855F7" },
-  { x: 58, y: 12, delayMs: 1000, emoji: "🎇", color: "#4ADE80" },
-  { x: 32, y: 60, delayMs: 1200, emoji: "🎆", color: "#F43F5E" },
-  { x: 66, y: 54, delayMs: 1400, emoji: "🎇", color: "#60A5FA" },
+  { x: 18, y: 22, delayMs: 0, emoji: "🎆", color: tokens["--color-postal"] },
+  { x: 72, y: 16, delayMs: 200, emoji: "🎇", color: tokens["--color-gold"] },
+  { x: 45, y: 30, delayMs: 400, emoji: "🎆", color: "#d4627f" },
+  { x: 86, y: 40, delayMs: 600, emoji: "🎇", color: tokens["--color-sea-deep"] },
+  { x: 10, y: 48, delayMs: 800, emoji: "🎆", color: "#e07a3a" },
+  { x: 58, y: 12, delayMs: 1000, emoji: "🎇", color: tokens["--color-success"] },
+  { x: 32, y: 60, delayMs: 1200, emoji: "🎆", color: "#8a5a9e" },
+  { x: 66, y: 54, delayMs: 1400, emoji: "🎇", color: "#c98a2b" },
 ];
 
 export function Fireworks(): ReactElement {

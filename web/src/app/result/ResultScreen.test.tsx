@@ -275,6 +275,46 @@ describe("ResultScreen", () => {
     expect(screen.getByRole("button", { name: "ステージ選択" })).toBeDefined();
   });
 
+  it("RS-9 ★は 1 字ずつ aria-hidden の span に分かれ、textContent と aria-label は変わらない", () => {
+    setResult(FULL_RESULT);
+    renderResult();
+
+    const stars = screen.getByRole("img", { name: "★ 2 / 3" });
+    expect(stars.textContent).toBe("★★☆");
+    const spans = Array.from(stars.querySelectorAll("span"));
+    expect(spans).toHaveLength(3);
+    expect(spans.every((span) => span.getAttribute("aria-hidden") === "true")).toBe(true);
+    expect(spans.map((span) => span.textContent)).toEqual(["★", "★", "☆"]);
+  });
+
+  it.each([
+    ["出来事あり", FULL_RESULT],
+    ["出来事が 0 件", resultWith({ story: [] })],
+  ])("RS-10 今日の出来事は便箋の節（%s）", (_, result) => {
+    setResult(result);
+    const { container } = renderResult();
+
+    const story = section("今日起きた分散システムの出来事");
+    expect(story.classList.contains("result-letter")).toBe(true);
+    expect(story.classList.contains("result-section")).toBe(true);
+    for (const tag of ["img", "canvas"]) {
+      expect(container.querySelector(tag)).toBeNull();
+    }
+  });
+
+  it("RS-11 「同じ条件でもう一度」が主ボタン、ほかは副ボタン（順番は変わらない）", () => {
+    setResult(FULL_RESULT);
+    const { container } = renderResult();
+
+    const buttons = Array.from(container.querySelectorAll(".result-actions button"));
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      "同じ条件でもう一度",
+      "次のステージ",
+      "ステージ選択",
+    ]);
+    expect(buttons.map((b) => b.className)).toEqual(["btn btn-primary", "btn", "btn"]);
+  });
+
   describe("RS-8 用語", () => {
     afterEach(() => {
       act(() => {

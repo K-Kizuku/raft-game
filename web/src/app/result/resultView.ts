@@ -4,6 +4,7 @@
 // 表示の計算は整数の演算だけで書く。
 import type { FinalLog, RoundResult, StoryItem, TermRange } from "../../protocol/index.ts";
 import { letterKind } from "../../ui/letters/letterKinds.ts";
+import { tokens } from "../../ui/theme/tokens.ts";
 import { letterRaftTerm } from "../../ui/terms/glossary.ts";
 
 export type Stars = 0 | 1 | 2 | 3;
@@ -282,19 +283,20 @@ export function logBands(
   };
 }
 
-// Term ごとの帯の色（8 色をくり返す）。
+// Term ごとの帯の色（8 色をくり返す）。区別のための配色で、紙の地（--color-paper）の上で
+// コントラスト比 3:1 以上の落ち着いた色にする。トークンにある色はトークンの値を使う。
 export const TERM_COLORS: readonly string[] = [
-  "#2563EB",
-  "#DC2626",
-  "#16A34A",
-  "#CA8A04",
-  "#9333EA",
-  "#0891B2",
-  "#EA580C",
-  "#DB2777",
+  tokens["--color-sea-deep"],
+  tokens["--color-postal"],
+  "#4f7f4a",
+  "#a77a1f",
+  "#7d4e8c",
+  "#2f7f7a",
+  "#b5602a",
+  "#a8486a",
 ];
 
 export function termColor(term: number): string {
   const n = TERM_COLORS.length;
-  return TERM_COLORS[((term % n) + n) % n] ?? "#6B7280";
+  return TERM_COLORS[((term % n) + n) % n] ?? tokens["--color-ink-muted"];
 }
