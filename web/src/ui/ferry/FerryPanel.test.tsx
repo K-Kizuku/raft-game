@@ -12,10 +12,17 @@ import { gameStore } from "../../state/index.ts";
 import { GameCommandProvider } from "../commands/GameCommands.tsx";
 import type { GameCommandSender } from "../commands/GameCommands.tsx";
 import { setShowRaftTerms } from "../terms/preference.ts";
-import { CARGO_DROP_ID } from "./dnd.ts";
+import { CARGO_DROP_ID, PORT_DROP_ID, RELAY_DROP_ID } from "./dnd.ts";
 import { FerryPanel } from "./FerryPanel.tsx";
 import { pressIsland } from "./islandPress.ts";
-import { ferryLetter, makeFerrySnapshot, portLetter, withFerry1 } from "./testing/world.ts";
+import {
+  ferryLetter,
+  makeFerrySnapshot,
+  portLetter,
+  relayLetter,
+  withFerry1,
+  withRelayCap,
+} from "./testing/world.ts";
 
 // jsdom にドラッグの座標の計算は無いので、DndContext の onDragEnd だけを捕まえる（元の DndContext を使う）。
 const dnd = vi.hoisted(() => ({
@@ -811,6 +818,276 @@ describe("行き先の選び方と経由の手紙（#318）", () => {
       "二の島経由 → 三の島",
     );
     expect(letters[1]?.querySelector(".ferry-panel__letter-to")?.textContent).toBe("→ 二の島");
+  });
+});
+
+// 中継倉庫（積み替え。FR-FERRY-06・T-722）。f1 は島 1 に停泊。
+describe("中継倉庫の区画（T-722）", () => {
+  // 島 1 の倉庫に 40（宛先 3）・41（宛先 2）・42（宛先 3）、島 2 の倉庫に 43。積み荷は 50（島 1 生まれ）・51（島 2 生まれ）。
+  function relaySnapshot(relayCap: number, relayIds: number[] = [40, 41, 42]): Snapshot {
+    const base = makeFerrySnapshot();
+    const relay = [
+      relayLetter(40, "append", 2, 3, 1),
+      relayLetter(41, "heartbeat", 3, 2, 1),
+      relayLetter(42, "vote", 2, 3, 1),
+    ].filter((l) => relayIds.includes(l.id));
+    return withRelayCap(
+      withFerry1(
+        { cargo: [50, 51] },
+        {
+          letters: [
+            ...base.letters,
+            ferryLetter(50, "heartbeat", 1, 2, "f1"),
+            ferryLetter(51, "append", 2, 3, "f1"),
+            ...relay,
+            relayLetter(43, "append", 3, 1, 2),
+          ],
+        },
+      ),
+      relayCap,
+    );
+  }
+
+  function relayArea(): HTMLElement {
+    const el = document.querySelector<HTMLElement>(".ferry-panel__relay");
+    if (el === null) throw new Error("倉庫が無い");
+    return el;
+  }
+
+  function relayButtons(): HTMLElement[] {
+    return within(relayArea()).getAllByRole("button");
+  }
+
+  function viaCargoButton(): HTMLElement {
+    const el = cargoList().querySelector<HTMLElement>('button[data-letter-id="51"]');
+    if (el === null) throw new Error("経由の手紙が無い");
+    return el;
+  }
+
+  function relayMoved(letterId: number, islandId: number): EventBody {
+    return { type: "letter.moved", t: 29000, letterId, loc: { type: "relay", islandId } };
+  }
+
+  it("FP-R1 relayCap > 0 の停泊中の船では、港と積み荷の間に倉庫の区画が出る", () => {
+    load(relaySnapshot(12));
+    renderPanel(okSender());
+    const sections = [...document.querySelectorAll<HTMLElement>(".ferry-panel__section")];
+    expect(sections.map((s) => s.querySelector("h3")?.textContent)).toEqual([
+      "一の島の港の手紙",
+      "📦 一の島の倉庫 3/12",
+      "積み荷 2/4",
+    ]);
+    expect(sections[1]?.classList.contains("ferry-panel__relay-section")).toBe(true);
+    expect(sections[1]?.querySelector("h3")?.getAttribute("tabindex")).toBe("-1");
+    expect(
+      within(sections[1] ?? document.body).getByText(
+        "預けた手紙は、宛先に着くまで島では読まれません",
+      ),
+    ).toBeDefined();
+    const piles = [...relayArea().querySelectorAll<HTMLElement>(".ferry-panel__pile")];
+    expect(piles.map((p) => p.dataset["to"])).toEqual(["2", "3"]);
+    expect(
+      piles.map((p) =>
+        [...p.querySelectorAll("button[data-letter-id]")].map((b) =>
+          b.getAttribute("data-letter-id"),
+        ),
+      ),
+    ).toEqual([["41"], ["40", "42"]]);
+    // 別の島の倉庫の手紙（43）は出ない。
+    expect(document.querySelector('button[data-letter-id="43"]')).toBeNull();
+    // 行き先の山には「行き先宛て」。
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    expect(piles[0]?.querySelector(".ferry-panel__pile-to")?.textContent).toBe(
+      "→ 二の島行き先宛て",
+    );
+  });
+
+  it("FP-R1 倉庫が空なら「倉庫に手紙はありません。」", () => {
+    load(relaySnapshot(12, []));
+    renderPanel(okSender());
+    expect(within(relayArea()).getByText("倉庫に手紙はありません。")).toBeDefined();
+    expect(screen.getByRole("heading", { level: 3, name: "一の島の倉庫 0/12" })).toBeDefined();
+  });
+
+  it("FP-R1 relayCap 0・航行中では倉庫の区画を出さない", () => {
+    load(relaySnapshot(0));
+    const { unmount } = renderPanel(okSender());
+    expect(document.querySelector(".ferry-panel__relay-section")).toBeNull();
+    expect(document.querySelector(".ferry-panel__relay")).toBeNull();
+    unmount();
+    load(relaySnapshot(12), "f2");
+    renderPanel(okSender());
+    expect(document.querySelector(".ferry-panel__relay-section")).toBeNull();
+  });
+
+  it("FP-R2 経由の手紙を押すと cmd.ferry.unload を送り、ok で「手紙を倉庫に預けました。」", async () => {
+    load(relaySnapshot(12));
+    const send = okSender();
+    renderPanel(send);
+    const via = viaCargoButton();
+    expect(via.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(via);
+    expect(send).toHaveBeenCalledWith("cmd.ferry.unload", { ferryId: "f1", letterIds: [51] });
+    await flush();
+    expect(statusText()).toBe("手紙を倉庫に預けました。");
+    // 反映待ち。イベントで倉庫に入る。
+    expect(viaCargoButton().getAttribute("aria-disabled")).toBe("true");
+    events(relayMoved(51, 1));
+    expect(cargoList().querySelector('button[data-letter-id="51"]')).toBeNull();
+    expect(relayArea().querySelector('button[data-letter-id="51"]')).not.toBeNull();
+    expect(screen.getByRole("heading", { level: 3, name: "一の島の倉庫 4/12" })).toBeDefined();
+  });
+
+  it("FP-R2 経由の手紙を倉庫・港へドラッグすると cmd.ferry.unload で、文は預け入れ", async () => {
+    load(relaySnapshot(12));
+    const send = okSender();
+    renderPanel(send);
+    act(() => {
+      dnd.onDragEnd?.({
+        active: { id: "letter:cargo:51", data: { current: { letterId: 51, source: "cargo" } } },
+        over: { id: RELAY_DROP_ID },
+      } as unknown as DragEndEvent);
+    });
+    expect(send).toHaveBeenCalledWith("cmd.ferry.unload", { ferryId: "f1", letterIds: [51] });
+    await flush();
+    expect(statusText()).toBe("手紙を倉庫に預けました。");
+  });
+
+  it("FP-R3 倉庫の手紙を押すと cmd.relay.load を送り、ok で「倉庫の手紙を積みました。」", async () => {
+    load(relaySnapshot(12));
+    const send = okSender();
+    renderPanel(send);
+    const first = relayButtons()[0];
+    if (first === undefined) throw new Error("倉庫の手紙が無い");
+    expect(first.getAttribute("aria-label")).toBe("お元気ですか？（→ 二の島）を積む");
+    fireEvent.click(first);
+    expect(send).toHaveBeenCalledWith("cmd.relay.load", { ferryId: "f1", letterIds: [41] });
+    await flush();
+    expect(statusText()).toBe("倉庫の手紙を積みました。");
+    expect(within(relayArea()).getByText("反映待ち")).toBeDefined();
+  });
+
+  it("FP-R3 倉庫の手紙を積み荷へドラッグすると cmd.relay.load。港へは何もしない", async () => {
+    load(relaySnapshot(12));
+    const send = okSender();
+    renderPanel(send);
+    const drag = (over: string): void => {
+      act(() => {
+        dnd.onDragEnd?.({
+          active: { id: "letter:relay:40", data: { current: { letterId: 40, source: "relay" } } },
+          over: { id: over },
+        } as unknown as DragEndEvent);
+      });
+    };
+    drag(PORT_DROP_ID);
+    expect(send).not.toHaveBeenCalled();
+    drag(CARGO_DROP_ID);
+    expect(send).toHaveBeenCalledWith("cmd.relay.load", { ferryId: "f1", letterIds: [40] });
+    await flush();
+    expect(statusText()).toBe("倉庫の手紙を積みました。");
+    expect(
+      dnd.accessibility?.announcements?.onDragOver({
+        active: { id: "letter:relay:40", data: { current: { letterId: 40, source: "relay" } } },
+        over: { id: RELAY_DROP_ID },
+      } as unknown as DragEndEvent),
+    ).toBe("倉庫の上です。");
+  });
+
+  it.each<[string, "deposit" | "relayLoad", string, string]>([
+    ["預ける・relay_full", "deposit", "relay_full", "この島の倉庫はいっぱいです。"],
+    [
+      "倉庫から積む・letter_not_here",
+      "relayLoad",
+      "letter_not_here",
+      "その手紙はもう倉庫にありません。",
+    ],
+    ["預ける・letter_not_here", "deposit", "letter_not_here", "その手紙はもう船にありません。"],
+    ["倉庫から積む・capacity_exceeded", "relayLoad", "capacity_exceeded", "積み荷がいっぱいです。"],
+  ])("FP-R4 %s の文", async (_name, op, code, text) => {
+    load(relaySnapshot(12));
+    const send = vi.fn<GameCommandSender>(() => Promise.resolve({ ...OK, ok: false, code } as Ack));
+    renderPanel(send);
+    const target = op === "deposit" ? viaCargoButton() : relayButtons()[0];
+    if (target === undefined) throw new Error("ボタンが無い");
+    fireEvent.click(target);
+    await flush();
+    expect(statusText()).toBe(text);
+    expect(screen.queryByText("反映待ち")).toBeNull();
+  });
+
+  it("FP-R5 倉庫がいっぱいなら経由の手紙は押せず「倉庫がいっぱいです」。送信元の手紙は港へ戻せる", () => {
+    load(relaySnapshot(3));
+    const send = okSender();
+    renderPanel(send);
+    const via = viaCargoButton();
+    expect(via.getAttribute("aria-disabled")).toBe("true");
+    expect(describedText(via)).toContain("倉庫がいっぱいです");
+    expect(via.getAttribute("title")).toBe("倉庫がいっぱいです");
+    fireEvent.click(via);
+    act(() => {
+      dnd.onDragEnd?.({
+        active: { id: "letter:cargo:51", data: { current: { letterId: 51, source: "cargo" } } },
+        over: { id: RELAY_DROP_ID },
+      } as unknown as DragEndEvent);
+    });
+    expect(send).not.toHaveBeenCalled();
+    const own = cargoList().querySelector<HTMLElement>('button[data-letter-id="50"]');
+    expect(own?.getAttribute("aria-disabled")).toBeNull();
+    if (own !== null) fireEvent.click(own);
+    expect(send).toHaveBeenCalledWith("cmd.ferry.unload", { ferryId: "f1", letterIds: [50] });
+  });
+
+  it("FP-R5 relayCap 0 なら経由の手紙は「この島で生まれた手紙だけ降ろせます」", () => {
+    load(relaySnapshot(0));
+    renderPanel(okSender());
+    const via = viaCargoButton();
+    expect(via.getAttribute("aria-disabled")).toBe("true");
+    expect(describedText(via)).toContain("この島で生まれた手紙だけ降ろせます");
+  });
+
+  it("FP-R6 倉庫から積んだ手紙が消えたら、倉庫の同じ位置・1 つ前・見出しにフォーカスを移す", async () => {
+    load(relaySnapshot(12));
+    renderPanel(okSender());
+    const heading = screen.getByRole("heading", { level: 3, name: "一の島の倉庫 3/12" });
+
+    // 並びは 41・40・42。真ん中（40）を積む → 同じ位置の 42。
+    const middle = relayButtons()[1];
+    if (middle === undefined) throw new Error("倉庫の 2 つ目が無い");
+    middle.focus();
+    fireEvent.click(middle);
+    await flush();
+    events(moved(40, { type: "ferry", ferryId: "f1" }));
+    expect(document.activeElement?.getAttribute("data-letter-id")).toBe("42");
+
+    // 最後（42）を積む → 1 つ前の 41。
+    fireEvent.click(document.activeElement as HTMLElement);
+    await flush();
+    events(moved(42, { type: "ferry", ferryId: "f1" }));
+    expect(document.activeElement?.getAttribute("data-letter-id")).toBe("41");
+
+    // 最後の 1 通 → 見出し。
+    fireEvent.click(document.activeElement as HTMLElement);
+    await flush();
+    events(moved(41, { type: "ferry", ferryId: "f1" }));
+    expect(document.activeElement).toBe(heading);
+    expect(within(relayArea()).getByText("倉庫に手紙はありません。")).toBeDefined();
+  });
+
+  it("FP-R7 倉庫の区画があっても、チュートリアルが指す className が残る", () => {
+    load(relaySnapshot(12));
+    renderPanel(okSender());
+    for (const cls of [
+      "ferry-panel",
+      "ferry-panel__tabs",
+      "ferry-panel__port",
+      "ferry-panel__cargo",
+      "ferry-panel__destinations",
+      "ferry-panel__autoload",
+      "ferry-panel__depart",
+      "ferry-panel__status",
+    ]) {
+      expect(document.querySelector(`.${cls}`), cls).not.toBeNull();
+    }
   });
 });
 

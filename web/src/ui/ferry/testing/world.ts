@@ -122,6 +122,22 @@ export function makeFerrySnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
   };
 }
 
+// 中継倉庫（FR-FERRY-06）にある手紙（islandId の倉庫）。
+export function relayLetter(
+  id: number,
+  label: Letter["label"],
+  from: number,
+  to: number,
+  islandId: number,
+): Letter {
+  return portLetter(id, label, from, to, { loc: { type: "relay", islandId } });
+}
+
+// stage.relayCap（島ごとの中継倉庫の上限）を入れた Snapshot。
+export function withRelayCap(snapshot: Snapshot, relayCap: number): Snapshot {
+  return { ...snapshot, stage: { ...snapshot.stage, relayCap } };
+}
+
 // f1 を差し替えた Snapshot（f2 はそのまま）。
 export function withFerry1(
   patch: Partial<Snapshot["ferries"][number]>,

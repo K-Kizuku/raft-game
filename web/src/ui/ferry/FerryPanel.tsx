@@ -1,5 +1,5 @@
 // ゲーム画面のスロット「フェリー操作」（T-405・ゲームデザイン §3.2・§7.2 の下・DesignDoc §13.8）。
-// 船を選ぶ・港の手紙を積む／降ろす（クリック・キーボード・ドラッグ＆ドロップ）・行き先・おまかせ・出航。
+// 船を選ぶ・港の手紙を積む／降ろす・中継倉庫に預ける／倉庫から積む（クリック・キーボード・ドラッグ＆ドロップ。T-722）・行き先・おまかせ・出航。
 // 表示はストア（T-403）に届いた値だけで変え、コマンドを送っただけでは変えない（ADR-0009）。
 // 成否はサーバーの ack で知る。押せなくするのは「送っても明らかに失敗する」ときだけ。
 import {
@@ -26,22 +26,22 @@ import { letterKind } from "../letters/letterKinds.ts";
 import { letterRaftTerm, withRaftTerm } from "../terms/glossary.ts";
 import { useShowRaftTerms } from "../terms/preference.ts";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
-import { CARGO_DROP_ID, PORT_DROP_ID, dragId, dropCommand } from "./dnd.ts";
+import { CARGO_DROP_ID, PORT_DROP_ID, RELAY_DROP_ID, dragId, dropCommand } from "./dnd.ts";
 import type { LetterDragData } from "./dnd.ts";
 import { FerryList } from "./FerryList.tsx";
 import { blockerText, ferryResultMessage, viaHintText, viaLabel } from "./ferryMessages.ts";
 import type { FerryOp } from "./ferryMessages.ts";
 import { autoloadBlocker, departBlocker, ferryDetail, ferryTabs } from "./ferryView.ts";
-import type { FerryDetail, FerryTab } from "./ferryView.ts";
+import type { FerryDetail, FerryTab, RelayGroup } from "./ferryView.ts";
 import { onIslandPress } from "./islandPress.ts";
 import "./FerryPanel.css";
 
-const UNLOADABLE_NOTE = "この島で生まれた手紙だけ降ろせます";
+const RELAY_NOTE = "預けた手紙は、宛先に着くまで島では読まれません";
 const DESTINATION_HOW_TO = "下のボタンか、マップで隣の島を押して選びます";
 const SCREEN_READER_INSTRUCTIONS =
   "Enter か Space で積み込み・荷降ろしをします。マウスではドラッグでもできます。";
 
-type LetterList = "port" | "cargo";
+type LetterList = "port" | "cargo" | "relay";
 // 行き先（パネルの状態。ストアに入れない）。船と島が今と同じときだけ使う。
 type DestinationChoice = Readonly<{ ferryId: string; islandId: number; to: number }>;
 // 結果の文（選んだ船ごと）。
@@ -166,6 +166,7 @@ function FerryPanelContent({
 
 function letterIdsOf(detail: FerryDetail, list: LetterList): number[] {
   if (list === "port") return detail.port.flatMap((group) => group.letters.map((l) => l.id));
+  if (list === "relay") return detail.relay.flatMap((group) => group.letters.map((l) => l.id));
   return detail.cargo.flatMap((slot) => (slot.kind === "letter" ? [slot.letter.id] : []));
 }
 
@@ -199,8 +200,19 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const portListRef = useRef<HTMLElement | null>(null);
   const cargoListRef = useRef<HTMLElement | null>(null);
+  const relayListRef = useRef<HTMLElement | null>(null);
   const portHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const cargoHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const relayHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  // 一覧ごとの要素と見出し（フォーカスの移し先）。中身は ref なので、描画をまたいで同じもの。
+  const listRefs = useMemo(
+    () => ({
+      port: { list: portListRef, heading: portHeadingRef },
+      cargo: { list: cargoListRef, heading: cargoHeadingRef },
+      relay: { list: relayListRef, heading: relayHeadingRef },
+    }),
+    [],
+  );
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -234,13 +246,13 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     const active = document.activeElement;
     if (root === null) return;
     if (active !== null && active !== document.body && !root.contains(active)) return;
-    const list = intent.list === "port" ? portListRef.current : cargoListRef.current;
-    const heading = intent.list === "port" ? portHeadingRef.current : cargoHeadingRef.current;
-    const buttons = letterButtons(list);
+    const refs = listRefs[intent.list];
+    const heading = refs.heading.current;
+    const buttons = letterButtons(refs.list.current);
     const target =
       buttons.length > 0 ? buttons[Math.min(intent.index, buttons.length - 1)] : heading;
     target?.focus();
-  }, [detail, ferryId]);
+  }, [detail, ferryId, listRefs]);
 
   // マップで隣の島を押したら、その島を行き先にする（#318。港にいるときだけ。隣でない島は何もしない）。
   const detailRef = useRef(detail);
@@ -263,6 +275,9 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
   }, []);
   const setCargoList = useCallback((el: HTMLElement | null) => {
     cargoListRef.current = el;
+  }, []);
+  const setRelayList = useCallback((el: HTMLElement | null) => {
+    relayListRef.current = el;
   }, []);
 
   const docked = detail.state === "docked";
@@ -322,21 +337,32 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
       });
   }
 
-  function sendLetter(op: "load" | "unload", letterId: number, fromButton: boolean): void {
+  // op は押した・落とした操作。unload は積み荷の降ろし先（unloadTo）で、港へ戻す（unload）か
+  // 倉庫に預ける（deposit）かを分ける（送るコマンドはどちらも cmd.ferry.unload。結果の文だけが違う）。
+  function sendLetter(
+    op: "load" | "unload" | "relayLoad",
+    letterId: number,
+    fromButton: boolean,
+  ): void {
     if (!canOperate || !docked) return;
     const letter = Object.hasOwn(world.letters, letterId) ? world.letters[letterId] : undefined;
     if (letter === undefined || isPending(letter)) return;
-    const list: LetterList = op === "load" ? "port" : "cargo";
-    if (op === "load" && !letterIdsOf(detail, "port").includes(letterId)) return;
-    if (
-      op === "unload" &&
-      !detail.cargo.some((s) => s.kind === "letter" && s.letter.id === letterId && s.unloadable)
-    ) {
-      return;
+    let list: LetterList;
+    let resultOp: FerryOp;
+    if (op === "load" || op === "relayLoad") {
+      list = op === "load" ? "port" : "relay";
+      resultOp = op;
+      if (!letterIdsOf(detail, list).includes(letterId)) return;
+    } else {
+      const slot = detail.cargo.find(
+        (s) => s.kind === "letter" && s.letter.id === letterId && s.unloadable,
+      );
+      if (slot?.kind !== "letter") return;
+      list = "cargo";
+      resultOp = slot.unloadTo === "relay" ? "deposit" : "unload";
     }
     if (fromButton) {
-      const listEl = list === "port" ? portListRef.current : cargoListRef.current;
-      const index = letterButtons(listEl).findIndex(
+      const index = letterButtons(listRefs[list].list.current).findIndex(
         (b) => b.dataset["letterId"] === String(letterId),
       );
       focusIntentRef.current = { ferryId, list, letterId, index: Math.max(0, index) };
@@ -345,12 +371,14 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     }
     const moved: PendingLetter = { letterId, locType: letter.loc.type };
     dispatch(
-      op,
+      resultOp,
       destinationName,
-      (sender) =>
-        op === "load"
-          ? sender("cmd.ferry.load", { ferryId, letterIds: [letterId] })
-          : sender("cmd.ferry.unload", { ferryId, letterIds: [letterId] }),
+      (sender) => {
+        const payload = { ferryId, letterIds: [letterId] };
+        if (op === "load") return sender("cmd.ferry.load", payload);
+        if (op === "relayLoad") return sender("cmd.relay.load", payload);
+        return sender("cmd.ferry.unload", payload);
+      },
       moved,
     );
   }
@@ -388,6 +416,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     onDragOver: ({ over }) => {
       if (over?.id === CARGO_DROP_ID) return "積み荷の上です。";
       if (over?.id === PORT_DROP_ID) return "港の上です。";
+      if (over?.id === RELAY_DROP_ID) return "倉庫の上です。";
       return undefined;
     },
     onDragEnd: ({ active }) => `${letterName(active.data.current)}を置きました。`,
@@ -409,22 +438,29 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     source: LetterDragData["source"],
     toName: string,
     toColor: string,
-    unloadable: boolean,
+    unloadable = true,
+    unloadNote: string | null = null,
   ): LetterButtonProps => {
     const waiting = isPending(letter);
-    const disabled = !canOperate || waiting || (source === "cargo" && !unloadable);
+    const blocked = source === "cargo" && !unloadable;
+    const disabled = !canOperate || waiting || blocked;
+    const blockedNote = blocked ? unloadNote : null;
     return {
       letter,
       source,
       toName,
       toColor,
       disabled,
-      note: source === "cargo" && !unloadable ? UNLOADABLE_NOTE : waiting ? "反映待ち" : null,
-      noteVisible: waiting,
-      title: source === "cargo" && !unloadable ? UNLOADABLE_NOTE : undefined,
+      note: blockedNote ?? (waiting ? "反映待ち" : null),
+      noteVisible: blockedNote === null && waiting,
+      title: blockedNote ?? undefined,
       describedBy: phaseOk ? undefined : phaseNoteId,
       onActivate: () => {
-        sendLetter(source === "port" ? "load" : "unload", letter.id, true);
+        sendLetter(
+          source === "port" ? "load" : source === "relay" ? "relayLoad" : "unload",
+          letter.id,
+          true,
+        );
       },
     };
   };
@@ -494,7 +530,44 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
                           {group.letters.map((letter) => (
                             <li key={letter.id}>
                               <LetterButton
-                                {...letterProps(letter, "port", group.toName, group.toColor, true)}
+                                {...letterProps(letter, "port", group.toName, group.toColor)}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </DropArea>
+            </section>
+          )}
+
+          {docked && detail.relayCap > 0 && (
+            <section className="ferry-panel__section ferry-panel__relay-section">
+              <h3 tabIndex={-1} ref={relayHeadingRef}>
+                <span aria-hidden="true">📦</span>
+                {` ${detail.islandName === null ? "倉庫" : `${detail.islandName}の倉庫`} ${String(detail.relayCount)}/${String(detail.relayCap)}`}
+              </h3>
+              <p className="ferry-panel__note">{RELAY_NOTE}</p>
+              <DropArea id={RELAY_DROP_ID} className="ferry-panel__relay" nodeRef={setRelayList}>
+                {detail.relay.length === 0 ? (
+                  <p className="ferry-panel__note">倉庫に手紙はありません。</p>
+                ) : (
+                  <ul className="ferry-panel__piles">
+                    {detail.relay.map((group: RelayGroup) => (
+                      <li key={group.to} className="ferry-panel__pile" data-to={group.to}>
+                        <h4 className="ferry-panel__pile-to">
+                          {`→ ${group.toName}`}
+                          {destinationTo === group.to && (
+                            <span className="ferry-panel__pile-target">行き先宛て</span>
+                          )}
+                        </h4>
+                        <ul className="ferry-panel__letters">
+                          {group.letters.map((letter) => (
+                            <li key={letter.id}>
+                              <LetterButton
+                                {...letterProps(letter, "relay", group.toName, group.toColor)}
                               />
                             </li>
                           ))}
@@ -530,6 +603,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
                               slot.toName,
                               slot.toColor,
                               slot.unloadable,
+                              slot.unloadNote,
                             )}
                             viaName={slot.viaName}
                           />
@@ -748,7 +822,7 @@ function LetterButton({
     disabled,
   });
   const name = withRaftTerm(letterKind(letter.label).name, letterRaftTerm(letter.label), show);
-  const action = source === "port" ? "積む" : "降ろす";
+  const action = source === "cargo" ? "降ろす" : "積む";
   const described = [describedBy, note === null ? undefined : noteId]
     .filter((v) => v !== undefined)
     .join(" ");

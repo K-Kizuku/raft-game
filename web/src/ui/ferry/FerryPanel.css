@@ -157,6 +157,25 @@
   border: 4px dashed var(--color-sea-deep);
 }
 
+/* 中継倉庫（FR-FERRY-06・T-722）。港と同じ紙の地で、枠を破線にして「一時的に預かる場所」と分かるようにする。 */
+.ferry-panel__relay {
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: var(--space-2);
+  background: var(--color-paper);
+  border: 2px dashed var(--ferry-area-line);
+  border-radius: var(--radius-s);
+}
+
+.ferry-panel__relay.is-over {
+  padding: calc(var(--space-2) - 2px);
+  border: 4px dashed var(--color-sea-deep);
+}
+
+.ferry-panel__relay-section > .ferry-panel__note {
+  margin: 0 0 var(--space-2);
+}
+
 .ferry-panel__piles,
 .ferry-panel__letters,
 .ferry-panel__cargo {

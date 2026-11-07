@@ -37,6 +37,7 @@ export type StageStatic = Readonly<{
   routeIds: readonly string[]; // snapshot の順
   resources: readonly Resource[];
   demoStorm?: DemoStormView; // デモの嵐（snapshot.stage.demoStorm）。ないステージでは省く
+  relayCap?: number; // 島ごとの中継倉庫の上限（snapshot.stage.relayCap）。無い・0 なら積み替えなし
 }>;
 
 // 船。brokenUntil はスナップショットの brokenUntil（故障中だけ）と ferry.broken / ferry.repaired が入れる。故障していなければ null。

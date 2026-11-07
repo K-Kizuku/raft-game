@@ -32,6 +32,8 @@ describe("FERRY_OP_NAMES", () => {
     expect(FERRY_OP_NAMES).toEqual({
       load: "積み込み",
       unload: "荷降ろし",
+      deposit: "預け入れ",
+      relayLoad: "倉庫からの積み込み",
       autoload: "おまかせ積み込み",
       depart: "出航",
     });
@@ -51,6 +53,7 @@ describe("ferryResultMessage", () => {
     ["depart", "letter_not_here", "出航できませんでした。"],
     ["depart", "no_route", "二の島へは直接の航路がありません。"],
     ["depart", "route_blocked", "嵐で二の島への航路が通れません。"],
+    ["deposit", "relay_full", "この島の倉庫はいっぱいです。"],
     ["autoload", "phase_invalid", "いまはおまかせ積み込みできません。"],
     ["load", "rate_limited", "操作が多すぎます。少し待ってください。"],
     ["load", "bad_request", "積み込みできませんでした。"],
@@ -69,8 +72,8 @@ describe("ferryResultMessage", () => {
     expect(ferryResultMessage(op, fail(code), "二の島")).toBe(want);
   });
 
-  it("FM-1 code の 10 種類をすべて試している", () => {
-    expect(new Set(codeRows.map(([, code]) => code)).size).toBe(10);
+  it("FM-1 code の 11 種類をすべて試している", () => {
+    expect(new Set(codeRows.map(([, code]) => code)).size).toBe(11);
   });
 
   it.each<[FerryOp, Ack | "rejected", string]>([
@@ -89,6 +92,20 @@ describe("ferryResultMessage", () => {
     ["depart", fail("route_blocked"), "嵐で行き先への航路が通れません。"],
   ])("FM-1 toName が null → 「行き先」（%s）", (op, result, want) => {
     expect(ferryResultMessage(op, result, null)).toBe(want);
+  });
+});
+
+describe("中継倉庫の文（FR-FERRY-06）", () => {
+  it.each<[FerryOp, Ack, string]>([
+    ["deposit", OK, "手紙を倉庫に預けました。"],
+    ["relayLoad", OK, "倉庫の手紙を積みました。"],
+    ["deposit", fail("relay_full"), "この島の倉庫はいっぱいです。"],
+    ["relayLoad", fail("letter_not_here"), "その手紙はもう倉庫にありません。"],
+    ["deposit", fail("letter_not_here"), "その手紙はもう船にありません。"],
+    ["relayLoad", fail("capacity_exceeded"), "積み荷がいっぱいです。"],
+    ["relayLoad", fail("whirlpool"), "倉庫からの積み込みできませんでした。"],
+  ])("FM-R1 %s →「%s」", (op, result, want) => {
+    expect(ferryResultMessage(op, result, "二の島")).toBe(want);
   });
 });
 

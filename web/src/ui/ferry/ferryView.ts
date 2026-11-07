@@ -23,13 +23,22 @@ export type PortGroup = Readonly<{
   toColor: string;
   letters: readonly Letter[];
 }>;
+// 停泊中の島の中継倉庫（FR-FERRY-06）の手紙の山。形は PortGroup と同じ。
+export type RelayGroup = Readonly<{
+  to: number;
+  toName: string;
+  toColor: string;
+  letters: readonly Letter[];
+}>;
 export type CargoSlot = Readonly<
   | {
       kind: "letter";
       letter: Letter;
       toName: string;
       toColor: string;
+      unloadTo: "port" | "relay"; // 降ろし先（この島で生まれた手紙は港、それ以外は倉庫。サーバーが送信元で決める）
       unloadable: boolean;
+      unloadNote: string | null; // 押せない理由（押せるときは null）
       viaName: string | null; // 経由して運ぶ手紙なら、経由する島の名前（「豊島経由 → 小豆島」）。直行なら null
     }
   | { kind: "unknown"; letterId: number } // cargo にあって letters に無い ID
@@ -60,11 +69,18 @@ export type FerryDetail = Readonly<{
   etaMs: number | null;
   readyInMs: number; // docked: max(0, readyAt − simNow)、sailing: 0
   port: readonly PortGroup[]; // docked: いる島の港の手紙。sailing: []
+  relayCap: number; // 島ごとの中継倉庫の上限（world.stage.relayCap ?? 0。0 なら積み替えなし）
+  relayCount: number; // docked: いる島の倉庫の手紙の数。sailing: 0
+  relay: readonly RelayGroup[]; // docked: いる島の倉庫の手紙（宛先の昇順の山・山の中は ID の昇順）。sailing: []
   cargo: readonly CargoSlot[];
   destinations: readonly Destination[]; // docked: 航路でつながる島。sailing: []
   viaHints: readonly ViaHint[]; // docked: 港の手紙の山のうち、隣でない島宛てのもの（山の順）。sailing: []
 }>;
 export type FerryBlocker = "sailing" | "no_destination" | "not_ready" | "route_blocked";
+
+// 積み荷の手紙を降ろせない理由（DesignDoc §13.8）。
+export const UNLOAD_NOTE_ORIGIN_ONLY = "この島で生まれた手紙だけ降ろせます";
+export const UNLOAD_NOTE_RELAY_FULL = "倉庫がいっぱいです";
 
 // 島がステージに無いときの色。
 const UNKNOWN_ISLAND_COLOR = "#9CA3AF";
@@ -184,7 +200,50 @@ function cargoVia(world: World, ferry: FerryView, letter: Letter): number | null
   return ferry.islandId === undefined ? null : viaIsland(world, ferry.islandId, letter.to);
 }
 
-function cargoSlots(world: World, ferry: FerryView, islandId: number | null): CargoSlot[] {
+type RelayRoom = Readonly<{ cap: number; count: number }>;
+
+function unloadState(
+  letter: Letter,
+  islandId: number | null,
+  relay: RelayRoom,
+): Pick<Extract<CargoSlot, { kind: "letter" }>, "unloadTo" | "unloadable" | "unloadNote"> {
+  const unloadTo = islandId !== null && letter.from === islandId ? "port" : "relay";
+  if (islandId === null) return { unloadTo, unloadable: false, unloadNote: null };
+  if (unloadTo === "port") return { unloadTo, unloadable: true, unloadNote: null };
+  if (relay.cap <= 0) {
+    return { unloadTo, unloadable: false, unloadNote: UNLOAD_NOTE_ORIGIN_ONLY };
+  }
+  if (relay.count >= relay.cap) {
+    return { unloadTo, unloadable: false, unloadNote: UNLOAD_NOTE_RELAY_FULL };
+  }
+  return { unloadTo, unloadable: true, unloadNote: null };
+}
+
+// islandId の中継倉庫にある手紙を、宛先の昇順の山（山の中は ID の昇順）にまとめる。
+function relayGroups(world: World, islandId: number): RelayGroup[] {
+  const byTo = new Map<number, Letter[]>();
+  for (const letter of Object.values(world.letters)) {
+    if (letter.loc.type !== "relay" || letter.loc.islandId !== islandId) continue;
+    const pile = byTo.get(letter.to);
+    if (pile === undefined) byTo.set(letter.to, [letter]);
+    else pile.push(letter);
+  }
+  return [...byTo.keys()]
+    .sort((a, b) => a - b)
+    .map((to) => ({
+      to,
+      toName: islandName(world, to),
+      toColor: islandColor(world, to),
+      letters: [...(byTo.get(to) ?? [])].sort((a, b) => a.id - b.id),
+    }));
+}
+
+function cargoSlots(
+  world: World,
+  ferry: FerryView,
+  islandId: number | null,
+  relay: RelayRoom,
+): CargoSlot[] {
   const slots: CargoSlot[] = [];
   for (const id of ferry.cargo) {
     const letter = Object.hasOwn(world.letters, id) ? world.letters[id] : undefined;
@@ -198,7 +257,7 @@ function cargoSlots(world: World, ferry: FerryView, islandId: number | null): Ca
       letter,
       toName: islandName(world, letter.to),
       toColor: islandColor(world, letter.to),
-      unloadable: islandId !== null && letter.from === islandId,
+      ...unloadState(letter, islandId, relay),
       viaName: via === null ? null : islandName(world, via),
     });
   }
@@ -240,6 +299,7 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
   const ferry = getFerry(world, ferryId);
   if (ferry === undefined) return null;
   const broken = isBroken(ferry, simNow);
+  const relayCap = world.stage.relayCap ?? 0;
   if (ferry.state === "sailing") {
     return {
       ferry,
@@ -252,13 +312,18 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
       etaMs: etaOf(ferry, simNow),
       readyInMs: 0,
       port: [],
-      cargo: cargoSlots(world, ferry, null),
+      relayCap,
+      relayCount: 0,
+      relay: [],
+      cargo: cargoSlots(world, ferry, null, { cap: relayCap, count: 0 }),
       destinations: [],
       viaHints: [],
     };
   }
   const islandId = ferry.islandId ?? null;
   const piles = islandId === null ? [] : portPiles(world, islandId);
+  const relay = islandId === null ? [] : relayGroups(world, islandId);
+  const relayCount = relay.reduce((n, group) => n + group.letters.length, 0);
   const viaHints: ViaHint[] = [];
   if (islandId !== null) {
     for (const pile of piles) {
@@ -288,7 +353,10 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
       toColor: islandColor(world, pile.to),
       letters: pile.letters,
     })),
-    cargo: cargoSlots(world, ferry, islandId),
+    relayCap,
+    relayCount,
+    relay,
+    cargo: cargoSlots(world, ferry, islandId, { cap: relayCap, count: relayCount }),
     destinations: islandId === null ? [] : destinationsFrom(world, islandId, simNow),
     viaHints,
   };
