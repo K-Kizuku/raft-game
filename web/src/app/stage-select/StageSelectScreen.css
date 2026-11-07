@@ -1,5 +1,5 @@
 /* ステージ選択の見た目（T-424・docs/11-visual-design.md）。温かい絵本・海図風。
-   各ステージは葉書のカード（上の縁に航空便の縞・右上に地域名の切手・島・船・制限時間の札）。
+   各ステージは葉書のカード（上の縁に航空便の縞・題名の下に地域名の切手・島・船・制限時間の札）。
    色・余白・角丸・影はトークン（web/src/ui/theme/tokens.css）だけを使う。 */
 .stage-select {
   /* 航空便の縞と切手の目打ち（ミシン目）の大きさ。 */
@@ -7,22 +7,45 @@
   --stage-select-perforation: 8px;
 }
 
-/* 葉書の並び。幅に合わせて折り返す（360px の幅でも 1 列ではみ出さない）。 */
-.stage-select .stage-select-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
-  gap: var(--space-5);
-  margin: var(--space-5) 0;
+/* 見出しと「タイトルへ」は、カードの列と同じく画面の中央にそろえる（T-427。カードが 1・2 枚でも中央に来る）。 */
+.stage-select > h1 {
+  text-align: center;
 }
 
-/* 葉書のカード。見出しと切手を上の段に、ほかは全幅に並べる（切手と長い名前が重ならない）。 */
+.stage-select > a {
+  display: block;
+  width: fit-content;
+  margin-inline: auto;
+}
+
+/* 葉書の並び。幅に合わせて折り返す（360px の幅でも 1 列ではみ出さない）。
+   auto-fit で空の列を作らず、カードの列を中央にそろえる（T-427。auto-fill だと、カードが列の数より
+   少ないときに右に空の列が残り、左に寄って見える）。 */
+.stage-select .stage-select-list {
+  --stage-select-card-max: 28rem;
+
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-5);
+  margin: var(--space-5) auto;
+}
+
+/* カードが 1・2 枚のときは、一覧の幅をその枚数ぶんに絞って中央に置く（カードが横に間延びしない）。 */
+.stage-select .stage-select-list:not(:has(> :nth-child(3))) {
+  max-width: calc(var(--stage-select-card-max) * 2 + var(--space-5));
+}
+
+.stage-select .stage-select-list:not(:has(> :nth-child(2))) {
+  max-width: var(--stage-select-card-max);
+}
+
+/* 葉書のカード。題名を 1 行目の全幅に、切手をその下に置く（切手が題名の幅を削らない。T-427）。 */
 .stage-select .stage-select-item {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  /* 見出しと切手・紹介文（伸びる）・札・ボタン。ボタンをカードの下にそろえる。 */
-  grid-template-rows: auto 1fr auto auto;
-  column-gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr);
+  /* 題名・切手・紹介文（伸びる）・札・鍵やクリアの文・ボタン。ボタンをカードの下にそろえる。 */
+  grid-template-rows: auto auto 1fr auto auto;
   min-width: 0;
   padding: calc(var(--space-4) + var(--space-2)) var(--space-4) var(--space-4);
   overflow: hidden;
@@ -48,25 +71,20 @@
   );
 }
 
-.stage-select .stage-select-item > * {
-  grid-column: 1 / -1;
-}
-
 .stage-select .stage-select-item > h2 {
-  grid-column: 1;
-  align-self: center;
   margin: 0;
   font-size: var(--font-size-h3);
+  /* 日本語の題名を文字の途中で折らず、句読点・括弧・空白で折る。収まらないときだけ途中で折る。 */
+  word-break: keep-all;
   overflow-wrap: anywhere;
 }
 
-/* 右上の地域名の切手。縁の目打ちはマスクで抜く。 */
+/* 題名の下の地域名の切手。縁の目打ちはマスクで抜く。 */
 .stage-select .stage-select-region {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  max-width: 9em;
-  margin: 0;
+  justify-self: start;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: var(--space-3) 0 0;
   padding: var(--space-3);
   color: var(--color-ink);
   background: var(--color-sea-light);
