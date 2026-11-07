@@ -3,6 +3,7 @@ package server
 import (
 	"strconv"
 
+	"github.com/K-Kizuku/raft-game/server/internal/game"
 	"github.com/K-Kizuku/raft-game/server/internal/protocol"
 	"github.com/K-Kizuku/raft-game/server/internal/protocol/simconv"
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
@@ -97,21 +98,28 @@ func routeID(a, b uint64) string {
 	return strconv.FormatUint(a, 10) + "-" + strconv.FormatUint(b, 10)
 }
 
-// buildResult は round.result・internal.result の payload（プロトコル §5.5）を作る。
-// 中身は T-203 が Engine.Result() を作るまでの枠: 点数・星・統計の数は 0、lettersDelivered は {}、
-// finalLogs は Snapshot().Nodes から、story は []。inputLogAvailable は single なら true。
+// buildResult は round.result・internal.result の payload（プロトコル §5.5）を作る。run の goroutine から呼ぶ。
+//
+// 点数・★・依頼の結果の数は Engine.Result()（採点しないステージ・終わる前はゼロ値のまま使う）、ほかの統計は
+// Engine.TechStats()、story は Engine.StoryFacts() から game.WriteStory で組み立てた文。inputLogAvailable は single なら true。
+// JSON に null の map・配列を出さない（simconv.RoundResultFromSim）。
 func (s *session) buildResult() protocol.RoundResult {
-	snap := s.engine.Snapshot()
-	logs := make([]protocol.FinalLog, len(snap.Nodes))
-	for i, n := range snap.Nodes {
-		logs[i] = protocol.FinalLog{ID: n.ID, LastIndex: n.LastIndex, Commit: n.Commit, Terms: [][3]uint64{}}
+	r, _ := s.engine.Result() // 採点しない・終わる前は false（ゼロ値のまま使う）
+	story := game.WriteStory(s.engine.StoryFacts(), storyNames(s.st))
+	return simconv.RoundResultFromSim(r, s.engine.TechStats(), story, s.mode == ModeSingle)
+}
+
+// storyNames は文章に使う島（stage.Islands の順 = ノード ID の順）と資源（ID → Label）の名前。
+func storyNames(st *stage.Stage) game.StoryNames {
+	n := game.StoryNames{
+		Islands:   make([]string, len(st.Islands)),
+		Resources: make(map[string]string, len(st.Resources)),
 	}
-	return protocol.RoundResult{
-		Stats: protocol.RoundStats{
-			LettersDelivered: map[string]int{},
-			FinalLogs:        logs,
-		},
-		Story:             []protocol.StoryItem{},
-		InputLogAvailable: s.mode == ModeSingle,
+	for i, is := range st.Islands {
+		n.Islands[i] = is.Name
 	}
+	for _, r := range st.Resources {
+		n.Resources[r.ID] = r.Label
+	}
+	return n
 }
