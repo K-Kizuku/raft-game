@@ -11,12 +11,16 @@
 SHELL := bash
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint gen sync-data dev dev-env clean-docker demo-local
+.PHONY: help test lint gen gen-check sync-data dev dev-env clean-docker demo-local
 
 # golangci-lint の版。.github/workflow-sources/ci.yml の server ジョブの
 # GOLANGCI_LINT_VERSION と同じ版にする。PATH の golangci-lint は使わず、
 # `go run` で server/go.mod の Go でビルドして実行する（T-005 / #13）。
 GOLANGCI_LINT_VERSION := v2.15.0
+
+# tygo の版。`go run` で server/go.mod の Go でビルドして実行する。server/go.mod には入れない。
+# 上げるときは make gen をやり直して生成物も同じ PR でコミットする（T-301 / ADR-0014）。
+TYGO_VERSION := v0.2.21
 
 # レシピの先頭で読み込む小さな関数。
 #   run  <cmd...>  実行して、失敗したら status=1 にする
@@ -87,7 +91,21 @@ lint: ## go vet・gofmt（tools/*・server）・golangci-lint（server）・web 
 	exit $$status
 
 gen: ## Go のプロトコルの型から TS の型を生成する（T-301）
-	@echo "gen: Go のプロトコルの型から TS の型を生成する。未実装（T-301）"
+	@if ! command -v go >/dev/null 2>&1; then echo "make gen: go がない" >&2; exit 1; fi; \
+	echo "==> go -C server run github.com/gzuidhof/tygo@$(TYGO_VERSION) generate --config tygo.yaml"; \
+	if ! go -C server run "github.com/gzuidhof/tygo@$(TYGO_VERSION)" generate --config tygo.yaml; then \
+	  echo "make gen: tygo が失敗した" >&2; exit 1; \
+	fi
+
+gen-check: ## make gen をやり直して、web/src/protocol/ の生成物に差分がないかを確かめる（CI 用）
+	@$(MAKE) --no-print-directory gen || exit 1; \
+	untracked="$$(git ls-files --others --exclude-standard -- web/src/protocol/)"; \
+	if ! git diff --exit-code -- web/src/protocol/ || [ -n "$$untracked" ]; then \
+	  if [ -n "$$untracked" ]; then echo "未追跡のファイル:"; echo "$$untracked"; fi; \
+	  echo "make gen-check: make gen の結果がコミットされていない（make gen を実行して web/src/protocol/ をコミットする）" >&2; \
+	  exit 1; \
+	fi; \
+	echo "make gen-check: 差分なし"
 
 sync-data: ## data/ を server/internal/stage/embedded/ にコピーする（T-201/T-205）
 	@echo "sync-data: data/ を server/internal/stage/embedded/ にコピーする。未実装（T-201/T-205）"
