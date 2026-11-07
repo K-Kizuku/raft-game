@@ -27,7 +27,7 @@ type Config struct {
 	Port           int      // 0 なら空いているポート（テスト用）
 	DataDir        string   // "" なら埋め込み（stage.Embedded）
 	AllowedOrigins []string // standalone だけ。ALLOWED_ORIGINS を読んだもの（有効な要素だけ）
-	DemoControls   bool     // standalone だけ。true なら demo: true のセッションを作れる
+	DemoControls   bool     // standalone だけ。true なら demo: true のセッションを作れ、/api/stages にデモ用のステージを出す
 	MaxSessions    int      // standalone だけ
 	Invariants     bool     // sim.Options.CheckInvariants
 	LogLevel       slog.Level

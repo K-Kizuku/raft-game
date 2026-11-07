@@ -90,12 +90,14 @@ func TestHTTPStandalone(t *testing.T) {
 		t.Fatalf("GET /api/stages = %d %s", res.StatusCode, body)
 	}
 	assertJSONHeaders(t, res)
-	// intro・learning・demo は T-311 で StageSummary に足した欄。standalone を stageconv にそろえるのは #212。
+	// 形は stageconv.Summaries（Worker の一覧と同じ。#212）。
 	want := `{"stages":[` +
 		`{"id":"alpha","title":"テストの海","region":"波間県（架空）","islands":3,"ferries":1,"durationMs":180000,"unlock":null,` +
-		`"intro":{"text":"","provenance":"","source":null},"learning":null,"demo":false},` +
+		`"intro":{"text":"架空の穏やかな海です。","provenance":"derived","source":{"dataset":"fixture-2026","region":"星砂地域","field":"NATURAL_CLIMATE_FEATURES","quote":null}},` +
+		`"learning":[],"demo":false},` +
 		`{"id":"omega","title":"テストの外海","region":"波間県（架空）","islands":3,"ferries":1,"durationMs":180000,"unlock":"alpha",` +
-		`"intro":{"text":"","provenance":"","source":null},"learning":null,"demo":false}]}`
+		`"intro":{"text":"架空の穏やかな海です。","provenance":"derived","source":{"dataset":"fixture-2026","region":"星砂地域","field":"NATURAL_CLIMATE_FEATURES","quote":null}},` +
+		`"learning":[],"demo":false}]}`
 	if string(body) != want {
 		t.Errorf("GET /api/stages =\n%s\nwant\n%s", body, want)
 	}
