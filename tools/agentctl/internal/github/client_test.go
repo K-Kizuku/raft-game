@@ -54,6 +54,7 @@ func pullJSON(sha string, mergeable any) map[string]any {
 		"base":      map[string]any{"ref": "main", "sha": "2222222222222222222222222222222222222222"},
 		"head":      map[string]any{"ref": "agent/issue-3", "sha": sha},
 		"mergeable": mergeable, "mergeable_state": "blocked", "changed_files": 1,
+		"additions": 7, "deletions": 3,
 	}
 }
 
@@ -203,6 +204,10 @@ func TestFetchInput(t *testing.T) {
 	if in.PullRequest.Labels[0] != "agent" || in.PullRequest.Author != "K-Kizuku" {
 		t.Errorf("pr = %+v", in.PullRequest)
 	}
+	// 小さな PR の判定（Issue #243）に使う追加・削除の行数。
+	if a, d := in.PullRequest.Additions, in.PullRequest.Deletions; a == nil || d == nil || *a != 7 || *d != 3 {
+		t.Errorf("additions = %v, deletions = %v", a, d)
+	}
 	if len(in.Reviews) != 1 || in.Reviews[0].ID != 501 || in.Reviews[0].Author != "chatgpt-codex-connector[bot]" || in.Reviews[0].CommitID != head {
 		t.Errorf("reviews = %+v", in.Reviews)
 	}
@@ -248,6 +253,22 @@ func TestCreateComment(t *testing.T) {
 	}
 	if len(f.posted) != 1 || f.posted[0] != "POST /repos/"+repo+"/issues/12/comments "+`{"body":"@codex review"}` {
 		t.Errorf("posted = %q", f.posted)
+	}
+}
+
+// 追加・削除の行数がない応答では null のまま（小さな PR と判定しない）。
+func TestFetchInputNoLineCounts(t *testing.T) {
+	f := newFake(t)
+	p := pullJSON(head, true)
+	delete(p, "additions")
+	delete(p, "deletions")
+	f.pulls = []map[string]any{p}
+	in, err := f.client(t).FetchInput(context.Background(), repo, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.PullRequest.Additions != nil || in.PullRequest.Deletions != nil {
+		t.Errorf("additions = %v, deletions = %v", in.PullRequest.Additions, in.PullRequest.Deletions)
 	}
 }
 

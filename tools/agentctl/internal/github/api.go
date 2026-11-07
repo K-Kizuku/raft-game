@@ -40,6 +40,8 @@ type pull struct {
 	Mergeable      *bool   `json:"mergeable"`
 	MergeableState string  `json:"mergeable_state"`
 	ChangedFiles   int     `json:"changed_files"`
+	Additions      *int    `json:"additions"`
+	Deletions      *int    `json:"deletions"`
 }
 
 type issue struct {
@@ -108,6 +110,7 @@ func (p *pull) toGate() gate.PullRequest {
 		Title: p.Title, Body: str(p.Body), Author: p.User.Login, Labels: labelNames(p.Labels),
 		BaseRef: p.Base.Ref, BaseSHA: p.Base.SHA, HeadRef: p.Head.Ref, HeadSHA: p.Head.SHA,
 		Mergeable: p.Mergeable, MergeableState: p.MergeableState, ChangedFiles: p.ChangedFiles,
+		Additions: p.Additions, Deletions: p.Deletions,
 	}
 }
 

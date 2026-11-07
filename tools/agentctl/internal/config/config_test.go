@@ -48,6 +48,59 @@ func TestCarryOverOnBaseMerge(t *testing.T) {
 	}
 }
 
+// review.skip_small_prs・skip_paths・skip_max_lines（Issue #243）は、リポジトリの設定に書いてあり、
+// 書かなければ skip_small_prs は false、skip_paths・skip_max_lines は既定の値。
+func TestSkipSmallPRs(t *testing.T) {
+	data, err := os.ReadFile(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Review map[string]json.RawMessage `json:"review"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"skip_small_prs", "skip_paths", "skip_max_lines"} {
+		if _, ok := raw.Review[k]; !ok {
+			t.Errorf("リポジトリの設定に review.%s がない", k)
+		}
+	}
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Review.SkipSmallPRs {
+		t.Error("リポジトリの設定の skip_small_prs が true ではない")
+	}
+	if got := strings.Join(c.Review.SmallPRSkipPaths(), " "); got != strings.Join(DefaultSkipPaths, " ") {
+		t.Errorf("リポジトリの設定の skip_paths = %s", got)
+	}
+	if c.Review.SmallPRMaxLines() != 300 {
+		t.Errorf("リポジトリの設定の skip_max_lines = %d", c.Review.SmallPRMaxLines())
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) {
+		for _, k := range []string{"skip_small_prs", "skip_paths", "skip_max_lines"} {
+			delete(review(m), k)
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.SkipSmallPRs {
+		t.Error("skip_small_prs の既定が false ではない")
+	}
+	if got := strings.Join(c.Review.SmallPRSkipPaths(), " "); got != "docs/** **/*_test.go **/*.test.ts **/*.test.tsx **/testdata/** **/fixtures/**" {
+		t.Errorf("skip_paths の既定 = %s", got)
+	}
+	if c.Review.SmallPRMaxLines() != DefaultSkipMaxLines || DefaultSkipMaxLines != 300 {
+		t.Errorf("skip_max_lines の既定 = %d", c.Review.SmallPRMaxLines())
+	}
+	if strings.Join(NeverSkipPaths, " ") != "docs/adr/**" {
+		t.Errorf("NeverSkipPaths = %v", NeverSkipPaths)
+	}
+}
+
 // merge.require_up_to_date（Issue #239）は、リポジトリの設定では false、書かなければ true。
 func TestRequireUpToDate(t *testing.T) {
 	c, err := Load(repoConfig)
@@ -163,6 +216,10 @@ func TestInvalid(t *testing.T) {
 		{"max_rounds が 11", func(m map[string]any) { review(m)["max_rounds"] = 11 }, "review.max_rounds"},
 		{"max_rounds が整数でない", func(m map[string]any) { review(m)["max_rounds"] = "2" }, "max_rounds"},
 		{"不正な glob", func(m map[string]any) { m["protected_paths"] = []any{"a/[b"} }, "protected_paths"},
+		{"skip_paths に不正な glob", func(m map[string]any) { review(m)["skip_paths"] = []any{"docs/[x"} }, "review.skip_paths"},
+		{"skip_paths に空の値", func(m map[string]any) { review(m)["skip_paths"] = []any{" "} }, "review.skip_paths"},
+		{"skip_max_lines が負", func(m map[string]any) { review(m)["skip_max_lines"] = -1 }, "review.skip_max_lines"},
+		{"skip_small_prs が真偽値でない", func(m map[string]any) { review(m)["skip_small_prs"] = "yes" }, "skip_small_prs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1679,6 +1679,31 @@ printf '%s\n' "- [x] AC-1: CI（\`ci-ok\`）が通る" "- [ ] AC-2: ほか" >"$T
 train 1
 check "train: 変える行がなければ gh pr edit を呼ばない" test "$(gh_calls "pr edit" 53)" = 0
 
+# ---- 小さな PR（#243）: Merge Gate が C5〜C8 を「レビューを省いた」として pass にする → レビューを依頼しない ----
+# mksmallgate <PR> <verdict> <C2>: 小さな PR の gate の結果（C5〜C8 の detail に省いた理由が入る）を置く
+mksmallgate() {
+  jq -n --argjson pr "$1" --arg v "$2" --arg c2 "$3" \
+    '"小さな PR なのでレビューを省いた（1 ファイルがすべて review.skip_paths に一致・保護されたパスの変更なし・追加と削除が 50 行（上限 300 行））" as $d
+    | {verdict:$v, repo:"K-Kizuku/raft-game", pr:$pr, head_sha:"h\($pr)", closed:false,
+    results:[{id:"C1",status:"pass"},{id:"C2",status:$c2},{id:"C4",status:"pass"},
+      {id:"C5",status:"pass",detail:$d},{id:"C6",status:"pass",detail:$d},{id:"C7",status:"pass",detail:$d},
+      {id:"C8",status:"pass",detail:$d},{id:"C9",status:"pass"},{id:"C10",status:"pass"},{id:"C11",status:"pass"},
+      {id:"C12",status:"pass"}]}' >"$TRAIN_DIR/gate-$1.json"
+}
+train_reset
+mkprs "54:agent/issue-154"
+mksmallgate 54 fail fail
+printf '%s\n' "- [x] AC-1: 一つ目" "- [ ] AC-2: CI（\`ci-ok\`）が通る" >"$TRAIN_DIR/body-54.md"
+train 2
+wait_reviews
+check "train: 小さな PR（C5〜C8 を省いた）にはレビューを依頼しない" test ! -s "$FAKE_LOG/review.log" -a ! -e "$trepo/.agents/run/train/review-54.pid"
+check "train: 小さな PR でも CI の AC にはチェックを付ける" grep -q '^- \[x\] AC-2: CI' "$FAKE_LOG/edit-54.md"
+check "train: 小さな PR は止まった扱いにしない" test ! -e "$trepo/.agents/run/train/stopped-54"
+mksmallgate 54 pass pass
+echo 1 >"$TRAIN_DIR/comments-54"
+train 1
+check "train: 小さな PR は Merge Gate が pass ならレビューなしでマージする" test "$(cat "$FAKE_LOG/merge.log")" = "54" -a ! -s "$FAKE_LOG/review.log"
+
 # ---- 不具合 2: gate が空の結果を返したら、その周はその PR に何もしない ----
 for rc in 3 0 2; do
   train_reset
