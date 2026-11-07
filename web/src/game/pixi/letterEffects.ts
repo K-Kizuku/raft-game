@@ -8,8 +8,10 @@ import { termsPreference } from "../../ui/terms/preference.ts";
 import { createExitTracker, effectFrame, planLetterEffects } from "../animations/letterEffects.ts";
 import type { LetterEffect } from "../animations/letterEffects.ts";
 import { LETTER_EFFECT_STYLE } from "../animations/style.ts";
+import { MAP_ART_STYLE } from "../model/art/style.ts";
 import type { MapScene } from "../model/scene.ts";
 import { MAP_STYLE } from "../model/style.ts";
+import { drawEnvelope } from "./envelope.ts";
 
 export type LetterEffectsLayer = Readonly<{
   update(world: World, scene: MapScene, now: number, simNow: number): void;
@@ -19,24 +21,15 @@ export type LetterEffectsLayer = Readonly<{
 const S = MAP_STYLE;
 const D = MAP_STYLE.draw;
 const E = LETTER_EFFECT_STYLE;
+const A = MAP_ART_STYLE;
 
-// 封筒 1 通（T-404 の山と同じ形）。依頼書なら ★ を添える。
+// 封筒 1 通（港の手紙の山と同じ形。./envelope.ts）。依頼書なら ★ を添える。
 function envelope(effect: LetterEffect, faded: boolean): Container {
   const root = new Container();
-  const g = new Graphics();
-  const w = D.envelopeWidth;
-  const h = D.envelopeHeight;
-  const strokeAlpha = faded ? E.driftStrokeAlpha : 1;
-  g.roundRect(-w / 2, -h / 2, w, h, D.envelopeRadius);
-  g.fill({ color: S.colors.envelope });
-  g.stroke({ width: D.envelopeStrokeWidth, color: effect.color, alpha: strokeAlpha });
-  g.moveTo(-w / 2, -h / 2)
-    .lineTo(0, 0)
-    .lineTo(w / 2, -h / 2);
-  g.stroke({
-    width: D.envelopeStrokeWidth,
-    color: faded ? E.colors.drift : effect.color,
-    alpha: strokeAlpha,
+  const g = drawEnvelope(new Graphics(), {
+    color: effect.color,
+    alpha: faded ? E.driftStrokeAlpha : 1,
+    ...(faded ? { stroke: E.colors.drift } : {}),
   });
   root.addChild(g);
   if (effect.request) {
@@ -47,11 +40,11 @@ function envelope(effect: LetterEffect, faded: boolean): Container {
         fontSize: D.badgeFontSize,
         fill: S.colors.star,
         fontWeight: "bold",
-        stroke: { color: S.colors.halo, width: D.haloWidth },
+        stroke: { color: S.colors.starStroke, width: A.starStrokeWidth },
       },
     });
     star.anchor.set(0.5);
-    star.position.set(-w / 2, -h / 2);
+    star.position.set(-D.envelopeWidth / 2, -D.envelopeHeight / 2);
     root.addChild(star);
   }
   return root;
@@ -65,7 +58,7 @@ function captionText(): Text {
       fontSize: E.captionFontSize,
       fill: E.colors.caption,
       fontWeight: "bold",
-      stroke: { color: S.colors.halo, width: D.haloWidth },
+      stroke: { color: E.colors.captionHalo, width: D.haloWidth },
     },
   });
   text.anchor.set(0.5);
