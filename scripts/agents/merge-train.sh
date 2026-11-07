@@ -5,7 +5,7 @@
 # 使い方: scripts/agents/merge-train.sh [PR:Issue …]
 #   引数がなければ、周ごとに開いた PR（ブランチ agent/issue-<n>）を PR 番号の小さい順に見つける。
 #   .agents/run/train/skip に書いた PR 番号（1 行に 1 つ）は飛ばす。PR の Issue は一度だけ in-review にする
-#   （印は .agents/run/train/inreview-<PR>）
+#   （印は .agents/run/train/inreview-<PR>。遷移に成功したか、すでに in-review 以降の状態のときだけ作る）
 #
 # 環境変数:
 #   AGENT_TRAIN_INTERVAL  周の間隔（秒、既定 180）
@@ -17,8 +17,10 @@
 #      してから merge.sh でマージする。マージしたら、メインの作業ツリーで git pull --ff-only を実行する
 #      （.agents/config.json などの変更を、ほかの道具の判定にすぐ反映するため）。
 #      PR の HEAD・更新時刻・コメントの数・チェックの状態と main の HEAD が前の周と同じなら、前の判定を使う
+#      （一時的な pending＝C9 の mergeable の未計算を含む判定は 2 周まで。過ぎたら判定し直す）
 #   2. 残りを 1 歩ずつ進める
-#      C10 が fail → main の取り込み（PUT pulls/<PR>/update-branch。失敗＝コンフリクトは「止まった」）
+#      C10 が fail → main の取り込み（PUT pulls/<PR>/update-branch。HTTP 422 の merge conflict は「止まった」、
+#      それ以外の失敗＝通信・5xx・API の上限などは次の周で試す）
 #      C9 が fail →「止まった」。C6 が fail か、C6 が pass で C7 が fail →「止まった」
 #      C6 が pass でなく C10 が pass → review.sh をバックグラウンドで起動（PR ごとに 1 つまで）
 #      C2 が fail で ci-ok が pass → 本文の「- [ ] AC-n: CI（`ci-ok`）が通る」の行だけを [x] にする
@@ -146,6 +148,14 @@ status_of() {
   printf '%s' "$1" | jq -r --arg id "$2" '[.results[]? | select(.id == $id) | .status] | first // ""' 2>/dev/null || true
 }
 
+# 一時的な pending の判定を使う周の数（判定した周を含む）。過ぎたら目印が同じでも判定し直す
+TRANSIENT_CYCLES=2
+
+# transient_pending <gate の JSON>: 目印に表れない一時的な pending（C9 の mergeable の未計算）を含めば 0
+transient_pending() {
+  [ "$(status_of "$1" C9)" = pending ]
+}
+
 # tick_ci_ac <本文のファイル> <出力のファイル>: 「- [ ] AC-n: CI（`ci-ok`）が通る」の行だけを [x] にする。
 # 行の末尾の「（…結果待ち）」は外す。変えた行があれば 0。
 # （ロケールに左右されないよう、LC_ALL=C でバイトの列として比べる）
@@ -202,6 +212,33 @@ stop_pr() {
   log "PR #${1}: 止まった（$3）。新しい PR か修正を待つ"
 }
 
+# update_conflict <出力のファイル>: update-branch の失敗が確定したコンフリクト（HTTP 422 の merge conflict）なら 0
+update_conflict() {
+  grep -q 'HTTP 422' "$1" 2>/dev/null && grep -qi 'merge conflict' "$1" 2>/dev/null
+}
+
+# mark_in_review <PR> <Issue>: Issue を一度だけ in-review にする。遷移に成功したか、すでに in-review 以降の
+# 状態なら印（.agents/run/train/inreview-<PR>）を作る。それ以外（一時的な失敗など）は印を作らず、次の周で試す
+mark_in_review() {
+  local pr="$1" issue="$2" labels
+  [ ! -f "$state_dir/inreview-$pr" ] || return 0
+  if agentctl state "$issue" in-review --repo "$repo" --pr "$pr" >/dev/null 2>&1; then
+    : >"$state_dir/inreview-$pr"
+    return 0
+  fi
+  labels="$(gh issue view "$issue" --repo "$repo" --json labels -q '.labels[].name' 2>/dev/null)" || {
+    log "Issue #${issue}: in-review にできず、状態も読めない（次の周で試す）"
+    return 0
+  }
+  if printf '%s\n' "$labels" | grep -Eqx 'status:(in-review|changes-requested|ci-pending|ready-to-merge|merged)'; then
+    : >"$state_dir/inreview-$pr"
+    log "Issue #${issue}: すでに in-review 以降の状態なので、in-review にしない"
+  else
+    log "Issue #${issue}: in-review にできない（次の周で試す）"
+  fi
+  return 0
+}
+
 # pr_gone <PR>: マージ済み・閉じていれば 0
 pr_gone() {
   local st
@@ -225,10 +262,13 @@ advance() {
   c9="$(status_of "$g" C9)"
   c10="$(status_of "$g" C10)"
   if [ "$c10" = fail ]; then
-    if gh api -X PUT "repos/$repo/pulls/$pr/update-branch" >/dev/null 2>"$state_dir/update-$pr.err"; then
+    if gh api -X PUT "repos/$repo/pulls/$pr/update-branch" >"$state_dir/update-$pr.err" 2>&1; then
       log "PR #${pr}: ${default_branch} の取り込みを依頼した（update-branch）。次の周で判定し直す"
+    elif update_conflict "$state_dir/update-$pr.err"; then
+      stop_pr "$pr" "$key" "${default_branch} を取り込めない（コンフリクト）: $(grep -i 'merge conflict' "$state_dir/update-$pr.err" | head -n 1 || true)"
     else
-      stop_pr "$pr" "$key" "${default_branch} を取り込めない（コンフリクト）: $(head -n 1 "$state_dir/update-$pr.err" 2>/dev/null || true)"
+      # 通信の失敗・HTTP 5xx・API の上限などは一時的な失敗として、次の周で試す（止まった扱いにしない）
+      log "PR #${pr}: update-branch に失敗した（次の周で試す）: $(head -n 1 "$state_dir/update-$pr.err" 2>/dev/null || true)"
     fi
     return 0
   fi
@@ -267,7 +307,7 @@ advance() {
 # evaluate <PR>: 判定する（使い回せれば使い回す）。結果を ${gate}・${key}、本文を ${state_dir}/body-<PR> に置く。
 # 判定できなければ 1
 evaluate() {
-  local pr="$1" info mh new_key cache_key out rc
+  local pr="$1" info mh new_key cache_key out rc uses
   # 目印は GraphQL の 1 回（gh pr view）と git ls-remote で作る
   info="$(gh pr view "$pr" --repo "$repo" --json number,state,headRefOid,updatedAt,comments,statusCheckRollup,body 2>/dev/null)" || {
     log "PR #${pr}: gh pr view に失敗した（次の周で試す）"
@@ -284,10 +324,20 @@ evaluate() {
   if [ -n "$mh" ] && [ "$cache_key" = "$new_key" ] && [ -f "$state_dir/gate-$pr.json" ]; then
     gate="$(cat "$state_dir/gate-$pr.json")"
     if gate_valid "$gate"; then
-      return 0
+      if ! transient_pending "$gate"; then
+        return 0
+      fi
+      # 一時的な pending（C9 の mergeable の未計算）は目印に表れないので、使うのは TRANSIENT_CYCLES 周まで
+      uses="$(cat "$state_dir/gate-$pr.uses" 2>/dev/null || echo 1)"
+      case "$uses" in '' | *[!0-9]*) uses="$TRANSIENT_CYCLES" ;; esac
+      if [ "$uses" -lt "$TRANSIENT_CYCLES" ]; then
+        printf '%s\n' "$((uses + 1))" >"$state_dir/gate-$pr.uses"
+        return 0
+      fi
+      log "PR #${pr}: 一時的な pending（C9）の判定を ${uses} 周使ったので、判定し直す"
     fi
   fi
-  rm -f "$state_dir/gate-$pr.key" "$state_dir/gate-$pr.json"
+  rm -f "$state_dir/gate-$pr.key" "$state_dir/gate-$pr.json" "$state_dir/gate-$pr.uses"
   set +e
   out="$(agentctl gate --repo "$repo" --pr "$pr" --json 2>"$state_dir/gate-$pr.err")"
   rc=$?
@@ -300,6 +350,7 @@ evaluate() {
   gate="$out"
   printf '%s\n' "$gate" >"$state_dir/gate-$pr.json"
   printf '%s\n' "$new_key" >"$state_dir/gate-$pr.key"
+  echo 1 >"$state_dir/gate-$pr.uses"
   return 0
 }
 
@@ -330,11 +381,7 @@ one_cycle() {
       log "PR #${pr}: skip に書いてあるので飛ばす"
       continue
     fi
-    if [ ! -f "$state_dir/inreview-$pr" ]; then
-      : >"$state_dir/inreview-$pr"
-      agentctl state "$issue" in-review --repo "$repo" --pr "$pr" >/dev/null 2>&1 ||
-        log "Issue #${issue}: in-review にできない（すでにその状態か、遷移できない）"
-    fi
+    mark_in_review "$pr" "$issue"
     gate="" key=""
     evaluate "$pr" || continue
     if [ "$(printf '%s' "$gate" | jq -r '.closed // false')" = true ]; then

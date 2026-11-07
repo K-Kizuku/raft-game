@@ -1226,7 +1226,21 @@ case "$1 $2" in
     # gh api -X PUT repos/<repo>/pulls/<n>/update-branch
     n="${4%/update-branch}"
     n="${n##*/}"
-    [ ! -f "$TRAIN_DIR/update-rc-$n" ] || { echo "merge conflict" >&2; exit "$(cat "$TRAIN_DIR/update-rc-$n")"; }
+    # 失敗の出力は update-msg-<n>（なければ gh が HTTP 422 のコンフリクトで出す形）
+    if [ -f "$TRAIN_DIR/update-rc-$n" ]; then
+      if [ -f "$TRAIN_DIR/update-msg-$n" ]; then
+        cat "$TRAIN_DIR/update-msg-$n" >&2
+      else
+        echo '{"message":"merge conflict between base and head","status":"422"}'
+        echo 'gh: merge conflict between base and head (HTTP 422)' >&2
+      fi
+      exit "$(cat "$TRAIN_DIR/update-rc-$n")"
+    fi
+    ;;
+  "issue view")
+    # gh issue view <n> --json labels -q '.labels[].name'
+    [ ! -f "$TRAIN_DIR/labels-rc-$n" ] || exit "$(cat "$TRAIN_DIR/labels-rc-$n")"
+    cat "$TRAIN_DIR/labels-$n" 2>/dev/null || true
     ;;
   "pr edit")
     prev=""
@@ -1253,7 +1267,10 @@ case "$1" in
       pass) exit 0 ;; fail) exit 1 ;; pending) exit 2 ;; *) exit 3 ;;
     esac
     ;;
-  state) exit 0 ;;
+  state)
+    # state-rc-<Issue>-<状態> があれば、その終了コードで失敗する
+    exit "$(cat "$TRAIN_DIR/state-rc-$2-$3" 2>/dev/null || echo 0)"
+    ;;
   plan)
     # FAKE_PLAN_STOP_AFTER 回目の plan で止めのファイルを作る
     cat "$TRAIN_DIR/plan.json"
@@ -1366,6 +1383,40 @@ train 1
 train 1
 check "train: 起動し直しても in-review にするのは一度だけ" \
   test "$(jq -s '[.[] | select(.args[0:3] == ["state","124","in-review"])] | length' "$FAKE_LOG/agentctl.log")" = 1
+# in-review への遷移が（一時的に）失敗したら印を作らず、次の周で試す。成功したら印を作る
+inreview_calls() { jq -s --arg n "$1" '[.[] | select(.args[0:3] == ["state",$n,"in-review"])] | length' "$FAKE_LOG/agentctl.log"; }
+train_reset
+mkprs "26:agent/issue-126"
+mkgate 26 pending pass pending pending pass fail
+echo 3 >"$TRAIN_DIR/state-rc-126-in-review"
+printf '%s\n' "status:in-progress" "area:agents" >"$TRAIN_DIR/labels-126"
+train 2
+check "train: in-review への遷移が失敗し、まだ in-progress なら印を作らない" test ! -e "$trepo/.agents/run/train/inreview-26"
+check "train: in-review への遷移が失敗したら次の周で試す" test "$(inreview_calls 126)" = 2
+check "train: in-review にできないことを出す" grep -q "Issue #126: in-review にできない（次の周で試す）" "$tmp/err"
+rm -f "$TRAIN_DIR/state-rc-126-in-review"
+train 2
+check "train: in-review への遷移に成功したら印を作る" test -e "$trepo/.agents/run/train/inreview-26"
+check "train: 遷移に成功したあとは in-review にしない" test "$(inreview_calls 126)" = 3
+# 状態を読めないときも印を作らない
+train_reset
+mkprs "27:agent/issue-127"
+mkgate 27 pending pass pending pending pass fail
+echo 4 >"$TRAIN_DIR/state-rc-127-in-review"
+echo 1 >"$TRAIN_DIR/labels-rc-127"
+train 1
+check "train: in-review にできず状態も読めなければ印を作らない" test ! -e "$trepo/.agents/run/train/inreview-27"
+# すでに in-review 以降の状態なら（遷移は拒否されるが）印を作り、もう試さない
+for st in in-review changes-requested ci-pending ready-to-merge merged; do
+  train_reset
+  mkprs "28:agent/issue-128"
+  mkgate 28 pending pass pending pending pass fail
+  echo 4 >"$TRAIN_DIR/state-rc-128-in-review"
+  printf '%s\n' "area:agents" "status:$st" >"$TRAIN_DIR/labels-128"
+  train 2
+  check "train: すでに ${st} なら印を作る" test -e "$trepo/.agents/run/train/inreview-28"
+  check "train: すでに ${st} なら in-review を一度だけ試す" test "$(inreview_calls 128)" = 1
+done
 # マージしたら、メインの作業ツリーで git pull --ff-only を実行する（失敗したら pull しない）
 train_reset
 git -C "$repo" switch --quiet main
@@ -1419,6 +1470,24 @@ rm -f "$TRAIN_DIR/update-rc-32"
 echo h32b >"$TRAIN_DIR/head-32"
 train 1
 check "train: 止まった PR の HEAD が変わったら判定し直して進める" test "$(update_calls 32)" = 2 -a "$(gate_calls 32)" = 2
+# update-branch の一時的な失敗（通信・HTTP 5xx・API の上限）は止まった扱いにせず、次の周で試す
+for msg in "gh: Bad Gateway (HTTP 502)" "gh: API rate limit exceeded for user ID 1. (HTTP 403)" \
+  "error connecting to api.github.com" "gh: Validation Failed (HTTP 422)"; do
+  train_reset
+  mkprs "36:agent/issue-136"
+  mkgate 36 fail pass pending pending pass fail
+  echo 1 >"$TRAIN_DIR/update-rc-36"
+  printf '%s\n' "$msg" >"$TRAIN_DIR/update-msg-36"
+  train 2
+  check "train: update-branch の一時的な失敗（${msg}）は止まった扱いにしない" \
+    test "$(grep -c "PR #36: 止まった" "$tmp/err" || true)" = 0 -a ! -e "$trepo/.agents/run/train/stopped-36"
+  check "train: update-branch の一時的な失敗（${msg}）は次の周で試す" test "$(update_calls 36)" = 2
+  check "train: update-branch の一時的な失敗（${msg}）を出す" grep -q "PR #36: update-branch に失敗した（次の周で試す）" "$tmp/err"
+done
+# 一時的な失敗のあと、成功すれば取り込みを依頼したことになる
+rm -f "$TRAIN_DIR/update-rc-36"
+train 1
+check "train: update-branch の一時的な失敗のあとに成功すれば依頼する" grep -q "PR #36: main の取り込みを依頼した" "$tmp/err"
 
 # ---- C9・C6・C7 → 止まった ----
 for c in "33:C9:fail pass pending pending fail pass" "34:C6:fail pass fail pass pass pass" "35:C7:fail pass pass fail pass pass"; do
@@ -1465,6 +1534,25 @@ git -C "$repo" commit --quiet --allow-empty -m "main を進める"
 git -C "$repo" push --quiet origin main
 train 1
 check "train: main の HEAD が変わったら判定し直す" test "$(gate_calls 43)" = 2
+# 一時的な pending（C9 の mergeable の未計算）は、目印が同じでも 2 周ごとに判定し直す
+train_reset
+mkprs "44:agent/issue-144"
+mkgate 44 pending pass pass pass pending pass
+train 2
+check "train: C9 が pending の判定は 2 周まで使う" test "$(gate_calls 44)" = 1
+train 1
+check "train: C9 が pending の判定を 2 周使ったら、目印が同じでも判定し直す" test "$(gate_calls 44)" = 2
+check "train: 判定し直す理由を出す" grep -q "PR #44: 一時的な pending（C9）の判定を 2 周使ったので、判定し直す" "$tmp/err"
+# 判定し直して mergeable が計算済み（pass）になれば、その結果でマージする
+mkgate 44 pass pass pass pass pass pass
+train 2
+check "train: 判定し直した結果が pass ならマージする" test "$(cat "$FAKE_LOG/merge.log")" = "44" -a "$(gate_calls 44)" = 3
+# C9 が pending でない pending（C6 など、目印に表れる）は目印が変わるまで使い続ける
+train_reset
+mkprs "45:agent/issue-145"
+mkgate 45 pending pass pass pending pass pass
+train 3
+check "train: C9 が pending でなければ、目印が同じ間は前の判定を使い続ける" test "$(gate_calls 45)" = 1
 
 # ---- C2 だけが fail で ci-ok が pass → CI の AC だけを [x] にする（不具合 1: ほかのチェックの失敗で gh pr checks が 1）----
 train_reset
