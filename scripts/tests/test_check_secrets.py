@@ -164,6 +164,8 @@ class CheckSecretsTest(unittest.TestCase):
         self.assertEqual(real[0], "git")
         self.assertIn("--redact", real)
         self.assertIn("--log-opts=HEAD", real)
+        # 見つかった場所を出す（値は --redact で REDACTED になる）。
+        self.assertIn("--verbose", real)
         self.assertIn(f"--config\n{self.repo}/.gitleaks.toml", "\n".join(real))
         self.assertIn(f"--gitleaks-ignore-path\n{self.repo}/.gitleaksignore", "\n".join(real))
         self.assertEqual(real[-1], str(self.repo))

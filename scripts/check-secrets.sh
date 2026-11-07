@@ -12,6 +12,7 @@
 #   ビルド済みのバイナリのダウンロードとサードパーティのアクションは使わない。
 # - HEAD から辿れる履歴だけを検査する（--log-opts=HEAD）。まだコミットしていない変更は見ない。
 # - 見つかった値はログに出さない（--redact。CI のログは公開される）。レポートのファイルは作らない。
+#   見つかった場所（コミット・ファイル・行・規則）は --verbose で出す（値は REDACTED になる）。
 # - bash 3.2（macOS）で動く書き方にする（mapfile・連想配列・空の配列と set -u を避ける）。
 #   日本語の直前の変数は ${name} と書く（bash 3.2 は続く多バイト文字を変数名の一部として読むことがある）。
 set -euo pipefail
@@ -137,6 +138,7 @@ set +e
   --gitleaks-ignore-path "$root/.gitleaksignore" \
   --log-opts=HEAD \
   --redact \
+  --verbose \
   --no-banner \
   --exit-code 1 \
   "$root"
