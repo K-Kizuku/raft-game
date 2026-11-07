@@ -1,5 +1,5 @@
 // 設定（T-412・FR-UI-10）。見た目は T-424a: 紙のパネルに、スイッチの見た目のトグルを置く。
-// ステージの進み具合を消す節（T-703・DesignDoc §13.9）。
+// ステージの進み具合（クリアの記録）を消す節（T-703・T-703b・DesignDoc §13.9）。
 import { useId, useState, type ReactElement } from "react";
 
 import { ArtIcon } from "../../ui/art/ArtIcon.tsx";
@@ -62,7 +62,7 @@ function ProgressSection(): ReactElement {
       <p className="settings-progress-count">クリアしたステージ: {count}</p>
       {step === "confirm" ? (
         <div className="settings-progress-confirm">
-          <p>本当に消しますか？（クリアの記録が消え、最初のステージから遊び直します）</p>
+          <p>本当に消しますか？（ステージ選択のクリア済みの印が消えます）</p>
           <button
             type="button"
             className="btn"

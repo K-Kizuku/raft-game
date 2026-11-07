@@ -206,7 +206,8 @@ describe("StageSelectScreen の見た目（T-424）", () => {
   });
 });
 
-describe("StageSelectScreen のステージの解放（T-703）", () => {
+describe("StageSelectScreen のクリアの記録（T-703・T-703b）", () => {
+  // unlock があっても鍵には使わない（T-703b）。
   const stage2: StageCatalogEntry = {
     id: "stage2",
     title: "島から返事が来ない！",
@@ -237,67 +238,63 @@ describe("StageSelectScreen のステージの解放（T-703）", () => {
     return screen.getByRole<HTMLButtonElement>("button", { name: `${title}を選ぶ` });
   }
 
-  it("SS-U1 未解放のステージは鍵つきで押せず、説明の文をボタンが指す", () => {
+  it("SS-U1 記録がなくても、unlock のあるステージを含めてすべて押せ、鍵の表示がない", () => {
     const onSelect = renderStages();
 
     const [first, second] = screen.getAllByRole("listitem");
-    expect(first!.getAttribute("data-locked")).toBeNull();
-    expect(second!.getAttribute("data-locked")).toBe("true");
     expect(within(second!).getByRole("heading", { level: 2 }).textContent).toBe(
-      "🔒島から返事が来ない！",
+      "島から返事が来ない！",
     );
-    expect(second!.querySelector("h2 > span")?.getAttribute("aria-hidden")).toBe("true");
+    for (const item of [first!, second!]) {
+      expect(item.getAttribute("data-locked")).toBeNull();
+      expect(item.textContent).not.toContain("🔒");
+      expect(item.textContent).not.toContain("クリアすると遊べます");
+    }
 
-    const locked = button("島から返事が来ない！");
-    expect(locked.disabled).toBe(true);
-    const lockText = second!.querySelector(".stage-select-lock");
-    expect(lockText?.textContent).toBe("「はじめての郵便船」を★1 以上でクリアすると遊べます。");
-    expect(lockText?.tagName).toBe("P");
-    expect(locked.getAttribute("aria-describedby")).toBe(lockText?.id);
-    fireEvent.click(locked);
-    expect(onSelect).not.toHaveBeenCalled();
+    const next = button("島から返事が来ない！");
+    expect(next.disabled).toBe(false);
+    expect(next.getAttribute("aria-describedby")).toBeNull();
+    fireEvent.click(next);
+    expect(onSelect).toHaveBeenCalledWith(stage2);
 
     expect(button("はじめての郵便船").disabled).toBe(false);
-    expect(button("はじめての郵便船").getAttribute("aria-describedby")).toBeNull();
-    expect(first!.querySelector(".stage-select-lock")).toBeNull();
     expect(screen.queryByText("クリア済み", { exact: false })).toBeNull();
   });
 
-  it("SS-U1 前のステージをクリア済み（★2）なら★を出し、次のステージを押せる", () => {
+  it("SS-U2 記録があれば、そのカードにだけクリア済みの印（最高の★）を出す", () => {
     act(() => {
-      stageProgress.recordResult("stage1", 2);
+      stageProgress.recordResult("stage2", 2);
     });
-    const onSelect = renderStages();
+    renderStages();
 
     const cleared = screen.getByText("クリア済み ★2");
     expect(cleared.className).toBe("stage-select-cleared");
     expect(cleared.getAttribute("aria-label")).toBe("クリア済み、★ 2 / 3");
-    const [, second] = screen.getAllByRole("listitem");
-    expect(second!.getAttribute("data-locked")).toBeNull();
-    expect(second!.querySelector(".stage-select-lock")).toBeNull();
-
-    const next = button("島から返事が来ない！");
-    expect(next.disabled).toBe(false);
-    fireEvent.click(next);
-    expect(onSelect).toHaveBeenCalledWith(stage2);
+    const [first, second] = screen.getAllByRole("listitem");
+    expect(within(second!).getByText("クリア済み ★2")).toBeDefined();
+    expect(first!.querySelector(".stage-select-cleared")).toBeNull();
+    expect(button("はじめての郵便船").disabled).toBe(false);
   });
 
-  it("SS-U1 表示中にクリアが記録されると鍵が外れる", () => {
+  it("SS-U2 表示中にクリアが記録されると印が出る", () => {
     renderStages();
-    expect(button("島から返事が来ない！").disabled).toBe(true);
+    expect(screen.queryByText("クリア済み", { exact: false })).toBeNull();
 
     act(() => {
       stageProgress.recordResult("stage1", 1);
     });
-    expect(button("島から返事が来ない！").disabled).toBe(false);
     expect(screen.getByText("クリア済み ★1")).toBeDefined();
   });
 
-  it("SS-U1 開発のときは ?unlock-all ですべて解放する（保存はしない）", () => {
-    window.history.replaceState(null, "", "/stages?unlock-all");
+  it("SS-U3 保存した記録が壊れていても、すべて押せる（印を出さないだけ）", () => {
+    localStorage.setItem("raft-game.progress", "{broken");
+    act(() => {
+      stageProgress.reload();
+    });
     renderStages();
 
+    expect(button("はじめての郵便船").disabled).toBe(false);
     expect(button("島から返事が来ない！").disabled).toBe(false);
-    expect(localStorage.getItem("raft-game.progress")).toBeNull();
+    expect(screen.queryByText("クリア済み", { exact: false })).toBeNull();
   });
 });

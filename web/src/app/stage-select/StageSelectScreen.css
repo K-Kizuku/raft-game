@@ -44,7 +44,7 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  /* 題名・切手・紹介文（伸びる）・札・鍵やクリアの文・ボタン。ボタンをカードの下にそろえる。 */
+  /* 題名・切手・紹介文（伸びる）・札・クリアの印・ボタン。ボタンをカードの下にそろえる。 */
   grid-template-rows: auto auto 1fr auto auto;
   min-width: 0;
   padding: calc(var(--space-4) + var(--space-2)) var(--space-4) var(--space-4);

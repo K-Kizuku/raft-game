@@ -121,7 +121,7 @@ describe("SettingsScreen", () => {
 });
 
 describe("SettingsScreen のステージの進み具合（T-703）", () => {
-  const CONFIRM = "本当に消しますか？（クリアの記録が消え、最初のステージから遊び直します）";
+  const CONFIRM = "本当に消しますか？（ステージ選択のクリア済みの印が消えます）";
   const PROGRESS_SAVE_FAILED =
     "このブラウザには進み具合を保存できませんでした。ページを閉じると元に戻ります。";
 

@@ -1,25 +1,4 @@
-/* ステージの解放（T-703）。色・余白・角丸・影はトークン（web/src/ui/theme/tokens.css）だけを使う。 */
-
-/* 未解放の葉書。色だけでなく 🔒 の印と説明の文でも示す。 */
-.stage-select .stage-select-item[data-locked="true"] {
-  background: var(--color-paper-deep);
-  border-style: dashed;
-}
-
-.stage-select .stage-select-item[data-locked="true"] > h2,
-.stage-select .stage-select-item[data-locked="true"] .stage-intro-text {
-  color: var(--color-ink-muted);
-}
-
-.stage-select .stage-select-lock {
-  margin: 0 0 var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  color: var(--color-ink);
-  background: var(--color-paper);
-  border-left: 4px solid var(--color-ink-muted);
-  border-radius: var(--radius-s);
-  font-size: 0.875em;
-}
+/* ステージのクリアの記録（T-703・T-703b）。色・余白・角丸・影はトークン（web/src/ui/theme/tokens.css）だけを使う。 */
 
 /* クリア済みの★。金の札。 */
 .stage-select .stage-select-cleared {
@@ -31,18 +10,5 @@
   border: 1px solid var(--color-gold);
   border-radius: var(--radius-s);
   font-size: 0.875em;
-  font-weight: bold;
-}
-
-/* 解放の知らせ（リザルトの下）。 */
-.unlock-notice {
-  margin: var(--space-4) auto;
-  padding: var(--space-3) var(--space-4);
-  max-width: 40rem;
-  color: var(--color-ink);
-  background: color-mix(in srgb, var(--color-success) 20%, var(--color-paper));
-  border-left: 6px solid var(--color-success);
-  border-radius: var(--radius-s);
-  box-shadow: var(--shadow-paper);
   font-weight: bold;
 }
