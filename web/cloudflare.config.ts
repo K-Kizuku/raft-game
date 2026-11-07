@@ -10,6 +10,8 @@ import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 
 const PRODUCTION_HOST = "raft.kizuku-hackathon.work";
 const DEMO_HOST = "raft-demo.kizuku-hackathon.work";
+// 一般公開・デモの両方の Worker で、両方のホスト名のオリジンを許す（#130 の決定・T-601b）
+const ALLOWED_ORIGINS = `https://${PRODUCTION_HOST},https://${DEMO_HOST}`;
 const COMPATIBILITY_DATE = "2026-11-04";
 // T-007（#15）の測定で見直す。GUARDS.cpuMs（表示用）と同じ値にする
 const CPU_MS = 50;
@@ -54,7 +56,7 @@ function parseMode(mode: string | undefined): Mode {
 
 interface ModeValues {
   workerName: string;
-  host: string | undefined; // domains と ALLOWED_ORIGINS。ローカルは書かない
+  host: string | undefined; // domains。undefined（ローカル）なら ALLOWED_ORIGINS も書かない
   containerName: string | undefined; // undefined ならコンテナ（GameSession）なし
   ownCostGuard: boolean; // false なら一般公開の Worker の CostGuard を参照し、GUARDS・ADMIN_TOKEN を置かない
   demoControls: "0" | "1";
@@ -141,7 +143,7 @@ export default defineConfig((ctx) => {
       },
       limits: { cpuMs: CPU_MS },
       env: {
-        ALLOWED_ORIGINS: m.host === undefined ? undefined : bindings.text(`https://${m.host}`),
+        ALLOWED_ORIGINS: m.host === undefined ? undefined : bindings.text(ALLOWED_ORIGINS),
         DEMO_CONTROLS: bindings.text(m.demoControls),
         BUILD_ID: bindings.text(buildId),
         CONTAINER_INSTANCE: bindings.text(m.instance),
