@@ -240,3 +240,74 @@ func TestInputLogEncodeUnknown(t *testing.T) {
 		t.Errorf("error = %v", err)
 	}
 }
+
+// CL-D1: demo.trigger の行を含む入力ログの往復（バイト列も）。
+func TestInputLogDemoTrigger(t *testing.T) {
+	t.Parallel()
+	in := sampleLog()
+	in.Commands = append(in.Commands,
+		sim.InputEntry{T: 5000, Cmd: sim.Command{Type: sim.CmdDemoTrigger, Event: sim.DemoEventStorm}},
+		sim.InputEntry{T: 5000, Cmd: sim.Command{Type: sim.CmdDemoTrigger, Event: sim.DemoEventStorm}},
+	)
+	data, err := encodeInputLog(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const line = `{"t":5000,"cmd":{"type":"demo.trigger","payload":{"event":"storm"}}}`
+	if !strings.HasSuffix(string(data), line+",\n"+line+"\n]}\n") {
+		t.Errorf("bytes:\n%s\nwant the last lines %s", data, line)
+	}
+	out, err := decodeInputLog(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode: %v\n%s", err, data)
+	}
+	if !reflect.DeepEqual(normalized(out), normalized(in)) {
+		t.Errorf("round trip:\n got %+v\nwant %+v", out, in)
+	}
+	again, err := encodeInputLog(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again, data) {
+		t.Errorf("bytes after round trip:\n%s\nwant:\n%s", again, data)
+	}
+
+	// 値が storm かは読み込みで検査しない（Replay が bad_request → ErrReplayDiverged にする）。
+	l, err := decodeString(`{"format":1,"stageId":"s","stageHash":"h","seed":0,"commands":[{"t":0,"cmd":{"type":"demo.trigger","payload":{"event":"rush"}}}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (sim.Command{Type: sim.CmdDemoTrigger, Event: "rush"}); len(l.Commands) != 1 || !reflect.DeepEqual(l.Commands[0].Cmd, want) {
+		t.Errorf("commands = %+v, want [%+v]", l.Commands, want)
+	}
+}
+
+// CL-D2: demo.trigger の payload の誤り。
+func TestInputLogDemoTriggerErrors(t *testing.T) {
+	t.Parallel()
+	withPayload := func(payload string) string {
+		return `{"format":1,"stageId":"s","stageHash":"h","seed":0,"commands":[{"t":0,"cmd":{"type":"cmd.game.start","payload":{}}},` +
+			`{"t":0,"cmd":{"type":"demo.trigger","payload":` + payload + `}}]}`
+	}
+	cases := []struct {
+		name, payload, want string
+	}{
+		{"event がない", `{}`, "commands[1].cmd.payload.event: ない"},
+		{"event が空", `{"event":""}`, "commands[1].cmd.payload.event: 空"},
+		{"未知のキー", `{"event":"storm","x":1}`, "commands[1].cmd.payload:"},
+		{"event が数", `{"event":1}`, "commands[1].cmd.payload:"},
+		{"payload が null", `null`, "commands[1].cmd.payload: ない"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			l, err := decodeString(withPayload(c.payload))
+			if err == nil {
+				t.Fatalf("decode = %+v, want error", l)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error %q に %q がない", err, c.want)
+			}
+		})
+	}
+}
