@@ -11,7 +11,7 @@
 SHELL := bash
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint gen sync-data dev demo-local
+.PHONY: help test lint gen sync-data dev dev-env clean-docker demo-local
 
 # golangci-lint の版。.github/workflow-sources/ci.yml の server ジョブの
 # GOLANGCI_LINT_VERSION と同じ版にする。PATH の golangci-lint は使わず、
@@ -92,8 +92,15 @@ gen: ## Go のプロトコルの型から TS の型を生成する（T-301）
 sync-data: ## data/ を server/internal/stage/embedded/ にコピーする（T-201/T-205）
 	@echo "sync-data: data/ を server/internal/stage/embedded/ にコピーする。未実装（T-201/T-205）"
 
-dev: ## Go（standalone モード）と Vite を起動する（T-008）
-	@echo "dev: Go（standalone モード）と Vite を起動する。未実装（T-008）"
+# dev・dev-env・clean-docker の中身は scripts/dev-env.sh（ポートの計算の正本。ADR-0019）。
+dev: ## Go（standalone モード）と Vite を DEV_SLOT のポートで起動する（DRY_RUN=1 で表示だけ）
+	@bash scripts/dev-env.sh dev $(if $(DRY_RUN),--dry-run)
+
+dev-env: ## この作業ツリーの DEV_SLOT・ポート・cf の状態・Docker の名前を出す
+	@bash scripts/dev-env.sh env
+
+clean-docker: ## この作業ツリーの Docker のコンテナとイメージを消す（DRY_RUN=1 で表示だけ）
+	@bash scripts/dev-env.sh clean-docker $(if $(DRY_RUN),--dry-run)
 
 demo-local: ## デモの保険（ノート PC で起動する）（T-504）
 	@echo "demo-local: デモの保険（ノート PC で起動する）。未実装（T-504）"

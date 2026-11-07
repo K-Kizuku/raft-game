@@ -42,10 +42,10 @@
 | 項目 | 約束 |
 |---|---|
 | 作業場所 | エージェントごとに `git worktree add ../raft-game-<名前> -b <ブランチ>` で作業ディレクトリを分ける |
-| 番号 | 作業ディレクトリごとに `DEV_SLOT`（0〜9）を決める。`make dev` は `DEV_SLOT` が未設定ならエラーにする（`scripts/dev-slot.sh` で空いている番号を割り当てる） |
-| ポート | 固定しない。`DEV_SLOT` から計算する（例：Go サーバー `18080 + DEV_SLOT×10`、Vite・`cf dev` `15173 + DEV_SLOT×10`、デバッグ用 `+1`〜`+9`） |
-| `cf` のローカルの状態 | `--persist-to ./.cloudflare/state` で、作業ディレクトリの中に置く（既定の共有の場所は使わない） |
-| Docker | イメージ名・コンテナ名に作業ディレクトリの名前を付ける（例：`raft-game-server:<名前>`）。不要になったものは `make clean-docker` で消す |
+| 番号 | 作業ディレクトリごとに `DEV_SLOT`（0〜99。先頭が 0 の値は不可）を決める。`scripts/dev-slot.sh` が 1〜`dev_slots`（`.agents/config.json`）の空いている番号を割り当て、0 は人が手で使う。`make dev`・`make dev-env` は `DEV_SLOT` が未設定ならエラーにする |
+| ポート | 固定しない。`scripts/dev-env.sh` が `DEV_SLOT` から計算する（正本）。Go サーバー（`standalone`）は `DEV_SERVER_PORT = 18080 + DEV_SLOT×10`、Vite は `DEV_WEB_PORT = 15173 + DEV_SLOT×10`。それぞれ `+1`〜`+9` はデバッグ用に予約する（範囲 18080〜19079 と 15173〜16172 は重ならない）。値は `make dev-env`（`eval "$(scripts/dev-env.sh env)"` で読める）で確かめる |
+| `cf` のローカルの状態 | 作業ディレクトリの中に置く（既定の共有の `~/.config/cloudflare/state` は使わない）。`make dev` は `cf dev` を通さずに `vite --strictPort` を直接起動し、状態は `web/vite.config.ts` の `persistState` で `web/.cloudflare/state` に置く（`cf dev` は `--persist-to` を受け付けない。`cf@1.0.0-beta.28` で確認）。`--local` で動く `cf` のコマンドには `--persist-to "$DEV_CF_PERSIST_TO"`（`web/.cloudflare/state`）を付ける |
+| Docker | イメージ名は `raft-game-server:<名前>-<ハッシュ>`、コンテナ名は `raft-game-server-<名前>-<ハッシュ>`（`<名前>` は作業ディレクトリの basename を小文字・`[a-z0-9_.-]` に直した先頭 32 文字、空なら `wt`。`<ハッシュ>` は物理パスの `cksum` の 16 進数 8 桁）。ラベル `raft-game.worktree=<物理パス>` を付ける。`make clean-docker` は、このラベルとちょうどの名前のコンテナ・イメージだけを消す（イメージは `-f` なしで名前で消す。prune しない） |
 | テスト | Go は `t.TempDir()` を使い、ポートは `:0`（自動で空きを選ぶ）で待つ。固定のファイル名・ポートを使わない。並列に実行して安全なこと（`go test -p` / `t.Parallel()`） |
 | 共有の資源 | 本番・デモ用の環境へのデプロイ、ゾーンの設定の変更、Cloudflare のシークレットの更新は、**CI だけ**が行う。エージェントは直接行わない |
 | データ | 生成物（`islands.json`、生成された TS の型）は、`make gen` で各自が作り直せる。手で編集しない |
@@ -57,7 +57,7 @@
 
 ## 差し替えるときの影響範囲
 
-`Makefile`、`scripts/dev-slot.sh`、`CLAUDE.md`、`.gitignore`。
+`Makefile`、`scripts/dev-slot.sh`、`scripts/dev-env.sh`、`CLAUDE.md`、`.gitignore`。
 
 ## 見直すきっかけ
 
