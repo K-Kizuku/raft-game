@@ -1,6 +1,6 @@
 # ADR-0022: YAML の読み込みに go.yaml.in/yaml/v3 を使い、未知のキーを拒否する
 
-- 状態: Proposed
+- 状態: Accepted（2026-11-08 に #132 でプロダクトオーナーが承認）
 - 日付: 2026-11-07
 - 決めた人: Claude（T-205 / #33）
 - 関連: FR-DATA-01・FR-DATA-03、[ADR-0013](./0013-open-data-build-time-etl.md)、[データ仕様 §2.6・§3.4・§5](../07-data-spec.md)、[実装計画 T-201・T-205・T-206](../08-implementation-plan.md)
