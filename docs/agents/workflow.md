@@ -225,8 +225,12 @@ Codex が PR に書くもの（作者は `review.codex_bot_authors`。既定は 
 前の SHA の Codex の指摘（Codex は、後のレビューで前の指摘を行コメントとして出し直すとは限らない。Merge Gate の C7 と `agentctl pr codex-record` で同じ扱い）:
 
 - 最新の要約の `code_review.has_unresolved_findings` が `false` なら、それまでの SHA の Codex の指摘はすべて `resolved` とみなす
-- `true` のあいだは、前の SHA の Codex の P0・P1（バッジのないものを含む）を `open` のまま引き継ぐ（C7 は fail、変換した記録の `verdict` は `request_changes`）。`resolved` にできるのは、その行コメントより後の `agent-review/v1` の記録（Codex の GitHub 連携の変換ではないもの）が、同じ `id`（`C<コメントの ID>`）を `resolved` にしたときだけ
+- `true` のあいだは、前の SHA の Codex の P0・P1（バッジのないものを含む）を `open` のまま引き継ぐ（C7 は fail、変換した記録の `verdict` は `request_changes`）。`resolved` にできるのは、その行コメントより後の `agent-review/v1` の記録（Codex の GitHub 連携の変換ではないもの）が、同じ `id`（`C<コメントの ID>`）を `resolved` にしたときと、次の「重大な指摘なし」のときだけ
 - 前の SHA の P2・P3 は引き継がない（それだけが残っていてもマージを止めない）
+- **重大な指摘なし**（#213）: `true` でも、最新のレビューが重大な指摘なしと答えたなら、前の SHA の P0・P1 は解消とみなし、P2・P3（`has_unresolved_findings` が残っている理由）を `open` のまま引き継ぐ（重大でないので C7 は止めない）。変換した記録では、解消とみなした指摘を `resolved` にし、`resolution` に根拠（receipt のコメントの ID・レビューした SHA・元の SHA）を書く。重大な指摘なしとみなすのは、次をすべて満たすときだけ:
+  - 信頼する作者の receipt（`codex-review-receipt:v1` を持つ Issue のコメントと PR のレビュー）のうち、最も新しいものが Issue のコメントで、文言 `Didn't find any major issues` を持ち、`**Reviewed commit:**` が最新の要約の SHA を指す
+  - 最新の要約の SHA に、信頼する作者の P0・P1（バッジのないものを含む）の行コメントがない（Codex が同じ指摘を再び出していない）
+- 上を満たさないとき（receipt がない・文言が英語以外や別の文言・SHA が違う・receipt の作成日時が分からない・最も新しい receipt が同じ日時で複数ある・Codex が同じ SHA に P0・P1 を出した）は、解消とみなさず、今までどおり `open` のまま引き継ぐ（安全側。notes に理由が出る）
 
 同じ SHA の再レビュー: 最新の完了した要約の `code_review.has_any_findings` と `has_unresolved_findings` がどちらも `false` なら、その SHA の行コメントのうち要約の更新（`updated_at`）より前に作られたものは、前のレビューの指摘（Codex が取り下げた）として `resolved` とみなす（C7 と `pr codex-record` で同じ扱い）。要約の更新より後の行コメントと、作成日時が分からない行コメントは、そのまま判定に使う。
 
@@ -318,7 +322,7 @@ go -C tools/agentctl run . review render "$PWD/review.json"
 | C4 | 必須のチェック（`ci-ok`）が HEAD で成功し、失敗したチェックがない | 必須のチェックが未実行・実行中 | 必須のチェックが成功していない・ほかの check run が `failure`・`cancelled`・`timed_out`・`action_required`・ほかのステータスが `failure`・`error`（`merge-gate` と `merge-gate-evaluate` 自身は数えない） |
 | C5 | 信頼する作者（`trusted_authors`）のレビュー記録か、Codex の GitHub 連携（`codex_bot_authors`）の完了したレビューがある | どちらもない | — |
 | C6 | 最新のレビュー記録が HEAD に対する `approve`（`main` の取り込みだけなら、前の SHA の記録を引き継ぐ。[レビュー記録の引き継ぎ](#レビュー記録の引き継ぎmain-の取り込みだけのとき)） | 記録がない・最新の記録が古い SHA のもので、引き継げない（再レビュー待ち） | 最新の記録の verdict が `approve` ではない |
-| C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビューで、引き継げない | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す）・最新の要約の `has_unresolved_findings` が `true` で、前の SHA の Codex の P0・P1 が Codex 以外の後の記録で `resolved` になっていない・Codex のレビューが最新でも、Codex の GitHub 連携の変換ではない最新の記録で、それまでの重大な指摘（Codex の指摘。信頼する作者の行コメントに対応する `C<コメントの ID>` を除く）が `resolved` になっていない |
+| C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビューで、引き継げない | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す）・最新の要約の `has_unresolved_findings` が `true` で、前の SHA の Codex の P0・P1 が Codex 以外の後の記録で `resolved` になっていない（最新のレビューが重大な指摘なしのときを除く。「Codex の GitHub 連携」の「前の SHA の Codex の指摘」の「重大な指摘なし」）・Codex のレビューが最新でも、Codex の GitHub 連携の変換ではない最新の記録で、それまでの重大な指摘（Codex の指摘。信頼する作者の行コメントに対応する `C<コメントの ID>` を除く）が `resolved` になっていない |
 | C8 | レビュー役が `codex` か、正しいフォールバック（Codex の GitHub 連携は `codex`） | 記録がない | `reviewer` が認めない値・`allow_fallback` が false なのに `claude-fallback`・`fallback_reason` が `fallback_reasons` にない |
 | C9 | コンフリクトがない | `mergeable` が未計算 | `mergeable=false`・`mergeable_state=dirty` |
 | C10 | ベースより遅れていない | — | 比較の結果がない・`main` より遅れている（`behind_by > 0`） |

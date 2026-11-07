@@ -87,6 +87,18 @@ func mustResult(t *testing.T, rep Report, id string, want Verdict) Result {
 
 func notes(rep Report) string { return strings.Join(rep.Notes, "\n") }
 
+// withoutComment は、ID が id のコメントを除いた入力を返す。
+func withoutComment(in Input, id int64) Input {
+	var cs []Comment
+	for _, c := range in.Comments {
+		if c.ID != id {
+			cs = append(cs, c)
+		}
+	}
+	in.Comments = cs
+	return in
+}
+
 func TestCodexPR84NoFindingsPasses(t *testing.T) {
 	rep := Evaluate(loadConfig(t), codexInput(t, "codex-pr84.json", false))
 	if rep.Verdict != Pass {
@@ -452,9 +464,11 @@ func TestCodexCannotResolvePriorBlocking(t *testing.T) {
 // codexPR80Unresolved は、codex-pr80.json の古い SHA（aaaa…）の P2 の指摘を priority に変え、
 // 最新の要約（HEAD のレビュー）の has_unresolved_findings を unresolved にした入力を返す。
 // Codex は、HEAD のレビューで前の指摘を行コメントとして出し直していない。
+// 「Didn't find any major issues」の receipt（コメント 2103）は除く（重大な指摘なしと判断できないときの扱いを確かめる。
+// receipt があるときは TestCodexPR194NoMajorIssuesResolvesOldP1）。
 func codexPR80Unresolved(t *testing.T, priority string, unresolved bool) Input {
 	t.Helper()
-	in := codexInput(t, "codex-pr80.json", false)
+	in := withoutComment(codexInput(t, "codex-pr80.json", false), 2103)
 	rc := &in.ReviewComments[0]
 	if rc.ID != 4101 || rc.ReviewedSHA() != firstSHA {
 		t.Fatalf("review_comments[0] = %+v", rc)
@@ -715,6 +729,165 @@ func TestCodexSameSHAReReviewWithdrawsFindings(t *testing.T) {
 			if r := mustResult(t, Evaluate(cfg, in), "C7", Fail); !strings.Contains(r.Detail, "C4801") {
 				t.Errorf("created_at %q: C7 = %+v", created, r)
 			}
+		}
+	})
+}
+
+// codexPR194 は、PR #194 の形（testdata/codex-pr194.json）の入力を返す。古い SHA（aaaa…）に P1（C4501850982）と
+// P2（C4501850984）があり、HEAD のレビューは「Didn't find any major issues」、要約は has_unresolved_findings: true。
+func codexPR194(t *testing.T) Input {
+	t.Helper()
+	in := codexInput(t, "codex-pr194.json", false)
+	cr, _ := FindCodexReview(loadConfig(t), in)
+	if cr == nil || cr.SHA != headSHA || !cr.Unresolved {
+		t.Fatalf("codex = %+v", cr)
+	}
+	return in
+}
+
+func TestCodexPR194NoMajorIssuesResolvesOldP1(t *testing.T) {
+	cfg := loadConfig(t)
+	now := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+
+	t.Run("古い SHA の P1 は解消・P2 は引き継ぎ", func(t *testing.T) {
+		in := codexPR194(t)
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		mustResult(t, rep, "C6", Pass)
+		mustResult(t, rep, "C7", Pass)
+		if !strings.Contains(notes(rep), "4501850982") || !strings.Contains(notes(rep), "解消とみなした") {
+			t.Errorf("notes = %v", rep.Notes)
+		}
+
+		cr, _ := FindCodexReview(cfg, in)
+		if len(cr.Findings) != 1 || cr.Findings[0].ID() != "C4501850984" || !cr.Findings[0].Carried || cr.Findings[0].Severity != "medium" {
+			t.Errorf("findings = %+v", cr.Findings)
+		}
+		if len(cr.Resolved) != 1 || cr.Resolved[0].ID() != "C4501850982" || cr.Resolved[0].Severity != "high" {
+			t.Fatalf("resolved = %+v", cr.Resolved)
+		}
+		for _, want := range []string{"Didn't find any major issues", "2403", "1111111", "aaaaaaa"} {
+			if !strings.Contains(cr.Resolved[0].Resolution, want) {
+				t.Errorf("resolution に %q がない: %s", want, cr.Resolved[0].Resolution)
+			}
+		}
+
+		// round 4 の記録（P1・P2 が open）の後の変換（#194 の round 5 と同じ）。
+		prev := makeRecord(4, firstSHA, "request_changes", []review.Finding{
+			finding("C4501850982", "high", "open"), finding("C4501850984", "medium", "open")})
+		for _, p := range []*review.Record{nil, prev} {
+			rec := cr.Record(cfg, 12, baseSHA, p, now)
+			if err := rec.Validate(cfg); err != nil {
+				t.Fatal(err)
+			}
+			byID := map[string]review.Finding{}
+			for _, f := range rec.Findings {
+				byID[f.ID] = f
+			}
+			if rec.Verdict != "approve" || len(rec.Findings) != 2 {
+				t.Errorf("record = %+v", rec)
+			}
+			if f := byID["C4501850982"]; f.Status != "resolved" || f.Severity != "high" ||
+				!strings.Contains(f.Resolution, "Didn't find any major issues") || !strings.Contains(f.Title, "P1: ") {
+				t.Errorf("C4501850982 = %+v", f)
+			}
+			if f := byID["C4501850984"]; f.Status != "open" || f.Severity != "medium" || !strings.Contains(f.Title, "引き継いだ") {
+				t.Errorf("C4501850984 = %+v", f)
+			}
+			if !strings.Contains(rec.Summary, "解消とみなした") || !strings.Contains(rec.Summary, "重大でない指摘 1 件") {
+				t.Errorf("summary = %s", rec.Summary)
+			}
+
+			// 変換した記録を載せても、C7 は pass。
+			in2 := in
+			in2.Comments = append(append([]Comment{}, in.Comments...), commentOf(t, 8200, "K-Kizuku", rec))
+			rep := Evaluate(cfg, in2)
+			if rep.LatestReview == nil || rep.LatestReview.CommentID != 8200 {
+				t.Errorf("latest = %+v", rep.LatestReview)
+			}
+			mustResult(t, rep, "C7", Pass)
+		}
+	})
+
+	t.Run("Codex が新しい SHA で同じ P1 を再び出した → open のまま", func(t *testing.T) {
+		for _, p := range []string{"P1", "P0", ""} {
+			in := codexPR194(t)
+			again := codexFinding(4502000001, codexBot, headSHA, p, "★1 の確認のテストが必ず落ちる")
+			again.Path, again.Line, again.CreatedAt = "server/internal/stage/stage_test.go", 120, "2026-11-05T10:30:00Z"
+			in.ReviewComments = append(in.ReviewComments, again)
+			rep := Evaluate(cfg, in)
+			r := mustResult(t, rep, "C7", Fail)
+			for _, want := range []string{"C4501850982", "aaaaaaa から未解決", "C4502000001"} {
+				if !strings.Contains(r.Detail, want) {
+					t.Errorf("%q: C7 の detail に %q がない: %s", p, want, r.Detail)
+				}
+			}
+			cr, _ := FindCodexReview(cfg, in)
+			if len(cr.Resolved) != 0 {
+				t.Errorf("%q: resolved = %+v", p, cr.Resolved)
+			}
+			rec := cr.Record(cfg, 12, baseSHA, nil, now)
+			for _, f := range rec.Findings {
+				if f.ID == "C4501850982" && (f.Status != "open" || f.Resolution != "") {
+					t.Errorf("%q: C4501850982 = %+v", p, f)
+				}
+			}
+			if rec.Verdict != "request_changes" {
+				t.Errorf("%q: verdict = %s", p, rec.Verdict)
+			}
+		}
+	})
+
+	t.Run("重大な指摘なしと判断できない → open のまま", func(t *testing.T) {
+		for name, edit := range map[string]func(in *Input){
+			"receipt がない": func(in *Input) { *in = withoutComment(*in, 2403) },
+			"文言が英語以外": func(in *Input) {
+				in.Comments[len(in.Comments)-1].Body = "<!-- codex-review-receipt:v1 -->\nCodex のレビュー: 大きな問題は見つかりませんでした。\n\n**Reviewed commit:** `1111111`\n"
+			},
+			"文言が変わった": func(in *Input) {
+				in.Comments[len(in.Comments)-1].Body = strings.Replace(in.Comments[len(in.Comments)-1].Body, "Didn't find any major issues", "No major issues found", 1)
+			},
+			"Reviewed commit が古い SHA": func(in *Input) {
+				in.Comments[len(in.Comments)-1].Body = strings.Replace(in.Comments[len(in.Comments)-1].Body, "`1111111`", "`aaaaaaa`", 1)
+			},
+			"Reviewed commit がない": func(in *Input) {
+				in.Comments[len(in.Comments)-1].Body = strings.Replace(in.Comments[len(in.Comments)-1].Body, "**Reviewed commit:** `1111111`", "", 1)
+			},
+			"receipt の作者を信頼しない":   func(in *Input) { in.Comments[len(in.Comments)-1].Author = "someone-else" },
+			"receipt の作成日時が分からない": func(in *Input) { in.Comments[len(in.Comments)-1].CreatedAt = "" },
+			"receipt より新しいレビューの receipt がある": func(in *Input) {
+				in.Reviews = append(in.Reviews, PullReview{ID: 3402, Author: codexBot, CommitID: headSHA, SubmittedAt: "2026-11-05T10:40:00Z",
+					Body: "<!-- codex-review-receipt:v1 -->\n### 💡 Codex Review\n\n**Reviewed commit:** `1111111`\n"})
+			},
+			"同じ日時のレビューの receipt がある": func(in *Input) {
+				in.Reviews = append(in.Reviews, PullReview{ID: 3402, Author: codexBot, CommitID: headSHA, SubmittedAt: "2026-11-05T10:30:00Z",
+					Body: "<!-- codex-review-receipt:v1 -->\n### 💡 Codex Review\n\n**Reviewed commit:** `1111111`\n"})
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				in := codexPR194(t)
+				if in.Comments[len(in.Comments)-1].ID != 2403 {
+					t.Fatalf("comments = %+v", in.Comments)
+				}
+				edit(&in)
+				rep := Evaluate(cfg, in)
+				if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "C4501850982") || strings.Contains(r.Detail, "C4501850984") {
+					t.Errorf("C7 = %+v", r)
+				}
+				if !strings.Contains(notes(rep), "解消とみなさなかった") {
+					t.Errorf("notes = %v", rep.Notes)
+				}
+				cr, _ := FindCodexReview(cfg, in)
+				if len(cr.Resolved) != 0 || len(cr.Findings) != 1 || cr.Findings[0].ID() != "C4501850982" {
+					t.Errorf("codex = %+v", cr)
+				}
+				rec := cr.Record(cfg, 12, baseSHA, nil, now)
+				if rec.Verdict != "request_changes" || len(rec.Findings) != 1 || rec.Findings[0].Status != "open" || rec.Findings[0].Resolution != "" {
+					t.Errorf("record = %+v", rec)
+				}
+			})
 		}
 	})
 }
