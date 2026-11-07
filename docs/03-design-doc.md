@@ -1002,7 +1002,91 @@ func (s *session) step(now time.Time) {
 | コマンドのレート制限 | 1 セッションあたり 30 回/秒。DO は 1 秒の枠で 30 通を超えた電文を捨てる（返事はしない）。Go は超えたコマンドに `rate_limited` の `ack` を返す（`ping` は数えない。§12.4） | Durable Object と Go の両方 |
 | コンテナの起動を待つ上限 | `CONTAINER_START_TIMEOUT_MS` (T-007 の設定候補は 10 秒。本体の T-605 で再確認) | Durable Object（`/healthz` が `200` を返すまで） |
 | WS の受信メッセージの最大サイズ | 16 KiB | Durable Object と Go の両方 |
-| Worker 1 回あたりの CPU 時間 | `limits.cpuMs`（値は T-007 で測って決める） | Cloudflare（G5） |
+| Worker 1 回あたりの CPU 時間 | `limits.cpuMs`（仮 50。T-007 で見直す。§12.6） | Cloudflare（G5） |
+
+### 12.6 Cloudflare の構成（`web/cloudflare.config.ts`）
+
+インフラの構成の正本は `web/cloudflare.config.ts` です（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)）。`defineConfig((ctx) => …)` で `ctx.mode`（`cf build --mode …`）を見て、一般公開・デモ・ローカルの構成を切り替えます。ビルドの出力は `web/scripts/check-build-output.ts` が、このファイルとは別に書いた表で検査します。
+
+#### モード
+
+| `ctx.mode` | 使う場面 | 扱い |
+|---|---|---|
+| `"production"`・`undefined` | `cf build --mode production` → `cf deploy --prebuilt --mode production`（T-603）。`--mode` なしの `cf build` は Vite の既定の `production` | 一般公開 |
+| `"demo"` | `cf build --mode demo` → `cf deploy --prebuilt --mode demo`（手動の実行） | デモ |
+| `"development"` | `make dev`・`vite`・`cf dev`（Vite の開発サーバーの既定） | ローカル。コンテナを含めない（Docker なしで動く） |
+| `"local-container"` | `cf dev --mode local-container` | ローカル。コンテナあり（Docker と `make sync-data` が要る） |
+| ほか・プレビュー（`ctx.isPreview`） | 誤り | `throw`（`cf build` が失敗する） |
+
+- `undefined` を `production` にするのは、`--mode` なしで評価する `cf` のコマンドが一般公開の構成を見るため。デプロイのワークフローは必ず `--mode` を付ける（`cf deploy --prebuilt` は、ビルドしたときと違うモードを拒否する）
+
+#### モードごとの値
+
+| 項目 | `production` | `demo` | `development` | `local-container` |
+|---|---|---|---|---|
+| Worker の `name` | `raft-game` | `raft-game-demo` | `raft-game-dev` | `raft-game-dev` |
+| `domains` | `["raft.kizuku-hackathon.work"]` | `["raft-demo.kizuku-hackathon.work"]` | 書かない | 書かない |
+| `workersDev`・`previewUrls` | `false`・`false` | `false`・`false` | `false`・`false` | `false`・`false` |
+| `limits.cpuMs` | 50（仮。T-007（#15）で見直す） | 同じ | 同じ | 同じ |
+| コンテナの `name` | `raft-game-server` | `raft-game-demo-server` | なし | `raft-game-dev-server` |
+| `exports.GameSession` | `storage: "sqlite"`・コンテナ付き | 同じ | なし | 同じ |
+| `exports.CostGuard` | `storage: "sqlite"` | なし（一般公開のものを使う） | `storage: "sqlite"` | `storage: "sqlite"` |
+| `GAME_SESSION` | 自分の `GameSession` | 自分の `GameSession` | なし | 自分の `GameSession` |
+| `COST_GUARD` | 自分の `CostGuard` | `raft-game` の `CostGuard` | 自分の `CostGuard` | 自分の `CostGuard` |
+| `GUARDS` | 既定値（§12.3.1。`cpuMs` は `limits.cpuMs` と同じ値） | なし | 既定値 | 既定値 |
+| `DEMO_CONTROLS` | `"0"` | `"1"` | `"1"` | `"1"` |
+| `CONTAINER_INSTANCE` | `"lite"`（仮。T-007（#15）で見直す） | `"standard-1"` | `"lite"` | `"lite"` |
+| `ALLOWED_ORIGINS` | `"https://raft.kizuku-hackathon.work"` | `"https://raft-demo.kizuku-hackathon.work"` | 書かない（同じオリジンだけ） | 書かない |
+| `BUILD_ID` | ビルドの時の環境変数 `BUILD_ID`（未設定・空なら `"dev"`） | 同じ | 同じ | 同じ |
+| `SESSION_SIGNING_KEY`・`TURNSTILE_SECRET` | シークレット | シークレット | シークレット | シークレット |
+| `ADMIN_TOKEN` | シークレット | なし（管理用 API は 404） | シークレット | シークレット |
+| `SESSION_RATE_LIMIT` | `namespace: "1001"`（仮。#130 で決め直す） | `"1002"`（仮） | `"1003"`（仮） | `"1003"`（仮） |
+| `REPLAYS` | R2 `raft-game-replays`（P1。まだ誰も読まない） | 同じ | 同じ（ローカルは模擬） | 同じ |
+
+- 見直す値は、`web/cloudflare.config.ts` の先頭の定数（`CPU_MS`・`PRODUCTION_INSTANCE`・`DEMO_INSTANCE`・`SESSION_RATE_LIMIT_PER_MINUTE`）と、モードの表の `rateLimitNamespace` にまとめてある。`CPU_MS` は `GUARDS.cpuMs`（表示用）にも入り、`SESSION_RATE_LIMIT_PER_MINUTE` は `SESSION_RATE_LIMIT` の `simple.limit` と `GUARDS.rateLimit.perIpPerMinute` に入る。変えたら `web/scripts/check-build-output.ts` の表も直す
+- **コンテナはモードごとに別の名前にする**。Containers のアプリケーションは 1 つの Durable Object のクラスに結び付くので、一般公開とデモで同じ名前を使うと、後からデプロイした方に付け替わる。ADR-0016 の設定例（一般公開とデモで同じ `raft-game-server`）とは違う（設定例は T-007 の結果を足すときに直す）
+- **デモ用の Worker は `CostGuard`・`GUARDS`・`ADMIN_TOKEN` を持たない**。`COST_GUARD` は一般公開の Worker の `CostGuard` を指す（§12.3.1）。`CostGuard` は自分の Worker の `env` から `GUARDS` を読むので、デモ用の Worker に置いても効かない。共有の `CostGuard` を切り替える入り口は一般公開の `/api/admin/guards` の 1 つだけにする（緊急停止はデモにも効く）。`web/worker/index.ts` は `CostGuard` のクラスも export するが、`exports` に宣言しないので Durable Object にはならない
+- **`development` は `GameSession`・コンテナを持たない**。`POST /api/sessions` は `503`、`/ws/sessions/{id}` は `404` になる。画面の開発は `make dev` の Go（`standalone`）を使う
+- **`observability.redactQueryString: true`**。WS の接続の URL の `?token=`（§12.2）を Workers Logs に残さない。`logs.headSamplingRate` は 1（ログの量が課金に響くようなら T-605 の後に見直す）
+- ゾーンに対しては `domains` の 1 つのホスト名だけを使う。`triggers`（ルート）・ワイルドカードを書かない
+- コンテナは `schedulingPolicy: "durable-object"`、イメージの名前は `server`（`GameSession` の `ctx.container.images.server`）で、`server/Dockerfile` を文脈 `server/` でビルドする。`BUILD_ID` は `buildVars` で Docker のビルド引数にも渡し、コンテナの `/healthz` の `build` と Worker の `/api/healthz` の `build` を揃える。マシンの大きさは設定ファイルではなく `start()` の `instance`（`CONTAINER_INSTANCE`）で決まる
+- `BUILD_ID` は `^[A-Za-z0-9._:-]{1,64}$`（T-306 の Dockerfile と同じ規則）。合わなければ `throw`（`cf build` が失敗する）
+
+#### ビルドとデプロイの手順（T-603）
+
+```bash
+make sync-data                                                        # server/Dockerfile が要る（T-306）
+BUILD_ID=git:<SHA の先頭 7 桁> pnpm -C web exec cf build --mode production
+node web/scripts/check-build-output.ts --mode production web/.cloudflare/output/v0
+pnpm -C web exec cf deploy --prebuilt --mode production --secrets-file <ファイル>
+# demo も同じ手順（--mode demo）。必ず production を先にデプロイする
+```
+
+- **`production` を先にデプロイする**。`demo` の `COST_GUARD` が `raft-game` の `CostGuard` を参照するので、一般公開の Worker がないと `demo` のデプロイが失敗する
+- シークレット（`--secrets-file`）: `production` は `SESSION_SIGNING_KEY`・`TURNSTILE_SECRET`・`ADMIN_TOKEN`、`demo` は `SESSION_SIGNING_KEY`・`TURNSTILE_SECRET`
+- `check-build-output.ts` は、成功なら `{"ok":true,"mode":…,"worker":…,"images":[…]}` を出して 0、違反があれば項目名で始まる理由を 1 行ずつ標準エラーに出して 1、引数の誤り・出力を読めないときは 2 で終わる
+- Durable Object のクラスの改名・削除は前の版に戻せない（ADR-0016）。`exports` のキー（`GameSession`・`CostGuard`）を変えない
+
+#### ローカル
+
+- `make dev`（`development`）: Docker を使わない。`cf dev` は `web/.dev.vars` を読む（`web/.gitignore` で `.dev.vars`・`.dev.vars.*` を無視する）。なくても起動する（足りないシークレットを警告するだけ。`SESSION_SIGNING_KEY` がなければ `POST /api/sessions` は `503`）。値の例（作り物の値と Cloudflare のテスト用のキーだけ。本物の値を書かない）:
+
+  ```text
+  SESSION_SIGNING_KEY=local-dev-signing-key-not-a-secret-0000
+  TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+  ADMIN_TOKEN=local-dev-admin-token-not-a-secret-00000
+  ```
+
+- `cf dev --mode local-container`: コンテナまで手元で動かす。Docker と `make sync-data` が要る。Docker Desktop（macOS）では `DOCKER_HOST="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"` を付ける（`cf dev` は Docker の context を見ない。スパイクで分かったこと）
+- `cf build`・`cf dev` が作る Docker のイメージ（`cloudflare-build/<ハッシュ>/<コンテナの名前>-server:<タグ>`・`cloudflare-dev/…`）と、`cf dev` が作る中継のコンテナ（`workerd-raft-game-dev-…-proxy`）の名前は `cf` が決めるので、ADR-0019 の名前の規則（`make clean-docker`）の外になる。消し方はスパイクの [README の「後片付け」](../spike/README.md#後片付け)と同じ（`prune` せず、名前を指定して `docker rmi`・`docker rm`）
+
+#### 確認
+
+```bash
+DEV_SLOT=<n> bash web/scripts/check-cloudflare.sh   # Docker が要る。すべて成功 0・失敗 1・Docker がない 2
+```
+
+`make sync-data` → `production`・`demo`・`local-container`・`development` の順に `cf build` と検査 → イメージが `linux/amd64` → `production` のイメージの `/healthz` の `build` が `git:chk0001` → `production`・`demo` の `cf deploy --prebuilt --dry-run`（反映しない） → `cf build --mode staging` が失敗する、を一度に行います。残る `web/.cloudflare/output` は最後にビルドしたモード（`development`）のものです。
 
 ---
 
