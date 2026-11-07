@@ -143,6 +143,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	params := s.sessionParams()
 	params.id = id
 	params.st = body.stage
+	params.islands, _ = s.cat.islands(body.stage.ID)
 	params.seed = body.seed
 	params.demo = body.demo
 	params.engine = e
