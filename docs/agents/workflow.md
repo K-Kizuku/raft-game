@@ -39,6 +39,14 @@ Issue は Worker にとって**タスクの唯一の正本**で、Merge Gate と
 - Epic（親の Issue）には `status:*` を付けない。`agentctl plan` が作業中として数え、容量を減らす
 - Issue の本文に足りないものがあれば、Orchestrator が Issue のコメントに補足を書いてから `status:ready` にする。補足は実装仕様の一部として扱う
 
+### Acceptance Criteria の転記と CI の AC
+
+- Worker は、Issue の `## Acceptance Criteria` の `- [ ] AC-n: …` の行を、PR の本文に**一字一句そのまま**（同じ番号・同じ件数で）写し、満たしたものを `[x]` にする
+- AC の下の補足の行（`  - …`）は、PR でもチェックボックスにしない（`  - [x] …` にしない）。チェックボックスにすると C2 が数える AC の件数が Issue より多くなる。Issue を書くときも、補足はチェックボックスでない `  - …` の行で書く
+- CI の成否は Merge Gate の C4 が確かめる。AC に CI（「CI（`ci-ok`）が通る」など）を書くときは、Worker が PR を作った（fix・conflict では push した）あと、`gh pr checks <PR> --watch --required` で必須のチェックを待ってからチェックする（上限 20 分。上限を超えたら `[ ]` のまま「## Orchestrator への報告」に書く）
+- Worker は、web の依存（`web/node_modules`）がなければ最初に `pnpm install --frozen-lockfile` を実行する（web を触らない Issue でも `make test` に要る）
+- Worker は終わる前に、`gh issue view` と `gh pr view` の AC の行を比べ、件数・文が一致し、すべて `[x]` であることを確かめる
+
 ## 状態と遷移
 
 状態は Issue のラベル `status:<状態>` で、ちょうど 1 つだけ付ける。遷移は `agentctl state <issue> <状態>` で行い、遷移表（[state.go](../../tools/agentctl/internal/state/state.go) の `transitions`）にない遷移は拒否される（終了コード 1）。遷移のたびに、Issue のコメントに記録（`<!-- agent-state:v1 {…} -->`）を付ける。

@@ -361,6 +361,22 @@ check "dev-slot: パスで解放する" test "$RC" = 0 -a ! -d "$repo/.git/agent
 rm -rf "$repo/.git/agent-slots"
 unset AGENT_CONFIG
 
+# ================= Worker のプロンプト（#117）=================
+# 文言があることだけを確かめる（web の依存の用意・必須のチェックを待つ・補足の行をチェックボックスにしない）。
+for m in implement fix conflict; do
+  pf="$src_root/scripts/agents/prompts/worker-$m.md"
+  check "prompt $m: pnpm install --frozen-lockfile で web の依存を用意する" grep -qF -- "pnpm install --frozen-lockfile" "$pf"
+  check "prompt $m: web/node_modules がなければ" grep -qF -- "web/node_modules" "$pf"
+  check "prompt $m: gh pr checks で待つ" grep -qF -- "gh pr checks <PR> --watch" "$pf"
+  check "prompt $m: --required のチェックを待つ" grep -qF -- "--required" "$pf"
+  check "prompt $m: 待つ上限は 20 分" grep -qF -- "20 分" "$pf"
+  check "prompt $m: PR の番号を gh pr view で取る" grep -qF -- "gh pr view --json number -q .number" "$pf"
+  check "prompt $m: gh pr edit --body-file で本文を更新する" grep -qF -- "gh pr edit <PR> --body-file" "$pf"
+  check "prompt $m: AC を一字一句そのまま写す" grep -qF -- "一字一句そのまま" "$pf"
+  check "prompt $m: 補足の行をチェックボックスにしない" grep -qF -- "補足の行（\`  - …\`）はチェックボックスにしない" "$pf"
+  check "prompt $m: 最後に Issue と PR の AC を比べる" grep -qF -- "gh issue view {{ISSUE}} --json body" "$pf"
+done
+
 # ================= spawn-worker.sh =================
 reset_logs
 export AGENT_REPO="K-Kizuku/raft-game"
