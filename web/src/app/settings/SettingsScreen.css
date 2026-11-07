@@ -1,0 +1,125 @@
+/* 設定（T-424a）。紙のパネルに、スイッチの見た目のトグルを置く。
+   スイッチは <input type="checkbox"> のまま見た目だけを変える（役割・名前・操作はそのまま）。
+   オン・オフは色だけでなく、つまみの位置と ✓ の印でも示す（NFR-10）。色はトークンだけを使う。 */
+
+/* トグルの行（紙のパネル）。文字を左、スイッチを右に置く。 */
+.app-settings .settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-paper);
+  border: 2px solid color-mix(in srgb, var(--color-ink) 25%, transparent);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--font-size-h3);
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.app-settings .settings-switch {
+  position: relative;
+  flex: none;
+  order: 1;
+  box-sizing: border-box;
+  width: 3.4em;
+  height: 1.9em;
+  margin: 0;
+  background: var(--color-paper-deep);
+  border: 2px solid var(--color-ink);
+  border-radius: 999px;
+  box-shadow: inset 0 2px 4px color-mix(in srgb, var(--color-ink) 18%, transparent);
+  font-size: calc(var(--font-size-body) * 1.25);
+  cursor: pointer;
+  appearance: none;
+  transition: background-color 0.18s ease-out;
+}
+
+/* つまみ */
+.app-settings .settings-switch::before {
+  position: absolute;
+  top: 50%;
+  left: 0.2em;
+  box-sizing: border-box;
+  width: 1.35em;
+  height: 1.35em;
+  content: "";
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: 50%;
+  box-shadow: var(--shadow-paper);
+  transform: translateY(-50%);
+  transition: transform 0.18s ease-out;
+}
+
+/* オンの印（つまみの中の ✓） */
+.app-settings .settings-switch::after {
+  position: absolute;
+  top: 50%;
+  left: 0.2em;
+  width: 0.32em;
+  height: 0.6em;
+  content: "";
+  border-right: 3px solid var(--color-sea-deep);
+  border-bottom: 3px solid var(--color-sea-deep);
+  opacity: 0;
+  transform: translate(0.5em, -60%) rotate(45deg);
+  transition:
+    transform 0.18s ease-out,
+    opacity 0.18s ease-out;
+}
+
+.app-settings .settings-switch:checked {
+  background: var(--color-sea-deep);
+}
+
+.app-settings .settings-switch:checked::before {
+  transform: translate(1.5em, -50%);
+}
+
+.app-settings .settings-switch:checked::after {
+  opacity: 1;
+  transform: translate(2em, -60%) rotate(45deg);
+}
+
+.app-settings .settings-switch:focus-visible {
+  outline: 3px solid var(--color-sea-deep);
+  outline-offset: 3px;
+}
+
+.app-settings .settings-description {
+  margin: var(--space-3) var(--space-2) 0;
+}
+
+/* 表示の例（便箋の吹き出しのような見本） */
+.app-settings .settings-terms-example {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-paper);
+  border: 2px dashed color-mix(in srgb, var(--color-sea-deep) 60%, transparent);
+  border-radius: var(--radius-m);
+}
+
+.app-settings .settings-storage {
+  margin: var(--space-4) var(--space-2) 0;
+  color: var(--color-ink-muted);
+}
+
+/* 保存できなかったときの知らせ（封筒の金の縁） */
+.app-settings .settings-warning {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--color-warning) 25%, var(--color-paper));
+  border-left: 6px solid var(--color-warning);
+  border-radius: var(--radius-s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-settings .settings-switch,
+  .app-settings .settings-switch::before,
+  .app-settings .settings-switch::after {
+    transition: none;
+  }
+}

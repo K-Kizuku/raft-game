@@ -1,0 +1,75 @@
+/* クレジット（T-424a）。紙のカードの中に、出典・ソフトウェア・素材を区切った一覧で並べる。
+   出典区分のラベル（ui/provenance）は、帳簿の札のような小さな丸い札にする。色はトークンだけを使う。 */
+
+.app-credits {
+  /* 一覧の行の区切り（帳簿の点線） */
+  --credits-rule: color-mix(in srgb, var(--color-ink-muted) 45%, transparent);
+}
+
+.app-credits .credits-section {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-paper);
+  border: 2px solid color-mix(in srgb, var(--color-ink) 20%, transparent);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  overflow-wrap: anywhere;
+}
+
+/* 区分の見出し（見た目だけ。支援技術には section の aria-label が伝える） */
+.app-credits .credits-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-h3);
+  font-weight: bold;
+}
+
+.app-credits .credits-section-icon {
+  width: auto;
+  height: 1.6em;
+}
+
+/* 一覧の行 */
+.app-credits .credits-section > p:not(.credits-section-title) {
+  margin: 0;
+  padding: var(--space-3) 0;
+  border-top: 2px dashed var(--credits-rule);
+  line-height: 1.7;
+}
+
+/* 区分のラベルの直後の行は、ラベルと 1 つの組に見せる（区切りを引かない） */
+.app-credits .credits-section > .provenance-label + p {
+  padding-top: var(--space-1);
+  border-top: none;
+}
+
+/* 出典区分のラベル */
+.app-credits .provenance-label {
+  display: table;
+  margin-top: var(--space-3);
+  padding: 0 var(--space-3);
+  color: var(--color-ink);
+  background: var(--color-sea-light);
+  border: 2px solid var(--color-sea-deep);
+  border-radius: 999px;
+  font-size: 0.85em;
+  font-weight: bold;
+  line-height: 1.8;
+}
+
+.app-credits .provenance-label[data-provenance="derived"] {
+  background: var(--color-land);
+  border-color: color-mix(in srgb, var(--color-land) 50%, var(--color-ink));
+}
+
+.app-credits .provenance-label[data-provenance="creative"] {
+  background: color-mix(in srgb, var(--color-gold) 55%, var(--color-paper));
+  border-color: color-mix(in srgb, var(--color-gold) 60%, var(--color-ink));
+}
+
+/* 区分の見出しの直後のラベルは、上の余白を詰める */
+.app-credits .credits-section-title + .provenance-label {
+  margin-top: var(--space-1);
+}

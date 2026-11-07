@@ -1,0 +1,201 @@
+/* タイトル（T-424a）。温かい絵本・海図風（docs/11-visual-design.md §1・§8）。
+   画面いっぱいにタイトルの絵（ui/art/TitleArt）を敷き、中央に大きなタイトル・一言の説明・紙のカードのメニューを置く。
+   色・余白・角丸・影・文字の大きさは T-420 のトークンを使う。.btn（base.css）より後に効くよう、.app-title の下に書く。 */
+
+.app-title {
+  /* 浮いたカードの影（紙の影を少し濃く・広く） */
+  --title-shadow-lift:
+    0 2px 0 color-mix(in srgb, var(--color-ink) 10%, transparent),
+    0 10px 22px color-mix(in srgb, var(--color-ink) 20%, transparent);
+  /* 控えめなカードの縁 */
+  --title-card-border: color-mix(in srgb, var(--color-ink) 55%, transparent);
+}
+
+.app-title.app-screen {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  max-width: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: var(--space-6) var(--space-5);
+  overflow: hidden;
+  text-align: center;
+}
+
+.app-title .title-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+}
+
+/* タイトルの文字。紙の色のにじみで縁取り、水彩の海の上でも読めるようにする。 */
+.app-title .title-heading {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: calc(var(--font-size-h1) * 2.25);
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  text-shadow:
+    0 0 0.08em var(--color-paper),
+    0 0 0.25em var(--color-paper),
+    0 0 0.5em var(--color-paper),
+    0.05em 0.07em 0 color-mix(in srgb, var(--color-sea-deep) 30%, transparent);
+}
+
+/* 一言の説明。少し傾けた紙の帯。 */
+.app-title .title-tagline {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-2) var(--space-5);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--title-card-border);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--font-size-h3);
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  transform: rotate(-1deg);
+}
+
+/* メニュー。「遊ぶ」を上に大きく、残りの 3 つを下に並べる。 */
+.app-title .title-nav {
+  width: min(36rem, 100%);
+  margin-top: var(--space-6);
+}
+
+.app-title .title-menu {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.app-title .title-menu-item-play {
+  grid-column: 1 / -1;
+}
+
+/* 紙のカードのボタン（控えめ）。 */
+.app-title .title-menu-card {
+  position: relative;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 7rem;
+  padding: var(--space-4) var(--space-3);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--title-card-border);
+  border-radius: var(--radius-l);
+  font-size: var(--font-size-h3);
+  letter-spacing: 0.04em;
+  transition:
+    transform 0.15s ease-out,
+    box-shadow 0.15s ease-out,
+    border-color 0.15s ease-out;
+}
+
+.app-title .title-menu-icon {
+  width: auto;
+  height: 2.4em;
+}
+
+/* 主ボタン「遊ぶ」は郵便の赤（文字の色は .btn-primary）。切手のような点線の縁を内側に描く。 */
+.app-title .title-menu-item-play .title-menu-card {
+  flex-direction: row;
+  gap: var(--space-4);
+  min-height: 5.5rem;
+  background: var(--color-postal);
+  border-color: var(--color-postal);
+  font-size: var(--font-size-h2);
+  letter-spacing: 0.3em;
+}
+
+.app-title .title-menu-item-play .title-menu-card::after {
+  position: absolute;
+  inset: 5px;
+  content: "";
+  border: 2px dashed color-mix(in srgb, var(--color-paper) 70%, transparent);
+  border-radius: calc(var(--radius-l) - 5px);
+  pointer-events: none;
+}
+
+/* 赤い地の上では、船の絵を紙の丸の中に置く（赤い船体が地に埋もれないように）。 */
+.app-title .title-menu-item-play .title-menu-icon {
+  height: 2em;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-paper);
+  border-radius: 999px;
+}
+
+/* ホバー・フォーカス: 紙が少し浮く。押したとき: 押し込まれて影が消える。 */
+.app-title .title-menu-card:hover,
+.app-title .title-menu-card:focus-visible {
+  border-color: var(--color-ink);
+  box-shadow: var(--title-shadow-lift);
+  transform: translateY(-3px) rotate(-0.6deg);
+}
+
+.app-title .title-menu-item-play .title-menu-card:hover,
+.app-title .title-menu-item-play .title-menu-card:focus-visible {
+  border-color: var(--color-postal);
+  transform: translateY(-3px);
+}
+
+.app-title .title-menu-card:active {
+  box-shadow: none;
+  transform: translateY(1px);
+}
+
+.app-title .title-menu-item-play .title-menu-card:active {
+  transform: translateY(1px);
+}
+
+/* 狭い画面（768px まで）: 文字と余白を少し詰める。 */
+@media (max-width: 960px) {
+  .app-title .title-heading {
+    font-size: calc(var(--font-size-h1) * 1.75);
+  }
+
+  .app-title .title-menu-card {
+    min-height: 6rem;
+  }
+}
+
+/* 低い画面: 縦に収まるよう詰める。 */
+@media (max-height: 640px) {
+  .app-title .title-nav {
+    margin-top: var(--space-4);
+  }
+
+  .app-title .title-menu-card {
+    min-height: 4.5rem;
+  }
+
+  .app-title .title-menu-icon {
+    height: 1.8em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-title .title-menu-card {
+    transition: none;
+  }
+
+  .app-title .title-menu-card:hover,
+  .app-title .title-menu-card:focus-visible,
+  .app-title .title-menu-card:active,
+  .app-title .title-menu-item-play .title-menu-card:hover,
+  .app-title .title-menu-item-play .title-menu-card:focus-visible,
+  .app-title .title-menu-item-play .title-menu-card:active {
+    transform: none;
+  }
+}
