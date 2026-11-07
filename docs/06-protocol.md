@@ -174,6 +174,38 @@ Worker が返すエラー:
 | 405 | `method_not_allowed` | `GET` 以外 |
 | 426 | `upgrade_required` | `Upgrade: websocket` がない（大文字・小文字は区別しない） |
 
+Durable Object `GameSession` の振る舞い（[DesignDoc §12.3](./03-design-doc.md)）:
+
+- Worker は `token` を `X-Session-Token` のヘッダーに入れて DO に渡す（DO への要求の URL にトークンを入れない）。元の要求のほかのヘッダー（Cookie など）は渡さない
+- DO は、`token` がない・形が違う（22 文字の base64url でない）・ハッシュが一致しない・セッションがない・終わったセッションを区別せずに `404 not_found` にする（WebSocket を作らない）
+- 同じセッションに 2 本目の接続が来たら、古い接続を `4001`（`replaced`）で閉じる。ブラウザは `4001` でつなぎ直さない
+- DO は、ブラウザから届いた電文のうち、`type` が `internal.` で始まるもの（大文字・小文字を区別しない）、JSON のオブジェクトでないもの、`type` が文字列でないもの、キーに `v`・`type`・`cmdId`・`payload` 以外（`seq`・`Type` など）を含むものを、返事をせずに捨てる。1 秒の枠で 30 通を超えた電文も、返事をせずに捨てる。ほかの電文は書き換えずにコンテナに送る
+- コンテナの準備ができるまで（`/healthz` が `200` を返すまで）に届いた電文は、32 通まで溜めて、つながった後に順に送る
+
+DO が閉じるときのコード:
+
+| コード | いつ |
+|---|---|
+| `4001` | 同じセッションに新しい接続が来た（`reason: "replaced"`） |
+| `1000` | ラウンドが終わった（`round.result` の後）・時間の上限・切断のまま 5 分・アラームの上限（`session_ended` の `error` の後） |
+| `1003` | ブラウザがバイナリの電文を送った |
+| `1009` | ブラウザの電文が UTF-8 で 16 KiB を超えた |
+| `1011` | コンテナが起動しない・止まった（`container_unavailable` の `error` の後）、コンテナの致命的な `error` を中継した後、コンテナへの接続が開けない・閉じた（このときはつなぎ直してよい） |
+
+DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。ブラウザはつなぎ直さない）:
+
+```json
+{ "v": 1, "type": "error", "seq": 43, "payload": { "code": "session_ended", "message": "Session ended", "fatal": true } }
+```
+
+| `code` | いつ |
+|---|---|
+| `session_ended` | 時間の上限（`gameTime.maxMinutes`）・切断のまま 5 分・アラームの上限（`gameTime.maxAlarms`） |
+| `container_unavailable` | コンテナが期限（`CONTAINER_START_TIMEOUT_MS`）までに準備できない・止まった |
+
+- `seq` は、その接続でコンテナから受けた最後の `seq` + 1（なければ `1`）。DO とコンテナの間の WebSocket はブラウザの接続ごとに 1 本なので、コンテナの番号の続きになる
+- DO が自分で作る電文は、この `error` と、コンテナへの `internal.init`・`internal.pong` だけ
+
 ---
 
 ### `GET /api/admin/guards`・`PATCH /api/admin/guards`（管理用）
