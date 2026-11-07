@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: lite と standard-1 のクラウド測定がともに終了コード 0 で完了。次は未使用の --first 10 で M-9 の対照実験と、JSON の CPU エラー・停止の詳細の取得。H-5 の判断・後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 の lite・standard-1・M-9 の対照実験を実施済み。JSON の抜粋から DO の CPU 超過によるリセットと stopFailures が空であることを確認。次は H-5 のデプロイ済み CPU 設定と通常要求の CPU p99/最大値の取得。後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -21,8 +21,8 @@
 | M-2・M-3 手元の基準値 | 取得済み | Apple M2 / Go 1.26.9。30 分の再計算 79.343 ms、8 倍速 step p99 0.289 ms。クラウドの性能とは区別する |
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
-| H-4 測定 / M-1〜M-14 | 途中 | lite (s-1〜s-9) と standard-1 (s-16〜s-24) が終了コード 0。raw JSON は未受領。次に --first 10 で M-9 の対照 |
-| H-5 limits.cpuMs の判断 | 未確定 | 1e9 の反復は lite 測定で Worker 200 / DO 502、standard-1 測定で Worker 503 / DO 502。エラー本文・設定の反映と Logs の CPU 時間を確認する |
+| H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
+| H-5 limits.cpuMs の判断 | 途中 | DO の 502 は CPU 超過によるリセット。Worker の 503 は resource limits。次にデプロイ済みの上限と、CPU 負荷試験を除く通常要求の CPU p99/最大値を取得する |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -745,6 +745,112 @@ for (const name of ["lite", "standard-1", "egress-control"]) {
 ```
 
 取得する内容は測定の開始・終了日時、使用番号、stopFailures、CPU のエラー本文と clientMs、inactivity の stopped、egress の両条件、コンテナの info、setInactivityTimeout の設定結果。これらは次に案内したコマンドで、まだ実行結果は受け取っていない。
+
+## 2026-11-07: M-9 の対照と JSON の抜粋を確認
+
+添付されたコマンド出力を確認した。対照実験のプロンプト表示は 16:47:20、詳細の抽出のプロンプト表示は 16:53:09。実際の実行時刻には、以下の JSON の startedAt / finishedAt を使う。フル JSON の全内容ではなく、案内済みの項目の抜粋を受け取った。
+
+### 実行日時と使用番号
+
+| 測定 | 実際の開始 (JST) | 実際の終了 (JST) | 所要 | sessions | stopFailures |
+|---|---|---|---|---|---|
+| lite | 16:12:51.730 | 16:19:30.646 | 398.916 秒 | 1〜9 | [] |
+| standard-1 | 16:40:43.645 | 16:47:20.396 | 396.751 秒 | 16〜24 | [] |
+| egress-control | 16:52:57.390 | 16:53:09.020 | 11.630 秒 | 10 | [] |
+
+3 回とも停止 API の失敗の記録は空。最終的な全番号の running=false の確認は H-6 で行う。現時点で使ったクラウドの番号は s-1〜s-10 と s-16〜s-24 の計 19 個。s-10 は今回 2 回起動した。
+
+### M-9: 外部通信の対照
+
+--instance lite / --only egress --internet-control / --runs 1 / --first 10 を実行。起動は 307 ms と 212 ms、終了コードは 0。
+
+| 試験 | enableInternet: false | enableInternet: true |
+|---|---|---|
+| example.com の DNS | resolver [2606:4700:4700::1111]:53 への UDP が i/o timeout | ok |
+| 1.1.1.1:443 の TCP | i/o timeout | ok |
+| https://example.com/ | context deadline exceeded | ok |
+
+internet0AllFailed は true。今回の 3 試験では、通信できる対照の条件で成功し、禁止した条件では失敗することを確認した。ローカルで false でも TCP が通った結果とは区別する。
+
+### CPU の HTTP エラーの詳細
+
+DO は両方の測定とも、1e9 反復で次の JSON を返した。
+
+```json
+{
+  "error": "do_error",
+  "message": "Durable Object exceeded its CPU time limit and was reset."
+}
+```
+
+この DO の 502 は、CPU 超過で DO がリセットされた結果だと確認できた。
+
+Worker は standard-1 の測定の 1e9 で HTTP 503。HTML の title は `Worker exceeded resource limits`。Worker の resource limit 超過は確認できたが、ここに表示された HTML の先頭 500 文字には具体的な CPU 時間や Error 1102 の番号は含まれない。実際の CPU 時間・outcome は Logs で確認する。
+
+| 反復 | lite Worker: status / clientMs | lite DO: status / clientMs | standard-1 Worker: status / clientMs | standard-1 DO: status / clientMs |
+|---|---|---|---|---|
+| 1e6 | 200 / 138.097 | 200 / 215.780 | 200 / 156.169 | 200 / 202.014 |
+| 1e7 | 200 / 169.320 | 200 / 203.751 | 200 / 238.467 | 200 / 248.755 |
+| 3e7 | 200 / 179.220 | 200 / 237.715 | 200 / 406.538 | 200 / 218.265 |
+| 1e8 | 200 / 308.003 | 200 / 399.034 | 200 / 397.533 | 200 / 481.190 |
+| 3e8 | 200 / 695.560 | 200 / 953.258 | 200 / 919.928 | 200 / 1102.796 |
+| 1e9 | 200 / 2082.436 | 502 / 2503.731 | 503 / 1710.909 | 502 / 2803.127 |
+
+clientMs はクライアントから見た往復の経過時間であり、Worker/DO の CPU 時間そのものではない。
+
+[Cloudflare Workers の CPU 制限の説明](https://developers.cloudflare.com/workers/platform/limits/) には、isolate が時々設定値を超える場合を許容する仕組みがあると記載されている。1 回成功したことだけで上限が無効とは判定しない。ただし、その仕組みが今回の成功/失敗の差の原因だと断定せず、デプロイされた値と Logs の CPU 時間を確認する。
+
+### inactivity とコンテナの情報
+
+- lite の s-9、standard-1 の s-24 とも inactivityMs=30000 / stopped=false。
+- 起動結果の inactivityTimeout は両方とも ok。設定 API が例外になった事例ではない。
+- 前節で確認した monitor と DO の退避の関係を踏まえ、単に 60 秒後に停止するという期待で測定を合格扱いにしない。
+- Go の実測値は両方とも go1.26.4 / linux / amd64、numCPU=1 / GOMAXPROCS=1、cpuMax=null / memoryMax=null、MODE=single / PORT=8080。
+- コンテナの hostname は公開記録に転載しない。
+
+### H-5: 次に CPU 設定と通常要求の CPU 時間を取得する
+
+cf@1.0.0-beta.28 の公式ソースで、次を確認した。
+
+- [workers versions get](https://github.com/cloudflare/cf/blob/b0703f68cf9ec67f515055d42d7ad128241649ed/packages/cli/src/commands/_generated/workers/versions/get.ts) は、Worker 名と version UUID を指定してメタデータを取得できる。modules を include しない。
+- [o11y telemetry query](https://github.com/cloudflare/cf/blob/b0703f68cf9ec67f515055d42d7ad128241649ed/packages/cli/src/commands/_generated/o11y/telemetry/query.ts) は、[Workers Observability API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/) を呼ぶ。--preview は結果を保存しない dry に対応する。
+- [Query Builder の説明](https://developers.cloudflare.com/workers/observability/query-builder/) の $workers.cpuTimeMs と request.path、P99/Max/Count の集計を使う。
+
+次のブロックはユーザーがリポジトリのルートで実行する。最初は CPU の設定を含む箇所だけを表示し、次に通常要求の CPU 時間を経路ごとに集計する。負荷試験の /cpu は除外する。
+
+```fish
+pnpm -C spike exec cf workers versions get b402a25d-9b2d-418d-b710-f577294a7eb9 --worker raft-game-spike | node -e '
+let s = "";
+process.stdin.on("data", d => s += d).on("end", () => {
+  const x = JSON.parse(s), out = {};
+  function scan(v, p = "") {
+    if (!v || typeof v !== "object") return;
+    for (const [k, value] of Object.entries(v)) {
+      const path = p ? p + "." + k : k;
+      if (["limits", "cpu_ms", "cpuMs"].includes(k)) out[path] = value;
+      else scan(value, path);
+    }
+  }
+  scan(x);
+  console.log(JSON.stringify({cpuSettings: out, versionKeys: Object.keys(x)}, null, 2));
+});
+'
+
+pnpm -C spike exec cf o11y telemetry query \
+  --query-id t007-normal-cpu --preview \
+  --view calculations --chart-type aggregate --ignore-series \
+  --timeframe-from 1794035511730 --timeframe-to 1794038049020 \
+  --parameters-filters '[{"key":"$metadata.service","operation":"eq","type":"string","value":"raft-game-spike"},{"key":"$workers.cpuTimeMs","operation":"exists","type":"number"},{"key":"$workers.event.request.path","operation":"not_includes","type":"string","value":"/cpu"}]' \
+  --parameters-calculations '[{"operator":"count","alias":"n"},{"operator":"p99","key":"$workers.cpuTimeMs","keyType":"number","alias":"cpu_p99_ms"},{"operator":"max","key":"$workers.cpuTimeMs","keyType":"number","alias":"cpu_max_ms"}]' \
+  --parameters-group-bys '[{"type":"string","value":"$workers.event.request.path"}]' \
+  --limit 500 --parameters-limit 500
+```
+
+集計の時刻範囲は 2026-11-07 16:11:51.730〜16:54:09.020 JST (3 回の測定の前後に 1 分を加えた範囲)。リソースの変更・再デプロイ・コンテナの起動はしない。
+
+CPU 設定を抽出する Node 部分は node --check で構文を確認した。API の実行・スキーマ上のフィールドが実際のログで利用できるかは、ユーザーの実行結果を待つ。集計が空の場合は成功した測定とせず、フィールドとログの記録設定を調べる。
+
+この出力を受けて limits.cpuMs の値を判断する。H-6 の資源削除は、設定の取得と必要なログの確認を終えてから案内する。
 
 ## 測定前に確定・確認する事項
 
