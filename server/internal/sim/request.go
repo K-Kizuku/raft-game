@@ -171,6 +171,7 @@ func (e *Engine) route(i int, island uint64, hops int) {
 		err = e.propose(island, data)
 		switch {
 		case err == nil:
+			e.noteProposed(i)
 			r.track.Outcome = game.OutcomeProposed
 			r.letter = 0
 			if island == r.req.Origin {
