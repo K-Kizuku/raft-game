@@ -672,7 +672,7 @@ check_segment() {
       install-workflows.sh)
         [ "$ROLE" = "human" ] || deny "scripts/github/install-workflows.sh は人だけが実行する"
         ;;
-      merge.sh | review.sh | spawn-worker.sh | wt.sh)
+      merge.sh | review.sh | spawn-worker.sh | wt.sh | merge-train.sh | autospawn.sh)
         if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
           deny "scripts/agents/${s0##*/} は Orchestrator だけが実行する"
         fi

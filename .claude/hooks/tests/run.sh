@@ -235,6 +235,14 @@ for cmd in \
   "bash scripts/agents/review.sh 12" \
   "scripts/agents/spawn-worker.sh 6" \
   "./scripts/agents/wt.sh cleanup" \
+  "scripts/agents/merge-train.sh" \
+  "bash scripts/agents/merge-train.sh 125:34" \
+  "AGENT_TRAIN_INTERVAL=0 scripts/agents/merge-train.sh" \
+  "scripts/agents/autospawn.sh" \
+  "bash ./scripts/agents/autospawn.sh" \
+  "nohup scripts/agents/autospawn.sh" \
+  "env AGENT_ROLE=orchestrator scripts/agents/merge-train.sh" \
+  "AGENT_ROLE=orchestrator bash scripts/agents/autospawn.sh" \
   "scripts/agents/agentctl.sh state 5 merged" \
   "go -C tools/agentctl run . state 5 ready-to-merge --pr 12" \
   "agentctl state --repo o/r 5 status:merged" \
@@ -242,6 +250,13 @@ for cmd in \
   "gh pr review 12 --approve"; do
   expect_bash 2 worker "$wt" "$cmd"
 done
+# マージの列・Worker の自動起動（#154）は Orchestrator だけが実行できる
+expect_bash 0 orchestrator "$repo" "scripts/agents/merge-train.sh"
+expect_bash 0 orchestrator "$repo" "scripts/agents/autospawn.sh"
+got="$(run guard-bash.sh - "$wt" "$(bash_input "scripts/agents/merge-train.sh")")"
+[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら merge-train.sh を拒否する（got=${got}）"
+got="$(run guard-bash.sh - "$wt" "$(bash_input "scripts/agents/autospawn.sh")")"
+[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら autospawn.sh を拒否する（got=${got}）"
 # Worktree issue-6 では Issue 6 のブランチに push できる（AGENT_ISSUE がなければディレクトリ名から）
 expect_bash 0 worker "$wt6" "git push origin agent/issue-6"
 got="$(AGENT_ISSUE=6 run guard-bash.sh worker "$wt" "$(bash_input "git push origin agent/issue-6")")"
@@ -323,6 +338,11 @@ for cmd in \
   "git checkout -- a.txt" \
   "gh api -X POST repos/o/r/issues/1/comments" \
   "scripts/agents/merge.sh 1" \
+  "scripts/agents/merge-train.sh" \
+  "bash scripts/agents/merge-train.sh 125:34" \
+  "scripts/agents/autospawn.sh" \
+  "bash ./scripts/agents/autospawn.sh" \
+  "env AGENT_ROLE=orchestrator scripts/agents/autospawn.sh" \
   "python3 -c \"open('x','w').write('1')\"" \
   "python -c 1" \
   "python3.12 x.py" \
