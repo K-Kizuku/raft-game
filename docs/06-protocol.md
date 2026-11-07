@@ -305,9 +305,9 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 |---|---|---|---|
 | `hello` | `{ "client": "web/0.1.0", "resume": false }` | 接続直後に送る。サーバーは `snapshot` を返す | P0 |
 | `cmd.game.start` | `{}` | 開会式を始める（ステージ紹介の「出航する」） | P0 |
-| `cmd.game.pause` | `{ "paused": true }` | 一時停止・再開 | P0 |
-| `cmd.game.speed` | `{ "speed": 2 }` | 0.5 / 1 / 2 / 4。デモ操作が有効なセッションでは 8 も | P0 |
-| `cmd.game.skip` | `{ "until": "next_notable" }` | デモ用。次の船の到着・台本の出来事・依頼の発生まで進めて一時停止する（最大 30 秒先まで） | P0 |
+| `cmd.game.pause` | `{ "paused": true }` | 一時停止・再開。`paused` は必須 | P0 |
+| `cmd.game.speed` | `{ "speed": 2 }` | 0.5 / 1 / 2 / 4。デモ操作が有効なセッションでは 8 も。`speed` は `snapshot` の `clock.allowedSpeeds` のどれか | P0 |
+| `cmd.game.skip` | `{ "until": "next_notable" }` | デモ用。次の船の到着・台本の出来事・依頼の発生まで進めて一時停止する（最大 30 秒先まで）。デモ操作が有効なセッションだけ。次の出来事が 30 秒より先なら進めずに止まる | P0 |
 | `cmd.ferry.load` | `{ "ferryId": "f1", "letterIds": [12, 13] }` | 港の手紙を積む。全部積めない場合は全体を拒否する | P0 |
 | `cmd.ferry.unload` | `{ "ferryId": "f1", "letterIds": [12] }` | 積んだ手紙をいまいる港へ戻す（P1 で中継倉庫へ預けるのにも使う） | P0 |
 | `cmd.ferry.autoload` | `{ "ferryId": "f1", "to": 2 }` | おまかせ積み込み。港の手紙のうち `to` 宛てのものを、ゲームデザイン §3.4 の順に空きの数だけ積む。`to` への直接の航路がなければ `no_route`、積む手紙がなければ `letter_not_here`、満載なら `capacity_exceeded` | P0 |
@@ -335,6 +335,10 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `rate_limited` | コマンドが多すぎる |
 | `bad_request` | 形式が不正 |
 
+- `cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` の失敗の `code`: payload の誤り（必須のキーがない・型が違う・`until` が `next_notable` でない）・使えない速度・デモ操作が有効でないセッションの `skip` は `bad_request`。ラウンドの終了後の 3 種類と、Intro（`cmd.game.start` の前）の `skip` は `phase_invalid`（Intro の `pause`・`speed` は受け付ける）
+- `rate_limited`: 1 セッションあたり 30 回/秒を超えたコマンド（`hello`・`cmd.*`・`sub.engineer`・`demo.trigger` を数え、`ping` は数えない）。超えた電文は処理せず、`cmdId` があれば `ack`（`ok: false`・`rate_limited`）を返し、`cmdId` のない電文は捨てる。Durable Object も同じ上限で数え、超えた電文は返事をせずに捨てる（[DesignDoc §12.5](./03-design-doc.md#125-寿命と上限)）
+- `ok: true` の `ack` の `t` は、処理した後のゲーム内時刻（`cmd.game.skip` では進めた先）
+
 ---
 
 ## 5. サーバー → クライアント
@@ -342,7 +346,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | type | payload | 説明 |
 |---|---|---|
 | `snapshot` | `Snapshot`（§5.1） | 接続時・`cmd.sync` の応答・送信キューがあふれたとき |
-| `events` | `{ "clock": Clock, "events": Event[] }` | 100ms ごとにまとめて送る（イベントがなくても 1 秒に 1 回は `clock` のために送る） |
+| `events` | `{ "clock": Clock, "events": Event[] }` | 100ms ごとにまとめて送る（イベントがなくても 1 秒に 1 回は `clock` のために送る）。コマンドと `pause`・`speed`・`skip` の後はすぐに送る（イベントがなくても `clock` のために送る）。`snapshot` の前のイベントは送らない（`snapshot` の後のイベントの `seq` は `lastSeq` より大きい） |
 | `ack` | `{ "cmdId": "c-12", "ok": true, "t": 61200 }` / `{ "cmdId": "c-12", "ok": false, "t": 61200, "code": "route_blocked", "message": "…" }` | コマンドの結果。`t` は適用したゲーム内時刻で、Durable Object が入力ログに記録するのに使う。失敗のときも `t`（そのときのゲーム内時刻）を入れる（後方互換なフィールドの追加、§8） |
 | `node.detail` | `NodeDetail`（§5.4） | エンジニアモードの購読中、2Hz |
 | `round.result` | `RoundResult`（§5.5） | ラウンド終了時 |
@@ -365,8 +369,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `replaced` | 真 | 同じセッションに新しい接続がつながった | `1000` |
 | `shutting_down` | 真 | プロセスを止める（SIGTERM など） | `1001` |
 
-- `cmdId` のある電文には、`hello`・`ping` を除いて必ず `ack` を 1 つ返す（`ok: true` を返すのは Engine のコマンドと `cmd.sync` だけ。まだ処理しない種類は `ok: false`・`bad_request`・`not implemented`、知らない種類は `ok: false`・`bad_request`・`unknown type`）
-- Engine のコマンド（`cmd.game.start`・`cmd.ferry.*`）は `cmdId` が必須。ない電文は適用せず、`error`（`bad_request`、偽）を返す（DO は `cmdId` で `ack` と組にして入力ログに記録するため）
+- `cmdId` のある電文には、`hello`・`ping` を除いて必ず `ack` を 1 つ返す（`ok: true` を返すのは Engine のコマンド・`cmd.sync`・`cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` だけ。まだ処理しない種類は `ok: false`・`bad_request`・`not implemented`、知らない種類は `ok: false`・`bad_request`・`unknown type`）
+- Engine のコマンド（`cmd.game.start`・`cmd.ferry.*`）と `cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` は `cmdId` が必須。ない電文は適用せず、`error`（`bad_request`、偽）を返す（DO は `cmdId` で `ack` と組にして入力ログに記録するため）
 - 送信キュー（接続ごとに 256 件）があふれたら、接続を `1013` で閉じる（セッションは残る。つなぎ直して `snapshot` を受ける）
 
 ### 5.1 Snapshot
@@ -556,6 +560,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 ```
 
 クライアントはこれを受け取った時刻（`performance.now()`）と組にして保持し、描画のたびにゲーム内時刻を推定します（[DesignDoc §13.3](./03-design-doc.md)）。
+
+`speed` は 0.5・1・2・4（デモでは 8 も）。`paused` は、プレイヤーの一時停止・`skip`・切断・復元のどれかで真になる。
 
 ---
 
