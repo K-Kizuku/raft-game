@@ -63,12 +63,20 @@ FAKE_CF = textwrap.dedent(
         i += 1
 
     if cmd in fail:
-        print("fake cf: " + cmd + " failed: spend policies are not enabled for this account", file=sys.stderr)
+        msg = os.environ.get("FAKE_CF_FAIL_MSG") or (
+            "fake cf: " + cmd + " failed: spend policies are not enabled for this account"
+        )
+        print(msg, file=sys.stderr)
         sys.exit(1)
 
     with open(state_path, encoding="utf-8") as f:
         state = json.load(f)
     body = json.loads(opts["--body"]) if "--body" in opts else None
+
+    # ポリシーが 0 件のとき、list が空の配列ではなく 404 を返す API の癖（Issue #223）
+    if cmd == "list" and state.get("empty_list_404") and not state["policies"]:
+        print("✘ APIError [1003] spend policy not found", file=sys.stderr)
+        sys.exit(1)
 
     if "--dry-run" in flags:
         print(json.dumps({"command": "cf billing spend-policies " + cmd, "method": "POST", "body": body}, indent=2))
@@ -205,6 +213,7 @@ class BudgetAlertTest(unittest.TestCase):
         *args: str,
         account: bool = True,
         fail: str = "",
+        fail_msg: str = "",
         env: Optional[Dict[str, str]] = None,
         stdin: Any = subprocess.DEVNULL,
     ) -> subprocess.CompletedProcess:
@@ -213,6 +222,7 @@ class BudgetAlertTest(unittest.TestCase):
         e["FAKE_CF_STATE"] = str(self.state_path)
         e["FAKE_CF_LOG"] = str(self.log_path)
         e["FAKE_CF_FAIL"] = fail
+        e["FAKE_CF_FAIL_MSG"] = fail_msg
         if account:
             e["CLOUDFLARE_ACCOUNT_ID"] = "0123456789abcdef"
         if env:
@@ -523,6 +533,56 @@ class BudgetAlertTest(unittest.TestCase):
                 for w in WRITE_CMDS:
                     self.assertNotIn(w, self.cmds())
 
+    # -- Issue #223: list の 404（[1003] spend policy not found）は 0 件 ----------------
+
+    NOT_FOUND_MSG = "✘ APIError [1003] spend policy not found"
+
+    def test_list_not_found_is_empty(self) -> None:
+        r = self.run_script("--check", "--email", "owner@example.com", fail="list", fail_msg=self.NOT_FOUND_MSG)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.count(": 作る（"), 2, r.stdout)
+        self.assertIn("budget_alert: ほかのポリシー: なし", r.stdout)
+        self.assertIn("budget_alert: 変更あり（2 件）。--apply で反映する", r.stdout)
+        self.assertIn("[1003] spend policy not found を返した。ポリシーは 0 件とみなす", r.stderr)
+        self.assertEqual(self.cmds(), ["list"])
+        self.assert_common_invariants()
+
+    def test_apply_when_empty_list_is_404(self) -> None:
+        self.set_state([], empty_list_404=True)
+        r = self.run_script("--apply", "--yes", "--email", "owner@example.com")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.cmds(), ["list", "create", "create", "list"])
+        self.assertEqual(
+            sorted(p["name"] for p in self.state()),
+            ["raft-game-budget-durable-objects", "raft-game-budget-workers"],
+        )
+        self.assert_common_invariants()
+
+    def test_list_other_failures_still_fail(self) -> None:
+        msgs = [
+            "✘ APIError [10000] Authentication error (403)",
+            "✘ APIError [7003] Could not route to /accounts/x/billing/spend_policies (404)",
+            "✘ APIError [1003] not found",
+        ]
+        for msg in msgs:
+            for mode in (["--check"], ["--apply", "--yes"]):
+                with self.subTest(msg=msg, mode=mode):
+                    if self.log_path.exists():
+                        self.log_path.unlink()
+                    r = self.run_script(*mode, "--email", "owner@example.com", fail="list", fail_msg=msg)
+                    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                    self.assertIn(msg, r.stderr)
+                    self.assertIn("cf billing spend-policies list が失敗した", r.stderr)
+                    self.assertEqual(self.cmds(), ["list"])
+
+    def test_not_found_only_tolerated_for_list(self) -> None:
+        # list 以外（get など）の [1003] は今までどおり失敗
+        self.set_state([own("workers", threshold_cents=300), own("durable_objects")], hide_version_in_list=True)
+        r = self.run_script("--apply", "--yes", "--email", "owner@example.com", fail="get", fail_msg=self.NOT_FOUND_MSG)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("cf billing spend-policies get が失敗した", r.stderr)
+        self.assertNotIn("update", self.cmds())
+
     def test_dry_run_cf_fails(self) -> None:
         r = self.run_script(account=False, fail="create")
         self.assertEqual(r.returncode, 1)
@@ -601,6 +661,25 @@ class PureFunctionTest(unittest.TestCase):
         cur = dict(body, enabled=1)
         self.assertEqual(m.diff_policy(cur, body), ["enabled"])
         self.assertEqual(m.diff_policy(dict(body), body), [])
+
+    def test_is_policy_not_found(self) -> None:
+        m = self.mod
+        for text in (
+            "[1003] spend policy not found",
+            "✘ APIError [1003] spend policy not found\n",
+            "Error: APIError [1003] Spend policy not found (404)",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(m.is_policy_not_found(text))
+        for text in (
+            "",
+            "✘ APIError [10000] Authentication error (403)",
+            "✘ APIError [1003] not found (404)",
+            "spend policy not found",
+            "[7003] Could not route (404)",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(m.is_policy_not_found(text))
 
     def test_cf_command(self) -> None:
         m = self.mod
