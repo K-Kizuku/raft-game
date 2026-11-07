@@ -1,0 +1,2 @@
+# cf dev のシークレット（local-smoke.sh が作って消す）。ルートの .gitignore は .dev.vars を無視しない
+.dev.vars*
