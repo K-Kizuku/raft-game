@@ -871,30 +871,83 @@ func (s *Session) run(ctx context.Context) {
 
 ### 13.2 状態の反映
 
+T-403 で決めた、世界の状態（`web/src/state/`）です。型は `web/src/protocol/index.ts`（T-301）のものを使います。ストアは届いた値を写すだけで、Leader や Commit の結果を決めません（[ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md)）。
+
 ```ts
+// web/src/state/world.ts（Readonly は省略）
+type ClockView = { simTime; speed; paused; endsAt; allowedSpeeds; receivedAt }; // receivedAt は performance.now()
+type StageStatic = {                     // snapshot.stage から作る。イベントでは変わらない
+  title; islands: Record<number, Island>; islandIds; routes: Record<string, Route>; routeIds; resources;
+};
+type FerryView = Ferry & { brokenUntil: number | null };
 type World = {
-  stage: StageMeta;
-  clock: { simTime: number; speed: number; paused: boolean; receivedAt: number };
-  islands: Record<IslandId, IslandView>;
-  routes: Record<RouteId, RouteView>;
-  ferries: Record<FerryId, FerryView>;
-  letters: Record<LetterId, LetterView>;
-  requests: Record<RequestId, RequestView>;
-  nodes: Record<IslandId, NodeView>;
-  score: ScoreView;
+  session; phase; clock: ClockView; stage: StageStatic;
+  islandStates: Record<number, IslandState>;  // 満足度など（stage に無い ID でも持つ）
+  routeStates: Record<string, RouteState>;    // 嵐（stage に無い ID でも持つ）
+  ferries: Record<string, FerryView>; ferryIds;
+  letters: Record<number, Letter>;            // 港・船・中継倉庫にある手紙だけ
+  requests: Record<string, Request>; requestIds; // requestIds は出てきた順
+  nodes: Record<number, NodeSummary>;
+  score: Score;
+  forecasts: ForecastView[];       // 嵐の予報（4 つの一覧はどれも古い順）
+  notices: NoticeView[];           // notice の key・params をそのまま持つ
+  letterExits: LetterExit[];       // 配達・破棄で消えた手紙（消える直前の値）
+  leaderChanges: LeaderChange[];   // node.leader_elected・node.stepped_down
+  lastEventSeq: number;            // 最後に当てはめたイベントの seq
 };
 
-function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest でテストする
+// web/src/state/applyEvent.ts（純粋な関数。Vitest でテストする）
+function worldFromSnapshot(snapshot: Snapshot, receivedAt: number): World;
+function applyEvent(world: World, event: ServerEvent): World;
+function applyEvents(world: World, events: readonly ServerEvent[]): World;
+function withClock(world: World, clock: Clock, receivedAt: number): World;
 ```
 
-- `snapshot` を受け取ったら丸ごと置き換え、`events` を受け取ったら順に `applyEvent` する
-- イベントの `seq` に抜けがあれば、サーバーにスナップショットを要求する（`cmd.sync`）
+- `snapshot` を受け取ったら `worldFromSnapshot` で丸ごと置き換える（`lastEventSeq = lastSeq`。前より `lastSeq` が小さくても置き換える）。`letters` には `delivered`・`dropped` の手紙を入れない。同じ ID は後の値を使う
+- `events` を受け取ったら `applyEvents` で順に当てはめ、時計は `withClock` で入れる（`allowedSpeeds` は snapshot の値を保つ）。`seq <= lastEventSeq` のイベントは読み飛ばし、同じオブジェクトを返す（重複・再接続でもう一度流れてくる分）
+- `seq` の抜けの検出と `cmd.sync` は WS クライアント（T-402・[06-protocol.md §10](./06-protocol.md)）の役目で、`applyEvent` は抜けがあってもそのまま当てはめる
+- 知らない `type`（[06-protocol.md §8](./06-protocol.md)）と、無い手紙・船・依頼を指すイベントは、`lastEventSeq` だけを進める（例外を投げない）
+- **構造の共有**: 引数を書き換えず、変わらなかった部分は前と同じオブジェクトを返す。変わった `Record`・配列・要素だけを作り直す（zustand のセレクターが関係のない変化で描き直さないため。NFR-01）
+- 一覧は末尾に足し、`WORLD_LIMITS`（`forecasts` 20・`notices` 50・`letterExits` 50・`leaderChanges` 20。画面のための値）を超えたら古いものから捨てる
+
+| イベント | 当てはめ方 |
+|---|---|
+| `phase.changed` | `phase` を入れる |
+| `letter.created` | `letters` に入れる（`delivered`・`dropped` なら入れない）。船の上なら `cargo` の末尾に足す |
+| `letter.moved` | `loc` を入れる。前が船の上なら `cargo` から外し、新しく船の上なら末尾に足す。`delivered`・`dropped` なら `letters` から消す |
+| `letter.delivered`・`letter.dropped` | `letters` から消し（船の上なら `cargo` からも外す）、`letterExits` に足す |
+| `letter.stale` | `raft.stale = true`（依頼書・すでに古いものは無視） |
+| `ferry.departed` | `sailing`・`from`・`to`・`departAt`・`arriveAt` を入れ、`islandId` を消す |
+| `ferry.arrived` | `docked`・`islandId`・`readyAt` を入れ、`from`・`to` を消し、`departAt`・`arriveAt` を 0 にする（停泊中の船の snapshot と同じ形） |
+| `ferry.broken`・`ferry.repaired` | `brokenUntil` を `until`・`null` にする |
+| `route.blocked`・`route.unblocked` | `routeStates` の `blockedUntil` を `until`・`null` にする。`route.blocked` では `at <= t` の予報を消す |
+| `forecast`・`notice`・`node.leader_elected`・`node.stepped_down` | それぞれの一覧に足す（役割は `node.state` で変わる） |
+| `node.state`・`island.updated` | `nodes`・`islandStates` の要素を置き換える（無ければ足す） |
+| `request.created`・`request.updated` | 依頼を入れる（初めての ID は `requestIds` の末尾に足す）・`status`・`expired`・`result` を入れる |
+| `score.updated` | `total`・`successes`・`criticalSecured` を入れる（`target` は変えない） |
+| `ledger.applied` | 無視（台帳の中身は `node.detail` で見る） |
+
+- `cargo` は積んだ順で、`letter.*` のイベントから保つ（`cargo` を持つ船が無ければ手紙の `loc` だけを変える）
+- 航行中の船の `readyAt` はイベントに無いので、到着の `ferry.arrived` まで出航前の値のまま。表示に使うのは停泊中だけにする
+
+**ストア**（`web/src/state/store.ts`。zustand 5 の `createStore`、ミドルウェアは使わない）
+
+- アプリに 1 つの `gameStore` と、React のフック `useGameStore(selector)`。テストは `createGameStore()` で自分のストアを作る
+- 状態は `world`（snapshot を受けるまで `null`）・`roundResult`・`nodeDetail`・`selection`（`{ islandId, ferryId }`。マップ・島の詳細・フェリー操作が共有する選択）
+- 操作の関数 `applySnapshot(snapshot, receivedAt)`・`applyEvents(clock, events, receivedAt)`・`setRoundResult`・`setNodeDetail`・`selectIsland`・`selectFerry`・`reset` は `this` を使わず、ストアの寿命の間同じ関数。WS クライアント（T-402）の `onSnapshot`・`onEvents` にそのまま渡せる
+- `applyEvents` は `world` が `null` なら何もしない。そうでなければ 1 回の `set` にまとめる（イベントが 0 件でも時計は進める）。`applySnapshot` は、選んでいる島・船が新しい `world` に無ければ選択を外す。`selectIsland`・`selectFerry` は無い ID を無視し、同じ値では購読者に知らせない
+- ストアは WS・コマンド・ブラウザの保存領域に触れない。画面ごとの UI の状態（エンジニアモードの表示など）と設定（§13.7）はストアに入れない
+
+**選択の関数**（`web/src/state/selectors.ts`）
+
+- `estimateSimTime(clock, now)`（§13.3）・`lettersAtPort`（ID の昇順）・`lettersOnFerry`（`cargo` の順）・`portPiles`（宛先ごとの山。`to` の昇順）・`leaderId`（`role` が `leader` のうち `term` が最大、同じなら ID の小さいもの）
+- どれも呼ぶたびに新しい配列を返す。React では `useGameStore((s) => s.world)` で `world` を取り、`useMemo` の中で呼ぶ（セレクターの中で呼ぶと毎回違う値になり、描き直しが止まらない）。PixiJS は `gameStore.getState().world` で毎フレーム呼んでよい
 
 ### 13.3 描画とアニメーション
 
 - 船の位置はサーバーから送られてこない。`departAt` / `arriveAt` と、クライアントで推定したゲーム内時刻から補間する
-  - 推定ゲーム内時刻 = `clock.simTime + (performance.now() − clock.receivedAt) × speed`（一時停止中は進めない）
-- PixiJS のティッカーは、毎フレーム zustand のストアを直接読む（`useStore.getState()`）。React の再描画は経由しない
+  - 推定ゲーム内時刻 = `clock.simTime + (performance.now() − clock.receivedAt) × speed`（一時停止中は進めない）。`estimateSimTime(clock, performance.now())`（`web/src/state/selectors.ts`）で求める
+- PixiJS のティッカーは、毎フレーム zustand のストアを直接読む（`gameStore.getState()`（`web/src/state/store.ts`））。React の再描画は経由しない
 - 手紙は島ごとに「宛先別の山」として描き、数をバッジで表示する。1 通ずつのアイコンは島のパネル（DOM）に出す
 - 手紙の種類は**色と形の両方**で区別する（[04-game-design.md §2](./04-game-design.md)）
 
@@ -956,7 +1009,7 @@ T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.
 | （重ねて表示） | `DemoKeys`（`web/src/ui/demo/DemoKeys.tsx`） | T-411 |
 | （重ねて表示） | `TutorialOverlay`（`web/src/app/tutorial/TutorialOverlay.tsx`、`stageId` を受ける） | T-409 |
 
-WS の接続と、ラウンドの終わりで `onRoundEnd` を呼ぶのは T-402・T-403 が `GameScreen` に足します。セッションの作成（`StageSelection.session` を入れること）は T-413 です。
+WS の接続（T-402 の `createGameConnection`）とストア（T-403 の `gameStore`）を `GameScreen` につなぎ、`round.result` で `onRoundEnd` を呼ぶのは、後続のタスクです。セッションの作成（`StageSelection.session` を入れること）は T-413 です。
 
 **ルーターのライブラリを使わない理由**
 
