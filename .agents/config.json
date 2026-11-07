@@ -21,5 +21,9 @@
   },
   "shared_append_files": ["CLAUDE.md", "docs/README.md", "docs/adr/README.md", "docs/08-implementation-plan.md", "docs/02-architecture.md", "docs/03-design-doc.md", "docs/04-game-design.md", "docs/06-protocol.md", "docs/07-data-spec.md"],
   "protected_paths": [".github/workflows/**", ".github/workflow-sources/**", ".github/rulesets/**", ".agents/config.json", ".claude/settings.json", ".claude/hooks/**", ".claude/agents/**", "tools/agentctl/**", "scripts/agents/**"],
-  "dev_slots": 15
+  "dev_slots": 15,
+  "github_app": {
+    "app_id": 5659452,
+    "key_path": "~/.config/raft-game/agent-app.pem"
+  }
 }

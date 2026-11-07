@@ -74,6 +74,18 @@
   - PC が動いている間しか開発が進まない
   - Codex が使えない環境では、レビューが Claude Code だけになり、実装と同じ系統のモデルでのレビューになる
 
+## 追記（2026-11-08）: AI の役割の GitHub の操作を、AI 用の GitHub App のトークンにする（#176・#282）
+
+オーナーと AI が 1 つのトークン（1 時間に 5,000 回）を共有していたため、API の上限に毎時間達するようになった。オーナーは #176 で、AI 用の GitHub App（App ID `5659452`）を作って `K-Kizuku/raft-game` にインストールし、秘密鍵をリポジトリの外（`~/.config/raft-game/agent-app.pem`、`chmod 600`）に置いた。案 D と違い、App はマージの実行者を分けるためではなく、**API の上限を分けるため**に使う。動かす場所はローカル PC のままで、App のサーバーは要らない。
+
+- Worker と Orchestrator（役割が `worker`・`orchestrator`）の `gh`・`agentctl` は、App のインストールのトークン（上限はオーナーと別の 1 時間に 5,000 回）を使う。トークンは `scripts/agents/lib.sh` が秘密鍵から JWT（RS256、`openssl`）を作って得て、`~/.config/raft-game/` にキャッシュし、作ってから 50 分で作り直す
+- Worker は 1 時間を超えて動くことがあるので、`spawn-worker.sh` が `gh` のラッパー（`scripts/agents/gh-app.sh`）を Worker の PATH の先頭に置き、`gh` を呼ぶたびに有効なトークンを入れる。lib.sh の `agentctl` も、呼ぶたびにトークンを子にだけ渡す
+- `merge.sh` と `review.sh` は今までどおりオーナーのトークンを使う（マージの実行者と、Merge Gate の C5 の `trusted_authors` が見るレビュー記録の作者を変えない）。Worker の `git push` も今までどおり SSH
+- 鍵がない・権限が 600 より広い・トークンを作れない（App が未インストール・時計のずれ）ときは、理由を標準エラーに 1 行出して、オーナーのトークンに戻る
+- トークンと鍵の中身は、標準出力・ログ・PR に出さない。秘密鍵はコミットしない
+
+受け入れるリスク: AI とオーナーは同じ PC で動くので、AI はオーナーの認証情報（`gh` のログイン・SSH の鍵）にも手が届く。マージの実行者の制限が疑似的であることは変わらない（上の「結果」）。App の名前（`<アプリのスラッグ>[bot]`）を `trusted_authors` に足すか、Worker の push を HTTPS と App のトークンにそろえるか、役割ごとに App を分けるかは、まだ決めていない。
+
 ## 差し替えるときの影響範囲
 
 [docs/agents/](../agents/README.md)、[.agents/config.json](../../.agents/config.json)、[.claude/settings.json](../../.claude/settings.json)・`.claude/hooks/`・`.claude/agents/`、`scripts/agents/`、`scripts/github/`、`.github/rulesets/`・`.github/workflow-sources/`、`tools/agentctl/`、[CLAUDE.md](../../CLAUDE.md)。

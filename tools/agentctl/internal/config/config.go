@@ -72,6 +72,16 @@ type Merge struct {
 	RequireUpToDate *bool `json:"require_up_to_date"`
 }
 
+// GithubApp は AI の役割（Worker・Orchestrator）が GitHub の操作に使う GitHub App の設定（Issue #282）。
+// scripts/agents/lib.sh が、秘密鍵から JWT を作ってインストールのトークンを得るのに使う。
+// 秘密鍵そのものはリポジトリの外に置き、ここにはパスだけを書く。
+type GithubApp struct {
+	// AppID は GitHub App の App ID（正の整数）。
+	AppID int64 `json:"app_id"`
+	// KeyPath は秘密鍵（PEM）のパス。先頭の「~/」はホームディレクトリ。
+	KeyPath string `json:"key_path"`
+}
+
 // Config は `.agents/config.json` の内容。
 type Config struct {
 	Version        int      `json:"version"`
@@ -86,6 +96,8 @@ type Config struct {
 	SharedAppendFiles []string `json:"shared_append_files"`
 	ProtectedPaths    []string `json:"protected_paths"`
 	DevSlots          int      `json:"dev_slots"`
+	// GithubApp は省略できる（省略すると AI の役割もオーナーのトークンを使う）。
+	GithubApp *GithubApp `json:"github_app,omitempty"`
 }
 
 // Parse は JSON を読み、検証する。未知のキーはエラーにする。
@@ -221,6 +233,21 @@ func (c *Config) Validate() error {
 	for _, p := range c.SharedAppendFiles {
 		if strings.TrimSpace(p) == "" {
 			add("shared_append_files に空の値がある")
+		}
+	}
+
+	if a := c.GithubApp; a != nil {
+		if a.AppID <= 0 {
+			add("github_app.app_id は正の整数にする（%d）", a.AppID)
+		}
+		kp := strings.TrimSpace(a.KeyPath)
+		switch {
+		case kp == "":
+			add("github_app.key_path が空")
+		case kp != a.KeyPath || strings.ContainsAny(a.KeyPath, "\n\r"):
+			add("github_app.key_path の前後に空白や改行を入れない（%q）", a.KeyPath)
+		case !strings.HasPrefix(a.KeyPath, "/") && !strings.HasPrefix(a.KeyPath, "~/"):
+			add("github_app.key_path は絶対パスか「~/」で始まるパスにする（%q）", a.KeyPath)
 		}
 	}
 
