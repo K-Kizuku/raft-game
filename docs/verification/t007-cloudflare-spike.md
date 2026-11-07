@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-1 の準備中。認証と OpenSSL を確認。契約一覧に Workers Paid がなく、Docker の linux/amd64 実行と Go 1.26 以上のツールチェーンを追加確認する。workers.dev と #134 のマージも待ち。
+- 状態: H-1 の準備中。認証・OpenSSL・Go 1.26.9 の取得と起動・linux/amd64 コンテナの実行に成功。Workers Paid の契約と workers.dev は未確認。#134 のマージ後にスパイクのビルドを確認する。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -16,7 +16,7 @@
 
 | 手順 | 状態 | 確認できたこと / 残り |
 |---|---|---|
-| H-1 準備 | 途中 | Node・pnpm・cf、Docker daemon、OAuth、OpenSSL を確認。契約一覧に Workers Paid がない。linux/amd64 の実行と Go 1.26 以上の利用可否は未確認。workers.dev も未確認。#134 のマージ後に依存のインストールと check.sh を確認する |
+| H-1 準備 | 途中 | Node・pnpm・cf、Docker daemon、OAuth、OpenSSL、Go 1.26.9、linux/amd64 の実行を確認。契約一覧に Workers Paid がなく、workers.dev も未確認。#134 のマージ後に依存のインストールと check.sh を確認する |
 | H-2 トークンの準備 | 未実施 | 測定コードが main に入ってから実施する |
 | H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
 | H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
@@ -113,8 +113,8 @@ pnpm -C web exec cf auth whoami
 |---|---|---|
 | Workers の有料プラン | `cf accounts subscriptions get` の結果で Workers の契約を確認。権限不足や不明な結果なら、ダッシュボードの Workers の契約表示で補足する | 一覧の取得に成功。Workers Paid は含まれない。ダッシュボードで最終確認する |
 | workers.dev のサブドメイン | 対象アカウントの Workers & Pages に表示される `<サブドメイン>.workers.dev` を読む | 未確認 |
-| linux/amd64 のビルド環境 | `docker buildx inspect` の Platforms を確認。実際のスパイクのイメージのビルド・実行は #134 の check.sh で確認する | Platforms に linux/amd64 がない。小さい既存イメージで実行を追加確認する |
-| ローカルの Go | `go version`。#134 の仕様の go.mod は `go 1.26`。測定用のローカル実行に使えるツールチェーンか確認する | 既定は go1.25.5。1.26 以上のツールチェーンの実行を追加確認する |
+| linux/amd64 のビルド環境 | `docker buildx inspect` の Platforms を確認。実際のスパイクのイメージのビルド・実行は #134 の check.sh で確認する | Platforms にはないが、alpine:3.22 を linux/amd64 で実行して x86_64 が返った。スパイクのビルドは未確認 |
+| ローカルの Go | `go version`。#134 の仕様の go.mod は `go 1.26`。測定用のローカル実行に使えるツールチェーンか確認する | 既定は go1.25.5。コマンド単位で指定した go1.26.9 の取得・起動に成功 |
 | トークン生成用の OpenSSL | `openssl version`。この段階ではシークレットを生成しない | OpenSSL 3.4.0 の起動を確認 |
 | ユーザーの手元のコミット | `git rev-parse HEAD`。GitHub で確認した main の SHA と区別して記録する | 31d8b909d620c35c252e2108aa753eab0fa5d8a1 |
 
@@ -172,6 +172,47 @@ docker run --rm --platform linux/amd64 alpine:3.22 uname -m
 Docker の確認用コンテナは `--rm` で実行終了時に消える。取得した `alpine:3.22` のイメージは残り得るので、測定用資源の後片付けとは区別する。スパイクのイメージのビルド・実行確認と性能測定は未実施。
 
 参考: [Containers の提供プラン](https://developers.cloudflare.com/containers/)、[Workers の料金](https://developers.cloudflare.com/workers/platform/pricing/)、[Docker のエミュレーション](https://docs.docker.com/build/building/multi-platform/)。
+
+## 2026-11-07: Go 1.26.9 と linux/amd64 の実行確認に成功
+
+共有されたプロンプトの開始時刻は 14:57:59。ユーザーが以下を実行した。
+
+```fish
+env GOTOOLCHAIN=go1.26.9 go version
+docker run --rm --platform linux/amd64 alpine:3.22 uname -m
+```
+
+### 実行結果
+
+```text
+go: downloading go1.26.9 (darwin/arm64)
+go version go1.26.9 darwin/arm64
+Unable to find image 'alpine:3.22' locally
+3.22: Pulling from library/alpine
+710f3da1112f: Pull complete
+Digest: sha256:bfe7ceb9f09ec0566c48fb93356e45a47a00be5a1dd14fa5b909e7709c66b034
+Status: Downloaded newer image for alpine:3.22
+x86_64
+```
+
+| 確認事項 | 判定 |
+|---|---|
+| Go 1.26 系の取得と起動 | go1.26.9 darwin/arm64 のダウンロードと起動に成功 |
+| linux/amd64 コンテナの取得と実行 | alpine:3.22 の pull に成功し、uname -m は x86_64 を返した |
+| Docker の設定変更 | 今回の実行確認のための変更は不要。builder の Platforms 表示だけで実行不可とは判定しない |
+| スパイクのイメージのビルド・実行 | 未実施。#134 のマージ後に check.sh とローカル動作確認で調べる |
+| Go の既定バージョン | env によるコマンド単位の指定なので、既定を 1.26.9 に変更したとは扱わない |
+
+後続のローカルの Go コマンドは、必要に応じて同じ `env GOTOOLCHAIN=go1.26.9` を付ける。スクリプトが Go を呼ぶ場合はスクリプトにもこの環境変数を渡す。実装された go.mod・README に別の指定がある場合は、実行前に整合を確認する。
+
+確認用の alpine:3.22 は今回初めてローカルに取得された。コンテナは `--rm` により終了時に削除されるが、イメージの削除はまだ実行していない。上記 digest は pull の出力として記録し、amd64 専用のイメージ manifest の digest とまでは断定しない。
+
+### 次に必要な確認
+
+- 対象アカウントの Workers Paid の契約状態。前回の契約一覧には Workers Paid がなく、有効化したとの報告もまだない。
+- 対象アカウントの workers.dev のサブドメイン。
+
+この 2 点が確認できれば、#134 のコードが必要になる前の環境確認は一通りそろう。H-1 全体の完了には、マージ済みのスパイクでの依存のインストールと check.sh の成功が必要。
 
 ## 測定前に確定・確認する事項
 
