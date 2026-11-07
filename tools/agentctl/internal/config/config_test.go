@@ -142,13 +142,13 @@ func TestRequireUpToDate(t *testing.T) {
 	}
 }
 
-// review.max_rounds（Issue #240）は、リポジトリの設定では 2、書かなければ DefaultMaxRounds（2）。
+// review.max_rounds（Issue #240）は、リポジトリの設定では 1（Issue #336）、書かなければ DefaultMaxRounds（2）。
 func TestMaxRounds(t *testing.T) {
 	c, err := Load(repoConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Review.MaxRounds != 2 || c.Review.MaxReviewRounds() != 2 {
+	if c.Review.MaxRounds != 1 || c.Review.MaxReviewRounds() != 1 {
 		t.Errorf("リポジトリの設定の max_rounds = %d（MaxReviewRounds %d）", c.Review.MaxRounds, c.Review.MaxReviewRounds())
 	}
 	c, err = Parse(mutate(t, func(m map[string]any) { delete(review(m), "max_rounds") }))
