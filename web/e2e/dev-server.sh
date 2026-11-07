@@ -20,7 +20,7 @@ mkdir -p "$(dirname "$log")"
 # show_tail <理由>: ログの末尾を標準エラーに出す。
 show_tail() {
   {
-    echo "e2e: 開発のサーバー: $1（ログ: $log）"
+    echo "e2e: 開発のサーバー: ${1}（ログ: ${log}）"
     echo "----- ログの末尾 -----"
     tail -n 40 "$log"
     echo "----------------------"
@@ -35,11 +35,8 @@ ready() {
 stopping=0
 was_ready=0
 pid=""
-on_stop() {
-  stopping=1
-  if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null || true; fi
-}
-trap on_stop TERM INT
+# 止められたら印を付け、子（scripts/dev-env.sh）に TERM を送る（子は後始末をしてから終わる）。
+trap 'stopping=1; if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null || true; fi' TERM INT
 
 VITE_GAME_MOCK=off DEV_BACKEND=standalone bash "$root/scripts/dev-env.sh" dev >>"$log" 2>&1 &
 pid=$!
@@ -57,6 +54,6 @@ if [ "$stopping" = 1 ]; then
   if [ "$was_ready" = 0 ]; then show_tail "準備ができる前に止められた"; fi
   exit 0
 fi
-show_tail "起動に失敗した（終了コード $rc）"
+show_tail "起動に失敗した（終了コード ${rc}）"
 if [ "$rc" = 0 ]; then rc=1; fi
 exit "$rc"

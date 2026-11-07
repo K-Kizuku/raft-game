@@ -2,4 +2,4 @@
 .dev.vars
 .dev.vars.*
 # E2E テスト（T-506）のスクリーンショット・結果・開発のサーバーのログ
-e2e/artifacts/
+/e2e/artifacts
