@@ -1039,5 +1039,109 @@
       }
     }
   ],
-  "excerpts": []
+  "excerpts": [
+    {
+      "id": "izu-cancellation-2020",
+      "region": "伊豆諸島地域",
+      "field": "MARITIME_TRANSPORT",
+      "quote": "令和2(2020)年利島17%、御蔵島・青ヶ島41%",
+      "provenance": "derived",
+      "note": "令和2年の定期貨客船の欠航率（利島 17%、御蔵島 41%、青ヶ島 41%）。× 10 で欠航の確率（‰）にする（データ仕様 §4.4）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "izu-hachijo-fruit-lemon",
+      "region": "伊豆諸島地域",
+      "field": "LOCAL_INDUSTRY_TOURISM",
+      "quote": "八丈フルーツレモン",
+      "provenance": "fact",
+      "note": "八丈島の郵便局長の名前の由来（ゲームデザイン §7.3）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "izu-helicommuter",
+      "region": "伊豆諸島地域",
+      "field": "MARITIME_TRANSPORT",
+      "quote": "青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航",
+      "provenance": "derived",
+      "note": "島どうしのつながり（データ仕様 §4.5）。ヘリコプターの区間で、船の航路そのものではない",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "izu-ship-names",
+      "region": "伊豆諸島地域",
+      "field": "PORTS",
+      "quote": "平成26(2014)年にあおがしま丸、橘丸、フェリーあぜりあ、令和2(2020)年に新さるびあ丸、セブンアイランド結、令和4(2022)年にくろしお丸が就航",
+      "provenance": "fact",
+      "note": "船の名前（データ仕様 §5.5）。計画書に記載された船名を使用しており、運航会社とは関係ありません",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "izu-typhoon-2013",
+      "region": "伊豆諸島地域",
+      "field": "DISASTER_LAND_CONSERVATION",
+      "quote": "平成25年台風26号による大島町の被害",
+      "provenance": "fact",
+      "note": "嵐のイベントの題材（Stage 3・demo-izu）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "nagasaki-typhoon",
+      "region": "離島振興対策実施地域",
+      "field": "NATURAL_CLIMATE_FEATURES",
+      "quote": "台風等の自然災害の影響を受けやすい",
+      "provenance": "fact",
+      "note": "嵐のイベントの題材（Stage 2・demo-goto）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "nagasaki-world-heritage",
+      "region": "離島振興対策実施地域",
+      "field": "LOCAL_INDUSTRY_TOURISM",
+      "quote": "世界遺産登録された「長崎と天草地方の潜伏キリシタン関連遺産」",
+      "provenance": "fact",
+      "note": "島の紹介文（Stage 2・demo-goto）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "setouchi-climate",
+      "region": "小豆島地域",
+      "field": "NATURAL_CLIMATE_FEATURES",
+      "quote": "温暖、小雨の典型的な瀬戸内式気候",
+      "provenance": "fact",
+      "note": "嵐のない穏やかな海のチュートリアルの紹介文（Stage 1）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "setouchi-olive",
+      "region": "小豆島地域",
+      "field": "LOCAL_INDUSTRY_TOURISM",
+      "quote": "オリーブ製品",
+      "provenance": "fact",
+      "note": "小豆島の郵便局長の名前の由来（ゲームデザイン §7.3）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "setouchi-takamatsu-naoshima-teshima-minutes",
+      "region": "小豆島地域",
+      "field": "MARITIME_TRANSPORT",
+      "quote": "高松~直島~豊島(22.6km・35分",
+      "provenance": "derived",
+      "value": 35,
+      "unit": "分",
+      "note": "高松発の便の全体の所要時間。豊島–直島の航行時間の上限に使う（35 × 150 = 5250 ms、データ仕様 §4.3）",
+      "source": "mlit-ritou-2026"
+    },
+    {
+      "id": "setouchi-teshima-tonosho-minutes",
+      "region": "小豆島地域",
+      "field": "MARITIME_TRANSPORT",
+      "quote": "豊島~小豊島~土庄(8km・25分",
+      "provenance": "derived",
+      "value": 25,
+      "unit": "分",
+      "note": "小豊島に寄る便の全体の所要時間。小豆島–豊島の航行時間に使う（25 × 150 = 3750 ms、データ仕様 §4.3）",
+      "source": "mlit-ritou-2026"
+    }
+  ]
 }
