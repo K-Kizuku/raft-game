@@ -15,6 +15,10 @@ type Input struct {
 	Statuses []Status `json:"statuses"`
 	// Comments は PR のコメント（GET /issues/{n}/comments の全ページ）。
 	Comments []Comment `json:"comments"`
+	// Reviews は PR のレビュー（GET /pulls/{n}/reviews の全ページ）。
+	Reviews []PullReview `json:"reviews"`
+	// ReviewComments は PR の行コメント（GET /pulls/{n}/comments の全ページ）。
+	ReviewComments []ReviewComment `json:"review_comments"`
 	// Compare は GET /compare/{base}...{head} の結果。
 	Compare *Compare `json:"compare"`
 }
@@ -77,6 +81,36 @@ type Comment struct {
 	Body      string `json:"body"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+// PullReview は PR のレビュー。
+type PullReview struct {
+	ID          int64  `json:"id"`
+	Author      string `json:"author"`
+	CommitID    string `json:"commit_id"`
+	Body        string `json:"body"`
+	SubmittedAt string `json:"submitted_at"`
+}
+
+// ReviewComment は PR の行コメント。
+type ReviewComment struct {
+	ID       int64  `json:"id"`
+	Author   string `json:"author"`
+	CommitID string `json:"commit_id"`
+	// OriginalCommitID は、コメントを書いたときの SHA（GitHub は commit_id を新しいコミットへ付け替えることがある）。
+	OriginalCommitID string `json:"original_commit_id,omitempty"`
+	Path             string `json:"path"`
+	Line             int    `json:"line"`
+	Body             string `json:"body"`
+	CreatedAt        string `json:"created_at"`
+}
+
+// ReviewedSHA は、行コメントが対象にした SHA（original_commit_id があればそれ、なければ commit_id）。
+func (c ReviewComment) ReviewedSHA() string {
+	if c.OriginalCommitID != "" {
+		return c.OriginalCommitID
+	}
+	return c.CommitID
 }
 
 // Compare はベースとの比較。
