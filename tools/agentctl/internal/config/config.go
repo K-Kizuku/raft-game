@@ -48,6 +48,20 @@ type Review struct {
 	// CarryOverOnBaseMerge は、HEAD より前の SHA のレビュー記録を、そのあとが既定のブランチの取り込みだけで
 	// PR の自分の変更が同じときに引き継ぐこと（Merge Gate の C6。Issue #120）。既定は false。
 	CarryOverOnBaseMerge bool `json:"carry_over_on_base_merge"`
+	// MaxRounds は、merge-train.sh がレビューを依頼する回数の上限（Issue #240）。この回数以上のレビューを
+	// 受けた PR にはもう依頼せず、ci-ok が pass なら「強制マージ待ち」にする。書かない（0）なら DefaultMaxRounds。
+	MaxRounds int `json:"max_rounds"`
+}
+
+// DefaultMaxRounds は review.max_rounds を書かないときの値。
+const DefaultMaxRounds = 2
+
+// MaxReviewRounds は review.max_rounds（書かなければ DefaultMaxRounds）を返す。
+func (r Review) MaxReviewRounds() int {
+	if r.MaxRounds == 0 {
+		return DefaultMaxRounds
+	}
+	return r.MaxRounds
 }
 
 // Merge はマージに関する設定（Issue #239）。
@@ -194,6 +208,9 @@ func (c *Config) Validate() error {
 		if strings.TrimSpace(a) == "" {
 			add("review.codex_bot_authors に空の値がある")
 		}
+	}
+	if r.MaxRounds != 0 {
+		checkRange("review.max_rounds", r.MaxRounds, 1, 10)
 	}
 
 	for _, p := range c.ProtectedPaths {
