@@ -10,6 +10,7 @@ import type {
   WorkerDeps,
 } from "./ports.ts";
 import { createHandler } from "./router.ts";
+import { stageFixture } from "./test-stages.ts";
 
 const REQUEST_URL = new URL("https://self.example/api/sessions");
 
@@ -57,17 +58,7 @@ function makeFakes() {
     connect: async () => (calls.push("connect"), new Response("{}")),
   };
   const deps: WorkerDeps = {
-    stages: [
-      {
-        id: "stage1",
-        title: "t",
-        region: "r",
-        islands: 3,
-        ferries: 1,
-        durationMs: 1,
-        unlock: null,
-      },
-    ],
+    stages: [stageFixture({ id: "stage1", title: "t", durationMs: 1 })],
     security,
     costGuard,
     session,
