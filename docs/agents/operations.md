@@ -139,6 +139,49 @@ scripts/agents/merge.sh 34 --dry-run
 scripts/agents/merge.sh 34
 ```
 
+### マージの列と Worker の自動起動（#154）
+
+上の 1 周のうち、Worker の起動と、レビューの依頼からマージまでを、2 つのスクリプトで自動で回せる。どちらも Orchestrator だけが、メインの作業ツリーで使う（Worker・Reviewer が実行すると hooks が拒否する）。終わらずに回り続けるので、バックグラウンドで動かす。
+
+```bash
+scripts/agents/merge-train.sh
+```
+
+```bash
+scripts/agents/autospawn.sh
+```
+
+[merge-train.sh](../../scripts/agents/merge-train.sh)（マージの列。GitHub の merge queue は個人のアカウントのリポジトリで使えないための代わり）:
+
+- 引数がなければ、周ごとに開いた PR（ブランチ `agent/issue-<n>`）を PR 番号の小さい順に見つける。`PR:Issue` を並べて渡すと、その PR だけを前から順に扱う。`.agents/run/train/skip` に書いた PR 番号は飛ばす。PR の Issue は一度だけ `in-review` にする
+- 1 周で、前から順に Merge Gate を判定し、pass の最初の 1 つを、Issue を `ready-to-merge` にしてから `merge.sh` でマージする。マージしたら、メインの作業ツリーで `git pull --ff-only` を実行する（`.agents/config.json` などの変更を、`autospawn.sh` などの判定にすぐ反映するため）
+- 残りの PR は 1 歩ずつ進める
+
+| Merge Gate の結果 | 行うこと |
+|---|---|
+| C10 が fail | main の取り込みを依頼する（`PUT pulls/<PR>/update-branch`）。失敗（コンフリクト）は「止まった」。次の周で判定し直す |
+| C9 が fail | 「止まった」（コンフリクト） |
+| C6 が fail、または C6 が pass で C7 が fail | 「止まった」（`request_changes`・重大な指摘） |
+| C6 が pass でなく、C10 が pass | `review.sh` をバックグラウンドで起動する（PR ごとに 1 つまで。`.agents/run/train/review-<PR>.pid` で判定し、終わっていれば起動し直す） |
+| C2 が fail で、`ci-ok` が pass | 本文の `` - [ ] AC-n: CI（`ci-ok`）が通る `` の行だけを `[x]` にする（行の末尾の「（…結果待ち）」は外す） |
+
+- 止まった PR は、ログに理由を出して、新しい PR か修正を待つ（終わらない）。Orchestrator が「指摘・CI の失敗・Conflict への対応」で直す
+- 判定の使い回し: PR の HEAD・更新時刻・コメントの数・チェックの状態と、main の HEAD が前の周と同じなら、前の判定を使う（`agentctl gate` は引き継ぎの判定で REST の API を 10 回以上呼ぶため）
+- `agentctl gate` の結果が空・不正（API の上限など）のときは、その周はその PR に何もしない。`gh` が失敗しても止まらず、次の周で試す。`gh api rate_limit` の残りが 300 未満なら、戻る時刻まで休む
+- マージ済み・閉じた PR は列から外す（`merge.sh` がマージの後の処理で 0 以外を返したときも）
+
+[autospawn.sh](../../scripts/agents/autospawn.sh)（Worker の自動起動）:
+
+- 周ごとに `agentctl plan --json` の `ready` を出た順に、`capacity` の数まで `spawn-worker.sh <n> --background` で起動する。拒否された Issue（終了コード 4 など）は、その周は飛ばす
+- `deferred`（実装中の Issue と変更予定ファイルが重なる）は起動しない。`conflicts`・`deferred` の Issue と理由は、前の周と変わったときだけログに出す
+- 止めるには `.agents/run/autospawn.stop` を作る（次の周で終わる。始めるときと終わるときに消す）
+
+| 環境変数 | 既定 | 意味 |
+|---|---|---|
+| `AGENT_TRAIN_INTERVAL` | 180 | `merge-train.sh` の周の間隔（秒） |
+| `AGENT_TRAIN_CYCLES` | 0 | `merge-train.sh` がこの数の周で終わる（テスト用。0 は終わらない） |
+| `AGENT_AUTOSPAWN_INTERVAL` | 300 | `autospawn.sh` の周の間隔（秒） |
+
 ### 指摘・CI の失敗・Conflict への対応
 
 ```bash
