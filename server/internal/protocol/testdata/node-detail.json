@@ -1,0 +1,8 @@
+{
+  "id": 2, "role": "follower", "term": 3, "vote": 2, "lead": 2,
+  "commit": 18, "applied": 18, "lastIndex": 19,
+  "log": [ { "index": 19, "term": 3, "type": "normal", "summary": "firework.reserve stage2-0009 (中通島)", "committed": false } ],
+  "progress": [ { "id": 1, "match": 15, "next": 16, "state": "probe", "recentActive": false } ],
+  "ledger": { "firework:a": "stage2-0002", "stall:main": ["stage2-0001", "stage2-0005"] },
+  "electionEstimate": { "ticksSinceLeaderContact": 12, "note": "推定値" }
+}

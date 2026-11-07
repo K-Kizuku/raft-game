@@ -268,20 +268,27 @@ islands:
 
 ### 3.3 計画書から使う記述（`data/curated/` に抜き出すもの）
 
-| ステージ | 記述（計画書の項目） | 使い道 | 出典区分 |
-|---|---|---|---|
-| 1 | 小豆島地域の `MARITIME_TRANSPORT`：「豊島~小豊島~土庄(8km・25分貸客船1便/日)」「高松~直島~豊島(22.6km・35分3~4便/日)」 | 航路と航行時間（§4.3） | `derived` |
-| 1 | 小豆島地域の `NATURAL_CLIMATE_FEATURES`：「温暖、小雨の典型的な瀬戸内式気候」 | 嵐のない穏やかな海のチュートリアルの紹介文 | `fact` |
-| 2 | 長崎県（離島振興対策実施地域）の `NATURAL_CLIMATE_FEATURES`：「台風等の自然災害の影響を受けやすい」 | 嵐のイベントの題材 | `fact` |
-| 2 | 長崎県（離島振興対策実施地域）の `LOCAL_INDUSTRY_TOURISM`：「世界遺産登録された『長崎と天草地方の潜伏キリシタン関連遺産』」 | 島の紹介文 | `fact` |
-| 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「令和2(2020)年利島17%、御蔵島・青ヶ島41%」（定期貨客船の欠航） | 欠航のイベントの確率（§4.4） | `derived` |
-| 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター … が運航」 | 島どうしのつながり（どの島とどの島に航路を引くか）（§4.5） | `derived` |
-| 3 | 伊豆諸島地域の `PORTS`：「… あおがしま丸、橘丸、フェリーあぜりあ、… 新さるびあ丸、セブンアイランド結、… くろしお丸が就航」 | 船の名前（「計画書に記載された船名を使用しており、運航会社とは関係ありません」と注記する） | `fact` |
-| 3 | 伊豆諸島地域の `DISASTER_LAND_CONSERVATION`：「平成25年台風26号による大島町の被害」 | 嵐のイベントの題材 | `fact` |
+引用は実データの文字のまま（`~`・`(` `)`・`%`・`-` は半角）です。ステージ定義の `source.quote` には、この `quote` をそのまま書きます（§5.4・T-201）。
+
+| ステージ | `id`（`data/curated/` のファイル） | 項目（`region` の `field`） | 引用（`quote`） | 使い道 | 出典区分 |
+|---|---|---|---|---|---|
+| 1 | `setouchi-climate`（`setouchi.yaml`） | 小豆島地域の `NATURAL_CLIMATE_FEATURES` | `温暖、小雨の典型的な瀬戸内式気候` | 嵐のない穏やかな海のチュートリアルの紹介文 | `fact` |
+| 1 | `setouchi-teshima-tonosho-minutes`（`setouchi.yaml`） | 小豆島地域の `MARITIME_TRANSPORT` | `豊島~小豊島~土庄(8km・25分` | 小豆島–豊島の航行時間（§4.3）。`value: 25`・`unit: 分` | `derived` |
+| 1 | `setouchi-takamatsu-naoshima-teshima-minutes`（`setouchi.yaml`） | 小豆島地域の `MARITIME_TRANSPORT` | `高松~直島~豊島(22.6km・35分` | 豊島–直島の航行時間（§4.3）。`value: 35`・`unit: 分` | `derived` |
+| 1 | `setouchi-olive`（`setouchi.yaml`） | 小豆島地域の `LOCAL_INDUSTRY_TOURISM` | `オリーブ製品` | 小豆島の郵便局長の名前の由来（ゲームデザイン §7.3） | `fact` |
+| 2 | `nagasaki-typhoon`（`nagasaki.yaml`） | 長崎県（離島振興対策実施地域）の `NATURAL_CLIMATE_FEATURES` | `台風等の自然災害の影響を受けやすい` | 嵐のイベントの題材 | `fact` |
+| 2 | `nagasaki-world-heritage`（`nagasaki.yaml`） | 長崎県（離島振興対策実施地域）の `LOCAL_INDUSTRY_TOURISM` | `世界遺産登録された「長崎と天草地方の潜伏キリシタン関連遺産」` | 島の紹介文 | `fact` |
+| 3 | `izu-cancellation-2020`（`izu.yaml`） | 伊豆諸島地域の `MARITIME_TRANSPORT` | `令和2(2020)年利島17%、御蔵島・青ヶ島41%` | 欠航のイベントの確率（§4.4）。定期貨客船の欠航率 | `derived` |
+| 3 | `izu-helicommuter`（`izu.yaml`） | 伊豆諸島地域の `MARITIME_TRANSPORT` | `青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航` | 島どうしのつながり（どの島とどの島に航路を引くか）（§4.5） | `derived` |
+| 3 | `izu-ship-names`（`izu.yaml`） | 伊豆諸島地域の `PORTS` | `平成26(2014)年にあおがしま丸、橘丸、フェリーあぜりあ、令和2(2020)年に新さるびあ丸、セブンアイランド結、令和4(2022)年にくろしお丸が就航` | 船の名前（「計画書に記載された船名を使用しており、運航会社とは関係ありません」と注記する） | `fact` |
+| 3 | `izu-typhoon-2013`（`izu.yaml`） | 伊豆諸島地域の `DISASTER_LAND_CONSERVATION` | `平成25年台風26号による大島町の被害` | 嵐のイベントの題材 | `fact` |
+| 3・4 | `izu-hachijo-fruit-lemon`（`izu.yaml`） | 伊豆諸島地域の `LOCAL_INDUSTRY_TOURISM` | `八丈フルーツレモン` | 八丈島の郵便局長の名前の由来（ゲームデザイン §7.3） | `fact` |
 
 ### 3.4 抜き出しの形式 `data/curated/*.yaml`
 
 §3.3 の記述は、`data/curated/*.yaml` に出典（地域・項目・引用）付きで書きます（中身は T-206）。ETL は `data/curated/` の直下の `*.yaml` をファイル名の昇順で読み（サブディレクトリは見ない）、検証して `islands.json` の `excerpts` に出します。`*.yml` があればエラーにします（読み落としを防ぐため）。それ以外のファイル（`.gitkeep` など）は無視します。
+
+ファイルは地域（`region`）ごとに 1 つに分け、ファイル名の語幹を `id` の先頭に付けます（`setouchi.yaml`〔小豆島地域〕→ `setouchi-…`、`nagasaki.yaml`〔離島振興対策実施地域〕→ `nagasaki-…`、`izu.yaml`〔伊豆諸島地域〕→ `izu-…`）。
 
 ```yaml
 format: 1
@@ -355,6 +362,29 @@ p_i [ppm] = w_i × rateMilliPerMin × (slotMs / 1000) / 60
 - 発生時刻は区間内で `rng.IntN(slotMs)` によって決める
 - 種類は、ステージ定義の `random.kinds` の重みで選ぶ
 
+ランダムな依頼の引く順序（`game.PlanRequests`、T-202）:
+
+```text
+for k := 0; k*slotMs < durationMs; k++:          // 区間 k = [k*slotMs, (k+1)*slotMs)
+    for island := 1..N:                            // ノード ID の昇順
+        p := w_island * rateMilliPerMin * slotMs / 60000   // ppm。整数の割り算（切り捨て）
+        if rng.Int64N(1_000_000) < p:
+            at   := k*slotMs + rng.Int64N(slotMs)
+            kind := kinds の重みで選ぶ（x := rng.Int64N(Σweight)。kinds を順に見て、重みの累積が x より大きくなった最初の 1 つ）
+            if at <= durationMs: 依頼として足す（at > durationMs なら捨てる。引いた乱数はそのまま）
+```
+
+- 乱数は `rng("requests")`（`Sub(seed, "requests")`、[DesignDoc §9.1](./03-design-doc.md)）の 1 本だけで、ラウンドの開始の前（`New`）にすべて引く
+- 区間ごと・島ごとの 1 回目（発生の判定）は、島の重みが 0 でも必ず引く（ある島の設定を変えても、ほかの島の乱数がずれないようにするため）。発生するときだけ、続けて時刻と種類を引く
+- `rateMilliPerMin` が 0 なら乱数を 1 回も引かない。`rateMilliPerMin × slotMs` は 60,000,000 以下（`p ≤ 1,000,000`）
+- 浮動小数点を使わない
+
+台本と合わせた並べ方と ID の振り方:
+
+1. 台本の依頼（`requests.script`）を書いた順に並べ、その後ろにランダムな依頼を引いた順（区間の順・島の順）に並べる
+2. 全体を発生の時刻で**安定に**並べ替える。同じ時刻なら台本が先、ランダムは引いた順
+3. 並べた順に 1 から番号を振り、ID を `<stageId>-<番号を 4 桁以上で 0 埋め>`（例: `stage2-0007`）にする
+
 ### 4.3 所要時間から航行時間を決める
 
 計画書に所要時間が載っている航路は、次の式で航行時間を決めます（[A-06](./09-assumptions-and-open-questions.md#a-06)）。
@@ -388,7 +418,7 @@ rng("events").IntN(1000) < 欠航の確率 なら durationMs（10 秒）の間�
 
 ### 4.5 計画書の記述から島どうしのつながりを決める（Stage 3）
 
-伊豆諸島の計画書にある「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター（ヘリコプターによる乗客の定期輸送）が運航」という記述を、島どうしの航路の組み合わせに使います。
+伊豆諸島の計画書にある「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航」という記述を、島どうしの航路の組み合わせに使います。
 
 | 航路 | 根拠 | `travelMs`（ゲーム上の設定） |
 |---|---|---|
@@ -721,7 +751,7 @@ ferries:
 
 ### 5.6 読み込み（`internal/stage`）
 
-`server/internal/stage` は、ETL が作った `islands.json`（§3.1）とステージ定義（§5.2〜§5.5）を読んで検証し、整数だけで表した `Stage` を返します（T-201）。浮動小数点・実時間・乱数・goroutine を使わず、map の走査で出力やエラーの順序を決めません（`sim` と同じ規則。[DesignDoc §9.2](./03-design-doc.md)）。`sim` などリポジトリのほかのパッケージは import しません。
+`server/internal/stage` は、ETL が作った `islands.json`（§3.1）とステージ定義（§5.2〜§5.5）を読んで検証し、整数だけで表した `Stage` を返します（T-201）。浮動小数点・実時間・乱数・goroutine を使わず、map の走査で出力やエラーの順序を決めません（`sim` と同じ規則。[DesignDoc §9.2](./03-design-doc.md)）。`sim.Config` への変換（`simconfig.go` の `SimConfig`）だけが `sim`・`ferry`・`ledger` を import します。ほかのファイルは、リポジトリのほかのパッケージを import しません。`sim` などは `stage` を import しません。
 
 | 関数 | 役割 |
 |---|---|
@@ -729,6 +759,7 @@ ferries:
 | `Parse(name, data, islands)` | 1 つのステージ定義を読んで検証し（§5.4）、重み（§4.1）・警告・ハッシュを計算する。I/O をしない純粋な関数 |
 | `LoadDir(fsys, islandsPath, stagesDir)` | `io/fs.FS` から `islands.json` とディレクトリの直下の `*.yaml` を読み、ファイルをまたぐ検査（§5.4）をする。ステージはファイルの名前の順。呼び出し側が `os.DirFS` か `embed.FS` を渡す |
 | `Weights(values)` | 整数の最大剰余法で、合計 1000 の千分率の重みを計算する（§4.1） |
+| `SimConfig(st)` | 検証済みの `Stage` から `sim.New` に渡す `sim.Config` を作る。`raft.checkQuorum`・`raft.preVote` が `false` なら誤り（`cluster` は常に `true`。ADR-0007）。`relayCap`（P1）・依頼（T-202 が足す）・イベント・スコアなどは使わない |
 
 エラーは、ファイルごとの `*stage.Error`（ファイル名と、`Path`・説明の一覧）です。`LoadDir` は複数のファイルのエラーを `errors.Join` でまとめて返します。
 
@@ -750,7 +781,7 @@ stageHash = "sha256:" + hex( SHA-256( SHA-256(ステージの YAML のバイト�
 #### 後のタスクで扱うこと
 
 - `go:embed` での取り込みと `make sync-data`（`data/` を `server/internal/stage/embedded/` にコピーする）は、サーバー（T-302）と Dockerfile（T-306）で扱います。`embedded/` は `.gitignore` に入っていて CI では作らないので、`internal/stage` には `//go:embed` を書きません
-- `Stage` から `sim.Config` への変換は、T-106 のマージの後の別のタスクで作ります
+- 依頼の設定の変換は T-202 が `SimConfig` に足します
 
 ---
 

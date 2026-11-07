@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.3 |
+| 版 | v0.5 |
 | 更新日 | 2026-11-07 |
 | 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
 | 対象読者 | 実装者（サーバー・フロントエンド・インフラ）、レビュアー |
@@ -153,12 +153,25 @@ func (e *Engine) DrainEvents() []DomainEvent
 
 func (e *Engine) InputLog() []InputEntry // 成功したコマンドと適用した時刻（§10.1）
 func (e *Engine) TraceHash() [32]byte    // §10.2
+
+// 今の状態（再接続時などに送る全体の状態のうち Engine が持つ分）。状態を変えない。T-301 が protocol.Snapshot に変換する。
+func (e *Engine) Snapshot() Snapshot
+// 次に「プレイヤーに見せたい出来事」が起きる時刻。船の到着と依頼の発生（台本の出来事は T-204 が足す）。
+func (e *Engine) NextNotableAt() (SimTime, bool)
+
+// 入力ログ（§10.1）から Engine を作り直す（復元とリプレイ）。stageHash はステージのハッシュ。
+func Replay(cfg Config, stageHash string, in ReplayLog, opt Options) (*Engine, error)
 ```
 
 - `Phase` の `Intro` は `cmd.game.start` を待つ間（ステージ紹介）。この間の `RunUntil` は時刻を進めない（開会式はゲーム内時間を使わないため）
 - 開会式は `New` の中で計算し（決定的な計算なので結果は同じ）、そのイベント（`phase.changed`・`node.*`）は `cmd.game.start` を適用したときに出す。Leader が決まらないような設定の誤りは、`New` のエラーになる
-- `stage`（T-201）と `protocol`（T-301）ができるまでは、`sim` の中で定義した型（`Config`・`Command`・`Ack`・`DomainEvent`・`InputEntry`）で受け、返す。`stage.Stage` → `Config` の変換は T-201、`sim` の型 ⇔ `protocol` の型の変換は T-301 で作る
-- 後のタスクで次を足す: `Snapshot()`（再接続時などに送る全体の状態）と `NextNotableAt()`（次に「プレイヤーに見せたい出来事」が起きる時刻。デモ操作の「次の出来事まで進める」に使う）は T-106b、`NodeDetail(id)`（エンジニアモード用）は T-407、`Result()`（終了後のみ）は T-203、`Replay`（入力ログを最初から適用し直して同じ状態のエンジンを作る）は T-304
+- `stage`（T-201）と `protocol`（T-301）ができるまでは、`sim` の中で定義した型（`Config`・`Command`・`Ack`・`DomainEvent`・`InputEntry`）で受け、返す。`stage.Stage` → `Config` の変換は T-201 で作る。`sim` は自分の型のまま。`protocol` は同じ JSON の形の型を別に持ち、`protocol/simconv` が変換する。両者の JSON が一致することはテストで確かめる
+- `Config` の `Requests`（`game.RequestConfig`）は依頼の設定（ステージ定義の `requests.*`）。ゼロ値は依頼なしで、そのときは依頼のイベントも乱数の消費もない（§8）
+- `Snapshot` の `letters` は港と船の上の手紙だけ（ID の昇順）。`requests` は発生済みの依頼（ID の順。最後に出した `request.*` の値。`Intro` では空）。`nodes` は最後に出した `node.state` の値。`lastSeq` 以下のイベントを当てはめた状態と一致する
+- `letter.stale` は、ノードの Term が上がったとき、そのノードが送信元で港と船にある Raft の手紙のうち、新しく古くなったものを ID の昇順に 1 回だけ出す。各ノードの出力の処理の中で、役割の変化の後・手紙の前に出す
+- `cmd.ferry.autoload` は `Apply` のコマンドで、ゲームデザイン §3.4 の順に空きを埋める。入力ログには `{ferryId, to}` だけが入る（リプレイでも同じ手紙が選ばれる）
+- `NextNotableAt` は、航行中の船の到着（`DurationMs` 以下）と、まだ発生していない最初の依頼の時刻のうち小さい方。`FerryReady` を含めない。30 秒の上限と一時停止はセッションループ（§12.4）が持つ
+- 後のタスクで次を足す: `NodeDetail(id)`（エンジニアモード用）は T-407、`Result()`（終了後のみ）は T-203
 - Engine の誤り（`Process`・`PostRaft`・`Arrive`・`AdvanceTo`・`Push` のエラー、コードに対応しない `ferry` のエラー、台帳の結果の型の違い、テストモードの不変条件の違反）は panic する。正しく使えば起きない。セッションループ（T-303）が panic を回復し、そのセッションを `error`（`fatal`）で閉じる
 
 ---
@@ -301,6 +314,8 @@ type Node struct {
 
 `cluster` は `ledger` を import せず、`StateMachine` 越しに台帳を使います。`sim` が `*ledger.Ledger` を `StateMachine` に合わせる薄い包みを作って `NodeConfig.StateMachine` に渡します。台帳はノードごとに 1 つずつ持ちます（Raft の「状態機械の複製」そのもの）。V-2・V-3 の検査は、全ノードの台帳を比べて行います。
 
+読み取り用の口として、`Status()` のほかに `Log() ([]LogEntry, error)` を持ちます。ストレージにあるエントリ（index 1 から LastIndex まで）の複製を返し、Raft の状態とストレージを変えません。不変条件の検査（§11）と、エンジニアモード（T-407）が使います。
+
 ---
 
 ## 6. Ferry Transport（`internal/ferry`）
@@ -366,7 +381,7 @@ type Letter struct {
 
 **終わった手紙の片付け**: 配達済み・破棄した手紙は、`Transport.Reclaim` を呼ぶまで残り、`Letter` で引けます（ドメインイベントを作るため）。`sim.Engine` は、コマンド 1 つ・スケジューラのイベント 1 つの処理を終えてドメインイベントを作ったあとに `Reclaim` を呼びます。片付けの時点は操作の結果（手紙の ID・破棄・配達）に影響せず、手紙の ID は再利用しません。上の上限は、`Reclaim` の直後に `Transport` が持つ手紙の数にも当てはまります。
 
-**古い手紙**: 送信元の今の Term より Term が古い手紙も、規則に当てはまらない限り港に残します（実際のネットワークでも古いパケットは残るため）。エンジニアモードでは「古い手紙」のタグを付けて表示します。
+**古い手紙**: 送信元の今の Term より Term が古い手紙も、規則に当てはまらない限り港に残します（実際のネットワークでも古いパケットは残るため）。エンジニアモードでは「古い手紙」のタグを付けて表示します。送信元の Term が上がって古くなった手紙は、`letter.stale` で 1 回だけ知らせる（§4.3）。
 
 ### 6.3 フェリー
 
@@ -471,16 +486,32 @@ func (l *Ledger) Apply(index uint64, data []byte) Result
 
 ## 8. 依頼の処理（アプリケーション層、`internal/game`）
 
+依頼の処理は 2 つのパッケージに分けます（T-202）。
+
+- `internal/game`: 状態を持たない純粋な型と関数だけ。役場の判断（`Decide`）、状態の判定（`Track.Status`）、ラウンドの依頼の計画（`PlanRequests`）。I/O・時刻・乱数の生成を持たず、乱数は `*rand.Rand` を引数で受けます
+- `internal/sim`（`request.go`）: Engine の中で状態を持つ部分。依頼の帳簿・発生・`route`・再送・転送・適用の観察・状態の更新とイベント。提案（`propose`）・スケジューラ・港・ノードを Engine が持つためです
+
+依存の向きは `stage` → `sim` → `game` → `ledger` で、逆向きはありません。`game` は `sim`・`cluster`・`ferry`・`stage`・`go.etcd.io/raft/v3` を import しません。
+
+### 8.0 依頼の発生
+
+ラウンドのすべての依頼は、`New` の中で `game.PlanRequests` が発生の前に決めます（台本とランダム。ランダムは [データ仕様 §4.2](./07-data-spec.md) の式と引く順序で、乱数は `Sub(seed, "requests")` の 1 本だけ）。発生の後には乱数を使いません。
+
+- 台本の依頼（書いた順）の後ろにランダムな依頼（引いた順）を並べ、発生の時刻で安定に並べ替えます。同じ時刻なら台本が先です
+- 並べた順に 1 から番号を振り、ID を `<stageId>-<連番4桁>` にします（ID の順 = 発生の順）
+- 期限は、重要な資源（`resources[].critical`）なら `createdAt + deadlineMs.critical`、そうでなければ `createdAt + deadlineMs.normal` です
+- `cmd.game.start` で、依頼の順に `RequestSpawn`（§4.2）を積みます。ラウンドの終わり（`durationMs`）ちょうどの依頼も、`GameTimer` より先に発生します
+
 ### 8.1 島ごとの「役場」
 
-各島には、住民の依頼を代表の島へ届ける「役場」があります（ゲーム側のロジックで、Raft の外にあります）。
+各島には、住民の依頼を代表の島へ届ける「役場」があります（ゲーム側のロジックで、Raft の外にあります）。役場が読むのは、そのノードの `Status()` の役割（`Role`）と知っている Leader（`Lead`）だけで、Leader や Commit を決めません。
 
 ```text
 route(req, island):
     node = island のノード
     if node.role == Leader:
         err = node.rn.Propose(command(req))
-        if err == nil:            req.status = 審議中（初回のみ）
+        if err == nil:            req.status = 審議中
         if err == ErrProposalDropped: 次の RaftTick で route をやり直す
     else if node.lead != 0 (Leader を知っている):
         依頼書を作る（From = island, To = node.lead）→ island の港へ（規則 R6）
@@ -489,11 +520,26 @@ route(req, island):
         req.status = 送付待ち（代表が分からない）→ 次の RaftTick で route をやり直す
 ```
 
-- **依頼の発生時**: 依頼元の島で `route(req, origin)`
-- **依頼書が島 X に届いたとき**: `route(req, X)`。X が Leader でなければ、X が知っている Leader へさらに転送する（X の港に新しい依頼書を作る）
-- **再送**: 依頼元の島で、最後に送ってから `retryMs`（25 秒）経っても依頼元の台帳に適用されていなければ、`route(req, origin)` をやり直す。同じ `reqId` なので、二重に適用されても台帳が `duplicate` として無視する
+役場の判断（`game.Decide`）は次の表のとおりです。
 
-> Leader が提案したあと Commit される前に交代すると、そのエントリは新しい Leader によって上書きされ、消えることがあります。この場合、依頼は再送によって救われます。これも Raft の実際の振る舞いとして、エンジニアモードで観察できます。
+| 役割 | 知っている Leader（`Lead`） | 判断 |
+|---|---|---|
+| Leader | （どれでも） | `Propose` する。`ErrProposalDropped`（Leader の移譲中など）なら待つ |
+| Leader でない | `0`（PreCandidate・Candidate・CheckQuorum で退いた直後など） | 待つ |
+| Leader でない | 自分（ふつうは起きない） | 待つ |
+| Leader でない | そのほか | `Lead` へ依頼書を書く |
+
+- **依頼の発生時**: 依頼元の島で `route(req, origin)`
+- **依頼書が島 X に届いたとき**: `route(req, X)`。X が Leader でなければ、X が知っている Leader へさらに転送する（X の港に新しい依頼書を作る）。今の依頼書でない（古い）依頼書が届いても同じです
+- **待ち**: 待つときは、依頼書を作らず、再送のタイマーも積みません。(依頼, 島) の組を 1 つだけ覚え、RaftTick の処理の最後（全ノードの `Tick()` の後）に、覚えた順に `route` をやり直します
+- **再送**: 依頼元の島で、最後に送ってから `retryMs`（25 秒）経っても依頼元の台帳に適用されていなければ、`route(req, origin)` をやり直す。同じ `reqId` なので、二重に適用されても台帳が `duplicate` として無視する
+  - 「送る」は、**依頼元の島での** `Propose` の成功と依頼書の作成だけです。転送した島の送り出しでは、タイマーを積み直しません。待ちが解けて送ったときに積みます
+  - 再送の条件は「依頼元の台帳に適用されていない」だけです。共和国で確定（`committed`）していても再送します
+  - 再送で同じ港に同じ依頼の依頼書ができると、規則 R6 で古い方が `letter.dropped{superseded}` になります
+- **`hops`**: 転送された回数です。依頼元が書く依頼書（発生・再送）は 0、島 X が転送する依頼書は「届いた依頼書の `hops` + 1」です
+- 依頼元の台帳に適用された依頼は、配達・再送・待ちのやり直しのどれでも何もしません
+
+> Leader が提案したあと Commit される前に交代すると、そのエントリは新しい Leader によって上書きされ、消えることがあります。この場合、依頼は再送によって救われます。役場はエントリが消えたことを判定しません。これも Raft の実際の振る舞いとして、エンジニアモードで観察できます。
 
 ### 8.2 依頼の状態の判定
 
@@ -508,6 +554,24 @@ route(req, island):
 | 共和国で確定 | いずれかのノードの台帳に、その `reqId` の最初のエントリが適用された（＝ Commit された） |
 | 確定 / 予約失敗 | 依頼元のノードの台帳に適用され、結果が `ok` / `rejected` |
 | 期限切れ | 期限を過ぎても「確定 / 予約失敗」になっていない（フラグとして重ねて表示。あとから確定もできる） |
+
+判定の材料（`game.Track`）は、最後の `route` の結果（まだ・待ち・依頼書・提案）、今の依頼書が船の上にあるか、いずれかの台帳に適用されたか、依頼元の台帳の結果です。Engine は台帳への適用（`ledger.applied`。`duplicate` は見ない）と手紙の場所を観察するだけです。判定は次の表の上の行ほど優先します（`Track.Status`）。
+
+| 条件 | 状態 |
+|---|---|
+| 依頼元の結果が `ok` | `succeeded`（確定） |
+| 依頼元の結果がそのほか | `rejected`（予約失敗） |
+| いずれかの台帳に適用された | `committed`（共和国で確定） |
+| 最後の `route` が提案 | `proposed`（審議中） |
+| 最後の `route` が依頼書で、今の依頼書が船の上 | `in_transit`（輸送中） |
+| 最後の `route` が依頼書（港）か待ち | `waiting`（送付待ち） |
+| まだ `route` していない | `received`（受付） |
+
+- 「今の依頼書」は、その依頼について最後に作った依頼書です。船の上の古い依頼書と港の新しい依頼書が両方あるときも、今の依頼書の場所で `waiting`・`in_transit` を決めます
+- 一度 `committed` になった依頼は、再送や転送の結果が変わっても前に戻りません。`succeeded`・`rejected` は最後の状態です。「審議中 → 送付待ち」は、再送で依頼書を書いたときに起きます
+- 状態の変化は、ステップ（成功した `Apply`・スケジューラのイベント 1 つ）の後処理で、依頼の ID の順に `request.updated` にまとめて出します（同じステップの中の変化は 1 回）。依頼元より先にほかの島で適用され、同じステップで依頼元でも適用されたときは、`committed` を出さずに最後の状態だけを出します
+- 受付は `request.created`（`status: "received"`）でだけ見えます。発生の直後に同じステップで `route` するので、同じ時刻に `request.updated`（審議中・送付待ちなど）が続きます
+- 期限切れのフラグ（`expired`）の判定は T-203 です。今は常に `false` です
 
 スコアは「確定」になった時点で入ります（[ADR-0015](./adr/0015-request-success-judged-at-origin-apply.md)）。
 
@@ -532,6 +596,7 @@ func Sub(seed uint64, name string) *rand.Rand {
 | `events` | 台本で「この時間帯のどこか」と指定されたイベントの時刻 |
 | `raft/<nodeID>` | ノードごとの選挙タイムアウトの乱数（パッチで注入） |
 | `drift` | 漂流瓶で、どの過去の手紙を複製するか |
+| `bot/<名前>` | ボット船長の選択（`bot/random`。`greedy` は引かない。`simcli` とテストだけで使い、ゲームの結果には入力ログを通してだけ効く） |
 
 ### 9.2 決定性を壊すもの（実装上の禁止事項）
 
@@ -543,9 +608,9 @@ func Sub(seed uint64, name string) *rand.Rand {
 - グローバルな `math/rand`（上記の派生乱数以外）
 - 浮動小数点の計算をスコアや判定に使うこと（スコアは整数で計算する）
 
-ここでの「その下」は、`sim.Engine` が組み立てて動かす世界（`internal/sim`・`internal/cluster`・`internal/ferry`・`internal/ledger`・`internal/game`）を指します。`stage`（YAML の小数を読む）・`protocol`・`server`（セッションループは実時間を使う）・`cmd` は対象外です。
+ここでの「その下」は、`sim.Engine` が組み立てて動かす世界（`internal/sim`・`internal/cluster`・`internal/ferry`・`internal/ledger`・`internal/game`）を指します。ボット船長（`internal/bot`）は Engine の外にありますが、操作が入力ログを通して結果に効くので、同じ規則に従います。`stage`（YAML の小数を読む）・`protocol`・`server`（セッションループは実時間を使う）・`cmd` は対象外です。
 
-CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.golangci.yml`。テストのファイルも対象）で、上の 5 つのパッケージについて次を検出します。
+CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.golangci.yml`。テストのファイルも対象）で、上の 5 つのパッケージと `internal/bot` の 6 つについて次を検出します。
 
 - 実時間の関数: `time.Now`・`Since`・`Until`・`Sleep`・`After`・`AfterFunc`・`Tick`・`NewTimer`・`NewTicker`（`time.Second` などの定数・型は使ってよい）
 - `math/rand`（v1）のすべて（別名で import しても検出する）
@@ -581,6 +646,12 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 - **保存先**: 入力ログは Durable Object の SQLite に保存します。コンテナはコマンドを適用したら `ack` に適用時刻 `t` を入れて返し、Durable Object が `(t, cmd)` を追記します（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）
 - **復元**: コンテナが止まったら、Durable Object が新しいコンテナに入力ログを渡し、`Replay` で同じ状態に戻します
 - **リプレイ** = 同じステージ・シードで `Engine` を作り、各コマンドの `t` まで `RunUntil` してから `Apply` することの繰り返し
+- **`sim.Replay`** が受けるのは、`format`・`stageHash`・`seed`・コマンドの列（`ReplayLog`）です（`stageId`・`build` は受けない。JSON の読み書きとプロトコルの型からの変換は呼び出し側）
+  - 検査の順序は、形式 → `stageHash` の照合 → 時刻の順です。`stageHash` は、空どうしでも一致とみなしません
+  - 各コマンドが成功して同じ `t` で適用されなければ、失敗（記録と食い違った。`ErrReplayDiverged`）にします
+  - セッションのコマンド（一時停止・速度・次の出来事まで）は、呼び出し側が除いてから渡します。`Replay` は知らない種類のコマンドを読み飛ばさず、失敗にします
+  - 最後に `Until`（省略時は最後のコマンドの `t`）まで進めます
+  - 返した Engine には `New` からの全イベントが残ります。セッションはそれを捨ててから `snapshot` を送ります（`lastSeq` 以下のイベントはスナップショットに含まれているため）
 
 ### 10.2 トレース
 
@@ -615,6 +686,18 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 | I-6 | 台帳の不変条件（§7.3） | V-3 |
 | I-7 | 港・船・中継倉庫の手紙の数が上限以下 | V-7 |
 
+検査のしかた（T-107）:
+
+- **呼ぶ時点**: 1 ステップ（成功した `Apply`・スケジューラのイベント 1 つ）の後処理の最後、`Reclaim` の後。全ノードの `Process` が済み、未処理の Ready がない
+- **読むもの**: 各ノードの `Status`・`Log`（§5.6）、各台帳の `AppliedIndex`・`Snapshot`・`CheckInvariants`、`Transport.CheckInvariants`、まだ取り出していないドメインイベント。どれも読むだけで、状態を変える呼び出しをしない。前回の検査で観測した値（Term ごとの Leader・各ノードの Term・Commit・Applied・見たイベントの Seq）だけを覚えておく
+- **I-1**: 前回の検査より後に出た `node.leader_elected` と、今の `Status` で Leader のノードの両方で観測する（1 ステップの中で Leader になってすぐ退いたノードも見逃さない）
+- **I-2**: 2 つのログが初めて違った index より後に、Term の等しい index があれば違反。Index・Term・Type・Data を比べ、空のエントリと構成変更のエントリも対象にする
+- **I-4**: 「Commit された時点で」より強い条件として、毎回 Commit 済みのすべての index を検査する（Commit 済みのエントリはどのログからも消えないので、正しい Raft では常に成り立つ）
+- **I-5**: 補助の条件として「Applied ≤ Commit」も検査する
+- **I-6**: 各台帳の `CheckInvariants` と「台帳の `AppliedIndex` ≤ ノードの Applied」を検査し、`AppliedIndex` が等しい台帳どうしの `Snapshot` を比べる（`AppliedIndex` はデータのあるエントリだけで進むので、ノードの Applied より小さいことがある）
+- **I-7**: `Transport.CheckInvariants`（港の上限・同じ宛先の `MsgApp` の上限・合流・積載量）。依頼書の数の上限は T-202、中継倉庫の上限は P1 で足す
+- **違反したとき**: 最初の 1 つで `panic("sim: invariant violated at t=<Now>: I-<n>: <説明>")` を出す（島の ID は 1 から）
+
 ---
 
 ## 12. サーバー（Go のゲームサーバーと、Cloudflare の Worker・Durable Object）
@@ -645,57 +728,172 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 
 ### 12.3 Durable Object `GameSession`
 
-コンテナは、推奨の `durable_object` 方式で、Durable Object のコードから起動します（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)）。
+1 ゲームに 1 つの Durable Object です（`idFromName(sessionId)`）。コンテナは、推奨の `durable_object` 方式で、Durable Object のコードから起動します（[ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)）。`DurableObject` を継承せず、`fetch` のハンドラーで内部の API を受けます（[ADR-0023](./adr/0023-durable-object-fetch-handler.md)）。実装は `web/worker/game-session.ts`（薄いクラス）と `web/worker/session/`（`core.ts` が中身）。入力ログの記録と、コンテナが止まったときの復元は T-308b で作ります（下の「復元の約束」）。
 
 ```ts
-// 概略。API は Cloudflare の Durable Object Container API（ctx.container）に従う。
-export class GameSession extends DurableObject {
-  async init(req: { stageId: string; seed: number; demo: boolean; tokenHash: string }) {
-    // SQLite: session(stage_id, seed, demo, token_hash, state, created_at, alarm_count)
-    this.ctx.container.start({
-      image: this.ctx.container.images.server,
-      instance: this.env.CONTAINER_INSTANCE,   // 一般公開 "lite" / デモ "standard-1"
-      enableInternet: false,                   // 外部への通信は禁止
-      env: { MODE: "single", PORT: "8080" },
-    });
-    // start() は準備完了の前に戻る。monitor() で起動の失敗を検知する
-    // アラーム: 起動から 30 分で強制終了（コストガード G2）
-  }
-  async fetch(request: Request) {
-    // 1. token を検証（ハッシュで比較）
-    // 2. ブラウザとの WebSocket を受け付ける
-    // 3. getTcpPort(8080).fetch("http://container/healthz") が成功するまで待つ
-    // 4. コンテナの /ws に WebSocket を開き、最初に internal.init（または internal.restore）を送る
-    // 5. 双方向に中継する。ブラウザ → コンテナの cmd.* は cmdId ごとに覚えておき、
-    //    コンテナ → ブラウザの ack(ok=true, t) を見たら (t, cmd) を SQLite の input_log に追記する
-    // 6. ブラウザ由来の internal.* は破棄する（内部の電文はこの Durable Object だけが送る）
-  }
-  async onContainerLost() {
-    // 新しいコンテナを起動 → internal.restore(stageId, seed, input_log) → コンテナが snapshot を返す
-  }
-  async onRoundEnded() {
-    // ctx.container.destroy() ですぐに止め、実際に動いた時間で CostGuard に精算する
-  }
-  async alarm() {
-    // 切断から 5 分、起動から 30 分のいずれかでコンテナを止める
-    // アラームの再設定は 1 ゲームで 20 回まで（繰り返しが止まらなくなるのを防ぐ。コストガード G2）
-  }
+// web/worker/game-session.ts（形だけ）
+export class GameSession {
+  constructor(ctx: GameSessionStateLike, env: Env, deps?: Partial<GameSessionDeps>);
+  fetch(request: Request): Promise<Response>; // POST /init・GET /connect
+  alarm(): Promise<void>;
 }
+// コンテナの起動（POST /init の中だけ）
+ctx.container.start({
+  image: ctx.container.images["server"],
+  instance: containerInstanceOf(env),   // CostGuard が予約したマシンと同じ（CONTAINER_INSTANCE が "lite" なら lite、ほかは standard-1）
+  enableInternet: false,                // 外部への通信は禁止（型もリテラル false）
+  env: { MODE: "single", PORT: "8080" },
+});
 ```
+
+**内部の API**（Worker → `GameSession`。Worker 側は `session/client.ts` の `GameSessionClient` と `session/ports.ts` の `createSessionPorts`）
+
+| メソッド | パス | 本文・ヘッダー | 応答 |
+|---|---|---|---|
+| `POST` | `/init` | `{ sessionId, stageId, seed, demo, tokenHash }`（JSON、4096 バイトまで。ほかのキーは不可） | `201 {}`・`200 {}`（同じ内容の 2 回目。起動し直さない）・`400 bad_request`・`409 conflict`（違う内容）・`500 start_failed` |
+| `GET` | `/connect` | `Upgrade: websocket`・`X-Session-Token: <token>` | `101`・`404 not_found`・`426 upgrade_required` |
+
+- ルーター（§12.2）は `reserve` が `ok` のときだけ `init` を呼び（G1）、`verifySessionId` が通ったときだけ `connect` を呼ぶ（G3）。`createSessionPorts` は呼ばれるまで `idFromName`・`get` を呼ばない
+- トークンは URL ではなくヘッダー `X-Session-Token` で渡す（DO の要求の URL がログに残ってもトークンが出ないように）。DO はハッシュ（`token_hash`）だけを保存し、64 文字どうしを定数時間で比べる
+- `POST /init` は、`view()` から `gameTime.maxMinutes`・`gameTime.maxAlarms` を 1 回だけ読み（読めないときは 30 分・20 回）、行を作り、**アラームを設定してから**コンテナを起動し、`monitor()` を見張って、`/healthz` を待たずに `201` を返す。アラームを設定できない（`setAlarm` が失敗した）ときは**コンテナを起動しない**（fail closed）。アラームを設定できない・起動に失敗したときは、行を `ended`（`start_failed`）にしてアラームを消し、`500` を返す（`settle` は呼ばない。ルーターが `cancel` する）
+- `GET /connect` は、行がない・トークンがない・形が違う・違う・終わったセッションを区別せずに `404` にする（ソケットを作らず、コンテナに触れない）
+
+**SQLite の表**（`session/store.ts`。`constructor` で `CREATE TABLE IF NOT EXISTS`）
+
+- `session`（1 行だけ）: `session_id`・`stage_id`・`seed`・`demo`・`token_hash`・`state`・`created_at`・`deadline_at`（`created_at + maxMinutes` 分）・`max_alarms`・`alarm_count`・`alarm_at`・`idle_since`・`container_starts`・`container_started_at`・`ready_at`・`run_ms`・`stage_hash`・`build`・`last_clock_t`・`end_reason`・`ended_at`・`settled`・`result_json`・`result_at`
+- `input_log`: `seq`（自動の連番）・`t`（`ack` の `t`）・`cmd`（`{"type":…,"payload":…}` の JSON）
+- `stage_hash`・`build`・`last_clock_t`・`input_log` には T-308b が値を入れる。列の追加・削除は、T-601 で初めてデプロイする前なら `CREATE TABLE` を直すだけでよい
+
+**状態の移り変わり**: `POST /init` で `starting` → コンテナへの WebSocket を開いて `internal.init` を送ったら `running` → 「終わり」で `ended`（戻らない）。
+
+**コンテナへの接続**（`/connect` で `101` を返した後、非同期）
+
+1. 見張りがない（DO が作り直された）なら、`ctx.container.running` が真のときだけ `monitor()` を見張り直して続ける。偽なら「終わり」（`container_lost`）
+2. `ready_at` がなければ、`getTcpPort(8080).fetch("http://container/healthz")` が `200` を返すまで 100ms ごとに試す（1 回の要求は 2 秒と残り時間の小さいほうで打ち切る）。期限は `container_started_at + CONTAINER_START_TIMEOUT_MS`。過ぎたら「終わり」（`starting` なら `start_timeout`、`running` なら `container_lost`）。初めて `200` を受けたら `ready_at` を保存し、ログ `container.ready` に `startMs` を出す（§15 の起動時間）
+3. コンテナの `/ws` を開く。開けなければブラウザを `1011` で閉じるだけ（終わりにしない。ブラウザがつなぎ直す）
+4. 最初に `internal.init` を送る（ブラウザの接続ごとに 1 本のコンテナへの WebSocket を張り、**毎回** `internal.init` を送る。コンテナは同じ sessionId なら作り直さずにつなぎ直す）。準備の間に溜めたブラウザの電文（32 通まで）を、受けた順に送る
+5. どの `await` の後でも、接続が置き換わった・ブラウザが閉じた・終わったなら、開いたソケットを閉じて終える（接続ごとの世代で見分ける）
+
+同じセッションに 2 本目の接続が来たら、古いブラウザの接続を `4001`（`replaced`）、古いコンテナへのソケットを `1000` で閉じます。古いソケットから後で届いた電文は捨てます。ブラウザの接続が閉じたら、コンテナへのソケットを `1000` で閉じ（コンテナはこれで自動の一時停止をする）、`idle_since` を保存します。コンテナへのソケットだけが閉じたら、ブラウザを `1011` で閉じます（終わりにしない）。
+
+**ブラウザからの電文**（上から順に判定する。`session/envelope.ts`）
+
+1. バイナリ → ブラウザを `1003` で閉じる。UTF-8 で 16 KiB を超える → `1009` で閉じる（どちらも Go と同じコード）
+2. 1 秒の枠（`Math.floor(now / 1000)`、DO に 1 つ）ごとに数え、31 通目からは捨てる（**返事はしない**。DO は `seq` を持たない電文を作れないため）
+3. JSON のオブジェクトでない・キーに `v`・`type`・`cmdId`・`payload` 以外がある・`type` が文字列でない → 捨てる
+4. `type` を小文字にして `internal.` で始まる → 捨てる
+5. それ以外は、受けた文字列を**そのまま**コンテナに送る（書き換えない）
+
+3 で**キーを限る**のは、Go の `encoding/json` が構造体のフィールド名を大文字・小文字を区別せずに読むためです（`{"type":"cmd.sync","Type":"internal.init"}` を JS は `cmd.sync`、Go は `internal.init` と読みうる）。DO が読んだ `type` と、コンテナが読む `type` を必ず一致させます。捨てた電文は種類ごとに数え、接続が閉じたときのログ `session.disconnect` に数だけを出します。
+
+**コンテナからの電文**: `seq` を接続ごとの「最後の `seq`」として覚え、`internal.*` はブラウザに送りません（`internal.result` は「ラウンドの終わり」、`internal.ping` には `internal.pong` を返す）。それ以外は受けた文字列のままブラウザに送ります。置き換えた・ブラウザが閉じた接続のソケットから届いた電文は捨てますが、`internal.result` だけは別です。ブラウザは `round.result` を受けるとすぐ閉じるので、`internal.result` はブラウザが閉じた後に届きえます。同じコンテナの結果なので、保存して「終わり」（`round_ended`）にします。`fatal` の `error` のうち `stage_not_found`・`internal_error`・`restore_failed`・`session_mismatch` は、中継した後で「終わり」（`container_error`）にします。
+
+**終わり**（何度呼んでも 1 回だけ動く）: `state = "ended"` を最初に保存 → ブラウザに知らせて閉じる → コンテナへのソケットを閉じる → `ctx.container.destroy()` → `run_ms`（実際に動いた時間）で `CostGuard.settle(sessionId, ceil(run_ms / 1000))` → `deleteAlarm()`。`settle` の失敗はログに出して**やり直さない**（帳簿は予約のまま＝最悪の費用で数えられる。安全側）。`internal.result` の payload（256 KiB まで）は `result_json` に上書きで保存します。
+
+`destroy()` が失敗したら、停止を確かめられるまで**精算しません**。`container_started_at` を残し、帳簿は予約のまま（最悪の費用）にします。そして 30 秒後（`DESTROY_RETRY_MS`）にアラームを設定し、鳴ったら `destroy()` からやり直します（後始末のやり直し）。止まったら、そこまでの時間で精算してアラームを消します。やり直しのアラームも `max_alarms` の中で数えます。すでに設定してあるアラームが先に鳴るなら、そのアラームでやり直します（数を増やさない）。上限に達して設定できなければ、ログ（`session.error`、`op: "destroy"`・`error: "retry_exhausted"`）を 1 行出してあきらめます（予約のままなので、最悪の費用で数えられる）。後始末は同時に 2 つ動きません。
+
+| 理由 | いつ | ブラウザに送るもの |
+|---|---|---|
+| `round_ended` | コンテナの `internal.result` | （`round.result` は中継済み）`close(1000)` |
+| `time_limit` | `deadline_at` のアラーム | `error`（`session_ended`）→ `close(1000)` |
+| `idle` | ブラウザの接続がないまま 5 分 | （接続がないので送らない） |
+| `alarm_cap` | アラームの回数が `max_alarms` に達した後で、設定が要る | `error`（`session_ended`）→ `close(1000)` |
+| `start_timeout` | 初回の `/healthz` が期限までに `200` にならない | `error`（`container_unavailable`）→ `close(1011)` |
+| `container_lost` | `monitor()` が終わった・作り直した DO でコンテナが動いていない・一度準備ができた後の `/healthz` の期限切れ | `error`（`container_unavailable`）→ `close(1011)` |
+| `container_error` | コンテナの `fatal` の `error`（上の 4 つの `code`） | （コンテナの `error` を中継済み）`close(1011)` |
+
+DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"payload":{"code":…,"message":…,"fatal":true}}` です（プロトコル §2）。DO が自分で作る電文は、この `error`・`internal.init`・`internal.pong` だけです。
+
+**アラーム**（`session/alarm.ts` の `desiredAlarmAt`）
+
+- 鳴らしたい時刻は、接続中なら `deadline_at`、接続がなければ `min(deadline_at, idle_since + 5 分)`（`idle_since` が NULL で接続もなければ、いまを `idle_since` とみなす）
+- **早いほうにだけ動かす**: `alarm_at` が NULL か、鳴らしたい時刻が `alarm_at` より早いときだけ設定する（遅くしたいときはそのまま鳴らし、鳴ったときに決め直す。つなぎ直しを繰り返しても回数が増えにくい）
+- 設定するたびに `alarm_count` を 1 増やし、`max_alarms`（既定 20）に達していたら設定せずに「終わり」（`alarm_cap`）。数は `setAlarm` の前に保存し、失敗しても戻さない。`setAlarm` が失敗したら、`alarm_at` を前の値に戻す（設定できていないアラームを「ある」と記録しない。前のアラームは残る）。`alarm()` の中で設定できなかったときは、例外を投げてランタイムに `alarm()` をやり直させる（やり直すたびに数えるので、`max_alarms` で `alarm_cap` になる）
+- 設定するのは `POST /init` の 1 回（コンテナを起動する前）・接続が切れるたびに最大 1 回・鳴るたびに最大 1 回・後始末のやり直し（上の「終わり」）。`alarm()` は、終わったセッションでは、停止を確かめられていないコンテナ（`container_started_at` が NULL でない）の後始末のやり直しだけをする（ほかは何もせず、設定し直さない）。鳴ったら `deadline_at` を過ぎていれば `time_limit`、接続がないまま 5 分なら `idle`、それ以外は設定し直す
+
+**復元の約束**（この Issue で決め、T-308b で実装する。T-302 の `internal.restore` に合わせる）
+
+- 保存するもの: `stage_hash`・`build`（コンテナの `snapshot` の `payload.session.stageHash`・`payload.session.build`、1〜128 文字の文字列のときだけ）、`last_clock_t`（中継した `snapshot`・`events` の `payload.clock.t`。SQLite には 5 秒に 1 回まで・接続が閉じたとき・終わりのときに書く）、`input_log`（`cmdId` を持ち、`hello`・`ping`・`cmd.sync`・`sub.engineer` でないブラウザの電文を `cmdId` ごとに 256 件まで覚え、コンテナの `ack` が `ok: true` で `t` が 0 以上の整数なら `(t, {"type","payload"})` を追記する。10,000 行・合計 512 KiB に達したら、覚える種類の電文をコンテナに送らずに捨てる）
+- `internal.restore` の中身: `{ sessionId, stageId, seed, demo, inputLog: { format: 1, build: build ?? "", stageId, stageHash: stage_hash, seed, commands: [{t, cmd}]（seq の順） }, until }`。`until = max(last_clock_t ?? 0, 最後の input_log の t ?? 0)`、0 なら省く
+- いつ送るか: コンテナへの `/ws` を開いたとき、`stage_hash` があれば `internal.restore`、なければ `internal.init`
+- 何回まで試すか: コンテナが止まったとき（見張りの終わり・`/connect` で動いていない・ソケットが閉じて `running` が偽・`internal.ping` を 5 秒ごとに送り 3 回続けて `internal.pong` がない）、`container_starts < 3` なら同じ設定で起動し直す（新しい予約はしない・`run_ms` に足していく）。3 回目が止まったら `container_lost`。`restore_failed` などの決定的な失敗は試し直さずに `container_error`
+- `build` が違っても試す（T-302 が `warn` を出して続ける）。`internal.restore` は 16 KiB を超えうるので、`single` モードの受信の上限を広げる必要がある（T-302 への確認事項）
 
 ### 12.3.1 Durable Object `CostGuard`
 
-全体で 1 つの Durable Object です（`idFromName("global")`）。一般公開とデモ用の Worker が共有します。
+全体で 1 つの Durable Object です（`idFromName("global")`。ほかの名前では作らない）。一般公開とデモ用の Worker が共有します（デモ用の Worker は、一般公開の Worker の `CostGuard` を参照する）。費用の予約・精算・上限の判定（G1）、受付の一括停止（G6）、ガードの設定の上書きと切り替えの記録を持ちます（[ADR-0018](./adr/0018-cost-guard.md)）。
 
-```ts
-export class CostGuard extends DurableObject {
-  // SQLite: settings(key, value), ledger(session_id, reserved_usd, settled_usd, started_at, ended_at), audit(at, change)
-  async reserve(sessionId: string, instance: "lite" | "standard-1"): Promise<"ok" | "budget_exhausted" | "sessions_disabled">
-  async settle(sessionId: string, runSeconds: number): Promise<void>  // 予約した額を実際の時間で精算する
-  async getGuards(): Promise<Guards>                                  // 設定ファイルの既定値に、保存した上書きを重ねたもの
-  async patchGuards(change: Partial<Guards>, by: string): Promise<Guards> // G3 は変更できない
+`DurableObject` を継承せず、`fetch` のハンドラーで内部の API を受けます（RPC と `cloudflare:workers` を使わない。[ADR-0023](./adr/0023-durable-object-fetch-handler.md)）。中身は `web/worker/admin/ledger.ts` の `CostGuardCore`（SQLite の上の同期の処理だけ）で、Worker・`GameSession` からは `web/worker/admin/client.ts` の `CostGuardClient`（`getCostGuardClient(env)`）で呼びます。
+
+| メソッド | パス | 本文 | 応答 |
+|---|---|---|---|
+| `POST` | `/reserve` | `{ sessionId, instance: "lite" \| "standard-1" }` | `200 { result: "ok" \| "budget_exhausted" \| "sessions_disabled" }` |
+| `POST` | `/cancel` | `{ sessionId }` | `200 {}`。未精算の予約だけを取り消す（額 0） |
+| `POST` | `/settle` | `{ sessionId, runSeconds }`（0〜86400 の整数） | `200 {}`。未精算の予約だけを、実際に動いた秒数で精算する |
+| `GET` | `/view` | — | `200 GuardsView`（[プロトコル §2](./06-protocol.md) の `GET` の応答）・`503 guards_invalid` |
+| `POST` | `/patch` | `{ change: 平らな形, reason, by }` | `200 GuardsView`・`400 bad_request`・`400 locked`・`503 guards_invalid` |
+
+- URL のホストは何でもよい（クライアントは `https://cost-guard.internal/<op>` を使う）。知らないパスは 404、メソッドが違えば 405、本文が壊れている・型が違えば `400 bad_request`。`sessionId` は `^[A-Za-z0-9._-]{1,256}$`、`by` は 1〜64 文字
+- `/patch` は、Worker を通らない呼び出しに備えて、`change` を管理用 API と同じ規則でもう一度確かめる
+- アラームを使わない（`alarm()` を持たず、アラームを設定しない）。ログを出さない
+
+SQLite の表（`constructor` で `CREATE TABLE IF NOT EXISTS`。`sql.exec` には 1 回に 1 つの文だけを渡す）:
+
+```sql
+CREATE TABLE IF NOT EXISTS ledger (
+  session_id     TEXT PRIMARY KEY,
+  instance       TEXT NOT NULL,          -- "lite" | "standard-1"
+  rate_micro     INTEGER NOT NULL,       -- 予約したときの 30 分あたりの単価（µUSD）
+  reserved_micro INTEGER NOT NULL,
+  settled_micro  INTEGER,                -- NULL = 未精算
+  status         TEXT NOT NULL,          -- "reserved" | "settled" | "cancelled"
+  started_at     INTEGER NOT NULL,       -- 予約した時刻（UNIX ミリ秒）
+  ended_at       INTEGER                 -- 精算・取り消しの時刻
+);
+CREATE INDEX IF NOT EXISTS ledger_started_at ON ledger (started_at);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- 上書き（値は JSON）
+CREATE TABLE IF NOT EXISTS audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, by TEXT NOT NULL,
+  change TEXT NOT NULL, reason TEXT NOT NULL                                       -- change は JSON
+);
+```
+
+費用の計算:
+
+- 金額は内部で**マイクロ USD の整数**（1 USD = 1,000,000 µUSD）で持ち、SQLite にも整数で入れる（浮動小数点の足し算の誤差を貯めない）。USD → µUSD は `Math.round(usd × 1,000,000)`
+- 単価 `unitCostUsd[instance]` は 30 分あたりの最悪の費用（`lite` 0.0065・`standard-1` 0.040 USD）
+- 予約額 = `ceil(単価µ × maxMinutes / 30)`（今の設定の `gameTime.maxMinutes`）
+- 精算額 = `ceil(単価µ × runSeconds / 1800)`。単価は予約したときの値（`rate_micro`）を使う。予約額を超えても上限で切らない
+- 行ごとの額は、`cancelled` は 0、`settled` は精算額、`reserved` は予約額。1 日・1 か月は **UTC** の暦で区切り、今日（今月）の 0 時以降に**予約した**行の合計を使う
+
+`reserve` の判定（確認と書き込みの間に `await` を挟まない。Durable Object の中で直列になる）:
+
+1. 設定 `GUARDS` が不正 → `sessions_disabled`
+2. 同じ `sessionId` の行がすでにある → 何も変えずに `ok`（冪等）
+3. `acceptGames` が `false` → `sessions_disabled`（予算より先に判定。G6）
+4. `budget.enabled` が `true` で、今日の合計 + 予約額 > `dailyUsd` か、今月の合計 + 予約額 > `monthlyUsd` → `budget_exhausted`（行を足さない。ちょうど上限は通す。G1）
+5. 行を足す（`budget.enabled` が `false` でも足す）。`ok`
+
+設定 `GUARDS`（一般公開の Worker の JSON のバインディング。`CostGuard` だけが読む。デモ用の Worker の `GUARDS` は `CostGuard` に届かない）:
+
+```json
+{
+  "budget":      { "enabled": true, "monthlyUsd": 30, "dailyUsd": 1 },
+  "gameTime":    { "maxMinutes": 30, "maxAlarms": 20 },
+  "turnstile":   { "enabled": true },
+  "rateLimit":   { "enabled": true, "perIpPerMinute": 10 },
+  "cpuMs":       500,
+  "acceptGames": true,
+  "unitCostUsd": { "lite": 0.0065, "standard-1": 0.04 }
 }
 ```
+
+- すべての項目が必須で、未知のキーや `signature` のキーがあれば不正（G3 を設定でも外せない）。値の範囲: 金額の上限は 0〜1000、`maxMinutes` は 1〜60 の整数、`maxAlarms` は 1〜100 の整数、`perIpPerMinute` は 1〜1000 の整数、`cpuMs` は 1〜300000 の整数（表示だけ）、単価は 0 より大きく 10 以下。文字列で渡されたら `JSON.parse` してから確かめる
+- **不正・未設定なら拒否する側に倒す**: `reserve` は `sessions_disabled`、`view`・`patch` は `guards_invalid`（管理用 API は `503 guards_invalid`）。`cancel`・`settle` は帳簿の行の値だけで動くので続けて動く
+- 管理用 API の上書き（`settings`。金額は µUSD の整数）を重ねたものが今の設定。保存された上書きが今の規則で不正なら、その上書きだけを無視して既定値を使う。変更は次の要求からすぐに効く（キャッシュしない）
+- `signature`・`cpuMs`・`gameTime.enabled`・`gameTime.maxAlarms` は上書きできない（`locked`）
+
+片付け: `reserve` で行を足したとき、先月の 1 日（UTC）より前に予約した `ledger` の行を消す。`audit` は足したとき、新しい 1000 件だけを残す。
 
 - 見込みの費用の単価・上限は `GUARDS`（`cloudflare.config.ts`）に既定値を持ち、管理用 API で上書きできる
 - 呼ぶのはゲームの開始と終了のときだけなので、全体で 1 つでも負荷は小さい
@@ -739,7 +937,7 @@ func (s *Session) run(ctx context.Context) {
 - `Engine` に触れるのはこの goroutine だけ（ロック不要）
 - 速度はセッションループの中だけの値で、エンジンの結果には影響しません。8 倍速でも、1 ステップで進めるのは 400ms（＜上限の 1 秒）です
 - 送信キューが詰まった場合（クライアントが遅い）は、イベントを捨てずに次回まとめて送ります。一定量（1,000 件）を超えたらイベント列を捨て、代わりにスナップショットを送ります
-- `internal.restore` を受けたら、`sim.Replay` で入力ログの最後の時刻まで一気に進め、一時停止の状態でスナップショットを返します
+- `internal.restore` を受けたら、`sim.Replay` で入力ログの最後の時刻（または呼び出し側が渡す `Until`）まで一気に進め、残ったイベントを捨ててから、一時停止の状態でスナップショットを返します
 
 ### 12.5 寿命と上限
 
@@ -747,12 +945,14 @@ func (s *Session) run(ctx context.Context) {
 |---|---|---|
 | 費用の上限 | 1 か月 30 USD・1 日 1 USD（見込みの費用の合計） | `CostGuard`（コストガード G1） |
 | 同時に遊べるゲームの数 | 上限なし（R-01） | — |
-| 1 ゲームの最長時間 | 30 分 | Durable Object のアラーム（G2） |
-| アラームの再設定の回数 | 1 ゲームで 20 回まで | Durable Object（G2） |
+| 1 ゲームの最長時間 | `gameTime.maxMinutes`（既定 30 分。init のときに読む） | Durable Object のアラーム（G2） |
+| アラームの再設定の回数 | `gameTime.maxAlarms`（既定 20 回）。超えるときはゲームを終える | Durable Object（G2） |
 | 切断されてからの保持時間 | 5 分（その間は自動で一時停止） | Durable Object のアラーム |
 | ラウンド終了後 | すぐにコンテナを止める。入力ログと結果は Durable Object に残る | Durable Object |
-| セッション作成のレート制限 | 1 IP あたり 10 回/分 ＋ Turnstile | Worker（G4） |
-| コマンドのレート制限 | 1 セッションあたり 30 回/秒 | Durable Object |
+| セッション作成のレート制限 | 1 IP（IPv6 は /64）あたり 10 回/分 ＋ Turnstile | Worker（G4。Rate Limiting の束縛 `SESSION_RATE_LIMIT`、拠点ごとの近似の値。[ADR-0024](./adr/0024-worker-rate-limit-binding.md)） |
+| sessionId の有効期限 | 発行 + `gameTime.maxMinutes` + 5 分（期限は sessionId に入れて署名する） | Worker（G2・G3。期限を過ぎた sessionId は Durable Object を呼ばずに `404`） |
+| コマンドのレート制限 | 1 セッションあたり 30 回/秒。DO は 1 秒の枠で 30 通を超えた電文を捨てる（返事はしない） | Durable Object |
+| コンテナの起動を待つ上限 | `CONTAINER_START_TIMEOUT_MS` (T-007 の設定候補は 10 秒。本体の T-605 で再確認) | Durable Object（`/healthz` が `200` を返すまで） |
 | WS の受信メッセージの最大サイズ | 16 KiB | Durable Object と Go の両方 |
 | Worker 1 回あたりの CPU 時間 | `limits.cpuMs`（値は T-007 で測って決める） | Cloudflare（G5） |
 
@@ -775,30 +975,83 @@ func (s *Session) run(ctx context.Context) {
 
 ### 13.2 状態の反映
 
+T-403 で決めた、世界の状態（`web/src/state/`）です。型は `web/src/protocol/index.ts`（T-301）のものを使います。ストアは届いた値を写すだけで、Leader や Commit の結果を決めません（[ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md)）。
+
 ```ts
+// web/src/state/world.ts（Readonly は省略）
+type ClockView = { simTime; speed; paused; endsAt; allowedSpeeds; receivedAt }; // receivedAt は performance.now()
+type StageStatic = {                     // snapshot.stage から作る。イベントでは変わらない
+  title; islands: Record<number, Island>; islandIds; routes: Record<string, Route>; routeIds; resources;
+};
+type FerryView = Ferry & { brokenUntil: number | null };
 type World = {
-  stage: StageMeta;
-  clock: { simTime: number; speed: number; paused: boolean; receivedAt: number };
-  islands: Record<IslandId, IslandView>;
-  routes: Record<RouteId, RouteView>;
-  ferries: Record<FerryId, FerryView>;
-  letters: Record<LetterId, LetterView>;
-  requests: Record<RequestId, RequestView>;
-  nodes: Record<IslandId, NodeView>;
-  score: ScoreView;
+  session; phase; clock: ClockView; stage: StageStatic;
+  islandStates: Record<number, IslandState>;  // 満足度など（stage に無い ID でも持つ）
+  routeStates: Record<string, RouteState>;    // 嵐（stage に無い ID でも持つ）
+  ferries: Record<string, FerryView>; ferryIds;
+  letters: Record<number, Letter>;            // 港・船・中継倉庫にある手紙だけ
+  requests: Record<string, Request>; requestIds; // requestIds は出てきた順
+  nodes: Record<number, NodeSummary>;
+  score: Score;
+  forecasts: ForecastView[];       // 嵐の予報（4 つの一覧はどれも古い順）
+  notices: NoticeView[];           // notice の key・params をそのまま持つ
+  letterExits: LetterExit[];       // 配達・破棄で消えた手紙（消える直前の値）
+  leaderChanges: LeaderChange[];   // node.leader_elected・node.stepped_down
+  lastEventSeq: number;            // 最後に当てはめたイベントの seq
 };
 
-function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest でテストする
+// web/src/state/applyEvent.ts（純粋な関数。Vitest でテストする）
+function worldFromSnapshot(snapshot: Snapshot, receivedAt: number): World;
+function applyEvent(world: World, event: ServerEvent): World;
+function applyEvents(world: World, events: readonly ServerEvent[]): World;
+function withClock(world: World, clock: Clock, receivedAt: number): World;
 ```
 
-- `snapshot` を受け取ったら丸ごと置き換え、`events` を受け取ったら順に `applyEvent` する
-- イベントの `seq` に抜けがあれば、サーバーにスナップショットを要求する（`cmd.sync`）
+- `snapshot` を受け取ったら `worldFromSnapshot` で丸ごと置き換える（`lastEventSeq = lastSeq`。前より `lastSeq` が小さくても置き換える）。`letters` には `delivered`・`dropped` の手紙を入れない。同じ ID は後の値を使う
+- `events` を受け取ったら `applyEvents` で順に当てはめ、時計は `withClock` で入れる（`allowedSpeeds` は snapshot の値を保つ）。`seq <= lastEventSeq` のイベントは読み飛ばし、同じオブジェクトを返す（重複・再接続でもう一度流れてくる分）
+- `seq` の抜けの検出と `cmd.sync` は WS クライアント（T-402・[06-protocol.md §10](./06-protocol.md)）の役目で、`applyEvent` は抜けがあってもそのまま当てはめる
+- 知らない `type`（[06-protocol.md §8](./06-protocol.md)）と、無い手紙・船・依頼を指すイベントは、`lastEventSeq` だけを進める（例外を投げない）
+- **構造の共有**: 引数を書き換えず、変わらなかった部分は前と同じオブジェクトを返す。変わった `Record`・配列・要素だけを作り直す（zustand のセレクターが関係のない変化で描き直さないため。NFR-01）
+- 一覧は末尾に足し、`WORLD_LIMITS`（`forecasts` 20・`notices` 50・`letterExits` 50・`leaderChanges` 20。画面のための値）を超えたら古いものから捨てる
+
+| イベント | 当てはめ方 |
+|---|---|
+| `phase.changed` | `phase` を入れる |
+| `letter.created` | `letters` に入れる（`delivered`・`dropped` なら入れない）。船の上なら `cargo` の末尾に足す |
+| `letter.moved` | `loc` を入れる。前が船の上なら `cargo` から外し、新しく船の上なら末尾に足す。`delivered`・`dropped` なら `letters` から消す |
+| `letter.delivered`・`letter.dropped` | `letters` から消し（船の上なら `cargo` からも外す）、`letterExits` に足す |
+| `letter.stale` | `raft.stale = true`（依頼書・すでに古いものは無視） |
+| `ferry.departed` | `sailing`・`from`・`to`・`departAt`・`arriveAt` を入れ、`islandId` を消す |
+| `ferry.arrived` | `docked`・`islandId`・`readyAt` を入れ、`from`・`to` を消し、`departAt`・`arriveAt` を 0 にする（停泊中の船の snapshot と同じ形） |
+| `ferry.broken`・`ferry.repaired` | `brokenUntil` を `until`・`null` にする |
+| `route.blocked`・`route.unblocked` | `routeStates` の `blockedUntil` を `until`・`null` にする。`route.blocked` では `at <= t` の予報を消す |
+| `forecast`・`notice`・`node.leader_elected`・`node.stepped_down` | それぞれの一覧に足す（役割は `node.state` で変わる） |
+| `node.state`・`island.updated` | `nodes`・`islandStates` の要素を置き換える（無ければ足す） |
+| `request.created`・`request.updated` | 依頼を入れる（初めての ID は `requestIds` の末尾に足す）・`status`・`expired`・`result` を入れる |
+| `score.updated` | `total`・`successes`・`criticalSecured` を入れる（`target` は変えない） |
+| `ledger.applied` | 無視（台帳の中身は `node.detail` で見る） |
+
+- `cargo` は積んだ順で、`letter.*` のイベントから保つ（`cargo` を持つ船が無ければ手紙の `loc` だけを変える）
+- 航行中の船の `readyAt` はイベントに無いので、到着の `ferry.arrived` まで出航前の値のまま。表示に使うのは停泊中だけにする
+
+**ストア**（`web/src/state/store.ts`。zustand 5 の `createStore`、ミドルウェアは使わない）
+
+- アプリに 1 つの `gameStore` と、React のフック `useGameStore(selector)`。テストは `createGameStore()` で自分のストアを作る
+- 状態は `world`（snapshot を受けるまで `null`）・`roundResult`・`nodeDetail`・`selection`（`{ islandId, ferryId }`。マップ・島の詳細・フェリー操作が共有する選択）
+- 操作の関数 `applySnapshot(snapshot, receivedAt)`・`applyEvents(clock, events, receivedAt)`・`setRoundResult`・`setNodeDetail`・`selectIsland`・`selectFerry`・`reset` は `this` を使わず、ストアの寿命の間同じ関数。WS クライアント（T-402）の `onSnapshot`・`onEvents` にそのまま渡せる
+- `applyEvents` は `world` が `null` なら何もしない。そうでなければ 1 回の `set` にまとめる（イベントが 0 件でも時計は進める）。`applySnapshot` は、選んでいる島・船が新しい `world` に無ければ選択を外す。`selectIsland`・`selectFerry` は無い ID を無視し、同じ値では購読者に知らせない
+- ストアは WS・コマンド・ブラウザの保存領域に触れない。画面ごとの UI の状態（エンジニアモードの表示など）と設定（§13.7）はストアに入れない
+
+**選択の関数**（`web/src/state/selectors.ts`）
+
+- `estimateSimTime(clock, now)`（§13.3）・`lettersAtPort`（ID の昇順）・`lettersOnFerry`（`cargo` の順）・`portPiles`（宛先ごとの山。`to` の昇順）・`leaderId`（`role` が `leader` のうち `term` が最大、同じなら ID の小さいもの）
+- どれも呼ぶたびに新しい配列を返す。React では `useGameStore((s) => s.world)` で `world` を取り、`useMemo` の中で呼ぶ（セレクターの中で呼ぶと毎回違う値になり、描き直しが止まらない）。PixiJS は `gameStore.getState().world` で毎フレーム呼んでよい
 
 ### 13.3 描画とアニメーション
 
 - 船の位置はサーバーから送られてこない。`departAt` / `arriveAt` と、クライアントで推定したゲーム内時刻から補間する
-  - 推定ゲーム内時刻 = `clock.simTime + (performance.now() − clock.receivedAt) × speed`（一時停止中は進めない）
-- PixiJS のティッカーは、毎フレーム zustand のストアを直接読む（`useStore.getState()`）。React の再描画は経由しない
+  - 推定ゲーム内時刻 = `clock.simTime + (performance.now() − clock.receivedAt) × speed`（一時停止中は進めない）。`estimateSimTime(clock, performance.now())`（`web/src/state/selectors.ts`）で求める
+- PixiJS のティッカーは、毎フレーム zustand のストアを直接読む（`gameStore.getState()`（`web/src/state/store.ts`））。React の再描画は経由しない
 - 手紙は島ごとに「宛先別の山」として描き、数をバッジで表示する。1 通ずつのアイコンは島のパネル（DOM）に出す
 - 手紙の種類は**色と形の両方**で区別する（[04-game-design.md §2](./04-game-design.md)）
 
@@ -860,7 +1113,7 @@ T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.
 | （重ねて表示） | `DemoKeys`（`web/src/ui/demo/DemoKeys.tsx`） | T-411 |
 | （重ねて表示） | `TutorialOverlay`（`web/src/app/tutorial/TutorialOverlay.tsx`、`stageId` を受ける） | T-409 |
 
-WS の接続と、ラウンドの終わりで `onRoundEnd` を呼ぶのは T-402・T-403 が `GameScreen` に足します。セッションの作成（`StageSelection.session` を入れること）は T-413 です。
+WS の接続（T-402 の `createGameConnection`）とストア（T-403 の `gameStore`）を `GameScreen` につなぎ、`round.result` で `onRoundEnd` を呼ぶのは、後続のタスクです。セッションの作成（`StageSelection.session` を入れること）は T-413 です。
 
 **ルーターのライブラリを使わない理由**
 
@@ -972,6 +1225,12 @@ T-412 で決めた、設定「Raft の用語を併記する」（[FR-UI-10](./01
 
 **ボット船長**: テスト用の自動プレイヤーです。`random`（ランダムに積んで出航）と `greedy`（優先度の高い手紙が多い島へ向かう）の 2 種類を用意します。`greedy` はステージの難易度調整（クリアできるか）にも使います。
 
+- 置き場所は `internal/bot` です。`bot.New(name, seed)` で作り、`bot.Play(e, b)` で `cmd.game.start` からラウンドの終わりまで動かします（`simcli`・T-110・T-111・T-207・T-501 が使う。`sim` のテストからは `package sim_test` で使う）
+- ボットは、プレイヤーと同じく `Snapshot`・`NextNotableAt` を見て `Apply` でコマンドを送るだけです。イベント・提案・内部の状態には触れず、`DrainEvents` を呼びません。操作はすべて入力ログに入り、ボットなしで再生できます
+- 起きる時刻は、250ms ごと・船の到着（`NextNotableAt`）・停泊時間の終わりのうち最も早いものです。動けるのは停泊時間が終わった船だけです
+- `random`: 1/4 で待ちます。1/10 で積み間違いを取り消します。それ以外は、通れる隣の島をランダムに選び、ランダムな手紙（または、おまかせ積み込み）を積んで出航します
+- `greedy`: 乱数を使いません。通れる隣の島ごとに、そこで配達・経由できる手紙の重み（おまかせ積み込みの順位に対応。依頼書 100・選挙 30・記録して 10・記録した 5・お元気ですか 1、古い手紙は 1）を足し、最大の島へ向かいます。直行の手紙はおまかせ積み込み、経由の手紙は航路の数の最短経路で次に行く島へ `load` で積みます。どこにも運ぶものがなければ、手紙の多い島へ迎えに行きます
+
 ---
 
 ## 15. 観測性
@@ -989,7 +1248,7 @@ T-412 で決めた、設定「Raft の用語を併記する」（[FR-UI-10](./01
 |---|---|
 | セッションの乗っ取り | セッション作成時に推測できないトークン（128 bit）を発行し、WS の接続時に検証する |
 | 大量のセッション作成による資源の枯渇・課金の増加 | コストガード（[ADR-0018](./adr/0018-cost-guard.md)）：Turnstile、IP ごとのレート制限、ゾーンの WAF と AI クローラーの遮断、費用の上限 |
-| でたらめな ID による Durable Object の大量作成 | sessionId に HMAC の署名を付け、Worker で検証してから Durable Object を呼ぶ（G3。**無効にしない**） |
+| でたらめな ID による Durable Object の大量作成 | sessionId に HMAC-SHA256 の署名を付け、Worker で検証してから Durable Object を呼ぶ（G3。**無効にしない**）。署名の対象にホスト名と有効期限を含め、別のホスト（一般公開とデモ用）で発行したもの・期限を過ぎたものも通さない。比較は定数時間（`crypto.subtle.verify`）で、検証は暗号の計算と時計だけで行う（Durable Object・`CostGuard`・ネットワークを使わない）。鍵 `SESSION_SIGNING_KEY` がない・不正なら、受付（`503`）と接続（`404`）を止める（署名なしで動く経路を作らない）。形式は [プロトコル §2](./06-protocol.md#post-apisessions) |
 | 管理用 API の悪用 | `ADMIN_TOKEN`（`--secrets-file` で渡す）を必須にし、切り替えの記録を残す。合言葉は定期的に変える |
 | シークレットの漏えい（公開リポジトリ） | `.env` などは `.gitignore` に入れ、CI でシークレットの検査（secret scanning）を行う |
 | 巨大・大量のメッセージ | WS の受信サイズの上限、コマンドのレート制限、JSON のデコードは型を決めて行う |

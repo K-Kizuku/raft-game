@@ -1,13 +1,17 @@
 // Package sim は、ゲーム内時間で進む離散イベントシミュレーションのエンジン Engine を提供する
 // （DesignDoc §4、ADR-0004）。
 //
-// Engine は 1 ゲーム分の世界（Raft のノード・台帳・港と船）を、I/O・ゴルーチン・実時間を使わずに動かす。
+// Engine は 1 ゲーム分の世界（Raft のノード・台帳・港と船・住民の依頼）を、I/O・ゴルーチン・実時間を使わずに動かす。
 // 外から動かす方法は次の 2 つだけ。
 //
 //   - Apply: プレイヤーのコマンドを、今の時刻で適用する
 //   - RunUntil: 時間を進める
 //
-// 出力は、ドメインイベントの列（DrainEvents）と、その列のハッシュ（TraceHash、§10.2）だけ。
+// 出力は、ドメインイベントの列（DrainEvents）と、その列のハッシュ（TraceHash、§10.2）。
+// 状態を変えない観察として、次の 2 つがある（§4.3）。
+//
+//   - Snapshot: 今の状態の全体（再接続のときなどに送る分のうち Engine が持つもの）
+//   - NextNotableAt: 次に「プレイヤーに見せたい出来事」が起きる時刻（デモ操作の「次の出来事まで進める」）
 //
 // 土台の部品は次の 3 つ。
 //
@@ -15,7 +19,13 @@
 //   - Scheduler: イベントを (At, Class, Seq) の昇順に取り出す優先度キュー（§4.2）
 //   - Sub: ラウンドのシードと用途の名前から、用途ごとに独立した乱数列を作る（§9.1）
 //
-// 依存の向きは sim → cluster・ferry・ledger の一方向。下のパッケージは sim を import しない。
+// 住民の依頼（DesignDoc §8）は、Raft の外の「役場」として Engine の中で動く。依頼は New で全部を決め
+// （game.PlanRequests。台本とランダム）、発生・route・再送・転送・適用の観察・状態の判定（request.go）は
+// Engine が行う。役場が読むのはノードの役割と知っている Leader だけで、Leader や Commit を決めない。
+// 状態の変化は、ステップの後処理で request.updated にまとめて出す。
+//
+// 依存の向きは sim → game・cluster・ferry・ledger の一方向。下のパッケージは sim を import しない
+// （game は状態を持たない純粋な型と関数だけを持つ）。
 // stage（T-201）と protocol（T-301）はまだないので、設定・コマンド・イベントは sim の中の型
 // （Config・Command・Ack・DomainEvent）で受け、返す。
 //
@@ -30,6 +40,7 @@
 //   - パッケージ全体で共有される math/rand の関数。乱数は Sub で作った列だけを使う
 //   - 浮動小数点数の計算をスコアや判定に使うこと。スコアは整数で計算する
 //
-// Engine の中の順序は、ノードの ID の昇順・ferry と cluster が返す順・スケジューラの (At, Class, Seq) だけで決める。
+// Engine の中の順序は、ノードの ID の昇順・依頼の帳簿の添字（= ID の順）・待ちの入れた順・
+// ferry と cluster が返す順・スケジューラの (At, Class, Seq) だけで決める。
 // CI では forbidigo で検出する（T-005）。
 package sim

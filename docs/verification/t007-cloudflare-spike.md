@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 / H-5 の測定を実施済み。H-6 では 19 セッションの停止を確認、s-16 はタイムアウトで未確認。アプリ一覧の active / starting はともに 0。次は s-16 の再確認と、対象を限定したクラウド資源の削除。ローカルの後片付け・費用確認・最終 ADR/PR は未完了。
+- 状態: H-4 / H-5 の測定を実施済み。H-6 で使用済み全 20 セッションの停止と、対象 Worker・アプリ・イメージタグの削除を確認。ADR と設定候補・引き継ぎ案を作成済み。ローカルの後片付け・ダッシュボードの残存確認・翌日の費用確認・引き継ぎの投稿は未完了。PR はこれらを残した draft として作成する。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -23,9 +23,9 @@
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
 | H-5 limits.cpuMs の判断 | 暫定値の検証完了 | cpu_ms=500 を確認、WS 再測定成功、終了コード 0。CPU は Worker が 1e9 で 503、DO は 1e9 まで成功。本体での最終調整は T-605 に残す |
-| H-6 後片付け・費用確認 | 途中 | 19/20 の running=false を確認。s-16 はタイムアウト。アプリ active=0 / starting=0。削除対象と手元の CLI の引数を確認済み、再確認と削除を次に案内 |
-| H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
-| H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
+| H-6 後片付け・費用確認 | クラウドの CLI 削除確認済み | 全 20 件の停止、Worker・アプリ・イメージタグが一覧から消えたことを確認。ローカル・ダッシュボード・翌日の費用確認が残る |
+| H-7 ADR の更新 | 作成済み・PR で提示 | ADR-0016 に M-1〜M-14 と判断、ADR-0018・R-02・ADR-0023・DesignDoc に関連する結果を反映 |
+| H-8 後続への引き継ぎ | 案を作成・投稿未実施 | ADR-0016 に #65・#44・#45・#69 への伝達案を記載。Issue コメントはまだ投稿していない |
 
 ## 2026-11-07: 初回の環境確認
 
@@ -1335,6 +1335,59 @@ if (report.remainingWorkers.length || report.remainingApplications.length || rep
 JavaScript の構文を確認した。CLI は引数の配列で起動し、コマンド文字列をシェルに再解釈させない。途中のエラーは後続の削除に進まず報告する。s-16 の確認・クラウド資源の削除はまだ実行結果を受け取っていない。
 
 クラウドの削除後に、ダッシュボードで DO も含めた残存の確認、ローカルのシークレット・対象イメージ・停止済み中継コンテナの後片付け、2026-11-08 (JST) の費用確認を行う。ADR の更新と最終 PR の作成も継続中。
+
+## 2026-11-07 19:49 JST: 全停止とクラウド資源の削除を確認
+
+s-16 の GET 再確認は 19:48:58.765 JST に HTTP 200 / running=false。先に確認した 19 件と合わせ、使用済みの全 20 セッションの停止を確認できた。最初のタイムアウトの記録は残し、再確認のファイルは final-stop-s16-retry.json に分けた。
+
+- Worker raft-game-spike: CLI が Deleted を返した。
+- アプリ 065546f5b8c94deeae247939d516c458: 削除成功。完全な停止まで時間がかかる場合がある、という応答も記録する。
+- イメージ cloudflare-build/b8366d8bfb35/raft-game-spike-server-server:c4818d2dac5b: 削除成功。digest は測定時と同じ sha256:a5a5726ea808fe8bee6bbb4507065a514341f2bef67646cdd7f086ea68cf67d5。
+- 19:49:07.962 JST の最終確認: remainingWorkers=[] / remainingApplications=[] / remainingImageTags=[]。
+- H-6 cloud cleanup exit status: 0。結果ファイルは spike/.cloudflare/cloud-cleanup.json。
+
+上記は CLI の対象資源の削除確認。ダッシュボードでの DO を含む残存確認と、翌日の費用確認が終わったという意味ではない。
+
+### H-7 の文書と引き継ぎ案
+
+記録用ブランチに最新 main 013dc0c39ac325330a0426e5cdc65c09ab901ddd を取り込み、測定コミット d862bb78cbfea3fe0e476605b3b6d4996153f818 と区別した。文書だけを更新する。
+
+- ADR-0016: M-1〜M-14、CPU の集計範囲、一般公開 lite / デモ standard-1、暫定 CPU 500 ms、起動待ち 10000 ms、停止と monitor / inactivity の注意点。
+- ADR-0018: サイズを維持するためゲームの予約単価は維持。CPU 上限を 10 倍にする影響と、入口 Worker / Logs の費用が別にあることを明記。
+- R-02 と DesignDoc: 上記の設定候補に合わせる。本番コードや T-308 の設定欠損時のフォールバック値は変更しない。
+- ADR-0023: M-8 の実験で前提を確認できたことを追記。Proposed の承認状態は変更しない。
+- H-8: 各 Issue のコメントとして使える伝達内容を ADR-0016 に記載。コメントの投稿は未実施。
+
+### 残っている人の確認
+
+1. ローカルの spike.secrets.json と SPIKE_TOKEN の後片付け。測定 JSON は保持する。
+2. スパイクの停止済み中継コンテナと、build / dev イメージの削除。prune と強制削除は使わない。まず残存の一覧を取得する。
+3. cf dev は停止済み。スモークテスト用に取った DEV_SLOT を、この作業ツリーに対して release する。
+4. Cloudflare のダッシュボードで Worker・DO・コンテナの残存を確認する。
+5. 2026-11-08 (JST) に請求・使用量の明細を確認する。ゼロや特定の料金だとは未確認のまま断定しない。
+6. H-8 の引き継ぎ案を後続に伝える。
+
+これらが残るため Issue #15 は閉じず、PR も draft で提示する。
+
+### H-7 のローカル検査と次のローカル作業
+
+更新した 6 文書を含め、python3 scripts/check-docs.py が check-docs: OK。git diff --cached --check も成功。変更は Markdown だけで、本番コードや依存は変更していない。測定コードのテスト結果は測定コミットのものとして記録し、今回の文書更新で新たに Go / Docker の測定をしたとは扱わない。
+
+クラウドの削除を確認できたため、次はユーザーがトークンのローカルファイルと環境変数を片付け、この作業ツリーの DEV_SLOT を解放する。測定 JSON は消さない。Docker は残っている ID と名前を先に取得し、次に対象を限定して消す。
+
+```fish
+node -e 'require("node:fs").rmSync("spike/spike.secrets.json",{force:true});console.log("spike.secrets.json removed");'
+set -e SPIKE_TOKEN
+bash scripts/dev-slot.sh release
+and set -e DEV_SLOT
+
+docker ps -a --filter name=workerd-raft-game-spike --format '{{.ID}} {{.Status}} {{.Names}}'
+docker images --filter reference='cloudflare-build/*/raft-game-spike-server-server' --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+docker images --filter reference='cloudflare-dev/spikesession-server-*' --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+docker image inspect sha256:03d889b3fe26b5bd2ebaa766ab30caf01eaf5bfb76c49fefb17edf3d8fd107a7 --format '{{.Id}} {{json .RepoTags}}'
+```
+
+最後の既知の image ID が見つからなければ、その ID は既に削除されている。Cloudflare の OAuth の認証情報には触れない。これらのローカル作業の結果は未受領。
 
 ## 測定前に確定・確認する事項
 
