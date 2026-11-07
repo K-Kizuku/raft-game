@@ -1,4 +1,5 @@
 // 画面の出し分けと遷移（T-401・T-413・DesignDoc §13.6）。ステージの解放（T-703・DesignDoc §13.9）。
+// ステージ紹介の URL の ?seed= でシードを指定する（T-705・DesignDoc §13.6）。
 import {
   lazy,
   Suspense,
@@ -29,6 +30,8 @@ import { formatRoute, parsePath, type KnownRoute, type Route } from "./router/ro
 import { createSession, type SessionRequest } from "./session/api.ts";
 import { TURNSTILE_SITE_KEY } from "./session/config.ts";
 import { randomSeed } from "./session/seed.ts";
+import { SeedNotice } from "./session/SeedNotice.tsx";
+import { parseSeedParam, type SeedParam } from "./session/seedParam.ts";
 import { SessionNotice } from "./session/SessionNotice.tsx";
 import { createTurnstileClient, type TurnstileClient } from "./session/turnstile.ts";
 import { useSessionCreation } from "./session/useSessionCreation.ts";
@@ -289,15 +292,18 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
     });
   }
 
-  function onDepart(stage: StageSummary): void {
-    if (reusableSession(stage.id)) {
+  // seedParam は紹介を描いたときの URL の ?seed=。ok ならそのシードで作り、同じシードの
+  // 使っていないセッションだけを使う。none・invalid は今までどおり（新しいシード）。
+  function onDepart(stage: StageSummary, seedParam: SeedParam): void {
+    const fixedSeed = seedParam.status === "ok" ? seedParam.seed : null;
+    if (reusableSession(stage.id) && (fixedSeed === null || flow.selection?.seed === fixedSeed)) {
       // 前のラウンドの world・roundResult を消してから、新しいラウンドを始める。
       gameStore.getState().reset();
       dispatch({ type: "departed", stage });
       navigate({ name: "game" }, { replace: true });
       return;
     }
-    const seed = newSeed();
+    const seed = fixedSeed ?? newSeed();
     void startSession(stage, seed, (session) => {
       dispatch({ type: "stageSelected", selection: { stageId: stage.id, session, seed } });
       gameStore.getState().reset();
@@ -412,7 +418,20 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
         if (lock.locked) {
           return <LockedStageScreen stage={stage} requires={lock.requires} />;
         }
-        return <StageIntroScreen stage={stage} busy={busy} onDepart={() => onDepart(stage)} />;
+        // ルートが変われば描き直されるので、その時点の URL の値になる。
+        const seedParam = parseSeedParam(window.location.search);
+        return (
+          <>
+            <StageIntroScreen
+              stage={stage}
+              busy={busy}
+              onDepart={() => {
+                onDepart(stage, seedParam);
+              }}
+            />
+            {seedParam.status !== "none" && <SeedNotice param={seedParam} />}
+          </>
+        );
       }
       case "game": {
         const round = flow.round;

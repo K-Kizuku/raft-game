@@ -335,6 +335,31 @@ describe("ResultScreen", () => {
     expect(screen.queryByRole("button", { name: "E エンジニアモード" })).toBeNull();
   });
 
+  it("RS-S1 結果と世界があるとき、「同じ条件で遊ぶ」の節がボタンの列の直前にある", () => {
+    loadWorld(3);
+    setResult(FULL_RESULT);
+    const { container, unmount } = renderResult();
+
+    const seed = section("同じ条件で遊ぶ");
+    const actions = container.querySelector(".result-actions");
+    expect(seed.nextElementSibling).toBe(actions);
+    expect(within(seed).getByText(/このラウンドのシード:/).textContent).toBe(
+      "このラウンドのシード: 1",
+    );
+    expect(seed.querySelector("code")?.textContent).toBe(
+      `${window.location.origin}/stages/stage1?seed=1`,
+    );
+    unmount();
+
+    // 結果が無いときは無い（世界があっても）。
+    act(() => {
+      gameStore.getState().reset();
+    });
+    loadWorld(3);
+    renderResult();
+    expect(screen.queryByRole("region", { name: "同じ条件で遊ぶ" })).toBeNull();
+  });
+
   describe("RS-8 用語", () => {
     afterEach(() => {
       act(() => {
