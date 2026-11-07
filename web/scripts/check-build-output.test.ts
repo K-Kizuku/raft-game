@@ -5,6 +5,7 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  ALLOWED_ORIGINS,
   checkOutput,
   EXPECTED,
   localImages,
@@ -269,6 +270,15 @@ describe("check-build-output", () => {
   });
 
   describe("C-8: 文字列", () => {
+    it.each(["production", "demo"] as const)(
+      "%s の ALLOWED_ORIGINS は 2 つのホスト名のオリジンのカンマ区切り（#130）",
+      (mode) => {
+        const want = `https://${PROD_HOST},https://${DEMO_HOST}`;
+        expect(ALLOWED_ORIGINS).toBe(want);
+        expect(sub(env(fixture(mode)), "ALLOWED_ORIGINS")).toEqual({ type: "text", value: want });
+      },
+    );
+
     const cases: Case[] = [
       [
         "DEMO_CONTROLS が 1",
@@ -283,9 +293,28 @@ describe("check-build-output", () => {
         "env.CONTAINER_INSTANCE:",
       ],
       [
-        "ALLOWED_ORIGINS がデモのホスト名",
+        "ALLOWED_ORIGINS がデモのホスト名だけ",
         "production",
         (o) => (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${DEMO_HOST}`),
+        "env.ALLOWED_ORIGINS:",
+      ],
+      [
+        "ALLOWED_ORIGINS が一般公開のホスト名だけ",
+        "production",
+        (o) => (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${PROD_HOST}`),
+        "env.ALLOWED_ORIGINS:",
+      ],
+      [
+        "デモの ALLOWED_ORIGINS がデモのホスト名だけ",
+        "demo",
+        (o) => (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${DEMO_HOST}`),
+        "env.ALLOWED_ORIGINS:",
+      ],
+      [
+        "デモの ALLOWED_ORIGINS が逆の順",
+        "demo",
+        (o) =>
+          (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${DEMO_HOST},https://${PROD_HOST}`),
         "env.ALLOWED_ORIGINS:",
       ],
       [

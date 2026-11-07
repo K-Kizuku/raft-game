@@ -1057,7 +1057,7 @@ func (s *session) step(now time.Time) {
 | `GUARDS` | 既定値（§12.3.1。`cpuMs` は `limits.cpuMs` と同じ値） | なし | 既定値 | 既定値 |
 | `DEMO_CONTROLS` | `"0"` | `"1"` | `"1"` | `"1"` |
 | `CONTAINER_INSTANCE` | `"lite"`（仮。T-007（#15）で見直す） | `"standard-1"` | `"lite"` | `"lite"` |
-| `ALLOWED_ORIGINS` | `"https://raft.kizuku-hackathon.work"` | `"https://raft-demo.kizuku-hackathon.work"` | 書かない（同じオリジンだけ） | 書かない |
+| `ALLOWED_ORIGINS` | `"https://raft.kizuku-hackathon.work,https://raft-demo.kizuku-hackathon.work"`（両方のホスト名。#130） | 同じ | 書かない（同じオリジンだけ） | 書かない |
 | `BUILD_ID` | ビルドの時の環境変数 `BUILD_ID`（未設定・空なら `"dev"`） | 同じ | 同じ | 同じ |
 | `SESSION_SIGNING_KEY`・`TURNSTILE_SECRET` | シークレット | シークレット | シークレット | シークレット |
 | `ADMIN_TOKEN` | シークレット | なし（管理用 API は 404） | シークレット | シークレット |
