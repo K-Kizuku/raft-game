@@ -26,7 +26,8 @@ git config --file "$GIT_CONFIG_GLOBAL" user.email "test@example.invalid"
 git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE AGENT_ROLE AGENT_ISSUE AGENT_ALLOW_PROTECTED AGENT_CONFIG \
   AGENT_REPO AGENTCTL AGENT_FALLBACK_REASON CLAUDE_PROJECT_DIR DEV_SLOT \
-  GITHUB_TOKEN GH_TOKEN FAKE_GH_TOKEN AGENT_CODEX_GITHUB_TIMEOUT AGENT_CODEX_GITHUB_POLL
+  GITHUB_TOKEN GH_TOKEN FAKE_GH_TOKEN AGENT_CODEX_GITHUB_TIMEOUT AGENT_CODEX_GITHUB_POLL \
+  AGENT_CODEX_GITHUB_FIRST_WAIT AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT
 export CLAUDE_CONFIG_DIR="$tmp/claude-config"
 
 # ---- 本物の agentctl（review validate・render の書式の確認に使う。go がなければ jq で代わりに確かめる）----
@@ -89,8 +90,14 @@ case "$1" in
       exit "${FAKE_PROTECTED_RC:-0}"
     fi
     [ "$mode" != pending-then-completed ] || { [ "$n" -gt 2 ] && mode=completed || mode=pending; }
+    # Issue #135: API の上限（403 のレート制限）を 4 回（retry_limit より多く）返してから完了する
+    [ "$mode" != ratelimit-then-completed ] || { [ "$n" -gt 4 ] && mode=completed || mode=ratelimit; }
     case "$mode" in
       unavailable | error) echo "agentctl pr codex-record: github: 502" >&2; exit 3 ;;
+      ratelimit)
+        echo "agentctl pr codex-record: github: GET /repos/x/issues/12/comments: 403 API rate limit exceeded for user ID 1.（レート制限）" >&2
+        exit 3
+        ;;
       pending) echo "agentctl pr codex-record: まだ" >&2; exit 2 ;;
       bad) echo '{"schema":"agent-review/v1"}' ;;
       completed)
@@ -154,6 +161,11 @@ case "$1 $2" in
     done
     ;;
   "pr merge") exit "${FAKE_MERGE_RC:-0}" ;;
+  # Issue #135: --jq の結果（core の remaining と reset）。FAKE_RATE_RESET が未設定なら失敗する
+  "api rate_limit")
+    [ -n "${FAKE_RATE_RESET:-}" ] || { echo "HTTP 500" >&2; exit 1; }
+    printf '%s %s\n' "${FAKE_RATE_REMAINING:-0}" "$FAKE_RATE_RESET"
+    ;;
   # FAKE_GH_TOKEN が未設定なら未ログイン（本物の gh と同じく終了コード 1）。
   # 設定されていれば（空でも）その値を出す
   "auth token")
@@ -262,6 +274,13 @@ chmod +x "$fake/bin/"*
 for c in agentctl gh claude; do
   ln -s "$fake/bin/$c" "$fake/bin-nocodex/$c"
 done
+# Issue #135: 待たずに秒数を記録する偽の sleep（review.sh の待ちの間隔を確かめるときだけ PATH の先頭に入れる）
+mkdir -p "$fake/bin-sleep"
+cat >"$fake/bin-sleep/sleep" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_LOG/sleep.log"
+EOF
+chmod +x "$fake/bin-sleep/sleep"
 
 # 本物の gh・codex・claude・agentctl を隠す（Issue #81）。それらを含むディレクトリは、
 # ディレクトリごと外すと同じ場所の git・rm なども消える（GitHub Actions では gh が /usr/bin にある）。
@@ -683,8 +702,9 @@ run_rc env AGENT_ROLE=orchestrator FAKE_GATE_JSON="$gate_pass" FAKE_MERGE_RC=1 b
 check "merge: gh pr merge が失敗したら状態を変えない" test "$RC" = 1 -a -z "$(jq -c 'select(.args[0] == "state")' "$FAKE_LOG/agentctl.log")"
 
 # ================= review.sh =================
-# Codex の GitHub 連携の確認の間隔を 0 秒にする（偽の agentctl の FAKE_GH_MODE の既定は unavailable）
-export AGENT_CODEX_GITHUB_POLL=0
+# Codex の GitHub 連携の確認の間隔・最初の待ち・API の上限での待ちを 0 秒にする
+# （偽の agentctl の FAKE_GH_MODE の既定は unavailable）
+export AGENT_CODEX_GITHUB_POLL=0 AGENT_CODEX_GITHUB_FIRST_WAIT=0 AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT=0
 export FAKE_BASE_SHA="$base_sha"
 # GH_TOKEN があれば review.sh は gh auth token を呼ばない（偽の agentctl は使わない）
 export GH_TOKEN="test-token"
@@ -900,6 +920,75 @@ reset_logs
 FAKE_GH_MODE=pending-then-completed review
 check "review github: 完了するまで繰り返し確かめる" test "$RC:$(codex_gh_calls)" = "0:3"
 check "review github: 待った後の記録は GitHub 連携のもの" jq -e '.reviewer_version == "chatgpt-codex-connector (GitHub)"' "$tmp/record.json"
+
+# 待ちの間隔（Issue #135）: 偽の sleep で秒数を記録する。既定は最初に 60 秒待ち、その後 30 秒ごと
+sleeps() { [ ! -f "$FAKE_LOG/sleep.log" ] || tr '\n' ' ' <"$FAKE_LOG/sleep.log" | sed 's/ $//'; }
+review_sleep() { # review_sleep <環境変数…> -- <review の引数…>
+  local e=()
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+    e+=("$1")
+    shift
+  done
+  [ "$#" -eq 0 ] || shift
+  run_rc env -u AGENT_CODEX_GITHUB_POLL -u AGENT_CODEX_GITHUB_FIRST_WAIT -u AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT \
+    PATH="$fake/bin-sleep:$PATH" AGENT_ROLE=orchestrator ${e[@]+"${e[@]}"} bash "$A/review.sh" 12 \
+    --base "$base_sha" --head "$head_sha" --issue-file "$tmp/issue.md" --no-post --out "$tmp/record.json" "$@"
+}
+reset_logs
+review_sleep FAKE_GH_MODE=pending-then-completed
+check "review github 間隔: 既定は最初に 60 秒、その後 30 秒ごとに読み直す" test "$RC:$(codex_gh_calls):$(sleeps)" = "0:3:60 30 30"
+check "review github 間隔: 読み直した後の記録は GitHub 連携のもの" jq -e '.reviewer_version == "chatgpt-codex-connector (GitHub)"' "$tmp/record.json"
+reset_logs
+review_sleep FAKE_GH_MODE=pending-then-completed AGENT_CODEX_GITHUB_FIRST_WAIT=7 AGENT_CODEX_GITHUB_POLL=4
+check "review github 間隔: AGENT_CODEX_GITHUB_FIRST_WAIT・AGENT_CODEX_GITHUB_POLL で変えられる" test "$RC:$(codex_gh_calls):$(sleeps)" = "0:3:7 4 4"
+reset_logs
+review_sleep FAKE_GH_MODE=completed
+check "review github 間隔: すぐ終わっていても最初の待ちの後に 1 回だけ読む" test "$RC:$(codex_gh_calls):$(sleeps)" = "0:1:60"
+reset_logs
+review_sleep FAKE_GH_MODE=completed AGENT_CODEX_GITHUB_TIMEOUT=20
+check "review github 間隔: 最初の待ちは待ちの全体の上限を超えない" test "$RC:$(sleeps)" = "0:20"
+reset_logs
+review_sleep FAKE_GH_MODE=pending AGENT_CODEX_GITHUB_POLL=x FAKE_CODEX_MODE=good
+check "review github 間隔: 整数でない間隔は拒否する" test "$RC" = 1 -a ! -s "$FAKE_LOG/agentctl.log"
+
+# API の上限（403 のレート制限、Issue #135）: 上限が戻るまで待って続け、失敗として数えない
+reset_logs
+FAKE_GH_MODE=ratelimit-then-completed FAKE_RATE_RESET="$(($(date +%s) - 10))" review
+check "review github 上限: retry_limit より多く上限に達しても続けて GitHub 連携の記録を作る" \
+  test "$RC:$(codex_gh_calls)" = "0:5"
+check "review github 上限: 記録は GitHub 連携のもの（ローカルに切り替えない）" \
+  jq -e '.reviewer_version == "chatgpt-codex-connector (GitHub)"' "$tmp/record.json"
+check "review github 上限: ローカルの Codex・Claude Code を呼ばない" test ! -s "$FAKE_LOG/codex.log" -a ! -s "$FAKE_LOG/claude.log"
+check "review github 上限: gh api rate_limit で戻る時刻を読む" log_has gh '.args[0:2] == ["api","rate_limit"]'
+check "review github 上限: 失敗として数えない（n/3 回目を出さない）" bash -c '! grep -q "回目" "$1"' _ "$tmp/err"
+check "review github 上限: 待つことを標準エラーに出す" grep -q "API の上限に達した" "$tmp/err"
+# 戻る時刻（reset）まで待つ
+reset_logs
+review_sleep FAKE_GH_MODE=ratelimit-then-completed FAKE_RATE_RESET="$(($(date +%s) + 120))" AGENT_CODEX_GITHUB_FIRST_WAIT=0 AGENT_CODEX_GITHUB_POLL=0
+check "review github 上限: reset の時刻まで待つ" \
+  test "$RC" = 0 -a "$(head -n 1 "$FAKE_LOG/sleep.log" 2>/dev/null || echo 0)" -ge 110 -a "$(head -n 1 "$FAKE_LOG/sleep.log" 2>/dev/null || echo 999)" -le 122
+check "review github 上限: 上限の待ちの後に GitHub 連携の記録を作る" jq -e '.reviewer_version == "chatgpt-codex-connector (GitHub)"' "$tmp/record.json"
+# 戻る時刻が読めない・remaining が 0 でない（二次的な上限）なら 60 秒（AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT）
+reset_logs
+review_sleep FAKE_GH_MODE=ratelimit-then-completed AGENT_CODEX_GITHUB_FIRST_WAIT=0 AGENT_CODEX_GITHUB_POLL=0
+check "review github 上限: 戻る時刻が読めなければ 60 秒ずつ待つ" test "$RC:$(codex_gh_calls):$(sleeps)" = "0:5:60 60 60 60"
+reset_logs
+review_sleep FAKE_GH_MODE=ratelimit-then-completed FAKE_RATE_REMAINING=12 FAKE_RATE_RESET="$(($(date +%s) + 3000))" \
+  AGENT_CODEX_GITHUB_FIRST_WAIT=0 AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT=9
+check "review github 上限: remaining が 0 でなければ AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT 秒待つ" \
+  test "$RC:$(codex_gh_calls):$(sleeps)" = "0:5:9 9 9 9"
+# 戻るのが待ちの全体の上限より後・上限に達したまま時間切れ → 今までどおり service_unavailable（タイムアウト）
+reset_logs
+review_sleep FAKE_GH_MODE=ratelimit FAKE_RATE_RESET="$(($(date +%s) + 2000))" AGENT_CODEX_GITHUB_FIRST_WAIT=0 FAKE_CODEX_MODE=good
+check "review github 上限: 戻るのが待ちの上限（900 秒）より後なら待たずにローカルの Codex に切り替える" \
+  test "$RC:$(codex_gh_calls):$(sleeps)" = "0:1:" -a "$(wc -l <"$FAKE_LOG/codex.log" | tr -d ' ')" = 1
+check "review github 上限: そのときの理由はタイムアウトの service_unavailable" grep -q "service_unavailable.*AGENT_CODEX_GITHUB_TIMEOUT" "$tmp/err"
+reset_logs
+FAKE_GH_MODE=ratelimit AGENT_CODEX_GITHUB_TIMEOUT=0 FAKE_CODEX_MODE=good review
+check "review github 上限: 上限に達したまま時間切れならタイムアウトの理由で切り替える" \
+  test "$RC" = 0 -a "$(wc -l <"$FAKE_LOG/codex.log" | tr -d ' ')" = 1
+check "review github 上限: 時間切れの理由は今までどおり" grep -q "service_unavailable.*AGENT_CODEX_GITHUB_TIMEOUT" "$tmp/err"
+check "review github 上限: 時間切れの後の記録はローカルの Codex のもの" jq -e '.reviewer_version == "codex-cli 0.99.0"' "$tmp/record.json"
 
 # タイムアウト → service_unavailable で、これまでの経路（ローカルの Codex CLI）へ
 reset_logs
