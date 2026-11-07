@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/K-Kizuku/raft-game/server/internal/protocol"
+	"github.com/K-Kizuku/raft-game/server/internal/protocol/stageconv"
+	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
 // standaloneEntry は一覧のセッション 1 つ。
@@ -161,25 +163,21 @@ func newStandaloneEntry(sess *session, token string) *standaloneEntry {
 	return &standaloneEntry{sess: sess, tokenHash: sha256.Sum256([]byte(token))}
 }
 
-// stageSummaries は /api/stages の本文を作る。
+// stageSummaries は /api/stages の本文を作る。形は stageconv.Summaries（Worker の一覧と同じ。#113）、
+// デモ用のステージ（demo のあるステージ）は --demo-controls のときだけ出す（Worker の visibleStages と同じ規則）。
 func (s *Server) stageSummaries() protocol.StagesResponse {
-	stages := s.cat.Stages()
-	out := protocol.StagesResponse{Stages: make([]protocol.StageSummary, len(stages))}
-	for i, st := range stages {
-		var unlock *string
-		if st.Unlock != "" {
-			u := st.Unlock
-			unlock = &u
-		}
-		out.Stages[i] = protocol.StageSummary{
-			ID:         st.ID,
-			Title:      st.Title,
-			Region:     st.Region,
-			Islands:    len(st.Islands),
-			Ferries:    len(st.Ferries),
-			DurationMs: st.DurationMs,
-			Unlock:     unlock,
+	all := s.cat.Stages()
+	visible := make([]*stage.Stage, 0, len(all))
+	for _, st := range all {
+		if s.stageVisible(st) {
+			visible = append(visible, st)
 		}
 	}
-	return out
+	return protocol.StagesResponse{Stages: stageconv.Summaries(visible)}
+}
+
+// stageVisible は、st を /api/stages に出し、POST /api/sessions で受け付けるかを返す。
+// デモ用のステージ（st.Demo != nil）は --demo-controls（DEMO_CONTROLS=1）のときだけ。stageconv.Summary の demo と同じ判定。
+func (s *Server) stageVisible(st *stage.Stage) bool {
+	return st.Demo == nil || s.cfg.DemoControls
 }

@@ -740,7 +740,7 @@ Go サーバーの起動の設定（`server/internal/server` の `ParseConfig`�
 | `--port` | `PORT` | `8080` |
 | `--data` | `DATA_DIR` | `""`（埋め込んだステージ定義。[ADR-0025](./adr/0025-stage-data-source.md)） |
 | `--allowed-origins` | `ALLOWED_ORIGINS` | `""`（`standalone` だけ。規則はプロトコル §2 の「`Origin` の規則」） |
-| `--demo-controls` | `DEMO_CONTROLS` | `false`（`standalone` だけ。環境変数は `1` だけが真） |
+| `--demo-controls` | `DEMO_CONTROLS` | `false`（`standalone` だけ。環境変数は `1` だけが真。真のときだけ `demo: true` のセッションを作れ、`/api/stages` にデモ用のステージ（定義に `demo` がある）を出して `POST /api/sessions` で受け付ける。Worker の `DEMO_CONTROLS` と同じ規則） |
 | `--max-sessions` | `MAX_SESSIONS` | `16`（`standalone` だけ。`1`〜`256`） |
 | `--invariants` | `SIM_INVARIANTS` | `false`（`sim.Options.CheckInvariants`） |
 | `--log-level` | `LOG_LEVEL` | `info` |
