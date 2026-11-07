@@ -1281,7 +1281,7 @@ T-412 で決めた、設定「Raft の用語を併記する」（[FR-UI-10](./01
 | 大量のセッション作成による資源の枯渇・課金の増加 | コストガード（[ADR-0018](./adr/0018-cost-guard.md)）：Turnstile、IP ごとのレート制限、ゾーンの WAF と AI クローラーの遮断、費用の上限 |
 | でたらめな ID による Durable Object の大量作成 | sessionId に HMAC-SHA256 の署名を付け、Worker で検証してから Durable Object を呼ぶ（G3。**無効にしない**）。署名の対象にホスト名と有効期限を含め、別のホスト（一般公開とデモ用）で発行したもの・期限を過ぎたものも通さない。比較は定数時間（`crypto.subtle.verify`）で、検証は暗号の計算と時計だけで行う（Durable Object・`CostGuard`・ネットワークを使わない）。鍵 `SESSION_SIGNING_KEY` がない・不正なら、受付（`503`）と接続（`404`）を止める（署名なしで動く経路を作らない）。形式は [プロトコル §2](./06-protocol.md#post-apisessions) |
 | 管理用 API の悪用 | `ADMIN_TOKEN`（`--secrets-file` で渡す）を必須にし、切り替えの記録を残す。合言葉は定期的に変える |
-| シークレットの漏えい（公開リポジトリ） | `.env` などは `.gitignore` に入れ、CI でシークレットの検査（secret scanning）を行う |
+| シークレットの漏えい（公開リポジトリ） | `.env` などは `.gitignore` に入れ、CI でシークレットの検査（secret scanning）を行う。gitleaks（版を固定。`scripts/check-secrets.sh`）で git の履歴全体を検査する（CI の `secrets` ジョブ・`make check-secrets`） |
 | 巨大・大量のメッセージ | WS の受信サイズの上限、コマンドのレート制限、JSON のデコードは型を決めて行う |
 | 他のサイトからの WS 接続 | Worker で `Origin` ヘッダーを許可リスト（`ALLOWED_ORIGINS`）と照合する |
 | コンテナへの直接の接続 | コンテナは外部に公開しない。Durable Object からだけ接続する。ブラウザ由来の `internal.*` の電文は Durable Object が破棄する |
