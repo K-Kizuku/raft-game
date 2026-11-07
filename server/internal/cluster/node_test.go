@@ -18,6 +18,7 @@ func validConfig() NodeConfig {
 		MaxSizePerMsg:   4096,
 		MaxInflightMsgs: 4,
 		RandIntn:        func(int) int { return 0 },
+		StateMachine:    &fakeSM{id: 1},
 	}
 }
 
@@ -30,6 +31,7 @@ func TestNewNodeValidation(t *testing.T) {
 	}{
 		{name: "valid", mutate: func(*NodeConfig) {}},
 		{name: "nil RandIntn", mutate: func(c *NodeConfig) { c.RandIntn = nil }, wantErr: true},
+		{name: "nil StateMachine", mutate: func(c *NodeConfig) { c.StateMachine = nil }, wantErr: true},
 		{name: "empty Peers", mutate: func(c *NodeConfig) { c.Peers = nil }, wantErr: true},
 		{name: "duplicate Peers", mutate: func(c *NodeConfig) { c.Peers = []uint64{1, 2, 2} }, wantErr: true},
 		{name: "ID not in Peers", mutate: func(c *NodeConfig) { c.ID = 4 }, wantErr: true},
