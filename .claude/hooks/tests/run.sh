@@ -752,6 +752,67 @@ expect_bash 0 orchestrator "$nogit" "ls"
 expect_bash 2 orchestrator "$nogit" "rm -r /"
 got="$(run guard-mcp.sh - "$nogit" '{"pullNumber":1}' mcp__github__merge_pull_request)"
 [ "$got" = 0 ] && pass || fail "fail-closed: Git の外は内部エラーにしない（guard-mcp・got=${got}）"
+# here-string（<<<）・ヒアドキュメント（<<）の一時ファイルを作れなくても、検査を飛ばして許可にしない（F8）。
+# bash 3.2 は <<< の入力に一時ファイルを作り、作れないとリダイレクトが失敗して、while … done <<<"$x" の検査を
+# 飛ばしたまま allow に着いていた（rm -r / が終了コード 0）。hooks には <<< と << を書かない
+for f in lib.sh guard-bash.sh guard-write.sh guard-mcp.sh; do
+  if grep -nE '<<' "$hooks/$f" | grep -vE '^[0-9]+:[[:space:]]*#' >"$tmp/heredoc"; then
+    fail "here-string・ヒアドキュメントを使わない（一時ファイルを作れないと検査を飛ばす。F8）: $f: $(tr '\n' ' ' <"$tmp/heredoc")"
+  else
+    pass
+  fi
+done
+# TMPDIR を書き込めないディレクトリにして、bash 5（PATH の bash）と /bin/bash（macOS では 3.2）で確かめる。
+# macOS では sandbox-exec で一時ファイルの置き場（/tmp など）への書き込みも禁じ、一時ファイルを作れない環境を再現する
+rotmp="$tmp/readonly-tmp"
+mkdir -p "$rotmp"
+chmod 555 "$rotmp"
+bashes=("$(command -v bash)")
+[ -x /bin/bash ] && [ "/bin/bash" != "${bashes[0]}" ] && bashes+=("/bin/bash")
+sandbox=()
+if [ "$(uname -s)" = Darwin ] && command -v sandbox-exec >/dev/null 2>&1; then
+  sandbox=(sandbox-exec -p '(version 1)(allow default)(deny file-write* (subpath "/private") (subpath "/var") (subpath "/tmp") (subpath "/Users"))')
+  # sandbox の中で書き込めないことを確かめておく（確かめられなければ sandbox を使わない）
+  if "${sandbox[@]}" /bin/sh -c ': >"$1"' sh "$tmp/sandbox-probe" 2>/dev/null; then
+    sandbox=()
+  fi
+fi
+# run_notmp <bash> <hook> <role> <cwd> <tool_input の JSON> [tool_name]: 一時ファイルを作れない環境で hook を実行し、終了コードを出す
+run_notmp() {
+  local sh="$1" hook="$2" role="$3" cwd="$4" input="$5" tool="${6:-Bash}" json rc
+  json="$(jq -cn --arg cwd "$cwd" --arg tool "$tool" --argjson ti "$input" \
+    '{session_id:"s", cwd:$cwd, hook_event_name:"PreToolUse", tool_name:$tool, tool_input:$ti}')"
+  set +e
+  printf '%s' "$json" | TMPDIR="$rotmp" LC_ALL="$utf8" AGENT_ROLE="$role" \
+    ${sandbox[@]+"${sandbox[@]}"} "$sh" "$hooks/$hook" >/dev/null 2>"$tmp/stderr"
+  rc=$?
+  set -e
+  echo "$rc"
+}
+utf8="$(locale -a 2>/dev/null | grep -iE '^(ja_JP|en_US|C)\.utf-?8$' | head -n 1 || true)"
+[ -n "$utf8" ] || utf8="C"
+for sh in "${bashes[@]}"; do
+  label="${sh}（TMPDIR を書き込めない${sandbox[*]:+・sandbox-exec}）"
+  for c in "rm -r /" "rm -rf ~" "git push origin main" "git push --force-with-lease origin main" \
+    "echo x > .claude/hooks/x" "python3 -c \"open('.claude/hooks/x','w')\"" ".agents/bin/agentctl comment 1 x" \
+    "gh pr merge 1" "git status; rm -r /"; do
+    got="$(run_notmp "$sh" guard-bash.sh worker "$wt" "$(bash_input "$c")")"
+    [ "$got" = 2 ] && pass || fail "一時ファイルなし: ${label} で拒否されない（got=${got}）: $c: $(tr '\n' ' ' <"$tmp/stderr")"
+  done
+  got="$(run_notmp "$sh" guard-bash.sh orchestrator "$repo" "$(bash_input "echo x > .github/workflows/ci.yml")")"
+  [ "$got" = 2 ] && pass || fail "一時ファイルなし: ${label} で .github/workflows/ へのリダイレクトが拒否されない（got=${got}）"
+  got="$(run_notmp "$sh" guard-write.sh worker "$wt" "$(jq -cn --arg p "$wt/.claude/hooks/guard-bash.sh" '{file_path:$p}')" Write)"
+  [ "$got" = 2 ] && pass || fail "一時ファイルなし: ${label} で保護されたパスへの書き込みが拒否されない（guard-write・got=${got}）"
+  got="$(run_notmp "$sh" guard-write.sh orchestrator "$repo" "$(jq -cn --arg p "$repo/.agents/../server/x.go" '{file_path:$p}')" Write)"
+  [ "$got" = 2 ] && pass || fail "一時ファイルなし: ${label} で Orchestrator の .. を含むパスが拒否されない（guard-write・got=${got}）"
+  # 正しく許可していた操作は今までどおり許可する
+  got="$(run_notmp "$sh" guard-bash.sh worker "$wt" "$(bash_input "git status && ls -la | grep x")")"
+  [ "$got" = 0 ] && pass || fail "一時ファイルなし: ${label} で許可されるべきコマンドが拒否された（got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+  got="$(run_notmp "$sh" guard-write.sh worker "$wt" "$(jq -cn --arg p "$wt/README.md" '{file_path:$p}')" Write)"
+  [ "$got" = 0 ] && pass || fail "一時ファイルなし: ${label} で Worktree の中への書き込みが拒否された（got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+done
+chmod 755 "$rotmp"
+
 # 正しく拒否するときは、内部エラーではなく本来の理由を出す
 got="$(run guard-bash.sh worker "$wt" "$(bash_input "git push origin main")")"
 if [ "$got" = 2 ] && grep -qF 'main への push は禁止' "$tmp/stderr" && ! grep -qF "$internal_msg" "$tmp/stderr"; then

@@ -42,16 +42,18 @@ if [ "$ROLE" = "worker" ] && [ "${AGENT_ALLOW_PROTECTED:-0}" != "1" ] && [ -n "$
   [ -f "$TOP/.agents/config.json" ]; then
   pp="$(jq -r '.protected_paths[]? // empty' "$TOP/.agents/config.json")" ||
     internal_error "保護されたパス（.agents/config.json の protected_paths）を読めない"
-  while IFS= read -r p; do
+  split_lines "$pp"
+  for p in "${SPLIT[@]}"; do
     [ -n "$p" ] && PROTECTED+=("$p")
-  done <<<"$pp"
+  done
 fi
 
 # lex_norm <絶対パス>: . と .. を字句のまま取り除く。失敗したら 0 以外を返す。
 lex_norm() {
   local out="" part
   local parts=()
-  IFS=/ read -r -a parts <<<"$1" || return 1
+  split_fields / "$1"
+  parts=(${SPLIT[@]+"${SPLIT[@]}"})
   for part in "${parts[@]+"${parts[@]}"}"; do
     case "$part" in
       '' | .) ;;
@@ -131,23 +133,25 @@ if [ "${#PROTECTED[@]}" -gt 0 ]; then
     redirs="$(printf '%s\n' "$redirs" | sed -E 's/^>>?\|?[[:space:]]*//')" ||
       internal_error "リダイレクトの先を取り出せない（sed が失敗した）"
   fi
-  while IFS= read -r target; do
+  split_lines "$redirs"
+  for target in "${SPLIT[@]}"; do
     [ -n "$target" ] || continue
     if protected_hit "$target"; then
       deny "${PROTECTED_MSG}（リダイレクトの先: ${target}）"
     fi
-  done <<<"$redirs"
+  done
   # インタプリタのコード（python3 -c "open('…','w')" など）は ( や , で区切られてセグメントに分かれるので、
   # コマンド全体の単語を調べる。
   if re_match "$norm" -E '(^|[^A-Za-z0-9_.-])(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|perl[0-9.]*|ruby|php|lua|luajit|tclsh|osascript|Rscript)([[:space:]]|$)'; then
     toks="$(printf '%s\n' "$norm" | tr -c 'A-Za-z0-9_./~$*?=:@+%-' '\n')" ||
       internal_error "インタプリタのコードを単語に分けられない（tr が失敗した）"
-    while IFS= read -r tok; do
+    split_lines "$toks"
+    for tok in "${SPLIT[@]}"; do
       [ -n "$tok" ] || continue
       if protected_hit "$tok"; then
         deny "${PROTECTED_MSG}（インタプリタのコードの中: ${tok}）"
       fi
-    done <<<"$toks"
+    done
   fi
 fi
 
@@ -551,7 +555,8 @@ agentctl_write_hit() {
     *agentctl*) mention=1 ;;
   esac
   toks="$(printf '%s\n' "$s" | tr -c 'A-Za-z0-9_./=\n-' '\n')" || return 1
-  while IFS= read -r t; do
+  split_lines "$toks"
+  for t in "${SPLIT[@]}"; do
     case "$t" in
       go) has_go=1 ;;
       run) has_run=1 ;;
@@ -559,7 +564,7 @@ agentctl_write_hit() {
       -comment | --comment | -comment=* | --comment=*) [ -n "$sub" ] || sub="gate --comment" ;;
       -set-status | --set-status | -set-status=* | --set-status=*) [ -n "$sub" ] || sub="gate --set-status" ;;
     esac
-  done <<<"$toks"
+  done
   [ "$has_go" = 1 ] && [ "$has_run" = 1 ] && mention=1
   if [ "${2:-}" = any ]; then
     # どちらか一方でもあれば出す（正規化しきれない $'...' があるとき）
@@ -587,7 +592,8 @@ is_interpreter() {
 check_segment() {
   local seg="$1"
   local w=()
-  read -r -a w <<<"$seg" || internal_error "セグメントを単語に分けられない"
+  split_fields $' \t\n' "$seg"
+  w=(${SPLIT[@]+"${SPLIT[@]}"})
   [ "${#w[@]}" -gt 0 ] || return 0
 
   # 先頭の変数の代入・ラッパー（env・sudo など）・bash -c を取り除く。
@@ -834,8 +840,11 @@ fi
 # shellcheck disable=SC2020
 segs="$(printf '%s\n' "$norm" | tr ';&|()`' '\n\n\n\n\n\n')" ||
   internal_error "コマンドをセグメントに分けられない（tr が失敗した）"
-while IFS= read -r seg; do
+# （here-string <<< は一時ファイルを作れないとリダイレクトが失敗し、検査を飛ばして allow に着くので使わない。F8）
+split_lines "$segs"
+SEGS=("${SPLIT[@]}")
+for seg in "${SEGS[@]}"; do
   check_segment "$seg"
-done <<<"$segs"
+done
 
 allow

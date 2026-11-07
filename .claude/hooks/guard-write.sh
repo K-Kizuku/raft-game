@@ -35,7 +35,8 @@ file="$(hook_field '.tool_input.file_path // .tool_input.notebook_path')" || int
 normpath() {
   local out="" part
   local parts=()
-  IFS=/ read -r -a parts <<<"$1" || return 1
+  split_fields / "$1"
+  parts=(${SPLIT[@]+"${SPLIT[@]}"})
   for part in "${parts[@]+"${parts[@]}"}"; do
     case "$part" in
       '' | .) ;;
@@ -109,7 +110,8 @@ case "$ROLE" in
       # プロセス置換 < <(jq …) の失敗は親に伝わらず、保護されたパスが空のまま許可になるので、変数に受けて検査する
       pats="$(jq -r '.protected_paths[]? // empty' "$cfg")" ||
         internal_error "保護されたパス（${cfg} の protected_paths）を読めない"
-      while IFS= read -r pat; do
+      split_lines "$pats"
+      for pat in "${SPLIT[@]}"; do
         [ -n "$pat" ] || continue
         # ** も * も / をまたいで一致させる（控えめに判定する）。
         glob="${pat//\*\*/*}"
@@ -117,7 +119,7 @@ case "$ROLE" in
         if [[ "$rel" == $glob ]] || [[ "$rel/" == $glob ]]; then
           deny "保護されたパス（${pat}）は、Issue の変更予定ファイルに含まれるとき（AGENT_ALLOW_PROTECTED=1）だけ変更できる: $rel"
         fi
-      done <<<"$pats"
+      done
     fi
     ;;
   orchestrator)

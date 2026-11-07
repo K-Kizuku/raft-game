@@ -17,7 +17,11 @@
 # - 判定に使うデータを作るコマンド（tr・jq・sed・grep・git など）の失敗は、親のシェルで明示的に検査し、
 #   internal_error で拒否する。set -e に頼らない（コマンド置換の中・if や || の中の関数では set -e が効かず、
 #   プロセス置換 < <(…) の失敗はそもそも親に伝わらない）。そのため:
-#   - プロセス置換は使わず、いったん変数に受けて（x="$(…)" || internal_error …）、<<<"$x" で読む
+#   - プロセス置換は使わず、いったん変数に受けて（x="$(…)" || internal_error …）、split_lines・split_fields で
+#     配列に分けてから読む
+#   - here-string（<<<）とヒアドキュメント（<<）を使わない。bash 3.2（と、大きな入力の bash 5）は一時ファイルを作り、
+#     作れない（読み取り専用の環境など）とリダイレクトが失敗して、while … done <<<"$x" の検査を飛ばしたまま
+#     末尾の allow に着く（set -e では止まらない。F8）。一時ファイルを作らない形（パイプ・パラメータの展開）にする
 #   - 一致の判定は printf … | grep -q ではなく re_match を使う（grep のエラーを「一致しない」と区別する）
 #   - コマンド置換を引数の中に入れ子にしない（"$(f "$(g)")" の g の失敗は伝わらない）
 # shellcheck shell=bash
@@ -56,25 +60,66 @@ internal_error() {
   exit 2
 }
 
-# re_match <文字列> <grep の引数…>: 文字列が一致すれば 0、しなければ 1。grep のエラー（終了コード 2 以上）は
-# internal_error で拒否する。パイプ（printf … | grep -q）では、grep のエラーと「一致しない」を見分けられず、
-# パイプの中の exit も親に届かないので、文字列は <<< で渡す。
+# re_match <文字列> <grep の引数…>: 文字列が一致すれば 0、しなければ 1。grep のエラー（終了コード 2 以上）と、
+# 文字列を grep に渡しきれなかったとき（一致しないのに printf が失敗した）は internal_error で拒否する。
+# here-string（<<<）は一時ファイルを作り、作れないと「一致しない」になるので使わない（F8）。パイプの終了コードは
+# PIPESTATUS で 1 つずつ見る（pipefail では、grep -q が先に終わったときの printf の SIGPIPE が失敗に見える）。
+# パイプの中の exit は親に届かないので、internal_error はパイプの外で呼ぶ。
 re_match() {
-  local s="$1" rc=0
+  local s="$1" ps
   shift
-  grep -q "$@" <<<"$s" || rc=$?
-  [ "$rc" -le 1 ] || internal_error "grep が失敗した（終了コード ${rc}）"
-  return "$rc"
+  if printf '%s\n' "$s" 2>/dev/null | grep -q "$@"; then ps="${PIPESTATUS[*]}"; else ps="${PIPESTATUS[*]}"; fi
+  case "$ps" in
+    *" 0") return 0 ;; # grep が一致を見つけた（printf は SIGPIPE で終わりうる）
+    "0 1") return 1 ;;
+  esac
+  internal_error "grep が失敗した（終了コード ${ps}）"
 }
 
 # grep_out <文字列> <grep の引数…>: 文字列を grep に掛けた出力（一致しなければ空で 0）。
-# grep のエラー（終了コード 2 以上）では、その終了コードを返す（呼び出し側で internal_error にする）。
+# grep のエラー（終了コード 2 以上）や、文字列を grep に渡しきれなかったときは 0 以外を返す
+# （呼び出し側で internal_error にする）。here-string（<<<）を使わない理由は re_match と同じ。
 grep_out() {
-  local s="$1" rc=0
+  local s="$1" ps
   shift
-  grep "$@" <<<"$s" || rc=$?
-  [ "$rc" -le 1 ] || return "$rc"
-  return 0
+  if printf '%s\n' "$s" 2>/dev/null | grep "$@"; then ps="${PIPESTATUS[*]}"; else ps="${PIPESTATUS[*]}"; fi
+  case "$ps" in
+    "0 0" | "0 1") return 0 ;;
+  esac
+  return 2
+}
+
+# split_lines <文字列>: 文字列を改行で分けた行を、配列 SPLIT に入れる（while IFS= read -r … <<<"$x" と同じ行。
+# 空の文字列は空の行 1 つ。末尾の改行のあとにも空の行 1 つ）。一時ファイルを作らないよう、パラメータの展開で分ける。
+SPLIT=()
+split_lines() {
+  local s="$1" nl=$'\n'
+  SPLIT=()
+  while :; do
+    case "$s" in
+      *"$nl"*)
+        SPLIT+=("${s%%"$nl"*}")
+        s="${s#*"$nl"}"
+        ;;
+      *)
+        SPLIT+=("$s")
+        return 0
+        ;;
+    esac
+  done
+}
+
+# split_fields <区切り（IFS）> <文字列>: 文字列を区切りで分けた単語を、配列 SPLIT に入れる
+# （IFS=… read -r -a … <<<"$x" の代わり。改行を含まない文字列に使う）。パス名の展開はしない（set -f）。
+split_fields() {
+  local IFS="$1" had_f=0
+  case "$-" in
+    *f*) had_f=1 ;;
+  esac
+  set -f
+  # shellcheck disable=SC2206
+  SPLIT=($2)
+  [ "$had_f" = 1 ] || set +f
 }
 
 hook_read_input() {
