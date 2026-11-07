@@ -30,6 +30,7 @@ type Config struct {
 	DurationMs    SimTime // ラウンドの長さ（durationMs）。この時刻に航行が終わる
 	Raft          RaftConfig
 	Routes        []ferry.RouteConfig
+	Storms        []game.StormDef // 台本の嵐（events の kind: storm、書いた順）。nil は嵐なし
 	Ferries       []ferry.FerryConfig
 	DockMs        int64                // transport.dockMs
 	PortCap       int                  // transport.portCap
@@ -86,6 +87,7 @@ type Engine struct {
 	nodes   []*cluster.Node  // 添字 = ID - 1
 	ledgers []*ledger.Ledger // 添字 = ID - 1
 	tr      *ferry.Transport
+	storms  stormBook   // 嵐の帳簿（storm.go）
 	reqs    requestBook // 依頼の帳簿（request.go）
 	score   scoreBook   // 採点の帳簿（score.go）
 
@@ -171,6 +173,9 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		return nil, fmt.Errorf("sim: %w", err)
 	}
 	e.tr = tr
+	if err := e.initStorms(seed); err != nil {
+		return nil, err
+	}
 	e.cfg.Requests = cfg.Requests.Clone()
 	plan, err := game.PlanRequests(e.cfg.Requests, cfg.Islands, int64(cfg.DurationMs), e.cfg.Resources, Sub(seed, StreamRequests))
 	if err != nil {
@@ -233,6 +238,7 @@ func (e *Engine) start() {
 	e.afterStep()
 	e.phase = PhaseSailing
 	e.emit(PhaseChanged{Phase: PhaseSailing})
+	e.startStorms()
 	e.push(e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
 	e.push(e.cfg.DurationMs, ClassGameTimer, kindRoundEnd, nil)
 	e.scheduleRequests()
@@ -361,6 +367,8 @@ func (e *Engine) handleEvent(ev Event) {
 		}
 		e.push(e.Now()+e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
 		e.retryWaits()
+	case kindStormForecast, kindStormStart, kindStormEnd:
+		e.handleStorm(ev)
 	case kindFerryArrive:
 		e.arrive(ev.Data.(ferry.FerryID))
 	case kindFerryReady:
