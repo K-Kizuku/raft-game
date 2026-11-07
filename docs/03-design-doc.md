@@ -194,11 +194,13 @@ func Replay(st *stage.Stage, log protocol.InputLog, opt Options) (*Engine, error
 ゲーム開始直後は Leader がいません。ここで船を使った選挙から始めると、プレイヤーは何をすればよいか分からないまま時間が過ぎるので、**開会式フェーズ**を設けます。
 
 1. 全ノードを `RawNode.Bootstrap(peers)` で同じメンバー構成で初期化する
-2. ステージ定義の `initialLeader` の島で `Campaign()` を呼ぶ
-3. **即時配達モード**: 出てきたメッセージを船を使わず、FIFO で直接宛先に `Step()` する。これを「Leader が決まり、全ノードが Leader の最初の（空の）エントリまで適用する」まで繰り返す（上限 1,000 ステップ。超えたらエラー）
-4. 港を空にして、`SimTime = 0` で航行フェーズを始める
+2. **即時配達モード**（出てきたメッセージを船を使わず、FIFO で直接宛先に `Step()` する）で、Bootstrap の構成変更のエントリを全ノードで適用する。構成変更を適用する前の `Campaign()` は raft が無視するので、立候補より先に行う
+3. ステージ定義の `initialLeader` の島で `Campaign()` を呼ぶ
+4. 手紙がなくなるまで、FIFO で即時配達する（上限は開会式全体で 1,000 通。超えたらエラー）。条件を満たした時点で止めず、手紙がなくなるまで配達する。途中で止めると Follower の `MsgAppResp` が Leader に届かず、Leader の進捗の管理が古いまま航行が始まるため。Tick を呼ばないので、配達は必ず止まる
+5. Leader がちょうど 1 人に決まり、全ノードがその Leader を知っていて、全ノードが Leader の最初の（空の）エントリまで適用したことを確かめる（満たさなければエラー）
+6. 港は空のまま（開会式の手紙は港を通らない）、`SimTime = 0` で航行フェーズを始める
 
-開会式の間もドメインイベントは記録するので、エンジニアモードでは最初の選挙の様子も見られます。画面上は「開会式：代表に〇〇島が選ばれました」という演出にします。
+この手順は `cluster.Opening(nodes, initialLeader)` が行います。開会式の間もドメインイベントは記録します。`Opening` が `RoleChange` の列と配達した手紙を返し、`sim.Engine` がそれを記録するので、エンジニアモードでは最初の選挙の様子も見られます。画面上は「開会式：代表に〇〇島が選ばれました」という演出にします。
 
 > **Leader を指定するのは「ゲーム側が Leader を決めない」（C-05）に反しないか？** `Campaign()` は「選挙タイムアウトが来た」のと同じ扱いで、立候補させるだけです。当選するかどうかは Raft の投票で決まります。実際に、開会式で他のノードが先に立候補していれば別の島が当選し得ます（決定的な乱数のもとでは毎回同じ結果になります）。
 
@@ -208,35 +210,38 @@ func Replay(st *stage.Stage, log protocol.InputLog, opt Options) (*Engine, error
 
 ```go
 // processReady は HasReady が false になるまで Ready を処理する。
-// 戻り値の Message は送信元の港に置かれる。
-func (n *Node) processReady(now sim.SimTime) (out []*pb.Message, applied []Applied, err error) {
+// 戻り値の Messages は送信元の港に置かれる。エラーのときは途中までの結果を捨てて Output{}, err を返す。
+func (n *Node) processReady() (Output, error) {
+    var out Output
     for n.rn.HasReady() {
         rd := n.rn.Ready()
 
         // (1) 永続化：スナップショット → エントリ → HardState の順
         if rd.Snapshot != nil && !raft.IsEmptySnap(rd.Snapshot) {
-            return nil, nil, errUnexpectedSnapshot // コンパクションしないので来ない
+            return Output{}, errUnexpectedSnapshot // コンパクションしないので来ない
         }
-        if err := n.storage.Append(rd.Entries); err != nil { return ... }
+        if err := n.storage.Append(rd.Entries); err != nil { return Output{}, ... }
         if rd.HardState != nil && !raft.IsEmptyHardState(rd.HardState) {
-            n.storage.SetHardState(rd.HardState)
+            if err := n.storage.SetHardState(rd.HardState); err != nil { return Output{}, ... }
+            n.term = rd.HardState.GetTerm()
         }
 
         // (2) 送信：永続化の後。Raft のバッファを共有しないよう複製する
         for _, m := range rd.Messages {
-            out = append(out, proto.Clone(m).(*pb.Message))
+            out.Messages = append(out.Messages, proto.Clone(m).(*pb.Message))
         }
 
-        // (3) 適用：Commit 済みのエントリを台帳に順に適用する
+        // (3) 適用：Commit 済みのエントリを状態機械（台帳の複製）に順に適用する
         for _, ent := range rd.CommittedEntries {
             switch ent.GetType() {
             case pb.EntryNormal:
-                if len(ent.GetData()) == 0 { continue } // Leader 就任時の空エントリ
-                res := n.ledger.Apply(ent.GetIndex(), ent.GetData())
-                applied = append(applied, Applied{Index: ent.GetIndex(), Term: ent.GetTerm(), Result: res})
+                if len(ent.GetData()) == 0 { break } // Leader 就任時の空エントリ。状態機械を呼ばない
+                d := bytes.Clone(ent.GetData())
+                res := n.sm.Apply(ent.GetIndex(), d)
+                out.Applied = append(out.Applied, Applied{Index: ent.GetIndex(), Term: ent.GetTerm(), Data: d, Result: res})
             case pb.EntryConfChange, pb.EntryConfChangeV2:
-                // Bootstrap 時のメンバー追加のみ。ゲーム中には発生しない
-                var cc pb.ConfChangeV2 /* デコード */ 
+                // Bootstrap 時のメンバー追加のみ。ゲーム中には発生しない。状態機械を呼ばない
+                var cc pb.ConfChangeV2 /* デコード */
                 n.rn.ApplyConfChange(cc)
             }
             n.applied = ent.GetIndex()
@@ -245,15 +250,22 @@ func (n *Node) processReady(now sim.SimTime) (out []*pb.Message, applied []Appli
         // (4) 次の Ready へ
         n.rn.Advance(rd)
 
-        // ソフトステート（役割・Leader）が変わっていればドメインイベントにする
-        if rd.SoftState != nil { n.emitRoleChange(now, rd.SoftState) }
+        // ソフトステート（役割・Leader）が実際に変わっていればドメインイベントにする
+        if ss := rd.SoftState; ss != nil && (ss.RaftState != n.role || ss.Lead != n.lead) {
+            out.Events = append(out.Events, RoleChange{Node: n.id, Term: n.term,
+                PrevRole: n.role, Role: ss.RaftState, PrevLead: n.lead, Lead: ss.Lead})
+            n.role, n.lead = ss.RaftState, ss.Lead
+        }
     }
-    return out, applied, nil
+    return out, nil
 }
 ```
 
 - 順序は「追記 → HardState 保存 → 送信 → 適用 → Advance」で固定（`etcd-io/raft` の README が求める順序を満たす）
 - テストでは、`Storage` をラップして呼び出し順を記録し、この順序になっていることを確認します
+- 公開の入口は `Process`（`processReady` を呼ぶだけ）。`sim.Engine` は各イベントの処理のあと、全ノードの `Process` を ID の昇順に呼ぶ。`RaftTick` では `Tick` を呼んでから `Process` を呼ぶ
+- `cluster` は `sim` を import しない（docs/02-architecture.md §3 の依存の向き）。ドメインイベントは時刻を持たず、`sim.Engine` が `Process` を呼んだ時点の `Now()` を付ける
+- 1 つの Ready の間に役割が 2 回変わったときは、Ready に入る最後の状態だけが見える（raft の仕様）
 - 実際のコードでは API の細部（ゲッター名など）を v3.7.0 のソースに合わせてください
 
 ### 5.5 ノードがメッセージを受け取るとき
@@ -271,18 +283,25 @@ func (n *Node) Deliver(m *pb.Message) error {
 ### 5.6 1 ノードが持つもの
 
 ```go
+// StateMachine は、このノードの状態機械（台帳の複製）。Commit 済みの通常のエントリのうち
+// Data が空でないものを、index の昇順に 1 回ずつ受け取る。決定的でなければならない。
+type StateMachine interface {
+    Apply(index uint64, data []byte) any
+}
+
 type Node struct {
     id      uint64
     rn      *raft.RawNode
-    storage *raft.MemoryStorage
-    ledger  *ledger.Ledger // このノード専用の台帳の複製
-    applied uint64
-    role    raft.StateType
-    lead    uint64
+    storage nodeStorage    // raft.Storage＋Append・SetHardState（テストで記録用の包みに差し替える）
+    sm      StateMachine   // このノード専用の台帳の複製（sim が *ledger.Ledger を包んで渡す）
+    applied uint64         // 最後に適用したエントリの index（構成変更と空のエントリを含む）
+    term    uint64         // 最後に保存した HardState の Term
+    role    raft.StateType // 最後に観察した SoftState の役割（初期値 StateFollower）
+    lead    uint64         // 最後に観察した SoftState の Leader（0 = 知らない）
 }
 ```
 
-台帳はノードごとに 1 つずつ持ちます（Raft の「状態機械の複製」そのもの）。V-2・V-3 の検査は、全ノードの台帳を比べて行います。
+`cluster` は `ledger` を import せず、`StateMachine` 越しに台帳を使います。`sim` が `*ledger.Ledger` を `StateMachine` に合わせる薄い包みを作って `NodeConfig.StateMachine` に渡します。台帳はノードごとに 1 つずつ持ちます（Raft の「状態機械の複製」そのもの）。V-2・V-3 の検査は、全ノードの台帳を比べて行います。
 
 ---
 
@@ -493,13 +512,24 @@ func Sub(seed uint64, name string) *rand.Rand {
 
 ### 9.2 決定性を壊すもの（実装上の禁止事項）
 
-`internal/sim` とその下のパッケージでは、次を禁止します。CI では `forbidigo` で検出します。
+`internal/sim` とその下のパッケージでは、次を禁止します。
 
 - `time.Now` / `time.Since` などの実時間
 - goroutine・チャネル・`select`
 - `map` の走査順に依存する処理（走査する場合はキーをソートしてから）
 - グローバルな `math/rand`（上記の派生乱数以外）
 - 浮動小数点の計算をスコアや判定に使うこと（スコアは整数で計算する）
+
+ここでの「その下」は、`sim.Engine` が組み立てて動かす世界（`internal/sim`・`internal/cluster`・`internal/ferry`・`internal/ledger`・`internal/game`）を指します。`stage`（YAML の小数を読む）・`protocol`・`server`（セッションループは実時間を使う）・`cmd` は対象外です。
+
+CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.golangci.yml`。テストのファイルも対象）で、上の 5 つのパッケージについて次を検出します。
+
+- 実時間の関数: `time.Now`・`Since`・`Until`・`Sleep`・`After`・`AfterFunc`・`Tick`・`NewTimer`・`NewTicker`（`time.Second` などの定数・型は使ってよい）
+- `math/rand`（v1）のすべて（別名で import しても検出する）
+- `math/rand/v2` のパッケージ全体で共有される乱数（`rand.IntN`・`rand.Shuffle` など）。`rand.New(rand.NewPCG(…))` と、その `*rand.Rand` のメソッドは使ってよい
+- `float32`・`float64` を型として書くこと（フィールド・変数・変換）
+
+`forbidigo` は識別子しか見ないので、goroutine・チャネル・`select`・`map` の走査順への依存・型を書かない浮動小数点（`x := 1.5`）は検出できません。これらはレビューと各タスクの AC で確かめます。
 
 `etcd-io/raft` の内部は、進捗の管理（`tracker`）で ID 順に走査するので決定的です。乱数だけがパッチの対象です。
 

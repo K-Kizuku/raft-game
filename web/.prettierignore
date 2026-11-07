@@ -1,0 +1,4 @@
+dist/
+.cloudflare/
+coverage/
+node_modules/

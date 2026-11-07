@@ -30,13 +30,16 @@ make test       # Go と web のテスト
 make lint       # golangci-lint・ESLint・型チェック
 make gen        # Go のプロトコルの型から TS の型を生成
 make sync-data  # data/ を server/internal/stage/embedded/ にコピー
-make dev        # Go（standalone モード）と Vite を起動
+make dev        # Go（standalone モード）と Vite を DEV_SLOT のポートで起動（DRY_RUN=1 で表示だけ）
+make dev-env    # この作業ツリーの DEV_SLOT・ポート・cf の状態・Docker の名前を出す
+make clean-docker  # この作業ツリーの Docker のコンテナとイメージを消す（DRY_RUN=1 で表示だけ）
 make demo-local # デモの保険（ノート PC で起動）
 (cd web && pnpm exec cf build)                           # Build Output を作る
 (cd web && pnpm exec cf deploy --prebuilt --dry-run)     # 反映せずに検査
 python3 scripts/check-docs.py                            # Markdown の相対リンク切れを検査（CI の docs ジョブ）
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'  # scripts/ のテスト
 bash scripts/github/tests/run.sh                         # install-workflows.sh のテスト（CI の shell ジョブ）
+bash scripts/raft/verify-patch.sh --with-tests   # 同梱の etcd-raft と上流の差分がパッチだけか（CI の shell ジョブ）
 ```
 
 - ワークフローは `.github/workflow-sources/` に書き、`.github/workflows/` には書かない（人が `scripts/github/install-workflows.sh` で取り込む）
@@ -66,7 +69,8 @@ go -C tools/agentctl run . review render "$PWD/review.json"                     
 
 - AI エージェントごとに `git worktree` で作業ディレクトリを分け、`DEV_SLOT` を割り当てる（`scripts/dev-slot.sh`）
 - 固定のポート・固定のファイル名・固定の Docker の名前を使わない。ポートは `DEV_SLOT` から計算し、テストではポート `:0` と `t.TempDir()` を使う
-- `cf` のローカルの状態は、作業ディレクトリの中（`--persist-to ./.cloudflare/state`）に置く
+  - 計算は `scripts/dev-env.sh` が正本: `DEV_SERVER_PORT = 18080 + DEV_SLOT×10`・`DEV_WEB_PORT = 15173 + DEV_SLOT×10`（`+1`〜`+9` は予約）。Docker は `DEV_DOCKER_IMAGE`（`raft-game-server:<名前>-<ハッシュ>`）・`DEV_DOCKER_CONTAINER`・ラベル `DEV_DOCKER_LABEL`（`raft-game.worktree=<パス>`）を使い、`make clean-docker` で消す
+- `cf` のローカルの状態は、作業ディレクトリの中に置く。`make dev` は `web/vite.config.ts` の `persistState` で `web/.cloudflare/state` に置く（`cf dev` は `--persist-to` を受け付けない）。`--local` で動く `cf` のコマンドには `--persist-to "$DEV_CF_PERSIST_TO"` を付ける（値は `make dev-env`）
 - 本番・デモ用の環境へのデプロイ、ゾーンの設定の変更、Cloudflare のシークレットの更新はしない（CI だけが行う）
 - タスクは GitHub の Issue で管理されている。作業の前に、対応する Issue を確認する
 
