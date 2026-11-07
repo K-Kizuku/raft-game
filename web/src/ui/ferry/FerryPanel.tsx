@@ -28,6 +28,7 @@ import { useShowRaftTerms } from "../terms/preference.ts";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
 import { CARGO_DROP_ID, PORT_DROP_ID, dragId, dropCommand } from "./dnd.ts";
 import type { LetterDragData } from "./dnd.ts";
+import { FerryList } from "./FerryList.tsx";
 import { blockerText, ferryResultMessage } from "./ferryMessages.ts";
 import type { FerryOp } from "./ferryMessages.ts";
 import { autoloadBlocker, departBlocker, ferryDetail, ferryTabs } from "./ferryView.ts";
@@ -145,11 +146,17 @@ function FerryPanelContent({
 
   return (
     <div className="ferry-panel">
-      <FerryTabs tabs={tabs} />
       {detail === null ? (
-        <p className="ferry-panel__note">船を選ぶと、積み込みと出航の操作がここに出ます。</p>
+        // 何も選んでいないときは、船のタブの代わりに船の一覧（T-426）を出す。押すとその船を選ぶ。
+        <>
+          <p className="ferry-panel__note">船を選ぶと、積み込みと出航の操作がここに出ます。</p>
+          <FerryList tabs={tabs} />
+        </>
       ) : (
-        <FerryOperations world={world} detail={detail} />
+        <>
+          <FerryTabs tabs={tabs} />
+          <FerryOperations world={world} detail={detail} />
+        </>
       )}
     </div>
   );

@@ -74,7 +74,10 @@
   outline-offset: 2px;
 }
 
-/* ボタン。.btn は紙の札、.btn-primary は郵便の赤（白い文字）。 */
+/* ボタン。.btn に種類のクラスを 1 つ足して使う（T-426）。
+   - .btn-paper（紙のボタン）: 紙の札。ふつうの操作。.btn だけのときも同じ見た目
+   - .btn-primary（主ボタン）: 郵便の赤（白い文字）。その場でいちばん勧める操作
+   - .btn-quiet（控えめのボタン）: 地に溶け込む細い枠。やめる・閉じるなどの脇の操作 */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -115,10 +118,54 @@
   cursor: not-allowed;
 }
 
+.btn-paper {
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border-color: var(--color-ink);
+}
+
+.btn-paper:hover {
+  background: var(--color-paper-deep);
+}
+
 .btn-primary {
   color: #ffffff;
   background: var(--color-postal);
   border-color: var(--color-postal);
+}
+
+/* 主ボタンは押したとき少し暗くする（郵便の赤に墨を混ぜる。白い文字のコントラストは上がる）。 */
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--color-postal) 88%, var(--color-ink));
+}
+
+/* 控えめのボタン。地は透明・細い枠・影なし。文字は墨（紙・パネルの地のどちらでも 4.5:1 以上。NFR-10）。
+   形（細い枠と影の有無）でも紙のボタンと区別する。 */
+.btn-quiet {
+  color: var(--color-ink);
+  background: transparent;
+  border-width: 1px;
+  border-color: var(--color-ink-muted);
+  box-shadow: none;
+  font-weight: normal;
+}
+
+.btn-quiet:hover {
+  background: var(--color-paper);
+  border-color: var(--color-ink);
+}
+
+/* 押せないボタンは、種類によらず同じ見た目にする（上の種類の規則より後ろに置く）。 */
+.btn-paper:disabled,
+.btn-paper[aria-disabled="true"],
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"],
+.btn-quiet:disabled,
+.btn-quiet[aria-disabled="true"] {
+  color: var(--color-ink-muted);
+  background: var(--color-paper-deep);
+  border-color: var(--color-ink-muted);
+  box-shadow: none;
 }
 
 /* パネル・カード。重なった紙。 */

@@ -11,6 +11,7 @@ import { LETTER_EFFECT_STYLE } from "../animations/style.ts";
 import { MAP_ART_STYLE } from "../model/art/style.ts";
 import type { MapScene } from "../model/scene.ts";
 import { MAP_STYLE } from "../model/style.ts";
+import { MAP_VIEW } from "../model/viewport.ts";
 import { drawEnvelope } from "./envelope.ts";
 
 export type LetterEffectsLayer = Readonly<{
@@ -22,6 +23,12 @@ const S = MAP_STYLE;
 const D = MAP_STYLE.draw;
 const E = LETTER_EFFECT_STYLE;
 const A = MAP_ART_STYLE;
+
+// 文字の解像度。絵の拡大率（T-426）の上限まで拡大しても、ぼやけないようにする。
+function textResolution(): number {
+  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio;
+  return (Number.isFinite(dpr) && dpr > 0 ? dpr : 1) * MAP_VIEW.maxMarkScale;
+}
 
 // 封筒 1 通（港の手紙の山と同じ形。./envelope.ts）。依頼書なら ★ を添える。
 function envelope(effect: LetterEffect, faded: boolean): Container {
@@ -35,6 +42,7 @@ function envelope(effect: LetterEffect, faded: boolean): Container {
   if (effect.request) {
     const star = new Text({
       text: "★",
+      resolution: textResolution(),
       style: {
         fontFamily: D.fontFamily,
         fontSize: D.badgeFontSize,
@@ -53,6 +61,7 @@ function envelope(effect: LetterEffect, faded: boolean): Container {
 function captionText(): Text {
   const text = new Text({
     text: "",
+    resolution: textResolution(),
     style: {
       fontFamily: D.fontFamily,
       fontSize: E.captionFontSize,
@@ -126,7 +135,9 @@ export function createLetterEffectsLayer(
         }
         view.outgoing.position.set(frame.at.x, frame.at.y);
         view.outgoing.alpha = frame.alpha;
-        view.outgoing.scale.set(frame.scale);
+        // 絵の拡大率（T-426）を掛け、港の手紙の山と同じ大きさで動かす。
+        const k = scene.markScale ?? 1;
+        view.outgoing.scale.set(frame.scale * k);
         view.outgoing.rotation = frame.rotation;
         if (view.incoming !== null) {
           if (frame.incoming === null) {
@@ -135,7 +146,7 @@ export function createLetterEffectsLayer(
             view.incoming.visible = true;
             view.incoming.position.set(frame.incoming.at.x, frame.incoming.at.y);
             view.incoming.alpha = frame.incoming.alpha;
-            view.incoming.scale.set(frame.incoming.scale);
+            view.incoming.scale.set(frame.incoming.scale * k);
           }
         }
         if (view.caption !== null) {
@@ -147,6 +158,7 @@ export function createLetterEffectsLayer(
             view.caption.visible = true;
             view.caption.position.set(frame.caption.at.x, frame.caption.at.y);
             view.caption.alpha = frame.caption.alpha;
+            view.caption.scale.set(k);
           }
         }
       }

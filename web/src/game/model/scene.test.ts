@@ -16,7 +16,7 @@ import {
 import { buildMapScene } from "./scene.ts";
 import type { MapScene } from "./scene.ts";
 import { MAP_STYLE } from "./style.ts";
-import { fitIslands, toScreen } from "./viewport.ts";
+import { layoutMap, toScreen } from "./viewport.ts";
 import type { Point } from "./viewport.ts";
 
 const SIZE = { width: 800, height: 600 };
@@ -26,7 +26,10 @@ const LAYOUT: Readonly<Record<number, Point>> = {
   2: { x: 400, y: 0 },
   3: { x: 200, y: 300 },
 };
-const TRANSFORM = fitIslands([LAYOUT[1], LAYOUT[2], LAYOUT[3]].filter(isPoint), SIZE);
+const LAYOUT_MAP = layoutMap([LAYOUT[1], LAYOUT[2], LAYOUT[3]].filter(isPoint), SIZE);
+const TRANSFORM = LAYOUT_MAP.transform;
+// 絵の拡大率（島の周りに物を置く距離に掛ける）。
+const K = LAYOUT_MAP.markScale;
 
 function isPoint(p: Point | undefined): p is Point {
   return p !== undefined;
@@ -79,7 +82,7 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe("buildMapScene", () => {
-  it("SC-1 島は stage.islandIds の順で、座標は toScreen(fitIslands(...))、色は島の色", () => {
+  it("SC-1 島は stage.islandIds の順で、座標は toScreen(layoutMap(...).transform)、色は島の色", () => {
     // stage に無い島（4）のノードは描かない。
     const s = scene(
       world({
@@ -92,6 +95,9 @@ describe("buildMapScene", () => {
       }),
     );
     expect(s.transform).toEqual(TRANSFORM);
+    // 絵の拡大率（T-426）も入れる。800×600 では 1 より大きい（下の距離の検査が拡大率を見ている）。
+    expect(s.markScale).toBe(K);
+    expect(K).toBeGreaterThan(1);
     expect(s.islands.map((i) => i.id)).toEqual([1, 2, 3]);
     for (const id of [1, 2, 3] as const) {
       const island = islandOf(s, id);
@@ -193,8 +199,8 @@ describe("buildMapScene", () => {
     const c1 = screenOf(1);
     const first = ferryOf(s, "f1");
     expectPoint(first.at, {
-      x: c1.x + MAP_STYLE.islandRadius + MAP_STYLE.dockOffset,
-      y: c1.y - MAP_STYLE.islandRadius,
+      x: c1.x + (MAP_STYLE.islandRadius + MAP_STYLE.dockOffset) * K,
+      y: c1.y - MAP_STYLE.islandRadius * K,
     });
     expect(first).toMatchObject({
       heading: 0,
@@ -205,13 +211,13 @@ describe("buildMapScene", () => {
       name: "f1丸",
     });
     expectPoint(ferryOf(s, "f2").at, {
-      x: c1.x + MAP_STYLE.islandRadius + MAP_STYLE.dockOffset + MAP_STYLE.dockStep,
-      y: c1.y - MAP_STYLE.islandRadius,
+      x: c1.x + (MAP_STYLE.islandRadius + MAP_STYLE.dockOffset + MAP_STYLE.dockStep) * K,
+      y: c1.y - MAP_STYLE.islandRadius * K,
     });
     const c2 = screenOf(2);
     expectPoint(ferryOf(s, "f3").at, {
-      x: c2.x + MAP_STYLE.islandRadius + MAP_STYLE.dockOffset,
-      y: c2.y - MAP_STYLE.islandRadius,
+      x: c2.x + (MAP_STYLE.islandRadius + MAP_STYLE.dockOffset) * K,
+      y: c2.y - MAP_STYLE.islandRadius * K,
     });
   });
 
@@ -313,8 +319,8 @@ describe("buildMapScene", () => {
       const dest = screenOf(pile.to);
       const d = Math.hypot(dest.x - c1.x, dest.y - c1.y);
       expectPoint(pile.at, {
-        x: c1.x + ((dest.x - c1.x) / d) * MAP_STYLE.pileOffset,
-        y: c1.y + ((dest.y - c1.y) / d) * MAP_STYLE.pileOffset,
+        x: c1.x + ((dest.x - c1.x) / d) * MAP_STYLE.pileOffset * K,
+        y: c1.y + ((dest.y - c1.y) / d) * MAP_STYLE.pileOffset * K,
       });
     }
   });
@@ -337,8 +343,11 @@ describe("buildMapScene", () => {
       count: 2,
       color: MAP_STYLE.colors.unknownIsland,
     });
-    expectPoint(first?.at, { x: c2.x, y: c2.y + MAP_STYLE.pileOffset });
-    expectPoint(second?.at, { x: c2.x, y: c2.y + MAP_STYLE.pileOffset + MAP_STYLE.pileStackStep });
+    expectPoint(first?.at, { x: c2.x, y: c2.y + MAP_STYLE.pileOffset * K });
+    expectPoint(second?.at, {
+      x: c2.x,
+      y: c2.y + (MAP_STYLE.pileOffset + MAP_STYLE.pileStackStep) * K,
+    });
   });
 
   it("SC-7 選択と行き先の候補", () => {
@@ -391,7 +400,7 @@ describe("buildMapScene", () => {
       if (island === undefined) throw new Error(`島 ${String(id)} が無い`);
       return island.layout;
     };
-    const t = fitIslands(
+    const { transform: t, markScale: k8 } = layoutMap(
       stage.islands.map((i) => i.layout),
       SIZE,
     );
@@ -415,8 +424,8 @@ describe("buildMapScene", () => {
     const f1 = ferryOf(s30, "f1");
     expect(f1.state).toBe("docked");
     expectPoint(f1.at, {
-      x: p2.x + MAP_STYLE.islandRadius + MAP_STYLE.dockOffset,
-      y: p2.y - MAP_STYLE.islandRadius,
+      x: p2.x + (MAP_STYLE.islandRadius + MAP_STYLE.dockOffset) * k8,
+      y: p2.y - MAP_STYLE.islandRadius * k8,
     });
     expect(routeOf(s30, "2-3").storm).toBeNull();
   });

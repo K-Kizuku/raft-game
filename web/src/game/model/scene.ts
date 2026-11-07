@@ -7,7 +7,7 @@ import { ferryProgress, lerp } from "./ferry.ts";
 import { partitionOf } from "./partition.ts";
 import type { PartitionGroup } from "./partition.ts";
 import { MAP_STYLE } from "./style.ts";
-import { fitIslands, toScreen } from "./viewport.ts";
+import { layoutMap, toScreen } from "./viewport.ts";
 import type { MapTransform, Point, Size } from "./viewport.ts";
 
 export type RoleMark = "leader" | "leader_stale" | "candidate" | "pre_candidate" | null;
@@ -57,6 +57,9 @@ export type PartitionHalo = Readonly<{
 export type MapScene = Readonly<{
   size: Size;
   transform: MapTransform;
+  // 島・船・封筒・文字の絵の拡大率（T-426。viewport.ts の layoutMap）。MAP_STYLE の px に掛けて描く。
+  // buildMapScene はいつも入れる。省略された MapScene（テストで手で作ったもの）は 1 として扱う。
+  markScale?: number;
   routes: readonly RouteLine[];
   islands: readonly IslandNode[];
   piles: readonly LetterPile[];
@@ -109,10 +112,16 @@ export function buildMapScene(
 ): MapScene {
   const { stage } = world;
   const present = stage.islandIds.filter((id) => stage.islands[id] !== undefined);
-  const transform = fitIslands(
+  const { transform, markScale: k } = layoutMap(
     present.map((id) => stage.islands[id]?.layout ?? { x: 0, y: 0 }),
     size,
   );
+  // 絵の拡大率を掛けた、島の周りに物を置く距離（px）。
+  const pileOffset = MAP_STYLE.pileOffset * k;
+  const pileStackStep = MAP_STYLE.pileStackStep * k;
+  const islandRadius = MAP_STYLE.islandRadius * k;
+  const dockOffset = MAP_STYLE.dockOffset * k;
+  const dockStep = MAP_STYLE.dockStep * k;
   const centers = new Map<number, Point>();
   for (const id of present) {
     const island = stage.islands[id];
@@ -180,13 +189,13 @@ export function buildMapScene(
       let at: Point;
       if (dest !== undefined && dist > 0) {
         at = {
-          x: center.x + (dx / dist) * MAP_STYLE.pileOffset,
-          y: center.y + (dy / dist) * MAP_STYLE.pileOffset,
+          x: center.x + (dx / dist) * pileOffset,
+          y: center.y + (dy / dist) * pileOffset,
         };
       } else {
         at = {
           x: center.x,
-          y: center.y + MAP_STYLE.pileOffset + stacked * MAP_STYLE.pileStackStep,
+          y: center.y + pileOffset + stacked * pileStackStep,
         };
         stacked++;
       }
@@ -233,14 +242,14 @@ export function buildMapScene(
       const islandId = ferry.islandId;
       const center = islandId === undefined ? undefined : centers.get(islandId);
       if (islandId === undefined || center === undefined) continue;
-      const k = docked.get(islandId) ?? 0;
-      docked.set(islandId, k + 1);
+      const n = docked.get(islandId) ?? 0;
+      docked.set(islandId, n + 1);
       ferries.push({
         ...common,
         state: "docked",
         at: {
-          x: center.x + MAP_STYLE.islandRadius + MAP_STYLE.dockOffset + k * MAP_STYLE.dockStep,
-          y: center.y - MAP_STYLE.islandRadius,
+          x: center.x + islandRadius + dockOffset + n * dockStep,
+          y: center.y - islandRadius,
         },
         heading: 0,
         etaMs: null,
@@ -251,6 +260,7 @@ export function buildMapScene(
   return {
     size: { width: size.width, height: size.height },
     transform,
+    markScale: k,
     routes,
     islands,
     piles,

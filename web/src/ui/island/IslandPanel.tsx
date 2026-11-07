@@ -12,6 +12,7 @@ import { islandName } from "../hud/noticeText.ts";
 import { useSimNow } from "../hud/useSimNow.ts";
 import { LetterIcon } from "../letters/LetterIcon.tsx";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
+import { IslandList } from "./IslandList.tsx";
 import { isFinished, islandRequests, requestStatusView } from "./requestView.ts";
 import "./IslandPanel.css";
 
@@ -27,7 +28,13 @@ export function IslandPanel(): ReactElement {
     return <p>島の詳細（準備中）</p>;
   }
   if (islandId === null) {
-    return <p className="island-hint">マップの島を選ぶと、港の手紙と依頼がここに出ます。</p>;
+    // 何も選んでいないときは、島の一覧（T-426）を出す。押すとその島を選ぶ。
+    return (
+      <div className="island-panel">
+        <p className="island-hint">マップの島を選ぶと、港の手紙と依頼がここに出ます。</p>
+        <IslandList world={world} />
+      </div>
+    );
   }
   return <IslandDetail world={world} islandId={islandId} />;
 }
