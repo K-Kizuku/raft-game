@@ -1,8 +1,7 @@
 // GameSession の SQLite の表と読み書き（T-308・DesignDoc §12.3）。
 //
-// session は 1 行だけ（id = 1）。stage_hash・build・last_clock_t と input_log は T-308b が値を入れる
-// （この Issue では表と列だけを作る）。列の追加・削除は、T-601 で初めてデプロイする前なら
-// CREATE TABLE を直すだけでよい（移行を書かない）。
+// session は 1 行だけ（id = 1）。stage_hash・build・last_clock_t と input_log は T-308b の入力ログと復元が
+// 使う。列の追加・削除は、T-601 で初めてデプロイする前なら CREATE TABLE を直すだけでよい（移行を書かない）。
 
 import type { SqlStorageLike, SqlValue } from "../admin/cf-types.ts";
 
@@ -206,4 +205,35 @@ export function updateSession(sql: SqlStorageLike, patch: SessionPatch): void {
 export function countInputLog(sql: SqlStorageLike): number {
   const [row] = sql.exec("SELECT COUNT(*) AS n FROM input_log").toArray();
   return num(row?.["n"]);
+}
+
+// 入力ログに 1 行足す（cmd は {"type":…,"payload":…} の JSON）。
+export function appendInputLog(sql: SqlStorageLike, t: number, cmd: string): void {
+  sql.exec("INSERT INTO input_log (t, cmd) VALUES (?, ?)", t, cmd);
+}
+
+// seq の順。
+export function readInputLog(sql: SqlStorageLike): { readonly t: number; readonly cmd: string }[] {
+  return sql
+    .exec("SELECT t, cmd FROM input_log ORDER BY seq")
+    .toArray()
+    .map((row) => ({ t: num(row["t"]), cmd: String(row["cmd"]) }));
+}
+
+export interface InputLogStats {
+  readonly rows: number;
+  readonly bytes: number; // cmd の UTF-8 のバイト数の合計
+  readonly lastT: number | null; // 最後の行の t
+}
+
+export function inputLogStats(sql: SqlStorageLike): InputLogStats {
+  const [totals] = sql
+    .exec("SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(CAST(cmd AS BLOB))), 0) AS b FROM input_log")
+    .toArray();
+  const [last] = sql.exec("SELECT t FROM input_log ORDER BY seq DESC LIMIT 1").toArray();
+  return {
+    rows: num(totals?.["n"]),
+    bytes: num(totals?.["b"]),
+    lastT: numOrNull(last?.["t"]),
+  };
 }

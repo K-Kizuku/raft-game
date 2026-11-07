@@ -1,149 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import type { DurableObjectNamespaceLike } from "./admin/cf-types.ts";
-import { GameSession, type GameSessionDeps } from "./game-session.ts";
-import type { Env } from "./routes/env.ts";
+import { GameSession } from "./game-session.ts";
 import type { VerifiedSessionId } from "./routes/ports.ts";
 import { createHandler } from "./routes/router.ts";
-import { hashSessionToken } from "./security/token.ts";
 import { createSessionPorts } from "./session/ports.ts";
-import { readSession } from "./session/store.ts";
 import {
-  FakeClock,
-  FakeContainer,
-  FakeCostGuard,
-  FakeSocket,
-  createFakeState,
-  deferred,
-} from "./session/test-fakes.ts";
-
-const SESSION_ID = "s_abcdefghijklmnopqrstuvwxyz01.ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg";
-const TOKEN = "Tok_en-abcdefghijklmno"; // 22 文字
-const MIN = 60_000;
-
-interface HarnessOptions {
-  readonly env?: Env;
-  readonly maxMinutes?: number;
-  readonly maxAlarms?: number;
-  readonly noContainer?: boolean;
-}
-
-async function harness(options: HarnessOptions = {}) {
-  const calls: string[] = [];
-  const clock = new FakeClock();
-  const t0 = clock.t;
-  const container = new FakeContainer(calls);
-  const { state, storage } = await createFakeState(
-    calls,
-    options.noContainer === true ? undefined : container,
-  );
-  const costGuard = new FakeCostGuard(calls, options.maxMinutes ?? 30, options.maxAlarms ?? 20);
-  const logs: string[] = [];
-  const browsers: FakeSocket[] = [];
-  const tokenHash = await hashSessionToken(TOKEN);
-  const env: Env = options.env ?? {};
-
-  const deps: Partial<GameSessionDeps> = {
-    now: clock.now,
-    sleep: clock.sleep,
-    log: (line) => logs.push(line),
-    createPair: () => {
-      calls.push("createPair");
-      const server = new FakeSocket(`browser${browsers.length + 1}`, calls);
-      browsers.push(server);
-      return [new FakeSocket("client"), server];
-    },
-    upgradeResponse: () => new Response(null, { status: 200, headers: { "x-upgrade": "1" } }),
-    timeoutSignal: () => undefined,
-    costGuard,
-  };
-  let session = new GameSession(state, env, deps);
-
-  const initBody = {
-    sessionId: SESSION_ID,
-    stageId: "stage1",
-    seed: 20261101,
-    demo: false,
-    tokenHash,
-  };
-  const h = {
-    calls,
-    clock,
-    t0,
-    container,
-    storage,
-    costGuard,
-    logs,
-    browsers,
-    tokenHash,
-    initBody,
-    get session() {
-      return session;
-    },
-    row: () => readSession(storage.sql),
-    init: (body: unknown = initBody) =>
-      session.fetch(
-        new Request("https://game-session.internal/init", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: typeof body === "string" ? body : JSON.stringify(body),
-        }),
-      ),
-    connect: (token: string | null = TOKEN, upgrade = true) => {
-      const headers: Record<string, string> = {};
-      if (upgrade) headers["upgrade"] = "websocket";
-      if (token !== null) headers["x-session-token"] = token;
-      return session.fetch(
-        new Request("https://game-session.internal/connect", { method: "GET", headers }),
-      );
-    },
-    drain: () => session.drain(),
-    alarm: async () => {
-      await session.alarm();
-      await session.drain();
-    },
-    // DO が作り直された（メモリは消え、storage とコンテナは残る）
-    recreate: () => {
-      session = new GameSession(state, env, deps);
-    },
-    count: (name: string) => calls.filter((call) => call === name).length,
-    lastBrowser: () => {
-      const browser = browsers.at(-1);
-      if (browser === undefined) throw new Error("no browser");
-      return browser;
-    },
-    lastContainerSocket: () => {
-      const socket = container.sockets.at(-1);
-      if (socket === undefined) throw new Error("no container socket");
-      return socket;
-    },
-  };
-  return h;
-}
-
-type Harness = Awaited<ReturnType<typeof harness>>;
-
-// init → connect → drain（コンテナにつながるまで）
-async function started(options: HarnessOptions = {}) {
-  const h = await harness(options);
-  expect((await h.init()).status).toBe(201);
-  expect((await h.connect()).status).toBe(200);
-  await h.drain();
-  return h;
-}
-
-async function reconnect(h: Harness) {
-  expect((await h.connect()).status).toBe(200);
-  await h.drain();
-  return { browser: h.lastBrowser(), socket: h.lastContainerSocket() };
-}
-
-const msg = (type: string, extra: Record<string, unknown> = {}) =>
-  JSON.stringify({ v: 1, type, payload: {}, ...extra });
-
-function parsed(text: string | undefined): unknown {
-  return text === undefined ? undefined : JSON.parse(text);
-}
+  MIN,
+  SESSION_ID,
+  TOKEN,
+  harness,
+  msg,
+  parsed,
+  reconnect,
+  started,
+  type Harness,
+  type HarnessOptions,
+} from "./session/test-harness.ts";
+import { deferred } from "./session/test-fakes.ts";
 
 describe("G-1 init", () => {
   it("201。行を作り、アラームを設定してからコンテナを起動する", async () => {
@@ -849,21 +723,17 @@ describe("G-10 アラーム", () => {
 });
 
 describe("G-11 コンテナが止まる", () => {
-  it("接続中に monitor() が失敗で終わる → container_lost", async () => {
+  it("接続中に monitor() が失敗で終わる → ブラウザ 1011（container restarting）で終わらない", async () => {
     const h = await started();
     const browser = h.lastBrowser();
     h.lastContainerSocket().receive(msg("snapshot", { seq: 1 }));
     h.container.crash();
     await h.drain();
-    expect(parsed(browser.sent.at(-1))).toMatchObject({
-      type: "error",
-      seq: 2,
-      payload: { code: "container_unavailable", fatal: true },
-    });
-    expect(browser.closes).toEqual([{ code: 1011, reason: "container unavailable" }]);
-    expect(h.row()).toMatchObject({ state: "ended", endReason: "container_lost" });
-    expect(h.count("destroy")).toBe(1);
-    expect(h.costGuard.settles).toHaveLength(1);
+    expect(browser.sent.map(parsed)).toEqual([{ v: 1, type: "snapshot", seq: 1, payload: {} }]);
+    expect(browser.closes).toEqual([{ code: 1011, reason: "container restarting" }]);
+    expect(h.row()).toMatchObject({ state: "running", containerStartedAt: null });
+    expect(h.count("destroy")).toBe(0);
+    expect(h.costGuard.settles).toHaveLength(0);
   });
 
   it("コンテナへのソケットだけが閉じる → ブラウザ 1011 で終わらず、つなぎ直すと internal.init", async () => {
@@ -928,14 +798,16 @@ describe("G-13 DO の作り直し", () => {
     expect(socket.sent.at(-1)).toBe(msg("hello"));
   });
 
-  it("コンテナが動いていなければ container_lost", async () => {
+  it("コンテナが動いていなければ起動し直して internal.init（stage_hash がない）", async () => {
     const h = await started();
     h.recreate();
     h.container.running = false;
-    await h.connect();
-    await h.drain();
-    expect(h.row()).toMatchObject({ state: "ended", endReason: "container_lost" });
-    expect(h.lastBrowser().closes).toEqual([{ code: 1011, reason: "container unavailable" }]);
+    const { socket } = await reconnect(h);
+    expect(h.container.starts).toHaveLength(2);
+    expect(h.container.starts[1]).toEqual(h.container.starts[0]);
+    expect(socket.sentTypes).toEqual(["internal.init"]);
+    expect(h.row()).toMatchObject({ state: "running", containerStarts: 2 });
+    expect(h.lastBrowser().closes).toEqual([]);
   });
 
   it("作り直した後の alarm() で idle_since が NULL なら now を入れる", async () => {
