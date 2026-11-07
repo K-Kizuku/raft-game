@@ -1,0 +1,68 @@
+/* デザイントークン（T-420・docs/11-visual-design.md）。
+   温かい絵本・海図風。値は tokens.ts と一致させる（tokens.test.ts が確かめる）。
+   島の色はステージ定義（islands[].color）のものを使い、ここには置かない。 */
+:root {
+  /* 紙と墨 */
+  --color-paper: #f6efdf;
+  --color-paper-deep: #efe4cc;
+  --color-ink: #3b3a36;
+  --color-ink-muted: #6b6457;
+
+  /* 海（水彩風の濃淡） */
+  --color-sea-light: #bfdde6;
+  --color-sea-mid: #8ec5d6;
+  --color-sea-deep: #3c6e8f;
+
+  /* 島 */
+  --color-land: #d9c79a;
+  --color-land-green: #8fb07a;
+
+  /* 郵便の赤・封筒の金。郵便の赤は白い文字とのコントラスト比 4.5:1 以上のため、案の #C8553D を少し暗くした */
+  --color-postal: #c0503a;
+  --color-gold: #e0a84f;
+
+  /* 嵐 */
+  --color-storm: #5a6472;
+  --color-storm-deep: #2f3640;
+
+  /* 状態 */
+  --color-success: #5b9a68;
+  --color-warning: #e0a84f;
+  --color-danger: #c0503a;
+
+  /* 文字（Web フォントは読み込まない） */
+  --font-body:
+    "Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Zen Maru Gothic", "Yu Gothic", system-ui,
+    sans-serif;
+  --font-number: ui-rounded, "SF Pro Rounded", var(--font-body);
+  --font-size-body: 16px;
+  --font-size-h3: 20px;
+  --font-size-h2: 24px;
+  --font-size-h1: 32px;
+
+  /* 余白 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* 角丸 */
+  --radius-s: 6px;
+  --radius-m: 12px;
+  --radius-l: 20px;
+
+  /* 紙が重なる影 */
+  --shadow-paper: 0 1px 0 rgba(59, 58, 54, 0.08), 0 4px 12px rgba(59, 58, 54, 0.12);
+}
+
+/* 大きな画面（プロジェクター 16:9）では文字を 1.25 倍にする */
+@media (min-width: 1600px) {
+  :root {
+    --font-size-body: 20px;
+    --font-size-h3: 25px;
+    --font-size-h2: 30px;
+    --font-size-h1: 40px;
+  }
+}

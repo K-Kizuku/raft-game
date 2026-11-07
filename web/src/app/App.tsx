@@ -1,5 +1,14 @@
 // 画面の出し分けと遷移（T-401・DesignDoc §13.6）。
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactElement } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 
 import { fetchStages } from "./api/stages.ts";
 import { CreditsScreen } from "./credits/CreditsScreen.tsx";
@@ -15,6 +24,7 @@ import { StageIntroScreen } from "./stage-intro/StageIntroScreen.tsx";
 import { StageSelectScreen } from "./stage-select/StageSelectScreen.tsx";
 import { TitleScreen } from "./title/TitleScreen.tsx";
 import type { RoundContext, StageCatalogState, StageSelection, StageSummary } from "./types.ts";
+import "../ui/theme/index.ts";
 import "./app.css";
 
 export { TITLE } from "./constants.ts";
@@ -47,7 +57,28 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-export function App({ deps }: { deps?: Partial<AppDeps> } = {}): ReactElement {
+// デザインの見本の画面（T-420）。開発のときだけ、URL の `?theme-preview` で開く。
+// 本番のビルドでは import.meta.env.DEV が false になり、見本の画面ごと取り除かれる。
+const ThemePreview = import.meta.env.DEV
+  ? lazy(() => import("../ui/theme/ThemePreview.tsx").then((m) => ({ default: m.ThemePreview })))
+  : null;
+
+function wantsThemePreview(): boolean {
+  return import.meta.env.DEV && new URLSearchParams(window.location.search).has("theme-preview");
+}
+
+export function App(props: { deps?: Partial<AppDeps> } = {}): ReactElement {
+  if (ThemePreview !== null && wantsThemePreview()) {
+    return (
+      <Suspense fallback={null}>
+        <ThemePreview />
+      </Suspense>
+    );
+  }
+  return <AppRoutes {...props} />;
+}
+
+function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
   const [loadStages] = useState(() => deps?.loadStages ?? defaultLoadStages);
   const route = useRoute();
   const [flow, dispatch] = useReducer(flowReducer, initialFlowState);
