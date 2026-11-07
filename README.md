@@ -10,7 +10,7 @@
 
 ## 状態
 
-**設計段階**（コードはまだありません）。ドキュメントは [`docs/`](./docs/README.md) にあります。計画とタスクは GitHub の Issue で管理します。
+**開発中**です。進み具合は GitHub の Issue と[実装計画](./docs/08-implementation-plan.md)で見られます。ドキュメントは [`docs/`](./docs/README.md) にあります。
 
 公開予定の URL: `https://raft.kizuku-hackathon.work`（デモ用は `https://raft-demo.kizuku-hackathon.work`）
 
@@ -34,14 +34,21 @@
 | 通信 | WebSocket（JSON） |
 | インフラ | Cloudflare（Workers ＋ Durable Objects ＋ Containers ＋ R2）。構成は Cloudflare CLI（`cf`）だけで管理。コストガードで追加料金を月 30 USD までに抑える |
 
-## リポジトリ構成（予定）
+## リポジトリ構成
 
 ```text
-server/   Go のゲームサーバーとシミュレーションのコア（Cloudflare Containers で動く）
+server/   Go のゲームサーバーとシミュレーションのコア（Cloudflare Containers で動く）、同梱の etcd-raft
 web/      ブラウザのクライアント、Worker と Durable Object、cloudflare.config.ts
 data/     オープンデータの原本・島データ・ステージ定義
+spike/    cf と Worker・Durable Object・コンテナの確認と測定（本番と別の Worker）
+scripts/  開発の補助（ローカル環境・文書の検査・エージェントの運用など）
+tools/    開発用のツール（Merge Gate の agentctl）
 docs/     ドキュメント
 ```
+
+## 開発に参加する
+
+準備・作業の流れ・シークレット・ライセンスは [`CONTRIBUTING.md`](./CONTRIBUTING.md) にあります。規約は [`CLAUDE.md`](./CLAUDE.md) です。
 
 ## ライセンス
 
