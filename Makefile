@@ -107,8 +107,29 @@ gen-check: ## make gen をやり直して、web/src/protocol/ の生成物に差
 	fi; \
 	echo "make gen-check: 差分なし"
 
-sync-data: ## data/ を server/internal/stage/embedded/ にコピーする（T-201/T-205）
-	@echo "sync-data: data/ を server/internal/stage/embedded/ にコピーする。未実装（T-201/T-205）"
+# sync-data のコピー元とコピー先（テストで一時ディレクトリを渡すため変数にする）。
+# コピー先の末尾は /embedded でなければならない（rm -rf の誤爆を防ぐ）。
+SYNC_DATA_SRC ?= data
+SYNC_DATA_DEST ?= server/internal/stage/embedded
+
+sync-data: ## data/ の islands.json と stages/ を server/internal/stage/embedded/ にコピーする（-tags embeddata のビルド用。T-302）
+	@src="$(SYNC_DATA_SRC)"; dest="$(SYNC_DATA_DEST)"; \
+	case "$$dest" in \
+	  */embedded) ;; \
+	  *) echo "sync-data: SYNC_DATA_DEST の末尾は /embedded にする（値: $$dest）" >&2; exit 1 ;; \
+	esac; \
+	if [ ! -f "$$src/islands.json" ]; then echo "sync-data: $$src/islands.json がない" >&2; exit 1; fi; \
+	rm -rf "$$dest" || exit 1; \
+	mkdir -p "$$dest/stages" || exit 1; \
+	cp "$$src/islands.json" "$$dest/islands.json" || exit 1; \
+	n=0; \
+	for f in "$$src"/stages/* "$$src"/stages/.[!.]*; do \
+	  [ -f "$$f" ] || continue; \
+	  cp "$$f" "$$dest/stages/" || exit 1; \
+	  case "$$f" in *.yaml) n=$$((n + 1)) ;; esac; \
+	done; \
+	: >"$$dest/stages/.gitkeep" || exit 1; \
+	echo "sync-data: $$src → $$dest（ステージ $$n 個）"
 
 # dev・dev-env・clean-docker の中身は scripts/dev-env.sh（ポートの計算の正本。ADR-0019）。
 dev: ## Go（standalone モード）と Vite を DEV_SLOT のポートで起動する（DRY_RUN=1 で表示だけ）

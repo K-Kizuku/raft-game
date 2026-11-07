@@ -141,15 +141,17 @@ cmd_dev() {
   fi
   [ "$has_go" = 1 ] || echo "（対象なし: server/cmd/server がない。T-302 で作る）"
   [ "$has_web" = 1 ] || echo "（対象なし: web/package.json がない）"
+  # Go は作業ツリーの data/ を読み（make sync-data は要らない）、Vite の画面からの Origin を許す（T-302）。
+  local origins="http://127.0.0.1:$DEV_WEB_PORT,http://localhost:$DEV_WEB_PORT"
 
   if [ "$dry" = 1 ]; then
     if [ "$has_go" = 1 ]; then
       show mktemp -d
       show go -C "$DEV_WORKTREE/server" build -o "<tmp>/server" ./cmd/server
       if [ "$has_web" = 1 ]; then
-        show MODE=standalone "PORT=$DEV_SERVER_PORT" "<tmp>/server" "&"
+        show MODE=standalone "PORT=$DEV_SERVER_PORT" "DATA_DIR=$DEV_WORKTREE/data" "ALLOWED_ORIGINS=$origins" "<tmp>/server" "&"
       else
-        show MODE=standalone "PORT=$DEV_SERVER_PORT" "<tmp>/server"
+        show MODE=standalone "PORT=$DEV_SERVER_PORT" "DATA_DIR=$DEV_WORKTREE/data" "ALLOWED_ORIGINS=$origins" "<tmp>/server"
       fi
     fi
     if [ "$has_web" = 1 ]; then
@@ -176,7 +178,7 @@ cmd_dev() {
     tmp="$(mktemp -d)" || die "一時ディレクトリを作れない"
     DEV_TMP="$tmp"
     go -C "$DEV_WORKTREE/server" build -o "$tmp/server" ./cmd/server || die "Go のビルドに失敗した"
-    MODE=standalone PORT="$DEV_SERVER_PORT" "$tmp/server" &
+    MODE=standalone PORT="$DEV_SERVER_PORT" DATA_DIR="$DEV_WORKTREE/data" ALLOWED_ORIGINS="$origins" "$tmp/server" &
     DEV_GO_PID=$!
     pid="$DEV_GO_PID"
   fi
