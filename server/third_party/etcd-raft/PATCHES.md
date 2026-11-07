@@ -1,6 +1,6 @@
 # 同梱の etcd-io/raft とパッチ
 
-このディレクトリは、[etcd-io/raft](https://github.com/etcd-io/raft) のモジュール `go.etcd.io/raft/v3` を同梱したものです。`server/go.mod` の `replace go.etcd.io/raft/v3 => ./third_party/etcd-raft` で使っています。ライセンスは上流のまま Apache-2.0 です（[LICENSE](LICENSE)）。このファイルを除き、上流との違いは下のパッチだけです。
+このディレクトリは、[etcd-io/raft](https://github.com/etcd-io/raft) のモジュール `go.etcd.io/raft/v3` を同梱したものです。`server/go.mod` の `replace go.etcd.io/raft/v3 => ./third_party/etcd-raft` で使っています。ライセンスは上流のまま Apache-2.0 です（[LICENSE](LICENSE)）。このファイルを除き、上流との違いは下の「外したファイル」と「当てたパッチ」だけです。
 
 ## 取り込んだ版
 
@@ -24,7 +24,31 @@ dir=$(go mod download -json go.etcd.io/raft/v3@v3.7.0 | python3 -c 'import json,
 rm -rf server/third_party/etcd-raft
 cp -r "$dir" server/third_party/etcd-raft
 chmod -R u+w server/third_party/etcd-raft
+# Go のビルドとテストに使わない上流の開発用ファイルを外す（下の「外したファイル」）
+rm -rf server/third_party/etcd-raft/{tla,scripts,.github,Makefile}
 # このあとで下のパッチを raft.go に当て、この PATCHES.md を置き直す
+```
+
+## 外したファイル
+
+Go のビルドとテスト（`go build`・`go vet`・`go test`）に使わない、上流の開発用のファイルは取り込みません。
+
+| パス | 中身 | 外した理由 |
+|---|---|---|
+| `tla/` | TLA+ の仕様とモデル検査用のスクリプト（`validate.sh`・`validate-model.sh`） | Go から参照されない。CI の shell ジョブは `git ls-files -- '*.sh'` の全件に shellcheck をかけるので、上流のシェルスクリプトがエラーになる |
+| `scripts/` | 上流の開発用スクリプト（`test.sh`・`genproto.sh` など） | 同上 |
+| `Makefile` | `scripts/test.sh` を呼ぶだけの上流の開発用の入口 | `scripts/` を外すと動かない。このリポジトリでは使わない |
+| `.github/` | 上流の GitHub Actions と Dependabot の設定 | サブディレクトリの中では GitHub に読まれず、`scripts/` を参照している |
+
+外したあとで、同梱の中に `*.sh` が残っていないことを確かめます（`git ls-files -- 'server/third_party/etcd-raft/*.sh'` が空になる）。
+
+## 上流との差分の確かめ方
+
+外したパスを除いて比べると、差分は `PATCHES.md`（同梱側だけにある）と `raft.go`（下のパッチ）だけになります。
+
+```bash
+dir=$(go mod download -json go.etcd.io/raft/v3@v3.7.0 | python3 -c 'import json,sys; print(json.load(sys.stdin)["Dir"])')
+diff -r -x tla -x scripts -x .github -x Makefile "$dir" server/third_party/etcd-raft
 ```
 
 ## 当てたパッチ
