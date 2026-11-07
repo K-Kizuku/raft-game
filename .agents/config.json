@@ -13,7 +13,8 @@
     "blocking_severities": ["critical", "high"],
     "trusted_authors": ["K-Kizuku"],
     "codex_bot_authors": ["chatgpt-codex-connector[bot]"],
-    "carry_over_on_base_merge": true
+    "carry_over_on_base_merge": true,
+    "max_rounds": 2
   },
   "merge": {
     "require_up_to_date": false

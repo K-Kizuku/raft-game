@@ -10,11 +10,23 @@
 # 環境変数:
 #   AGENT_TRAIN_INTERVAL  周の間隔（秒、既定 180）
 #   AGENT_TRAIN_CYCLES    この数の周で終わる（テスト用。既定 0 は終わらない）
+#   AGENT_CODEX_GITHUB_TIMEOUT・AGENT_CODEX_TIMEOUT  review.sh の待ちの上限（既定 900・300 秒）。
+#                         凍結はこの和を超えたら解く
+#
+# 凍結（Issue #240）: 保護されたパスの PR（Merge Gate の C12 が fail・pending か、C12 の detail が
+#   「保護されたパスの変更（」で始まる）の review.sh を起動したら、それが動いている間はほかの PR をマージしない
+#   （保護されたパスの PR はレビューの引き継ぎが使えないので、main が進むと再レビューを繰り返すため）。
+#   印は .agents/run/train/freeze-<PR>（起動した時刻）。review.sh が終わるか、review.sh の待ちの上限を超えたら解く
+# レビューは review.max_rounds（.agents/config.json、既定 2）回まで（Issue #240）: 最新のレビュー記録の round が
+#   それ以上で、C6 が pass でない（か C12 が fail の）PR には review.sh を起動しない（止まった扱いにもしない）。
+#   ci-ok が pass なら「強制マージ待ち」として .agents/run/train/force-merge-<PR>.json に記録し、ログに出す
+# review.sh は親（merge-train）と別のセッション（setsid がなければ別のプロセスグループ）で、二重の fork で
+#   起動する。merge-train を止めても（プロセスグループごとでも）review.sh は止まらない
 #
 # 1 周の内容:
 #   0. gh api rate_limit の残りが 300 未満なら、戻る時刻まで休む
-#   1. 前から順に Merge Gate（agentctl gate）を判定し、pass の最初の 1 つを、Issue を ready-to-merge に
-#      してから merge.sh でマージする。マージしたら、メインの作業ツリーで git pull --ff-only を実行する
+#   1. 前から順に Merge Gate（agentctl gate）を判定し、pass の最初の 1 つ（凍結の間は、凍結した PR だけ）を、
+#      Issue を ready-to-merge にしてから merge.sh でマージする。マージしたら、メインの作業ツリーで git pull --ff-only を実行する
 #      （.agents/config.json などの変更を、ほかの道具の判定にすぐ反映するため）。
 #      PR の HEAD・更新時刻・コメントの数・チェックの状態と、Issue の更新時刻と main の HEAD が前の周と同じなら、
 #      前の判定を使う（Issue の AC・変更予定ファイルだけを直したときも判定し直すため）
@@ -22,7 +34,9 @@
 #   2. 残りを 1 歩ずつ進める
 #      C10 が fail → main の取り込み（PUT pulls/<PR>/update-branch。HTTP 422 の merge conflict は「止まった」、
 #      それ以外の失敗＝通信・5xx・API の上限などは次の周で試す）
-#      C9 が fail →「止まった」。C6 が fail か、C6 が pass で C7 が fail →「止まった」
+#      C9 が fail →「止まった」
+#      round が review.max_rounds 以上で、C6 が pass でないか C12 が fail → 強制マージ待ち（上を参照）
+#      C6 が fail か、C6 が pass で C7 が fail →「止まった」
 #      C6 が pass でなく C10 が pass → review.sh をバックグラウンドで起動（PR ごとに 1 つまで）
 #      C6 が pass で C12 が fail、C10 が pass → 保護されたパスの確認の記録が足りないので、review.sh を
 #      HEAD ごとに 1 回だけ起動する（そのレビューのあとも C12 が fail なら「止まった」）
@@ -56,6 +70,12 @@ interval="${AGENT_TRAIN_INTERVAL:-180}"
 cycles="${AGENT_TRAIN_CYCLES:-0}"
 case "$interval" in '' | *[!0-9]*) die "AGENT_TRAIN_INTERVAL は 0 以上の整数にする（${interval}）" ;; esac
 case "$cycles" in '' | *[!0-9]*) die "AGENT_TRAIN_CYCLES は 0 以上の整数にする（${cycles}）" ;; esac
+# 凍結の上限は review.sh の待ちの上限（review.sh と同じ環境変数・既定値）の和
+codex_github_timeout="${AGENT_CODEX_GITHUB_TIMEOUT:-900}"
+codex_timeout="${AGENT_CODEX_TIMEOUT:-300}"
+case "$codex_github_timeout" in '' | *[!0-9]*) die "AGENT_CODEX_GITHUB_TIMEOUT は 0 以上の整数にする（${codex_github_timeout}）" ;; esac
+case "$codex_timeout" in '' | *[!0-9]*) die "AGENT_CODEX_TIMEOUT は 0 以上の整数にする（${codex_timeout}）" ;; esac
+freeze_limit=$((codex_github_timeout + codex_timeout))
 
 need git jq
 require_orchestrator
@@ -68,6 +88,10 @@ cd "$root"
 repo="$(repo_slug)"
 prefix="$(cfg '.branch_prefix' 'agent/issue-')"
 default_branch="$(cfg '.default_branch' 'main')"
+# レビューを依頼する回数の上限（0 は書かないのと同じ。agentctl の設定の検証と同じ）
+max_rounds="$(cfg '.review.max_rounds' 2)"
+case "$max_rounds" in '' | *[!0-9]*) die "review.max_rounds は 1 以上の整数にする（${max_rounds}）" ;; esac
+[ "$max_rounds" -ge 1 ] || max_rounds=2
 state_dir="$root/.agents/run/train"
 log_dir="$root/.agents/logs"
 mkdir -p "$state_dir" "$log_dir"
@@ -78,6 +102,12 @@ log() {
 
 # 列から外した PR（マージ済み・閉じた。空白で区切る）
 done_prs=" "
+
+# drop_pr <PR>: 列から外す（強制マージ待ちの記録も消す）
+drop_pr() {
+  done_prs="$done_prs$1 "
+  rm -f "$state_dir/force-merge-$1.json"
+}
 
 has_word() { # has_word <リスト> <語>
   case "$1" in *" $2 "*) return 0 ;; esac
@@ -196,17 +226,99 @@ review_running() {
   pid_alive "$p"
 }
 
-start_review() { # start_review <PR>
-  local pr="$1" lf p
+# spawn_detached <PID のファイル> <ログ> <コマンド…>: コマンドを、親（merge-train）と別のセッション（setsid が
+# なければ、ジョブ制御（set -m）で別のプロセスグループ）で、二重の fork で起動し、PID をファイルに書く。
+# 親をプロセスグループごと止めても（TaskStop・Ctrl-C）止まらず、親が終わると init の子になる（bash 3.2 でも動く）
+spawn_detached() {
+  local pf="$1" lf="$2"
+  shift 2
+  if command -v setsid >/dev/null 2>&1; then
+    (setsid nohup "$@" >"$lf" 2>&1 </dev/null & printf '%s\n' "$!" >"$pf")
+  else
+    (
+      set -m
+      nohup "$@" >"$lf" 2>&1 </dev/null &
+      printf '%s\n' "$!" >"$pf"
+    )
+  fi
+}
+
+# protected_pr <gate の JSON>: 保護されたパスを変える PR なら 0（C12 が fail・pending か、
+# C12 の detail が「保護されたパスの変更（」で始まる。「保護されたパスの変更なし」は当たらない）
+protected_pr() {
+  printf '%s' "$1" | jq -e '[.results[]? | select(.id == "C12")] | first // {}
+    | (.status == "fail" or .status == "pending" or ((.detail // "") | startswith("保護されたパスの変更（")))' \
+    >/dev/null 2>&1
+}
+
+start_review() { # start_review <PR> <gate の JSON>
+  local pr="$1" g="${2:-}" lf p
   if review_running "$pr"; then
     log "PR #${pr}: review.sh が動いている（2 つ目は起動しない）"
     return 0
   fi
   lf="$log_dir/review-$pr-$(date -u +%Y%m%dT%H%M%SZ).log"
-  nohup "$AGENTS_DIR/review.sh" "$pr" >"$lf" 2>&1 </dev/null &
-  p=$!
-  printf '%s\n' "$p" >"$state_dir/review-$pr.pid"
+  spawn_detached "$state_dir/review-$pr.pid" "$lf" "$AGENTS_DIR/review.sh" "$pr"
+  p="$(cat "$state_dir/review-$pr.pid" 2>/dev/null || true)"
   log "PR #${pr}: review.sh を起動した（pid ${p}、ログ ${lf}）"
+  if [ -n "$g" ] && protected_pr "$g"; then
+    date +%s >"$state_dir/freeze-$pr"
+    log "PR #${pr}: 保護されたパスの PR のレビュー中は、ほかの PR をマージしない（凍結。上限 ${freeze_limit} 秒）"
+  fi
+}
+
+# frozen_by: 凍結している PR の番号を出す（なければ空）。review.sh が終わったか、上限を過ぎた凍結は解く
+frozen_by() {
+  local f pr started now
+  now="$(date +%s)"
+  for f in "$state_dir"/freeze-*; do
+    [ -f "$f" ] || continue
+    pr="${f##*/freeze-}"
+    case "$pr" in '' | *[!0-9]*) continue ;; esac
+    started="$(cat "$f" 2>/dev/null || true)"
+    case "$started" in '' | *[!0-9]*) started=0 ;; esac
+    if ! review_running "$pr"; then
+      rm -f "$f"
+      log "PR #${pr}: 保護されたパスの PR のレビューが終わったので、凍結を解く"
+      continue
+    fi
+    if [ $((now - started)) -ge "$freeze_limit" ]; then
+      rm -f "$f"
+      log "PR #${pr}: review.sh の待ちの上限（${freeze_limit} 秒）を超えたので、凍結を解く"
+      continue
+    fi
+    printf '%s\n' "$pr"
+    return 0
+  done
+  return 0
+}
+
+# ci_ok_bucket <PR>: チェック ci-ok の bucket（なければ空）
+ci_ok_bucket() {
+  pr_checks "$1" | jq -r '[.[] | select(.name == "ci-ok") | .bucket] | first // ""' 2>/dev/null || true
+}
+
+# force_wait <PR> <Issue> <gate の JSON> <round>: レビューを上限の回数まで受けた PR。レビューを依頼せず、
+# ci-ok が pass なら「強制マージ待ち」を .agents/run/train/force-merge-<PR>.json に記録してログに出す
+force_wait() {
+  local pr="$1" issue="$2" g="$3" round="$4" ci head f="$state_dir/force-merge-$1.json"
+  ci="$(ci_ok_bucket "$pr")"
+  if [ "$ci" != pass ]; then
+    rm -f "$f"
+    log "PR #${pr}: レビューを ${round} 回受けた（上限 ${max_rounds}）ので、もうレビューを依頼しない。ci-ok が pass になるのを待つ（${ci:-まだない}）"
+    return 0
+  fi
+  head="$(printf '%s' "$g" | jq -r '.head_sha // ""' 2>/dev/null || true)"
+  if [ -f "$f" ] && [ "$(jq -r '.head_sha // ""' "$f" 2>/dev/null || true)" = "$head" ]; then
+    log "PR #${pr}: 強制マージ待ちのまま（${f}）"
+    return 0
+  fi
+  printf '%s' "$g" | jq --argjson pr "$pr" --argjson issue "$issue" --argjson round "$round" \
+    --argjson max "$max_rounds" --arg at "$(now_utc)" '
+    {pr: $pr, issue: $issue, head_sha: (.head_sha // ""), round: $round, max_rounds: $max, ci_ok: "pass",
+     failed: [.results[]? | select(.status != "pass") | "\(.id)=\(.status)"], recorded_at: $at}' >"$f.tmp" &&
+    mv "$f.tmp" "$f"
+  log "PR #${pr}: 強制マージ待ち（Issue #${issue}）。レビューを ${round} 回受けた（上限 ${max_rounds}）ので、もうレビューを依頼しない。ci-ok は pass。オーナーに知らせる（${f}）"
 }
 
 # stop_pr <PR> <目印> <理由>: 止まった PR を記録する（同じ目印の間は繰り返さない）
@@ -250,16 +362,32 @@ pr_gone() {
   return 1
 }
 
-# advance <PR> <gate の JSON> <本文のファイル> <目印>: 1 歩だけ進める
+# tick_ci <PR> <gate の JSON> <本文のファイル>: C2 が fail で ci-ok が pass なら、本文の CI の AC にチェックを付ける
+tick_ci() {
+  local pr="$1" g="$2" body_file="$3" out
+  [ "$(status_of "$g" C2)" = fail ] || return 0
+  [ "$(ci_ok_bucket "$pr")" = pass ] || return 0
+  out="$(mktemp "${TMPDIR:-/tmp}/merge-train-body.XXXXXX")"
+  if tick_ci_ac "$body_file" "$out"; then
+    if gh pr edit "$pr" --repo "$repo" --body-file "$out" >/dev/null 2>&1; then
+      log "PR #${pr}: ci-ok が pass なので、本文の CI の AC にチェックを付けた"
+    else
+      log "PR #${pr}: 本文を更新できない（次の周で試す）"
+    fi
+  fi
+  rm -f "$out"
+  return 0
+}
+
+# advance <PR> <Issue> <gate の JSON> <本文のファイル> <目印>: 1 歩だけ進める
 advance() {
-  local pr="$1" g="$2" body_file="$3" key="$4"
-  local c2 c6 c7 c9 c10 c12 ci out head
+  local pr="$1" issue="$2" g="$3" body_file="$4" key="$5"
+  local c6 c7 c9 c10 c12 head round
   if [ -f "$state_dir/stopped-$pr" ] && [ "$(cat "$state_dir/stopped-$pr")" = "$key" ]; then
     log "PR #${pr}: 止まったまま（判定の目印が変わるのを待つ）"
     return 0
   fi
   rm -f "$state_dir/stopped-$pr"
-  c2="$(status_of "$g" C2)"
   c6="$(status_of "$g" C6)"
   c7="$(status_of "$g" C7)"
   c9="$(status_of "$g" C9)"
@@ -280,6 +408,15 @@ advance() {
     stop_pr "$pr" "$key" "コンフリクトがある（C9）"
     return 0
   fi
+  # レビューは review.max_rounds 回まで（オーナーの決まり）。それ以上はレビューを依頼せず、強制マージ待ちにする
+  round="$(printf '%s' "$g" | jq -r '.latest_review.round // 0' 2>/dev/null || true)"
+  case "$round" in '' | *[!0-9]*) round=0 ;; esac
+  if [ "$round" -ge "$max_rounds" ] && { [ "$c6" != pass ] || [ "$c12" = fail ]; }; then
+    force_wait "$pr" "$issue" "$g" "$round"
+    tick_ci "$pr" "$g" "$body_file"
+    return 0
+  fi
+  rm -f "$state_dir/force-merge-$pr.json"
   if [ "$c6" = fail ]; then
     stop_pr "$pr" "$key" "HEAD のレビュー記録が request_changes（C6）"
     return 0
@@ -289,7 +426,7 @@ advance() {
     return 0
   fi
   if [ "$c6" != pass ] && [ "$c10" = pass ]; then
-    start_review "$pr"
+    start_review "$pr" "$g"
   elif [ "$c6" = pass ] && [ "$c12" = fail ] && [ "$c10" = pass ]; then
     # 最新の記録（Codex の GitHub 連携など）が保護されたパスの確認（protected_paths_ack）を持たない。
     # review.sh は保護されたパスの変更があれば確認の記録も出すので、HEAD ごとに 1 回だけ依頼する
@@ -302,23 +439,10 @@ advance() {
     else
       [ -z "$head" ] || printf '%s\n' "$head" >"$state_dir/review-c12-$pr"
       log "PR #${pr}: 保護されたパスの確認の記録が足りない（C12）ので、レビューを依頼する"
-      start_review "$pr"
+      start_review "$pr" "$g"
     fi
   fi
-  if [ "$c2" = fail ]; then
-    ci="$(pr_checks "$pr" | jq -r '[.[] | select(.name == "ci-ok") | .bucket] | first // ""' 2>/dev/null || true)"
-    if [ "$ci" = pass ]; then
-      out="$(mktemp "${TMPDIR:-/tmp}/merge-train-body.XXXXXX")"
-      if tick_ci_ac "$body_file" "$out"; then
-        if gh pr edit "$pr" --repo "$repo" --body-file "$out" >/dev/null 2>&1; then
-          log "PR #${pr}: ci-ok が pass なので、本文の CI の AC にチェックを付けた"
-        else
-          log "PR #${pr}: 本文を更新できない（次の周で試す）"
-        fi
-      fi
-      rm -f "$out"
-    fi
-  fi
+  tick_ci "$pr" "$g" "$body_file"
   return 0
 }
 
@@ -387,11 +511,12 @@ pull_main() {
 }
 
 one_cycle() {
-  local q item pr issue gate key verdict merged="" rc
+  local q item pr issue gate key verdict merged="" rc frozen
   local evaluated=""
   if rate_limit_pause; then
     return 0
   fi
+  frozen="$(frozen_by)"
   q="$(list_queue)" || {
     log "開いた PR を読めない（次の周で試す）"
     return 0
@@ -409,10 +534,14 @@ one_cycle() {
     evaluate "$pr" "$issue" || continue
     if [ "$(printf '%s' "$gate" | jq -r '.closed // false')" = true ]; then
       log "PR #${pr}: マージ済みか閉じているので列から外す"
-      done_prs="$done_prs$pr "
+      drop_pr "$pr"
       continue
     fi
     verdict="$(printf '%s' "$gate" | jq -r '.verdict')"
+    if [ -z "$merged" ] && [ "$verdict" = pass ] && [ -n "$frozen" ] && [ "$pr" != "$frozen" ]; then
+      log "PR #${pr}: Merge Gate が pass だが、保護されたパスの PR #${frozen} のレビュー中なので、マージしない（凍結）"
+      continue
+    fi
     if [ -z "$merged" ] && [ "$verdict" = pass ]; then
       merged="$pr"
       log "PR #${pr}: Merge Gate が pass。merge.sh でマージする"
@@ -425,25 +554,27 @@ one_cycle() {
       set -e
       if [ "$rc" = 0 ]; then
         log "PR #${pr}: マージした"
-        done_prs="$done_prs$pr "
+        drop_pr "$pr"
         pull_main
       elif pr_gone "$pr"; then
         # マージの後の処理で失敗しても、マージ済みなら列から外す（不具合 4）
         log "PR #${pr}: merge.sh は終了コード ${rc} だが、PR はマージ済みか閉じているので列から外す"
-        done_prs="$done_prs$pr "
+        drop_pr "$pr"
         pull_main
       else
         log "PR #${pr}: merge.sh が終了コード ${rc} で失敗した（次の周で試す）"
       fi
       continue
     fi
-    evaluated="$evaluated$pr "
+    evaluated="$evaluated$pr:$issue "
     printf '%s\n' "$gate" >"$state_dir/cycle-gate-$pr.json"
     printf '%s\n' "$key" >"$state_dir/cycle-key-$pr"
   done
   [ -n "$q" ] || log "開いた PR がない"
-  for pr in $evaluated; do
-    advance "$pr" "$(cat "$state_dir/cycle-gate-$pr.json")" "$state_dir/body-$pr" "$(cat "$state_dir/cycle-key-$pr")"
+  for item in $evaluated; do
+    pr="${item%%:*}"
+    issue="${item#*:}"
+    advance "$pr" "$issue" "$(cat "$state_dir/cycle-gate-$pr.json")" "$state_dir/body-$pr" "$(cat "$state_dir/cycle-key-$pr")"
     rm -f "$state_dir/cycle-gate-$pr.json" "$state_dir/cycle-key-$pr"
   done
   return 0

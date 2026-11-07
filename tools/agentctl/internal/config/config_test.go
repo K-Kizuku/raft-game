@@ -85,6 +85,31 @@ func TestRequireUpToDate(t *testing.T) {
 	}
 }
 
+// review.max_rounds（Issue #240）は、リポジトリの設定では 2、書かなければ DefaultMaxRounds（2）。
+func TestMaxRounds(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.MaxRounds != 2 || c.Review.MaxReviewRounds() != 2 {
+		t.Errorf("リポジトリの設定の max_rounds = %d（MaxReviewRounds %d）", c.Review.MaxRounds, c.Review.MaxReviewRounds())
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { delete(review(m), "max_rounds") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.MaxReviewRounds() != DefaultMaxRounds || DefaultMaxRounds != 2 {
+		t.Errorf("既定が 2 ではない（%d）", c.Review.MaxReviewRounds())
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { review(m)["max_rounds"] = 3 }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.MaxReviewRounds() != 3 {
+		t.Errorf("max_rounds = 3 が効かない（%d）", c.Review.MaxReviewRounds())
+	}
+}
+
 // mutate はリポジトリの設定を map として書き換え、JSON にする。
 func mutate(t *testing.T, f func(m map[string]any)) []byte {
 	t.Helper()
@@ -134,6 +159,9 @@ func TestInvalid(t *testing.T) {
 		{"primary が別", func(m map[string]any) { review(m)["primary"] = "anyone" }, "primary"},
 		{"未知のキー", func(m map[string]any) { m["skip_review"] = true }, "unknown field"},
 		{"review の未知のキー", func(m map[string]any) { review(m)["disabled"] = true }, "unknown field"},
+		{"max_rounds が負", func(m map[string]any) { review(m)["max_rounds"] = -1 }, "review.max_rounds"},
+		{"max_rounds が 11", func(m map[string]any) { review(m)["max_rounds"] = 11 }, "review.max_rounds"},
+		{"max_rounds が整数でない", func(m map[string]any) { review(m)["max_rounds"] = "2" }, "max_rounds"},
 		{"不正な glob", func(m map[string]any) { m["protected_paths"] = []any{"a/[b"} }, "protected_paths"},
 	}
 	for _, tt := range tests {

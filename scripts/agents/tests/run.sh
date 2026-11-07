@@ -27,7 +27,7 @@ git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE AGENT_ROLE AGENT_ISSUE AGENT_ALLOW_PROTECTED AGENT_CONFIG \
   AGENT_REPO AGENTCTL AGENT_FALLBACK_REASON CLAUDE_PROJECT_DIR DEV_SLOT \
   GITHUB_TOKEN GH_TOKEN FAKE_GH_TOKEN AGENT_CODEX_GITHUB_TIMEOUT AGENT_CODEX_GITHUB_POLL \
-  AGENT_CODEX_GITHUB_FIRST_WAIT AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT
+  AGENT_CODEX_GITHUB_FIRST_WAIT AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT AGENT_CODEX_TIMEOUT
 export CLAUDE_CONFIG_DIR="$tmp/claude-config"
 
 # ---- 本物の agentctl（review validate・render の書式の確認に使う。go がなければ jq で代わりに確かめる）----
@@ -1223,6 +1223,11 @@ EOF
 cat >"$TS/spawn-worker.sh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$FAKE_LOG/spawn.log"
+# FAKE_WORKER_SLEEP があれば、本物の --background と同じく、Worker（sleep）を nohup で背景に起動して PID を残す（#240）
+if [ -n "${FAKE_WORKER_SLEEP:-}" ]; then
+  (exec nohup sleep "$FAKE_WORKER_SLEEP") </dev/null >/dev/null 2>&1 &
+  printf '%s\n' "$!" >"$TRAIN_DIR/worker-$1.pid"
+fi
 exit "$(cat "$TRAIN_DIR/spawn-rc-$1" 2>/dev/null || echo 0)"
 EOF
 chmod +x "$TS/merge.sh" "$TS/review.sh" "$TS/spawn-worker.sh"
@@ -1232,7 +1237,19 @@ cat >"$fake/bin-train/gh" <<'EOF'
 jq -cn --arg cwd "$PWD" '{cwd:$cwd, args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/gh.log"
 n="${3:-}"
 case "$1 $2" in
-  "pr list") cat "$TRAIN_DIR/prs.json" 2>/dev/null || echo '[]' ;;
+  "pr list")
+    # gh pr list --head <ブランチ> … -q '.[0].number // empty'（#240）: headpr-<ブランチの / を - に>の番号を出す
+    h="" prev=""
+    for a in "$@"; do
+      [ "$prev" != "--head" ] || h="$a"
+      prev="$a"
+    done
+    if [ -n "$h" ]; then
+      cat "$TRAIN_DIR/headpr-$(printf '%s' "$h" | tr / -)" 2>/dev/null || true
+      exit 0
+    fi
+    cat "$TRAIN_DIR/prs.json" 2>/dev/null || echo '[]'
+    ;;
   "pr view")
     st="$(cat "$TRAIN_DIR/state-$n" 2>/dev/null || echo OPEN)"
     case " $* " in
@@ -1372,6 +1389,46 @@ wait_reviews() {
     done
   done
 }
+# kill_reviews: 起動した偽の review.sh を止める（長く眠らせたもの）
+kill_reviews() {
+  local f
+  for f in "$trepo/.agents/run/train"/review-*.pid; do
+    [ -f "$f" ] || continue
+    kill "$(cat "$f")" 2>/dev/null || true
+  done
+  wait_reviews
+}
+# setround <PR> <round>: 偽の gate の結果に最新のレビュー記録（latest_review.round）を足す（#240）
+setround() {
+  jq --argjson r "$2" '. + {latest_review:{comment_id:1, author:"K-Kizuku", round:$r, head_sha:.head_sha, verdict:"request_changes", reviewer:"codex"}}' \
+    "$TRAIN_DIR/gate-$1.json" >"$TRAIN_DIR/gate-$1.tmp" && mv "$TRAIN_DIR/gate-$1.tmp" "$TRAIN_DIR/gate-$1.json"
+}
+# setdetail <PR> <ID> <detail>: 偽の gate の結果の条件に detail を足す（#240）
+setdetail() {
+  jq --arg id "$2" --arg d "$3" '.results |= map(if .id == $id then . + {detail:$d} else . end)' \
+    "$TRAIN_DIR/gate-$1.json" >"$TRAIN_DIR/gate-$1.tmp" && mv "$TRAIN_DIR/gate-$1.tmp" "$TRAIN_DIR/gate-$1.json"
+}
+# bg_group <ディレクトリ> <コマンド…>: 別のプロセスグループで背景に起動する（グループの番号＝PID を $tmp/bg.pid に書く）。
+# そのグループに SIGTERM を送り、TaskStop・Ctrl-C でプロセスグループごと止めた場合を真似る（#240）
+bg_group() {
+  local d="$1"
+  shift
+  (
+    set -m
+    (cd "$d" && exec "$@") </dev/null >"$tmp/bg.out" 2>"$tmp/bg.err" &
+    printf '%s\n' "$!" >"$tmp/bg.pid"
+  )
+}
+# wait_until <条件のコマンド…>: 条件が成り立つまで待つ（最大 15 秒）。成り立たなければ 1
+wait_until() {
+  local i=0
+  until "$@"; do
+    [ "$i" -lt 150 ] || return 1
+    sleep 0.1
+    i=$((i + 1))
+  done
+}
+pid_dead() { ! kill -0 "$1" 2>/dev/null; }
 
 # ---- 役割 ----
 train_reset
@@ -1724,6 +1781,157 @@ mkgate 76 fail pass pass pass pass fail false fail
 train 1
 check "train: C12 が fail でも C10 が fail ならレビューを依頼しない" test ! -s "$FAKE_LOG/review.log" -a "$(update_calls 76)" = 1
 
+# ---- 凍結（#240）: 保護されたパスの PR のレビュー中は、ほかの PR をマージしない ----
+train_reset
+mkprs "101:agent/issue-301"
+mkgate 101 pending pass pending pending pass pass false pending
+train 1 FAKE_REVIEW_SLEEP=30
+check "train（凍結）: 保護されたパスの PR（C12 が pending）の review.sh を起動する" test "$(cat "$FAKE_LOG/review.log")" = "101"
+check "train（凍結）: 保護されたパスの PR のレビューを起動したら凍結の印を作る" test -s "$trepo/.agents/run/train/freeze-101"
+check "train（凍結）: 凍結することを出す" grep -q "PR #101: 保護されたパスの PR のレビュー中は、ほかの PR をマージしない（凍結" "$tmp/err"
+mkprs "101:agent/issue-301" "102:agent/issue-302"
+mkgate 102 pass pass pass pass pass pass
+train 2 FAKE_REVIEW_SLEEP=30
+check "train（凍結）: 保護されたパスの PR のレビュー中は、ほかの pass の PR を merge.sh に渡さない" test ! -s "$FAKE_LOG/merge.log"
+check "train（凍結）: マージしない理由を出す" \
+  grep -q "PR #102: Merge Gate が pass だが、保護されたパスの PR #101 のレビュー中なので、マージしない（凍結）" "$tmp/err"
+check "train（凍結）: 凍結の間に ready-to-merge にしない" \
+  bash -c '! jq -e "select(.args[0:3] == [\"state\",\"302\",\"ready-to-merge\"])" "$1" >/dev/null' _ "$FAKE_LOG/agentctl.log"
+check "train（凍結）: 凍結の間も review.sh は PR ごとに 1 つまで" test "$(count_lines "$FAKE_LOG/review.log")" = 1
+# review.sh の待ちの上限（AGENT_CODEX_GITHUB_TIMEOUT＋AGENT_CODEX_TIMEOUT）を超えたら凍結を解く
+train 1 AGENT_CODEX_GITHUB_TIMEOUT=0 AGENT_CODEX_TIMEOUT=0
+check "train（凍結）: review.sh の待ちの上限を超えたら凍結を解いてマージする" test "$(cat "$FAKE_LOG/merge.log")" = "102"
+check "train（凍結）: 上限で凍結を解いたことを出す" grep -q "PR #101: review.sh の待ちの上限（0 秒）を超えたので、凍結を解く" "$tmp/err"
+check "train（凍結）: 上限で解いたら凍結の印を消す" test ! -e "$trepo/.agents/run/train/freeze-101"
+kill_reviews
+# review.sh が終われば凍結を解く
+train_reset
+mkprs "103:agent/issue-303"
+mkgate 103 pending pass pending pending pass pass false fail
+train 1
+wait_reviews
+mkprs "103:agent/issue-303" "104:agent/issue-304"
+mkgate 104 pass pass pass pass pass pass
+train 1
+wait_reviews
+check "train（凍結）: 保護されたパスの PR の review.sh が終われば凍結を解いてマージする" test "$(cat "$FAKE_LOG/merge.log")" = "104"
+check "train（凍結）: レビューが終わって凍結を解いたことを出す" \
+  grep -q "PR #103: 保護されたパスの PR のレビューが終わったので、凍結を解く" "$tmp/err"
+# C12 が pass でも、detail が保護されたパスの変更を示せば（前の記録の確認）凍結する。変更なしなら凍結しない
+train_reset
+mkprs "105:agent/issue-305" "106:agent/issue-306"
+mkgate 105 pending pass pending pending pass pass
+setdetail 105 C12 "保護されたパスの変更（scripts/agents/x.sh）は確認済み"
+mkgate 106 pending pass pending pending pass pass
+setdetail 106 C12 "保護されたパスの変更なし"
+train 1 FAKE_REVIEW_SLEEP=30
+check "train（凍結）: C12 の detail が保護されたパスの変更を示せば凍結する" test -e "$trepo/.agents/run/train/freeze-105"
+check "train（凍結）: 保護されたパスの変更がない PR のレビューでは凍結しない" test ! -e "$trepo/.agents/run/train/freeze-106"
+kill_reviews
+# 凍結した PR 自身は、pass ならマージする
+train_reset
+mkprs "107:agent/issue-307" "108:agent/issue-308"
+mkgate 107 pending pass pending pending pass pass false pending
+train 1 FAKE_REVIEW_SLEEP=30
+mkgate 107 pass pass pass pass pass pass
+mkgate 108 pass pass pass pass pass pass
+echo 1 >"$TRAIN_DIR/comments-107"
+train 1 FAKE_REVIEW_SLEEP=30
+check "train（凍結）: 凍結した PR 自身は pass ならマージする" test "$(cat "$FAKE_LOG/merge.log")" = "107"
+kill_reviews
+
+# ---- レビューは review.max_rounds 回まで（#240）----
+train_reset
+mkprs "111:agent/issue-311"
+mkgate 111 pending pass pending pending pass pass
+setround 111 2
+train 1
+wait_reviews
+check "train（2 往復まで）: round 2 で C6 が pass でなければ review.sh を呼ばない" test ! -s "$FAKE_LOG/review.log"
+check "train（2 往復まで）: ci-ok が pass なら強制マージ待ちの記録を作る" \
+  jq -e '.pr == 111 and .issue == 311 and .round == 2 and .max_rounds == 2 and .head_sha == "h111" and .ci_ok == "pass"
+    and (.failed | index("C6=pending")) != null and (.recorded_at | length) > 0' "$trepo/.agents/run/train/force-merge-111.json"
+check "train（2 往復まで）: 強制マージ待ちをログに出す" grep -q "PR #111: 強制マージ待ち（Issue #311）" "$tmp/err"
+check "train（2 往復まで）: 止まった扱いにしない" test ! -e "$trepo/.agents/run/train/stopped-111"
+train 1
+wait_reviews
+check "train（2 往復まで）: 次の周もレビューを依頼しない" test ! -s "$FAKE_LOG/review.log"
+check "train（2 往復まで）: 記録が同じ HEAD なら、強制マージ待ちのままと出す" grep -q "PR #111: 強制マージ待ちのまま" "$tmp/err"
+# round 3 で C6 が fail（request_changes）でも、止まった扱いにせず強制マージ待ちにする
+train_reset
+mkprs "112:agent/issue-312"
+mkgate 112 fail pass fail pass pass pass
+setround 112 3
+train 1
+check "train（2 往復まで）: round 3 で C6 が fail でも強制マージ待ちにする" \
+  test -s "$trepo/.agents/run/train/force-merge-112.json" -a ! -e "$trepo/.agents/run/train/stopped-112"
+# round 2 で C6 が pass、C12 が fail でも review.sh を呼ばない
+train_reset
+mkprs "113:agent/issue-313"
+mkgate 113 fail pass pass pass pass pass false fail
+setround 113 2
+train 1
+wait_reviews
+check "train（2 往復まで）: round 2 で C12 が fail でも review.sh を呼ばない" \
+  test ! -s "$FAKE_LOG/review.log" -a -s "$trepo/.agents/run/train/force-merge-113.json"
+# ci-ok が pass でなければ記録を作らない（レビューも依頼しない）
+train_reset
+mkprs "114:agent/issue-314"
+mkgate 114 pending pass pending pending pass pass
+setround 114 2
+printf '%s\n' '[{"name":"ci-ok","bucket":"pending"}]' >"$TRAIN_DIR/checks-114.json"
+train 1
+wait_reviews
+check "train（2 往復まで）: ci-ok が pass でなければ強制マージ待ちの記録を作らない" \
+  test ! -e "$trepo/.agents/run/train/force-merge-114.json" -a ! -s "$FAKE_LOG/review.log"
+check "train（2 往復まで）: ci-ok を待つことを出す" grep -q "PR #114: レビューを 2 回受けた（上限 2）ので、もうレビューを依頼しない。ci-ok が pass になるのを待つ（pending）" "$tmp/err"
+# round 1 なら（上限より少ない）これまでどおり review.sh を呼ぶ
+train_reset
+mkprs "115:agent/issue-315"
+mkgate 115 pending pass pending pending pass pass
+setround 115 1
+train 1
+wait_reviews
+check "train（2 往復まで）: round 1 なら review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "115" -a ! -e "$trepo/.agents/run/train/force-merge-115.json"
+# 上限は .agents/config.json の review.max_rounds から読む
+train_reset
+mkprs "116:agent/issue-316"
+mkgate 116 pending pass pending pending pass pass
+setround 116 2
+jq -n '{review:{max_rounds:3}}' >"$tmp/config-rounds.json"
+train 1 AGENT_CONFIG="$tmp/config-rounds.json"
+wait_reviews
+check "train（2 往復まで）: review.max_rounds が 3 なら round 2 でも review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "116"
+train_reset
+mkprs "117:agent/issue-317"
+mkgate 117 pending pass pending pending pass pass
+setround 117 1
+jq -n '{review:{max_rounds:1}}' >"$tmp/config-rounds.json"
+train 1 AGENT_CONFIG="$tmp/config-rounds.json"
+wait_reviews
+check "train（2 往復まで）: review.max_rounds が 1 なら round 1 で強制マージ待ちにする" \
+  test ! -s "$FAKE_LOG/review.log" -a -s "$trepo/.agents/run/train/force-merge-117.json"
+# 強制マージ待ちの PR がマージされたら（オーナーの強制マージのあと、gate の closed）記録を消す
+mkgate 117 fail pass pending pending pass pass true
+echo 1 >"$TRAIN_DIR/comments-117"
+train 1 AGENT_CONFIG="$tmp/config-rounds.json"
+check "train（2 往復まで）: 列から外したら強制マージ待ちの記録を消す" test ! -e "$trepo/.agents/run/train/force-merge-117.json"
+
+# ---- merge-train を止めても、起動した review.sh は止まらない（#240）----
+train_reset
+mkprs "118:agent/issue-318"
+mkgate 118 pending pass pending pending pass pass false pending
+bg_group "$trepo" env PATH="$fake/bin-train:$PATH" AGENT_ROLE=orchestrator AGENT_TRAIN_INTERVAL=30 AGENT_TRAIN_CYCLES=0 \
+  FAKE_REVIEW_SLEEP=30 bash "$TS/merge-train.sh"
+bgp="$(cat "$tmp/bg.pid")"
+check "train（親を止める）: review.sh を起動する" wait_until test -s "$FAKE_LOG/review.log"
+rp="$(cat "$trepo/.agents/run/train/review-118.pid" 2>/dev/null || echo 0)"
+kill -TERM -- "-$bgp" 2>/dev/null || true
+check "train（親を止める）: プロセスグループに SIGTERM を送ると merge-train は止まる" wait_until pid_dead "$bgp"
+sleep 0.3
+check "train（親を止める）: merge-train のプロセスグループごと止めても review.sh は止まらない" kill -0 "$rp"
+kill "$rp" 2>/dev/null || true
+
 # ---- 不具合 4: merge.sh がマージの後の処理で 0 以外を返しても、マージ済みなら列から外す ----
 train_reset
 mkgate 81 pass pass pass pass pass pass
@@ -1819,6 +2027,53 @@ jq -n '{ready:[{number:201}], capacity:1}' >"$TRAIN_DIR/plan.json"
 autospawn AGENT_ROLE=worker FAKE_PLAN_STOP_AFTER=1
 check "autospawn: Worker の役割では拒否する" test "$RC" = 1 -a ! -s "$FAKE_LOG/spawn.log"
 check "autospawn --help" bash "$TS/autospawn.sh" --help
+
+# ---- 状態の自動の直し（#240）: in-progress・Worker なし・PR あり → in-review ----
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[], active:[{number:207, status:"in-progress"}, {number:208, status:"in-progress"},
+  {number:209, status:"in-progress"}, {number:210, status:"in-review"}, {number:211, status:"in-progress"},
+  {number:212, status:"changes-requested"}], capacity:0}' >"$TRAIN_DIR/plan.json"
+echo 1207 >"$TRAIN_DIR/headpr-agent-issue-207"
+echo 1208 >"$TRAIN_DIR/headpr-agent-issue-208"
+echo 1210 >"$TRAIN_DIR/headpr-agent-issue-210"
+echo 1211 >"$TRAIN_DIR/headpr-agent-issue-211"
+echo 1212 >"$TRAIN_DIR/headpr-agent-issue-212"
+# 208 は Worker が動いている（pid はこのテストのシェル）。207 は Worker の記録の pid が終わっている
+jq -n --argjson p "$$" '{issue:208, pid:$p}' >"$trepo/.agents/run/issue-208.json"
+sleep 0 &
+deadpid=$!
+wait "$deadpid" 2>/dev/null || true
+jq -n --argjson p "$deadpid" '{issue:207, pid:$p}' >"$trepo/.agents/run/issue-207.json"
+echo 4 >"$TRAIN_DIR/state-rc-211-in-review"
+autospawn FAKE_PLAN_STOP_AFTER=1
+state_calls() { jq -s --arg n "$1" '[.[] | select(.args[0:3] == ["state",$n,"in-review"])] | length' "$FAKE_LOG/agentctl.log"; }
+check "autospawn（状態の直し）: in-progress・Worker なし・PR あり → state in-review を呼ぶ" \
+  log_has agentctl '.args == ["state","207","in-review","--repo","K-Kizuku/raft-game","--pr","1207"]'
+check "autospawn（状態の直し）: 開いた PR を gh pr list --head で探す" \
+  log_has gh '.args[0:2] == ["pr","list"] and (.args | index("--head")) != null and (.args | index("agent/issue-207")) != null'
+check "autospawn（状態の直し）: 移したことを出す" grep -q "Issue #207: in-progress のままだが、Worker が動いておらず PR #1207 があるので、in-review に移した" "$tmp/err"
+check "autospawn（状態の直し）: Worker が動いていれば移さない" test "$(state_calls 208)" = 0
+check "autospawn（状態の直し）: PR がなければ移さない" test "$(state_calls 209)" = 0
+check "autospawn（状態の直し）: in-progress でなければ移さない" test "$(state_calls 210):$(state_calls 212)" = "0:0"
+check "autospawn（状態の直し）: 移せなければ出して続ける" \
+  grep -q "Issue #211: in-progress のままで Worker が動いておらず PR #1211 があるが、in-review に移せない（次の周で試す）" "$tmp/err"
+check "autospawn（状態の直し）: 移せなくても成功する" test "$RC" = 0
+
+# ---- autospawn を止めても、起動した Worker は止まらない（#240）----
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[{number:213}], capacity:1}' >"$TRAIN_DIR/plan.json"
+bg_group "$trepo" env PATH="$fake/bin-train:$PATH" AGENT_ROLE=orchestrator AGENT_AUTOSPAWN_INTERVAL=30 \
+  FAKE_WORKER_SLEEP=30 bash "$TS/autospawn.sh"
+bgp="$(cat "$tmp/bg.pid")"
+check "autospawn（親を止める）: Worker を起動する" wait_until test -s "$TRAIN_DIR/worker-213.pid"
+wp="$(cat "$TRAIN_DIR/worker-213.pid" 2>/dev/null || echo 0)"
+kill -TERM -- "-$bgp" 2>/dev/null || true
+check "autospawn（親を止める）: プロセスグループに SIGTERM を送ると autospawn は止まる" wait_until pid_dead "$bgp"
+sleep 0.3
+check "autospawn（親を止める）: autospawn のプロセスグループごと止めても Worker は止まらない" kill -0 "$wp"
+kill "$wp" 2>/dev/null || true
 
 echo "agents: $((total - failures))/$total ok"
 if [ "$failures" -ne 0 ]; then
