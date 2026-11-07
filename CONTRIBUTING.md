@@ -50,8 +50,11 @@ make dev                          # 開発用のサーバーを起動する
 
 - 公開リポジトリなので、シークレットをコミットしない。`.env`・`.env.*`・`*.secrets*` は `.gitignore` に入っている
 - Cloudflare のシークレットは `cf deploy --secrets-file` で渡す。本番・デモ用の環境へのデプロイは CI だけが行う
+- push する前に `make check-secrets` で、git の履歴にシークレットがないかを確かめる（CI の `secrets` ジョブと同じ。gitleaks の版は `scripts/check-secrets.sh` に固定。初回は gitleaks をビルドする）。まだコミットしていない変更は見ないので、コミットしてから実行する
+- 偽陽性（テストの偽のトークン・鍵）は、その行に `gitleaks:allow` のコメントを付けるか、値を実行時に組み立てる（例: `"x".repeat(32)`）。`.gitleaksignore` に足してよいのは main にあるコミットの指紋だけ（方針は `.gitleaks.toml` のコメント）。本物のシークレットを push してしまったら、まずそれを無効化する
 
 ## ライセンス
 
 - [Apache License 2.0](LICENSE)。貢献したものは、同じライセンスで提供される（Apache-2.0 の第 5 条）
 - 同梱する OSS・提供データ・生成した素材を足したり変えたりしたら、[NOTICE](NOTICE) を更新する（[ADR-0020](docs/adr/0020-public-repository-apache-license.md)）
+- `make check-license` で、LICENSE が Apache-2.0 の本文そのものか、NOTICE が同梱の OSS（`server/third_party/` の各ディレクトリと etcd-io/raft の版）・提供データの出典（`data/islands.json` の `sources`）・素材の記載先と合っているかを確かめる（CI の `docs` ジョブと同じ）。OSS を同梱したり、`server/go.mod` の etcd-io/raft の版を上げたりしたら、同じ PR で NOTICE を直す
