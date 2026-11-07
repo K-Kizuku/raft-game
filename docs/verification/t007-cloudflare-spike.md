@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-1 と M-12 のローカル必須項目は成功。次は M-2・M-3 の手元の基準値の測定。ローカルでは enableInternet: false でも TCP 接続が通った。実デプロイ・クラウドでの測定は未実施。
+- 状態: H-1・M-12 と M-2/M-3 の手元の基準値の測定が完了。次は H-2 のトークン準備と H-3 の検証環境への実デプロイ。クラウドの資源はまだ作成していない。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -18,8 +18,8 @@
 |---|---|---|
 | H-1 準備 | 完了 | main d862bb78cbfea3fe0e476605b3b6d4996153f818、pnpm install --frozen-lockfile と check.sh が成功。shellcheck は未導入のため省略 |
 | M-12 ローカル動作確認 | 成功 | 必須 8 項目すべて ok、measure.ts 終了コード 0。cf dev の準備完了 6 秒。TCP の外部接続が通る点はクラウドで再確認 |
-| M-2・M-3 手元の基準値 | 未実施 | 次に CPU の種類と Go の bench raft / bench loop の JSON を取得する |
-| H-2 トークンの準備 | 未実施 | 測定コードが main に入ってから実施する |
+| M-2・M-3 手元の基準値 | 取得済み | Apple M2 / Go 1.26.9。30 分の再計算 79.343 ms、8 倍速 step p99 0.289 ms。クラウドの性能とは区別する |
+| H-2 トークンの準備 | 未実施 | 次に gitignore 確認・64 桁 hex の生成・mode 600 / 新規作成専用でファイル保存する |
 | H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
 | H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
 | H-5 limits.cpuMs の判断 | 未実施 | Worker・Durable Object の CPU 時間と WS 中継を確認する |
@@ -435,6 +435,85 @@ env GOTOOLCHAIN=go1.26.9 go -C spike/container run . bench loop --nodes 7 --spee
 1 つ目で CPU の種類、残りの 2 つで基準値の JSON を受け取る。bench loop は約 20 秒実行する。このコマンドは次に案内したもので、まだ結果は受け取っていない。
 
 基準値の取得後に H-2 のトークン作成と H-3 の検証環境へのデプロイに進む。ここまででは、クラウドの資源は作成していない。
+
+## 2026-11-07: 手元の性能基準値を取得 (M-2・M-3)
+
+共有されたプロンプトの開始時刻は 15:52:23 JST。
+
+- CPU: **Apple M2**。
+- Go: **go1.26.9 darwin/arm64** を環境変数で指定。
+- 対象のリビジョンは直前の確認済み main `d862bb78cbfea3fe0e476605b3b6d4996153f818`。この測定時の SHA の再表示はないが、変更したとの報告もない。
+- Docker を使わず、macOS 上の Go の負荷模型として実行。これは本番のゲームのエンジンや、クラウドの lite の性能確認ではない。
+
+### M-2: 7 ノード・30 分相当の再計算
+
+```fish
+env GOTOOLCHAIN=go1.26.9 go -C spike/container run . bench raft --nodes 7 --minutes 30
+```
+
+```json
+{
+  "nodes": 7,
+  "minutes": 30,
+  "wallMs": 79.343,
+  "cpuUserMs": 103.05,
+  "cpuSysMs": 7.809,
+  "virtualMinutesPerSecond": 378.107,
+  "committed": 3558,
+  "leaderChanges": 1
+}
+```
+
+### M-3: 7 ノード・8 倍速・20 秒
+
+```fish
+env GOTOOLCHAIN=go1.26.9 go -C spike/container run . bench loop --nodes 7 --speed 8 --seconds 20
+```
+
+```json
+{
+  "speed": "8",
+  "seconds": 20,
+  "steps": 399,
+  "stepMs": {
+    "p50": 0.057,
+    "p99": 0.289,
+    "max": 6.728
+  },
+  "lateMs": {
+    "p99": 3.639,
+    "max": 32.731
+  },
+  "cpuUtil": 0.002,
+  "gc": {
+    "num": 2,
+    "pauseMaxMs": 0.034
+  }
+}
+```
+
+手元の基準値は取得できた。クラウドの測定では wallMs の比、stepMs.p99 と lateMs、CPU やメモリの実際の上限を比較する。Dockerfile の Go は 1.26.4 なので、ローカルの 1.26.9 との差も記録する。
+
+### 次の手順: H-2・H-3
+
+リビジョン `d862bb78cbfea3fe0e476605b3b6d4996153f818` のルート .gitignore に `*.secrets*` があることを確認した。ユーザーの端末でも git check-ignore が成功してからシークレットを作る。
+
+トークンは openssl の 32 バイトの乱数 (64 桁 hex)。ファイルの新規作成は Node の writeFileSync で mode 600 / flag wx を指定し、既存のファイルがあれば上書きせず停止する。トークンの値は画面や記録に出さない。SPIKE_TOKEN はこの fish セッションの測定用の環境変数に保持する。
+
+次のブロックはユーザーがリポジトリのルートで実行する。最後から 2 行目で検証用の Worker・DO・コンテナを Cloudflare に実デプロイする。AI はこのブロックを実行しない。
+
+```fish
+git check-ignore spike/spike.secrets.json
+and set -gx SPIKE_TOKEN (openssl rand -hex 32)
+and node -e 'const fs=require("node:fs"),t=process.env.SPIKE_TOKEN;if(!/^[0-9a-f]{64}$/.test(t??""))throw new Error("Invalid SPIKE_TOKEN");fs.writeFileSync("spike/spike.secrets.json",JSON.stringify({SPIKE_TOKEN:t}),{mode:0o600,flag:"wx"});console.log("spike.secrets.json created (mode 600)");'
+and env SPIKE_CPU_MS=50 pnpm -C spike exec cf build
+and time pnpm -C spike exec cf deploy --prebuilt --secrets-file spike.secrets.json
+and curl -fsS --max-time 30 https://raft-game-spike.kizuku.workers.dev/spike/healthz
+```
+
+pnpm -C spike によって cf は spike/ で実行される。secrets-file はその作業ディレクトリ内の spike.secrets.json。最初のデプロイなので --containers-rollout immediate は付けない。Worker の公開先の予定は https://raft-game-spike.kizuku.workers.dev。
+
+このコマンドは次に案内したもので、まだ H-2・H-3 の実行結果は受け取っていない。時間・出力 URL・イメージの push・デプロイの成功と /spike/healthz の応答を記録する。healthz は DO を起動しないため、コンテナの本番での起動・WS・性能を確認したことにはしない。
 
 ## 測定前に確定・確認する事項
 
