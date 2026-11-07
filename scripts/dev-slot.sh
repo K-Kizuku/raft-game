@@ -9,7 +9,7 @@
 #   current [--path P]              P の枠の番号を出す（なければ終了コード 1）
 #
 # - 枠は $(git rev-parse --git-common-dir)/agent-slots/<番号> を mkdir で原子的に作り、
-#   中の path に作業ツリーのパスを書く。番号は 1〜dev_slots（.agents/config.json、既定 10）
+#   中の path に作業ツリーのパスを書く。番号は 1〜dev_slots（.agents/config.json、既定 15）
 # - パスが存在せず、持ち主の pid も生きていない枠は古いものとして回収する
 # - 空いている枠がなければ終了コード 1
 set -euo pipefail
@@ -40,7 +40,7 @@ common="$(abs_dir "$common")"
 slots_dir="$common/agent-slots"
 root="$(dirname "$common")"
 
-max_slots=10
+max_slots=15
 cfg="${AGENT_CONFIG:-$root/.agents/config.json}"
 if [ -f "$cfg" ] && command -v jq >/dev/null 2>&1; then
   v="$(jq -r '.dev_slots // empty' "$cfg" 2>/dev/null || true)"
