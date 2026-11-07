@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.3 |
+| 版 | v0.4 |
 | 更新日 | 2026-11-07 |
 | 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
 | 対象読者 | 実装者（サーバー・フロントエンド・インフラ）、レビュアー |
@@ -685,17 +685,79 @@ export class GameSession extends DurableObject {
 
 ### 12.3.1 Durable Object `CostGuard`
 
-全体で 1 つの Durable Object です（`idFromName("global")`）。一般公開とデモ用の Worker が共有します。
+全体で 1 つの Durable Object です（`idFromName("global")`。ほかの名前では作らない）。一般公開とデモ用の Worker が共有します（デモ用の Worker は、一般公開の Worker の `CostGuard` を参照する）。費用の予約・精算・上限の判定（G1）、受付の一括停止（G6）、ガードの設定の上書きと切り替えの記録を持ちます（[ADR-0018](./adr/0018-cost-guard.md)）。
 
-```ts
-export class CostGuard extends DurableObject {
-  // SQLite: settings(key, value), ledger(session_id, reserved_usd, settled_usd, started_at, ended_at), audit(at, change)
-  async reserve(sessionId: string, instance: "lite" | "standard-1"): Promise<"ok" | "budget_exhausted" | "sessions_disabled">
-  async settle(sessionId: string, runSeconds: number): Promise<void>  // 予約した額を実際の時間で精算する
-  async getGuards(): Promise<Guards>                                  // 設定ファイルの既定値に、保存した上書きを重ねたもの
-  async patchGuards(change: Partial<Guards>, by: string): Promise<Guards> // G3 は変更できない
+`DurableObject` を継承せず、`fetch` のハンドラーで内部の API を受けます（RPC と `cloudflare:workers` を使わない。[ADR-0023](./adr/0023-durable-object-fetch-handler.md)）。中身は `web/worker/admin/ledger.ts` の `CostGuardCore`（SQLite の上の同期の処理だけ）で、Worker・`GameSession` からは `web/worker/admin/client.ts` の `CostGuardClient`（`getCostGuardClient(env)`）で呼びます。
+
+| メソッド | パス | 本文 | 応答 |
+|---|---|---|---|
+| `POST` | `/reserve` | `{ sessionId, instance: "lite" \| "standard-1" }` | `200 { result: "ok" \| "budget_exhausted" \| "sessions_disabled" }` |
+| `POST` | `/cancel` | `{ sessionId }` | `200 {}`。未精算の予約だけを取り消す（額 0） |
+| `POST` | `/settle` | `{ sessionId, runSeconds }`（0〜86400 の整数） | `200 {}`。未精算の予約だけを、実際に動いた秒数で精算する |
+| `GET` | `/view` | — | `200 GuardsView`（[プロトコル §2](./06-protocol.md) の `GET` の応答）・`503 guards_invalid` |
+| `POST` | `/patch` | `{ change: 平らな形, reason, by }` | `200 GuardsView`・`400 bad_request`・`400 locked`・`503 guards_invalid` |
+
+- URL のホストは何でもよい（クライアントは `https://cost-guard.internal/<op>` を使う）。知らないパスは 404、メソッドが違えば 405、本文が壊れている・型が違えば `400 bad_request`。`sessionId` は `^[A-Za-z0-9._-]{1,256}$`、`by` は 1〜64 文字
+- `/patch` は、Worker を通らない呼び出しに備えて、`change` を管理用 API と同じ規則でもう一度確かめる
+- アラームを使わない（`alarm()` を持たず、アラームを設定しない）。ログを出さない
+
+SQLite の表（`constructor` で `CREATE TABLE IF NOT EXISTS`。`sql.exec` には 1 回に 1 つの文だけを渡す）:
+
+```sql
+CREATE TABLE IF NOT EXISTS ledger (
+  session_id     TEXT PRIMARY KEY,
+  instance       TEXT NOT NULL,          -- "lite" | "standard-1"
+  rate_micro     INTEGER NOT NULL,       -- 予約したときの 30 分あたりの単価（µUSD）
+  reserved_micro INTEGER NOT NULL,
+  settled_micro  INTEGER,                -- NULL = 未精算
+  status         TEXT NOT NULL,          -- "reserved" | "settled" | "cancelled"
+  started_at     INTEGER NOT NULL,       -- 予約した時刻（UNIX ミリ秒）
+  ended_at       INTEGER                 -- 精算・取り消しの時刻
+);
+CREATE INDEX IF NOT EXISTS ledger_started_at ON ledger (started_at);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- 上書き（値は JSON）
+CREATE TABLE IF NOT EXISTS audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, by TEXT NOT NULL,
+  change TEXT NOT NULL, reason TEXT NOT NULL                                       -- change は JSON
+);
+```
+
+費用の計算:
+
+- 金額は内部で**マイクロ USD の整数**（1 USD = 1,000,000 µUSD）で持ち、SQLite にも整数で入れる（浮動小数点の足し算の誤差を貯めない）。USD → µUSD は `Math.round(usd × 1,000,000)`
+- 単価 `unitCostUsd[instance]` は 30 分あたりの最悪の費用（`lite` 0.0065・`standard-1` 0.040 USD）
+- 予約額 = `ceil(単価µ × maxMinutes / 30)`（今の設定の `gameTime.maxMinutes`）
+- 精算額 = `ceil(単価µ × runSeconds / 1800)`。単価は予約したときの値（`rate_micro`）を使う。予約額を超えても上限で切らない
+- 行ごとの額は、`cancelled` は 0、`settled` は精算額、`reserved` は予約額。1 日・1 か月は **UTC** の暦で区切り、今日（今月）の 0 時以降に**予約した**行の合計を使う
+
+`reserve` の判定（確認と書き込みの間に `await` を挟まない。Durable Object の中で直列になる）:
+
+1. 設定 `GUARDS` が不正 → `sessions_disabled`
+2. 同じ `sessionId` の行がすでにある → 何も変えずに `ok`（冪等）
+3. `acceptGames` が `false` → `sessions_disabled`（予算より先に判定。G6）
+4. `budget.enabled` が `true` で、今日の合計 + 予約額 > `dailyUsd` か、今月の合計 + 予約額 > `monthlyUsd` → `budget_exhausted`（行を足さない。ちょうど上限は通す。G1）
+5. 行を足す（`budget.enabled` が `false` でも足す）。`ok`
+
+設定 `GUARDS`（一般公開の Worker の JSON のバインディング。`CostGuard` だけが読む。デモ用の Worker の `GUARDS` は `CostGuard` に届かない）:
+
+```json
+{
+  "budget":      { "enabled": true, "monthlyUsd": 30, "dailyUsd": 1 },
+  "gameTime":    { "maxMinutes": 30, "maxAlarms": 20 },
+  "turnstile":   { "enabled": true },
+  "rateLimit":   { "enabled": true, "perIpPerMinute": 10 },
+  "cpuMs":       50,
+  "acceptGames": true,
+  "unitCostUsd": { "lite": 0.0065, "standard-1": 0.04 }
 }
 ```
+
+- すべての項目が必須で、未知のキーや `signature` のキーがあれば不正（G3 を設定でも外せない）。値の範囲: 金額の上限は 0〜1000、`maxMinutes` は 1〜60 の整数、`maxAlarms` は 1〜100 の整数、`perIpPerMinute` は 1〜1000 の整数、`cpuMs` は 1〜300000 の整数（表示だけ）、単価は 0 より大きく 10 以下。文字列で渡されたら `JSON.parse` してから確かめる
+- **不正・未設定なら拒否する側に倒す**: `reserve` は `sessions_disabled`、`view`・`patch` は `guards_invalid`（管理用 API は `503 guards_invalid`）。`cancel`・`settle` は帳簿の行の値だけで動くので続けて動く
+- 管理用 API の上書き（`settings`。金額は µUSD の整数）を重ねたものが今の設定。保存された上書きが今の規則で不正なら、その上書きだけを無視して既定値を使う。変更は次の要求からすぐに効く（キャッシュしない）
+- `signature`・`cpuMs`・`gameTime.enabled`・`gameTime.maxAlarms` は上書きできない（`locked`）
+
+片付け: `reserve` で行を足したとき、先月の 1 日（UTC）より前に予約した `ledger` の行を消す。`audit` は足したとき、新しい 1000 件だけを残す。
 
 - 見込みの費用の単価・上限は `GUARDS`（`cloudflare.config.ts`）に既定値を持ち、管理用 API で上書きできる
 - 呼ぶのはゲームの開始と終了のときだけなので、全体で 1 つでも負荷は小さい
