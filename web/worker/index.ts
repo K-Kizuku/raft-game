@@ -1,22 +1,23 @@
-// 最小の Worker（T-004）。静的ファイルは assets が配り、/api/* と /ws/* だけがここに届く
-// （cloudflare.config.ts の runWorkerFirst）。Durable Object などは T-307 以降で足す。
+// Worker の入り口（T-307）。静的ファイルは assets が配り、/api/* と /ws/* だけがここに届く
+// （cloudflare.config.ts の runWorkerFirst）。
+//
+// 部品は各ディレクトリの ports.ts が作る。後続のタスクはこの配線を変えず、自分の ports.ts を
+// 置き換える（T-310 は security/、T-309 は admin/、T-308 は session/）。
 
-const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" } as const;
+import { createCostGuardPorts } from "./admin/ports.ts";
+import type { Env } from "./routes/env.ts";
+import { createHandler } from "./routes/router.ts";
+import { STAGE_CATALOG } from "./routes/stage-catalog.ts";
+import { createSecurityPorts } from "./security/ports.ts";
+import { createSessionPorts } from "./session/ports.ts";
 
-function json(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
-
-export async function handleRequest(request: Request): Promise<Response> {
-  const { pathname } = new URL(request.url);
-
-  if (pathname === "/api/healthz" && request.method === "GET") {
-    return json({ ok: true }, 200);
-  }
-
-  return json({ ok: false, error: "not_found" }, 404);
-}
+export const handleRequest = createHandler((env) => ({
+  stages: STAGE_CATALOG,
+  security: createSecurityPorts(env),
+  costGuard: createCostGuardPorts(env),
+  session: createSessionPorts(env),
+}));
 
 export default {
   fetch: handleRequest,
-} satisfies { fetch(request: Request): Promise<Response> };
+} satisfies { fetch(request: Request, env: Env): Promise<Response> };

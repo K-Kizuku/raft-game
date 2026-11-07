@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.3 |
-| 更新日 | 2026-11-06 |
+| 版 | v0.4 |
+| 更新日 | 2026-11-07 |
 | 状態 | レビュー済み。提供データの実ファイルを確認して反映した |
-| 関連 | [ADR-0013](./adr/0013-open-data-build-time-etl.md) / [要件 FR-DATA](./01-requirements.md#410-オープンデータfr-data) / [判断の記録 A-05・A-06・A-21](./09-assumptions-and-open-questions.md) |
+| 関連 | [ADR-0013](./adr/0013-open-data-build-time-etl.md) / [ADR-0022](./adr/0022-yaml-library.md) / [要件 FR-DATA](./01-requirements.md#410-オープンデータfr-data) / [判断の記録 A-05・A-06・A-21](./09-assumptions-and-open-questions.md) |
 
 ---
 
@@ -46,7 +46,7 @@
 |---|---|---|---|---|---|
 | D1 | 離島振興対策実施地域一覧 | `01_ritoushinkoutaisakujisshichiikiichiran.csv` | 2,077 | 島名・都道県・指定地域・自治体・人口・面積 | P0 |
 | D2 | 離島振興計画書（全体情報） | `01_zentaijouhou.csv` | 26 地域 | 地理・気象・人口・海上交通・港湾・観光などの文章 | P0 |
-| D2' | 離島振興計画書（所属市町村） | `02_shozokushichouson.csv` | 254 | 計画の地域と島・自治体の対応 | P0 |
+| D2' | 離島振興計画書（所属市町村） | `02_shozokushichouson.csv` | 254 | 計画の地域と島・自治体の対応（ETL では使わない。§2.5） | P2 |
 | D3 | 離島活性化交付金等事業計画書 | `01_ritoukasseikakoufukintoujigyoukeikakusho.csv` | 83 | 事業の目的・課題（発展ミッション） | P2 |
 | D4 | 離島広域活性化事業（全体情報・成果目標・基幹事業・交付金の執行状況） | `01_zentaijouhou.csv`・`02_zenkeikakunoseikamokuhyou.csv`・`03_kikanjigyou.csv`・`04_koufukinnoshikoujoukyou.csv` | 25 計画 | 発展ミッションの候補 | P2 |
 
@@ -70,14 +70,14 @@ D2 と D4 は、どちらもファイル名が `01_zentaijouhou.csv` です。`d
 
 - 基準日が令和 2 年〜令和 8 年の **8 時点分**並んでいます。**最新の基準日（令和 8 年 4 月 1 日）の行を使います**
 - 1 つの島が複数の自治体にまたがる場合（小豆島＝小豆島町・土庄町、利尻島＝利尻町・利尻富士町 など）は、**自治体ごとに行が分かれています**。人口と面積は合計して使います（出典区分 `derived`）
-- 同じ島名が別の地域にもあるので（例: 大島は 10 か所以上）、島は「都道県名＋島名」で特定します
+- 同じ島名が別の地域にもあるので（例: 大島は 10 か所以上）、島は「都道県名＋指定地域名＋島名」で特定し、自治体を `islands-select.yaml` の `municipalities` と照合します（§2.5・§2.6）
 
 **D2 離島振興計画書（全体情報）**
 
 | 列 | 内容 | ゲームでの使い道 |
 |---|---|---|
 | `DESIGNATED_REGION_NAME` | 指定地域名 | ステージ紹介の見出し |
-| `ISLAND_NAME` | 島名（読点区切り） | D2' と合わせて島を特定 |
+| `ISLAND_NAME` | 島名（読点区切り） | 計画の地域の取り違えを防ぐ照合（§2.5 の段階 4） |
 | `GEO_LOCATION_AREA` | 地理的位置・面積 | ステージ紹介 |
 | `NATURAL_CLIMATE_FEATURES` | 自然・気象特性 | 嵐のイベントの題材 |
 | `POPULATION_HOUSEHOLDS` | 人口・世帯 | ステージ紹介 |
@@ -120,17 +120,64 @@ data/raw/
 ### 2.5 ETL（`server/cmd/islandsdata`）
 
 ```bash
-go run ./cmd/islandsdata --raw ../data/raw --curated ../data/curated --select ../data/islands-select.yaml --out ../data/islands.json
+# リポジトリのルートで実行する（パスは server/ からの相対）
+go -C server run ./cmd/islandsdata \
+  --raw ../data/raw --curated ../data/curated \
+  --select ../data/islands-select.yaml --out ../data/islands.json [--check]
 ```
+
+- `--raw`・`--curated`・`--select`・`--out` はすべて必須。足りない・未知のフラグ・余分な引数は、使い方を出して終了コード 2
+- 入力をすべて読んで検証し、成功したときだけ `--out` を書く（同じディレクトリの一時ファイルに書いてから置き換える。失敗したときは `--out` を変えない）。成功したら終了コード 0
+- `--check` を付けると、ファイルを書かずに、生成したバイト列と `--out` の中身を比べる。同じなら 0、違う・ないなら再生成のコマンドを出して 1
+- 入力の誤りは、`islandsdata: ` で始まるメッセージ（ファイルのパスと、CSV なら行番号、YAML なら島や抜き出しの `id`）を出して終了コード 1
+- 手順は [`data/raw/README.md`](../data/raw/README.md) にもある
 
 | 段階 | 処理 |
 |---|---|
-| 1. 読み込み | BOM 付きの UTF-8 として CSV を読む |
-| 2. 島の特定 | `islands-select.yaml` に書いた（都道県名, 島名）で D1 の行を探す。見つからなければエラー |
-| 3. 人口・面積 | 最新の基準日の行を選び、複数の自治体の行があれば合計する（合計した場合は `derived`） |
-| 4. 計画書 | D2' で島から計画の `_id` を引き、D2 の文章をそのまま取り込む（`fact`） |
-| 5. 人手の値 | `data/curated/*.yaml`（航路の所要時間など）を取り込む。各値に、どの地域のどの項目から抜き出したかを持たせる |
-| 6. 出力 | キーの順序を固定した JSON を書く。同じ入力からは同じ出力になる（テストで確認） |
+| 1. 読み込み | D1（`ritou-list/01_ritoushinkoutaisakujisshichiikiichiran.csv`）と D2（`shinkou-keikaku/01_zentaijouhou.csv`）を読む。先頭の BOM は外す（なくてもよい）。UTF-8 でない・引用符が壊れている・列数の違う行はエラー。改行は CRLF・LF のどちらでもよい。1 行目を見出しとして列を**名前で**引く（列の順序は問わず、使わない列があってもよい。§2.3 の使う列がなければエラー）。名前の列は前後の空白を除き、文章の列はそのまま使う |
+| 2. 島の特定 | `islands-select.yaml`（§2.6）の各島について、D1 の最新の基準日の行のうち（都道県名, 指定地域名, 島名）が（`prefecture`, `designatedArea`, `name`）と一致する行を集める。0 行ならエラー（都道県名と島名が同じで指定地域が違う行があれば、その指定地域名を候補として出す）。集めた行の市町村名の集合が `municipalities` と違う・同じ市町村の行が 2 つ以上あればエラー |
+| 3. 人口・面積 | 基準日は和暦（`平成`・`令和`、`元年`、全角の数字）を読み、**D1 のすべての行**の基準日の最大を「最新の基準日」とする（読めない行が 1 つでもあればエラー）。選んだ島に最新の基準日の行がなければエラーにし、古い基準日の値で代わりにしない。`asOf` は、選んだ行の `REFERENCE_DATE` の文字列（ファイルの順で最初の行）。人口は全角の数字と 3 桁ごとの `,` を受け付ける 0 以上の整数。面積は小数第 4 位までで、**0.0001 km² 単位の整数**で扱う（浮動小数点を使わない）。自治体が 1 つなら `fact`、2 つ以上なら整数のまま合計して `derived` にし、`note` を付ける（§3.1） |
+| 4. 計画書 | 島に `plan` があるときだけ、D2 の `DESIGNATED_REGION_NAME` が `plan.region` と一致する行（ちょうど 1 行。0 行・2 行以上はエラー）を使う。その行の `ISLAND_NAME` を `、` で分けた一覧に `plan.islandName`（省略時は島の `name`）がなければエラー。§3.1 の 7 つの列の文章を、そのまま（空白も除かずに）取り込む（`fact`）。空白だけの列はキーごと出さない |
+| 5. 人手の値 | `data/curated/*.yaml`（§3.4）を読んで検証し、`excerpts` に出す（`id` の昇順） |
+| 6. 出力 | `json.Encoder` に `SetEscapeHTML(false)` と 2 つの空白の字下げを付けて書く（末尾は改行 1 つ）。キーの順序は §3.1 の順に固定する（`sources` だけはキーの昇順）。`islands` と `municipalities` は `islands-select.yaml` の順。同じ入力からは同じバイト列になる（テストで確認） |
+
+- 出力の決定性のため、ETL は実時間・乱数・goroutine・浮動小数点を使わず、map を走査して出力の順序を決めない。`generatedAt` は `islands-select.yaml` の値をそのまま書く
+- 段階 4 では D2' を使わない。D2' の列の定義がこの仕様になく、提供データもまだリポジトリにないため、計画の地域を `islands-select.yaml` の `plan.region` に人が書き、D2 の `ISLAND_NAME` で取り違えを防ぐ形にした（T-205）。D2' を使う形に戻すかどうかは、提供データが入ってから判断する
+
+### 2.6 ETL の設定 `data/islands-select.yaml`
+
+出典の情報と、使う島（§3.2）を書きます。読み込みには `go.yaml.in/yaml/v3` を使い、未知のキー・重複したキー・型の違いはエラーにします（[ADR-0022](./adr/0022-yaml-library.md)）。
+
+```yaml
+format: 1
+generatedAt: "2026-11-07"          # この設定で生成した日。ETL はこの値を出力にそのまま書く
+dataset: mlit-ritou-2026           # 出力の各値の source（sources のキー）
+sources:
+  mlit-ritou-2026:
+    title: Project LINKS アイディアソン公開データ（2026年度）離島に関するデータ
+    publisher: 国土交通省 総合政策局 情報政策課
+    license: 政府標準利用規約（第2.0版）
+    termsUrl: https://www.mlit.go.jp/links/terms-of-use.html
+    publishedAt: "2026-10-31"
+islands:
+  - { id: kagawa-shodoshima, prefecture: 香川県, name: 小豆島, designatedArea: 小豆島, municipalities: [小豆島町, 土庄町], plan: { region: 小豆島地域 } }
+  - { id: kagawa-naoshima, prefecture: 香川県, name: 直島, designatedArea: 直島諸島, municipalities: [直島町] }
+  # plan: { region: <D2 の DESIGNATED_REGION_NAME>, islandName: <D2 の ISLAND_NAME での書き方。省略時は name> }
+```
+
+検証（どれかが違えばエラー）:
+
+- `format` が 1（整数）
+- `generatedAt` と `sources.*.publishedAt` が実在する `YYYY-MM-DD`
+- `sources` が 1 つ以上で、各項目の `title`・`publisher`・`license`・`termsUrl`・`publishedAt` が空でなく、`termsUrl` が `https://` で始まる
+- `dataset` が `sources` のキーにある
+- `islands` が 1 つ以上。`id` が `^[a-z]+(-[a-z0-9]+)+$` に合い一意。`prefecture`・`name`・`designatedArea` が空でない。（`prefecture`, `designatedArea`, `name`）が一意
+- `municipalities` が 1 つ以上で、重複も空の要素もない
+- `plan` があれば `plan.region` が空でない
+
+`plan.region` は、地域名を確かめた島（小豆島地域・長崎県・伊豆諸島地域）にだけ書きます。直島と Stage 4 だけの島は、実データで確かめてから足します。
+
+再生成するときは、`generatedAt` を人が更新します。
 
 ---
 
@@ -159,20 +206,33 @@ go run ./cmd/islandsdata --raw ../data/raw --curated ../data/curated --select ..
       "designatedArea": "小豆島",
       "municipalities": ["小豆島町", "土庄町"],
       "population": { "value": 25881, "asOf": "令和8年4月1日", "provenance": "derived", "note": "小豆島町 13,870 人と土庄町 12,011 人の合計", "source": "mlit-ritou-2026" },
-      "areaKm2":    { "value": 153.27, "provenance": "derived", "note": "2 町の合計", "source": "mlit-ritou-2026" },
+      "areaKm2":    { "value": 153.27, "asOf": "令和8年4月1日", "provenance": "derived", "note": "小豆島町 95.59 km²と土庄町 57.68 km²の合計", "source": "mlit-ritou-2026" },
       "populationSqrt": 160.88,
       "plan": {
         "region": "小豆島地域",
-        "climate":  { "text": "温暖、小雨の典型的な瀬戸内式気候であり、…", "provenance": "fact", "source": "mlit-ritou-2026", "field": "NATURAL_CLIMATE_FEATURES" },
-        "maritime": { "text": "小豆島(土庄町)には、土庄港を拠点として、高松~土庄(22km・60分 …", "provenance": "fact", "source": "mlit-ritou-2026", "field": "MARITIME_TRANSPORT" },
-        "tourism":  { "text": "… エンジェルロード、土渕海峡など …", "provenance": "fact", "source": "mlit-ritou-2026", "field": "LOCAL_INDUSTRY_TOURISM" }
+        "geography":            { "text": "…", "provenance": "fact", "source": "mlit-ritou-2026", "field": "GEO_LOCATION_AREA" },
+        "climate":              { "text": "温暖、小雨の典型的な瀬戸内式気候であり、…", "provenance": "fact", "source": "mlit-ritou-2026", "field": "NATURAL_CLIMATE_FEATURES" },
+        "populationHouseholds": { "text": "…", "provenance": "fact", "source": "mlit-ritou-2026", "field": "POPULATION_HOUSEHOLDS" },
+        "maritime":             { "text": "小豆島(土庄町)には、土庄港を拠点として、高松~土庄(22km・60分 …", "provenance": "fact", "source": "mlit-ritou-2026", "field": "MARITIME_TRANSPORT" },
+        "ports":                { "text": "…", "provenance": "fact", "source": "mlit-ritou-2026", "field": "PORTS" },
+        "tourism":              { "text": "… エンジェルロード、土渕海峡など …", "provenance": "fact", "source": "mlit-ritou-2026", "field": "LOCAL_INDUSTRY_TOURISM" },
+        "disaster":             { "text": "…", "provenance": "fact", "source": "mlit-ritou-2026", "field": "DISASTER_LAND_CONSERVATION" }
       }
     }
+  ],
+  "excerpts": [
+    { "id": "setouchi-teshima-tonosho-minutes", "region": "小豆島地域", "field": "MARITIME_TRANSPORT", "quote": "豊島~小豊島~土庄(8km・25分", "provenance": "derived", "value": 25, "unit": "分", "note": "小豊島に寄る便の全体の所要時間", "source": "mlit-ritou-2026" }
   ]
 }
 ```
 
-- `populationSqrt` はステージに依存しない中間値（人口の 0.5 乗）です。ステージごとの重みは、ステージの読み込み時に整数の千分率へ変換します（§4）
+- キーの順序は上の例の順で固定です（`sources` だけはキーの昇順）。`islands`・`municipalities`・`excerpts` は空でも `[]` です
+- `population` と `areaKm2` の `asOf` は、使った D1 の行の `REFERENCE_DATE` の文字列です
+- 自治体が 1 つの島は `provenance: "fact"` で `note` を出しません。2 つ以上の島は `derived` で、`note` を `municipalities` の順に「`A 1 人、B 2 人とC 3 人の合計`」「`A 1.5 km²とB 2 km²の合計`」の形にします（最後の 1 つの前が `と`、ほかは `、`。人口は 3 桁ごとに `,`）
+- 面積と `populationSqrt` は、整数の値から 10 進の文字列を作り、小数部の末尾の `0` と残った末尾の `.` を消して、数として書きます（`14.5000` → `14.5`、`12.0000` → `12`）
+- `populationSqrt` はステージに依存しない中間値（人口の 0.5 乗）で、**小数第 2 位に四捨五入**した値です。**整数だけで計算します**: `x = 人口 × 10000`、`n = ⌊√x⌋`（整数の平方根）、`x > n² + n` なら `n + 1`（0.01 単位）。例: 25881 → 160.88、768 → 27.71、169 → 13、2 → 1.41、0 → 0。ステージごとの重みは、ステージの読み込み時に整数の千分率へ変換します（§4）
+- `plan` は、`islands-select.yaml` に `plan` がある島にだけ出します。7 つのキーは、`geography`（`GEO_LOCATION_AREA`）・`climate`（`NATURAL_CLIMATE_FEATURES`）・`populationHouseholds`（`POPULATION_HOUSEHOLDS`）・`maritime`（`MARITIME_TRANSPORT`）・`ports`（`PORTS`）・`tourism`（`LOCAL_INDUSTRY_TOURISM`）・`disaster`（`DISASTER_LAND_CONSERVATION`）です。文章が空白だけの列は、キーごと出しません
+- `excerpts` は `data/curated/*.yaml`（§3.4）の抜き出しで、`id` の昇順です。`value`・`unit`・`note` は書いたものだけ出し、`source` は `islands-select.yaml` の `dataset` です
 - 島の ID は「都道府県のローマ字＋島名」にします（同じ名前の島を区別するため）
 
 ### 3.2 使う島（確定）
@@ -212,6 +272,36 @@ go run ./cmd/islandsdata --raw ../data/raw --curated ../data/curated --select ..
 | 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター … が運航」 | 島どうしのつながり（どの島とどの島に航路を引くか）（§4.5） | `derived` |
 | 3 | 伊豆諸島地域の `PORTS`：「… あおがしま丸、橘丸、フェリーあぜりあ、… 新さるびあ丸、セブンアイランド結、… くろしお丸が就航」 | 船の名前（「計画書に記載された船名を使用しており、運航会社とは関係ありません」と注記する） | `fact` |
 | 3 | 伊豆諸島地域の `DISASTER_LAND_CONSERVATION`：「平成25年台風26号による大島町の被害」 | 嵐のイベントの題材 | `fact` |
+
+### 3.4 抜き出しの形式 `data/curated/*.yaml`
+
+§3.3 の記述は、`data/curated/*.yaml` に出典（地域・項目・引用）付きで書きます（中身は T-206）。ETL は `data/curated/` の直下の `*.yaml` をファイル名の昇順で読み（サブディレクトリは見ない）、検証して `islands.json` の `excerpts` に出します。`*.yml` があればエラーにします（読み落としを防ぐため）。それ以外のファイル（`.gitkeep` など）は無視します。
+
+```yaml
+format: 1
+excerpts:
+  - id: setouchi-teshima-tonosho-minutes   # 全ファイルで一意。^[a-z0-9]+(-[a-z0-9]+)*$
+    region: 小豆島地域                       # D2 の DESIGNATED_REGION_NAME
+    field: MARITIME_TRANSPORT              # D2 の列名（_id 以外）
+    quote: "豊島~小豊島~土庄(8km・25分"       # その列の文章にそのまま含まれる部分文字列
+    provenance: derived                    # fact か derived（creative は書かない）
+    value: 25                              # 任意。整数だけ（小数はエラー）
+    unit: 分                               # value があるときは必須、ないときは書かない
+    note: 小豊島に寄る便の全体の所要時間       # 任意
+```
+
+検証（どれかが違えば、ファイルと `id` を出してエラー）:
+
+- 未知のキー・重複したキー・型の違いがない（[ADR-0022](./adr/0022-yaml-library.md)）
+- `format` が 1
+- `id` が形式に合い、全ファイルで一意
+- `region` の行が D2 にちょうど 1 行ある
+- `field` がその D2 の見出しにある列（`_id` を除く）
+- `quote` が空でなく、その行のその列の文章に含まれる（正規化しないで比べる。`~` と `～`、全角と半角も区別する）
+- `provenance` が `fact` か `derived`
+- `value` があれば `unit` がある。`value` がなければ `unit` がない
+
+`data/curated/` を変えたら、`islands.json` を再生成し、`--check` が通ることを確かめます（§2.5）。
 
 ---
 

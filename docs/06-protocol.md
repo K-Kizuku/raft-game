@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.3（プロトコルバージョン `1`） |
-| 更新日 | 2026-11-06 |
+| 版 | v0.4（プロトコルバージョン `1`） |
+| 更新日 | 2026-11-07 |
 | 状態 | レビュー済み |
 | 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) |
 
@@ -28,9 +28,47 @@
 
 本番では、§2 の API はすべて Cloudflare の Worker が受けます。WebSocket は Worker から Durable Object `GameSession` に転送され、Durable Object がコンテナ（Go）との間を中継します。§3〜§7 の電文は、ブラウザと Go の間でそのまま通ります（Durable Object は中身を書き換えない）。ローカルの `standalone` モードでは、Go サーバーが §2 の API を自分で提供します。
 
+### 共通の応答とエラー
+
+Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダーは `content-type: application/json; charset=utf-8` と `cache-control: no-store` です（`201` でトークンを返すため、すべての応答に付ける）。CORS のヘッダーは返しません（画面と API は同じオリジン）。
+
+エラーの本文は `{ "code": "…", "message": "…" }` です。`message` は短い英語で、内部の詳細（例外のメッセージ・スタック・クエリ文字列）を含みません。
+
+| HTTP | `code` | いつ |
+|---|---|---|
+| 400 | `bad_request` | `POST /api/sessions` の本文が不正 |
+| 403 | `forbidden_origin` | `Origin` が許可リストにない・必須のルートで `Origin` がない |
+| 403 | `turnstile_failed` | Turnstile の確認に失敗 |
+| 404 | `not_found` | 知らないパス、`/ws/sessions/{id}` の id が不正・検証に失敗・部品がない、管理用 API の部品がない |
+| 405 | `method_not_allowed` | パスは知っているがメソッドが違う（`HEAD`・`OPTIONS` も）。`Allow` ヘッダーに許すメソッドを `, ` 区切りで入れる |
+| 426 | `upgrade_required` | `/ws/sessions/{id}` に `Upgrade: websocket` がない |
+| 429 | `rate_limited` | レート制限 |
+| 500 | `internal_error` | Worker の中で例外が出た |
+| 503 | `budget_exhausted` | 費用の上限に達した（G1） |
+| 503 | `sessions_disabled` | 管理者が受付を一括で止めている（G6）、または受付の部品がそろっていない |
+
+ルートはパスの**完全一致**で決まります（大文字・小文字を区別し、末尾の `/` を許さない）。下の表にないパス（`/api`・`/api/`・`/api/healthz/`・`/ws/sessions/`・`/ws/sessions/a/b` など）は、メソッドや `Origin` に関係なく `404 not_found` です。検査の順序は「パス → メソッド（405）→ `Origin`（403）→ ルートごとの処理」です。
+
+| パス | メソッド | `Origin` |
+|---|---|---|
+| `/api/healthz` | `GET` | あれば照合 |
+| `/api/stages` | `GET` | あれば照合 |
+| `/api/sessions` | `POST` | **必須** |
+| `/api/admin/guards` | `GET`・`PATCH` | あれば照合 |
+| `/ws/sessions/{id}` | `GET` | **必須** |
+
+`Origin` の規則（NFR-07）:
+
+- 許可リストは `ALLOWED_ORIGINS`（カンマ区切り）。各要素の前後の空白を除き、`http:`・`https:` の URL として読めるものだけを、そのオリジン（パスや末尾の `/` を落としたもの）として使う。読めない要素は無視する
+- 有効な要素が 1 つもない（未設定・空・不正な要素だけ）ときは、リクエスト自身のオリジンだけを許す（同じオリジンだけ。ローカルの開発で設定が要らないため）。有効な要素があるときは、その集合だけを許す
+- 照合は文字列の完全一致。`null`・複数の値・大文字の違いは一致しない
+- 必須のルートで `Origin` がなければ `403`。必須でないルートでは、`Origin` がなければ通す（`curl` でのヘルスチェック・管理用 API のため）
+
 ### `GET /api/healthz`
 
 `200 {"status":"ok","build":"git:3f2c1ab"}`
+
+- `build` は Worker の `BUILD_ID`。未設定・空なら `"dev"`
 
 ### `GET /api/stages`
 
@@ -58,10 +96,13 @@
 { "stageId": "stage2", "seed": 20261101, "demo": false, "turnstileToken": "…" }
 ```
 
-- `seed` を省略するとサーバーが決める
-- `turnstileToken` は Cloudflare Turnstile のウィジェットが返すトークン。Worker が検証する（コストガード G4。無効にした場合は省略可）
-- `demo: true` は `demo` モードでデプロイした Worker（`DEMO_CONTROLS=1`）のときだけ受け付ける
-- Worker は Durable Object を作り、コンテナの起動を始めてから応答する（ステージ紹介の間に起動を終える）
+- `seed` を省略すると Worker が決める（0 以上 2^32 未満の整数）。指定するときは 0 以上 `Number.MAX_SAFE_INTEGER`（2^53 − 1）以下の整数（`"1"` のような文字列は不可）
+- `turnstileToken` は Cloudflare Turnstile のウィジェットが返すトークン（文字列、2048 文字まで）。Worker が検証する（コストガード G4。無効にした場合は省略可）
+- `demo: true` は `demo` モードでデプロイした Worker（`DEMO_CONTROLS=1`）のときだけ受け付ける。それ以外の Worker に `demo: true` を送ると `400`（黙って `false` にしない）。省略すると `false`
+- 本文は `Content-Type: application/json`（`; charset=utf-8` などの引数は可）の UTF-8 の JSON オブジェクトで、4096 バイトまで。`stageId`・`seed`・`demo`・`turnstileToken` 以外のキーがあれば `400`。`stageId` は `GET /api/stages` の `id` のどれか
+- 検査の順序は `Origin`（必須）→ レート制限 → 本文 → Turnstile → 費用の予約（`CostGuard`）。どこかで止まったら、それより後は行わない
+- Worker は Durable Object を作り、コンテナの起動を始めてから応答する（ステージ紹介の間に起動を終える）。Durable Object の作成に失敗したら、予約を取り消して `500 internal_error`
+- 受付の部品（レート制限・Turnstile・署名・`CostGuard`・`GameSession`）がそろっていない Worker は、`503 sessions_disabled` を返す
 
 レスポンス `201`:
 
@@ -75,23 +116,37 @@
 
 | HTTP | `code` | 意味 | 画面の表示 |
 |---|---|---|---|
-| 400 | `bad_request` | 不正なステージなど | — |
+| 400 | `bad_request` | 不正なステージ・本文（上の検証） | — |
+| 403 | `forbidden_origin` | `Origin` がない・許可リストにない | — |
 | 403 | `turnstile_failed` | Turnstile の確認に失敗 | 「もう一度お試しください」 |
 | 429 | `rate_limited` | レート制限 | 「少し待ってからお試しください」 |
+| 500 | `internal_error` | Worker の中で失敗した | — |
 | 503 | `budget_exhausted` | 費用の上限に達した（G1） | 「本日の受付は終了しました」 |
-| 503 | `sessions_disabled` | 管理者が受付を一括で止めている（G6） | 「ただいま受付を停止しています」 |
+| 503 | `sessions_disabled` | 管理者が受付を一括で止めている（G6）・受付の部品がそろっていない | 「ただいま受付を停止しています」 |
 
-エラーの本文は `{ "code": "…", "message": "…" }` です。
+エラーの本文は `{ "code": "…", "message": "…" }` です（[共通の応答とエラー](#共通の応答とエラー)）。
 
 ### `GET /ws/sessions/{id}?token=…`
 
 WebSocket にアップグレードします。Worker が `Origin` を許可リストで検査し、Durable Object がトークンを検証します。同じセッションに 2 本目の接続が来たら、古い接続を閉じます（再接続のため）。
 
+- `{id}` は `[A-Za-z0-9._-]` の 1〜256 文字（`sessionId` の `s_<base64url>.<base64url>` はこの範囲に収まる）。パーセントエンコードした文字は含められない
+- Worker はアップグレードの応答（`101`）を包み直さずにそのまま返し、WebSocket の電文を読まない。`token` は Worker では検査せず、Durable Object に渡す
+
+Worker が返すエラー:
+
+| HTTP | `code` | いつ |
+|---|---|---|
+| 403 | `forbidden_origin` | `Origin` がない・許可リストにない |
+| 404 | `not_found` | `{id}` の文字の範囲が不正・署名の検証に失敗・接続の部品がない（区別しない。Durable Object を呼ばない） |
+| 405 | `method_not_allowed` | `GET` 以外 |
+| 426 | `upgrade_required` | `Upgrade: websocket` がない（大文字・小文字は区別しない） |
+
 ---
 
 ### `GET /api/admin/guards`・`PATCH /api/admin/guards`（管理用）
 
-コストガード（[ADR-0018](./adr/0018-cost-guard.md)）の確認と切り替えです。`Authorization: Bearer <ADMIN_TOKEN>` が必要です。
+コストガード（[ADR-0018](./adr/0018-cost-guard.md)）の確認と切り替えです。`Authorization: Bearer <ADMIN_TOKEN>` が必要です。`Origin` は、あれば許可リストと照合します（なければ通す）。管理用の部品がない Worker は `404 not_found` を返します。
 
 `GET` のレスポンス:
 
