@@ -66,7 +66,7 @@ if [ -z "$repo" ]; then
 fi
 case "$repo" in
   */*) ;;
-  *) die "--repo は OWNER/NAME の形で指定する（$repo）" ;;
+  *) die "--repo は OWNER/NAME の形で指定する（${repo}）" ;;
 esac
 
 tmp="$(mktemp -d)"

@@ -47,6 +47,18 @@ gh auth login
 
 ほかに、`git`・`jq`・`go`・`timeout`（macOS は `gtimeout`）が要る。
 
+### bash の版
+
+hooks（`.claude/hooks/*.sh`）と `scripts/` の shell のスクリプトは、`#!/usr/bin/env bash` で PATH の先頭の bash を使い、macOS 標準の `/bin/bash`（3.2）でも動く書き方にしている（#107）。Homebrew などの bash 5 でもよい。
+
+- bash 3.2 と UTF-8 のロケール（`LANG=ja_JP.UTF-8` など）では、`"$t）"` のように変数の直後に ASCII 以外の文字があると、そのバイトまで変数名として読まれ、`set -u` で `t�: unbound variable` になる。変数の直後に ASCII 以外の文字が続くときは `${t}` と書く。[test_shell_scripts.py](../../scripts/tests/test_shell_scripts.py) が、Git が追跡する `*.sh` を検査する
+- hooks は fail-closed にしている。想定外のエラーで止まっても、終了コード 2 と `[guard] 拒否（内部エラー）: …` を出す（Claude Code は終了コード 2 だけを拒否として扱い、1 などでは操作を通してしまう）。拒否・許可は `deny`・`allow` で終える。bash 3.2 では、`set -u` などで止まったときの EXIT の trap の `$?` が 0 になることがあるので、終了コードではなく `deny`・`allow` を通ったかで見分ける
+- 手元で bash 3.2 のときの動きを確かめるには、`/bin/bash` へのシンボリックリンクを置いたディレクトリを PATH の先頭に入れ、`LC_ALL=ja_JP.UTF-8` でテスト（下の「テスト」）を実行する
+
+### GitHub のトークン
+
+`agentctl` は `GITHUB_TOKEN` か `GH_TOKEN` からトークンを読む。どちらもないときは、[agentctl.sh](../../scripts/agents/agentctl.sh) と [lib.sh](../../scripts/agents/lib.sh) の `agentctl` が `gh auth token` の値を `GH_TOKEN` に入れて渡す（#107）。トークンは標準出力・ログに出さない。`gh` がない・未ログインなら何もせず、`agentctl` が「トークンがない」で止まる（先に `gh auth login` する）。
+
 ### ブートストラップ（ワークフローを取り込む前）
 
 ワークフローを取り込むまでは、GitHub で CI と Merge Gate が動かず、ステータス `ci-ok`・`merge-gate` が付かない。その間の PR は次のように扱う（#8・#73 が実例）。

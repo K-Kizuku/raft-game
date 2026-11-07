@@ -70,7 +70,7 @@ agent_role() {
 require_orchestrator() {
   local r
   r="$(agent_role)"
-  [ "$r" = "orchestrator" ] || die "Orchestrator だけが実行できる（AGENT_ROLE=$r）"
+  [ "$r" = "orchestrator" ] || die "Orchestrator だけが実行できる（AGENT_ROLE=${r}）"
 }
 
 # main_root: メインの作業ツリーのルート（git-common-dir の親）。
@@ -116,10 +116,27 @@ repo_slug() {
   printf '%s/%s\n' "${url##*[:/]}" "$p"
 }
 
+# ensure_gh_token: GITHUB_TOKEN も GH_TOKEN もなければ、gh auth token の値を GH_TOKEN に入れて export する
+# （#107。agentctl はこの 2 つの環境変数からトークンを読む）。トークンは標準出力・標準エラーに出さない。
+# gh がない・未ログインなら何もしない（agentctl が「トークンがない」で止める）。
+ensure_gh_token() {
+  if [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ]; then
+    return 0
+  fi
+  command -v gh >/dev/null 2>&1 || return 0
+  local t
+  t="$(gh auth token 2>/dev/null)" || return 0
+  [ -n "$t" ] || return 0
+  GH_TOKEN="$t"
+  export GH_TOKEN
+}
+
 # agentctl を実行する。AGENTCTL → PATH の agentctl → scripts/agents/agentctl.sh の順。
+# トークンがなければ gh auth token から取る（ensure_gh_token）。
 # （command -v はこの関数自身にも一致するので、実行ファイルだけを探す type -P を使う）
 agentctl() {
   local exe
+  ensure_gh_token
   if [ -n "${AGENTCTL:-}" ]; then
     "$AGENTCTL" "$@"
   elif exe="$(type -P agentctl)" && [ -n "$exe" ]; then

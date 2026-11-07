@@ -25,7 +25,7 @@ git config --file "$GIT_CONFIG_GLOBAL" user.name "test"
 git config --file "$GIT_CONFIG_GLOBAL" user.email "test@example.invalid"
 git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE AGENT_ROLE AGENT_ISSUE AGENT_ALLOW_PROTECTED AGENT_CONFIG \
-  AGENT_REPO AGENTCTL AGENT_FALLBACK_REASON CLAUDE_PROJECT_DIR DEV_SLOT
+  AGENT_REPO AGENTCTL AGENT_FALLBACK_REASON CLAUDE_PROJECT_DIR DEV_SLOT GITHUB_TOKEN GH_TOKEN FAKE_GH_TOKEN
 export CLAUDE_CONFIG_DIR="$tmp/claude-config"
 
 # ---- 本物の agentctl（review validate・render の書式の確認に使う。go がなければ jq で代わりに確かめる）----
@@ -106,6 +106,15 @@ case "$1 $2" in
     done
     ;;
   "pr merge") exit "${FAKE_MERGE_RC:-0}" ;;
+  # FAKE_GH_TOKEN がなければ未ログイン（本物の gh と同じく終了コード 1）
+  "auth token")
+    if [ -n "${FAKE_GH_TOKEN:-}" ]; then
+      printf '%s\n' "$FAKE_GH_TOKEN"
+    else
+      echo "no oauth token found for github.com" >&2
+      exit 1
+    fi
+    ;;
 esac
 EOF
 
@@ -320,6 +329,66 @@ check "lib agentctl: PATH の agentctl を呼ぶ" log_has agentctl '.args == ["s
 run_rc env PATH="$sys_path" AGENTCTL="$fake/bin/agentctl" bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" claim 9
 check "lib agentctl: AGENTCTL を優先する" test "$RC" = 0 -a ! -s "$tmp/out"
 check "lib agentctl: AGENTCTL の agentctl を呼ぶ" log_has agentctl '.args == ["claim","9"]'
+
+# ---- トークン（#107）: GITHUB_TOKEN も GH_TOKEN もなければ gh auth token の値を GH_TOKEN に入れる ----
+# 偽の agentctl（トークンの環境変数を出す）
+cat >"$lt/tokcheck" <<'EOF'
+#!/usr/bin/env bash
+printf 'GH_TOKEN=%s GITHUB_TOKEN=%s args=%s\n' "${GH_TOKEN:-none}" "${GITHUB_TOKEN:-none}" "$*"
+EOF
+chmod +x "$lt/tokcheck"
+reset_logs
+run_rc env PATH="$fake/bin:$sys_path" FAKE_GH_TOKEN=tok-107 \
+  bash -c '. "$1"; ensure_gh_token; bash -c "[ \"\$GH_TOKEN\" = tok-107 ]" && echo exported' _ "$lt/lib.sh"
+check "lib ensure_gh_token: gh auth token の値を GH_TOKEN に入れて export する" test "$RC:$(cat "$tmp/out")" = "0:exported"
+check "lib ensure_gh_token: トークンを標準エラーに出さない" test ! -s "$tmp/err"
+check "lib ensure_gh_token: gh auth token を呼ぶ" log_has gh '.args == ["auth","token"]'
+reset_logs
+run_rc env PATH="$fake/bin:$sys_path" FAKE_GH_TOKEN=tok-107 AGENTCTL="$lt/tokcheck" \
+  bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" plan --repo o/r
+check "lib agentctl: トークンがなければ gh auth token の値を GH_TOKEN で渡す" \
+  test "$RC:$(cat "$tmp/out")" = "0:GH_TOKEN=tok-107 GITHUB_TOKEN=none args=plan --repo o/r"
+check "lib agentctl: トークンを標準エラーに出さない" test ! -s "$tmp/err"
+reset_logs
+run_rc env PATH="$fake/bin:$sys_path" FAKE_GH_TOKEN=tok-107 GH_TOKEN=tok-own AGENTCTL="$lt/tokcheck" \
+  bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" plan
+check "lib agentctl: GH_TOKEN があればそのまま使う" test "$RC:$(cat "$tmp/out")" = "0:GH_TOKEN=tok-own GITHUB_TOKEN=none args=plan"
+check "lib agentctl: GH_TOKEN があれば gh を呼ばない" test ! -s "$FAKE_LOG/gh.log"
+run_rc env PATH="$fake/bin:$sys_path" FAKE_GH_TOKEN=tok-107 GITHUB_TOKEN=tok-actions AGENTCTL="$lt/tokcheck" \
+  bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" plan
+check "lib agentctl: GITHUB_TOKEN があれば GH_TOKEN を足さない" \
+  test "$RC:$(cat "$tmp/out")" = "0:GH_TOKEN=none GITHUB_TOKEN=tok-actions args=plan"
+check "lib agentctl: GITHUB_TOKEN があれば gh を呼ばない" test ! -s "$FAKE_LOG/gh.log"
+# gh が未ログイン・gh がない: 何もしない（agentctl が「トークンがない」で止める）
+run_rc env PATH="$fake/bin:$sys_path" AGENTCTL="$lt/tokcheck" bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" plan
+check "lib agentctl: gh が未ログインならトークンを入れない" test "$RC:$(cat "$tmp/out")" = "0:GH_TOKEN=none GITHUB_TOKEN=none args=plan"
+check "lib agentctl: gh が未ログインでも gh のエラーを出さない" test ! -s "$tmp/err"
+run_rc env PATH="$sys_path" AGENTCTL="$lt/tokcheck" bash -c '. "$1"; shift; agentctl "$@"' _ "$lt/lib.sh" plan
+check "lib agentctl: gh がなければトークンを入れない" test "$RC:$(cat "$tmp/out")" = "0:GH_TOKEN=none GITHUB_TOKEN=none args=plan"
+
+# agentctl.sh: ビルド済みの .agents/bin/agentctl に、gh auth token の値を GH_TOKEN で渡す
+acw="$tmp/acwrap"
+mkdir -p "$acw/tools/agentctl" "$acw/scripts/agents" "$acw/.agents/bin" "$tmp/fakego"
+git init --quiet "$acw"
+cp "$A/agentctl.sh" "$A/lib.sh" "$acw/scripts/agents/"
+printf 'module example.invalid/agentctl\n' >"$acw/tools/agentctl/go.mod"
+touch -t 202001010000 "$acw/tools/agentctl/go.mod"
+cp "$lt/tokcheck" "$acw/.agents/bin/agentctl"
+# ビルドし直さないはずなので、go が呼ばれたら失敗させる
+printf '#!/usr/bin/env bash\necho "go を呼んだ" >&2\nexit 1\n' >"$tmp/fakego/go"
+chmod +x "$tmp/fakego/go"
+reset_logs
+(cd "$acw" && run_rc env PATH="$tmp/fakego:$fake/bin:$sys_path" FAKE_GH_TOKEN=tok-107 bash scripts/agents/agentctl.sh plan --repo o/r &&
+  printf '%s\n' "$RC" >"$tmp/rc")
+check "agentctl.sh: トークンがなければ gh auth token の値を GH_TOKEN で渡す" \
+  test "$(cat "$tmp/rc"):$(cat "$tmp/out")" = "0:GH_TOKEN=tok-107 GITHUB_TOKEN=none args=plan --repo o/r"
+check "agentctl.sh: トークンを標準エラーに出さない" test ! -s "$tmp/err"
+(cd "$acw" && run_rc env PATH="$tmp/fakego:$fake/bin:$sys_path" GH_TOKEN=tok-own FAKE_GH_TOKEN=tok-107 bash scripts/agents/agentctl.sh plan &&
+  printf '%s\n' "$RC" >"$tmp/rc")
+check "agentctl.sh: GH_TOKEN があればそのまま使う" test "$(cat "$tmp/rc"):$(cat "$tmp/out")" = "0:GH_TOKEN=tok-own GITHUB_TOKEN=none args=plan"
+(cd "$acw" && run_rc env PATH="$tmp/fakego:$fake/bin:$sys_path" bash scripts/agents/agentctl.sh plan &&
+  printf '%s\n' "$RC" >"$tmp/rc")
+check "agentctl.sh: gh が未ログインならトークンを入れない" test "$(cat "$tmp/rc"):$(cat "$tmp/out")" = "0:GH_TOKEN=none GITHUB_TOKEN=none args=plan"
 reset_logs
 
 # ================= dev-slot.sh =================
