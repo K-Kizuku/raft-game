@@ -112,11 +112,17 @@ demo:
 
 scoring:
   target: { successes: 3, score3: 800 }
+  points: { normal: 80, critical: 250, late: 20, rejected: 1, expiredPenalty: 40 }
+  ferryCostMsPerPoint: 1500
+  fairnessPerSatisfaction: 4
 
 satisfaction:
   initial: 50
   silenceAfterMs: 25000
   silencePenalty: { everyMs: 5000, amount: 1 }
+  succeeded: 8
+  rejectedPenalty: 2
+  expiredPenalty: 9
 
 speed:
   allowed: [1, 1.5, 2.25]

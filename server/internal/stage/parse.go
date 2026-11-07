@@ -667,12 +667,25 @@ func (c *checker) checkScoring(st *Stage, s *rawScoring) {
 		c.add("scoring", msgRequired)
 		return
 	}
+	sc := &st.Scoring
 	if s.Target == nil {
 		c.add("scoring.target", msgRequired)
-		return
+	} else {
+		sc.TargetSuccesses, _ = c.reqInt("scoring.target.successes", s.Target.Successes, 1, maxInt)
+		sc.TargetScore3, _ = c.reqInt("scoring.target.score3", s.Target.Score3, 0, maxInt)
 	}
-	st.Scoring.TargetSuccesses, _ = c.reqInt("scoring.target.successes", s.Target.Successes, 1, maxInt)
-	st.Scoring.TargetScore3, _ = c.reqInt("scoring.target.score3", s.Target.Score3, 0, maxInt)
+	if s.Points == nil {
+		c.add("scoring.points", msgRequired)
+	} else {
+		p := s.Points
+		sc.PointsNormal, _ = c.reqInt("scoring.points.normal", p.Normal, 0, maxInt)
+		sc.PointsCritical, _ = c.reqInt("scoring.points.critical", p.Critical, 0, maxInt)
+		sc.PointsLate, _ = c.reqInt("scoring.points.late", p.Late, 0, maxInt)
+		sc.PointsRejected, _ = c.reqInt("scoring.points.rejected", p.Rejected, 0, maxInt)
+		sc.PointsExpiredPenalty, _ = c.reqInt("scoring.points.expiredPenalty", p.ExpiredPenalty, 0, maxInt)
+	}
+	sc.FerryCostMsPerPoint, _ = c.reqInt("scoring.ferryCostMsPerPoint", s.FerryCostMsPerPoint, 1, maxInt)
+	sc.FairnessPerSatisfaction, _ = c.reqInt("scoring.fairnessPerSatisfaction", s.FairnessPerSatisfaction, 0, maxInt)
 }
 
 func (c *checker) checkSatisfaction(st *Stage, s *rawSatisfaction) {
@@ -684,10 +697,13 @@ func (c *checker) checkSatisfaction(st *Stage, s *rawSatisfaction) {
 	st.Satisfaction.SilenceAfterMs, _ = c.reqInt("satisfaction.silenceAfterMs", s.SilenceAfterMs, 1, maxInt)
 	if s.SilencePenalty == nil {
 		c.add("satisfaction.silencePenalty", msgRequired)
-		return
+	} else {
+		st.Satisfaction.SilencePenaltyEveryMs, _ = c.reqInt("satisfaction.silencePenalty.everyMs", s.SilencePenalty.EveryMs, 1, maxInt)
+		st.Satisfaction.SilencePenaltyAmount, _ = c.reqInt("satisfaction.silencePenalty.amount", s.SilencePenalty.Amount, 0, maxInt)
 	}
-	st.Satisfaction.SilencePenaltyEveryMs, _ = c.reqInt("satisfaction.silencePenalty.everyMs", s.SilencePenalty.EveryMs, 1, maxInt)
-	st.Satisfaction.SilencePenaltyAmount, _ = c.reqInt("satisfaction.silencePenalty.amount", s.SilencePenalty.Amount, 0, maxInt)
+	st.Satisfaction.Succeeded, _ = c.reqInt("satisfaction.succeeded", s.Succeeded, 0, maxSatisfaction)
+	st.Satisfaction.RejectedPenalty, _ = c.reqInt("satisfaction.rejectedPenalty", s.RejectedPenalty, 0, maxSatisfaction)
+	st.Satisfaction.ExpiredPenalty, _ = c.reqInt("satisfaction.expiredPenalty", s.ExpiredPenalty, 0, maxSatisfaction)
 }
 
 func (c *checker) checkSpeed(st *Stage, s *rawSpeed) {
