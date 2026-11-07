@@ -353,7 +353,7 @@ func TestConversionDoesNotShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoNullArrays(t, b)
-	want := `{"protocol":1,"session":{"id":"","stageId":"","seed":0,"demo":false,"restored":false},"phase":"",` +
+	want := `{"protocol":1,"session":{"id":"","stageId":"","seed":0,"demo":false,"restored":false,"stageHash":"","build":""},"phase":"",` +
 		`"clock":{"t":0,"speed":0,"paused":false,"endsAt":0,"allowedSpeeds":[]},` +
 		`"stage":{"title":"","islands":[],"routes":[],"resources":[]},` +
 		`"ferries":[],"routesState":[],"letters":[],"requests":[],"nodes":[],"islandsState":[],` +

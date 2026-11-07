@@ -92,11 +92,11 @@ case "$pr" in
 esac
 case "$reviewer_opt" in
   '' | codex | claude) ;;
-  *) die "--reviewer は codex か claude（$reviewer_opt）" ;;
+  *) die "--reviewer は codex か claude（${reviewer_opt}）" ;;
 esac
 case "$via_opt" in
   '' | github | local) ;;
-  *) die "--via は github か local（$via_opt）" ;;
+  *) die "--via は github か local（${via_opt}）" ;;
 esac
 if [ "$reviewer_opt" = claude ]; then
   [ "$via_opt" != github ] || die "--reviewer claude と --via github は一緒に使えない"
@@ -217,7 +217,7 @@ run_github() {
       2) errors=0 ;;
       *)
         errors=$((errors + 1))
-        info "Codex の GitHub 連携の結果を読めない（終了コード $rc、$errors/$retry_limit 回目）: $(tail -n 3 "$tmp/github.log" | tr '\n' ' ')"
+        info "Codex の GitHub 連携の結果を読めない（終了コード ${rc}、$errors/$retry_limit 回目）: $(tail -n 3 "$tmp/github.log" | tr '\n' ' ')"
         [ "$errors" -lt "$retry_limit" ] || github_unavailable "agentctl pr codex-record が $retry_limit 回続けて失敗した" || return 1
         ;;
     esac
@@ -263,7 +263,7 @@ prepare_local() {
     head_sha="$(printf '%s' "$pr_json" | jq -r '.headRefOid // empty')"
     [ -n "$head_sha" ] || die "PR #$pr の headRefOid がない"
     ensure_commit "$head_sha" || git fetch --quiet origin "pull/$pr/head" || true
-    ensure_commit "$head_sha" || die "PR #$pr の HEAD（$head_sha）を取得できない"
+    ensure_commit "$head_sha" || die "PR #$pr の HEAD（${head_sha}）を取得できない"
   fi
   if [ -n "$base_ref" ]; then
     base_sha="$(git rev-parse --verify --quiet "$base_ref^{commit}")" || die "--base $base_ref が見つからない"
@@ -273,7 +273,7 @@ prepare_local() {
     if ! ensure_commit "$base_sha"; then
       git fetch --quiet origin "$(printf '%s' "$pr_json" | jq -r '.baseRefName // "main"')" || true
     fi
-    ensure_commit "$base_sha" || die "PR #$pr の base（$base_sha）を取得できない"
+    ensure_commit "$base_sha" || die "PR #$pr の base（${base_sha}）を取得できない"
   fi
 
   # ---- Issue の本文 ----
@@ -404,12 +404,12 @@ run_codex() {
     c="$(classify "$rc" "$tmp/codex.log")"
     if [ "$c" != "other" ]; then
       fallback_reason="$c"
-      info "Codex が使えない（$c、終了コード $rc）: $(tail -n 3 "$tmp/codex.log" | tr '\n' ' ')"
+      info "Codex が使えない（${c}、終了コード ${rc}）: $(tail -n 3 "$tmp/codex.log" | tr '\n' ' ')"
       return 1
     fi
-    info "Codex が失敗した（終了コード $rc、$attempt/$retry_limit 回目）。再試行する"
+    info "Codex が失敗した（終了コード ${rc}、$attempt/$retry_limit 回目）。再試行する"
   done
-  die_code 5 "Codex が retry_limit（$retry_limit）回失敗した。フォールバックの理由に当たらないので止める"
+  die_code 5 "Codex が retry_limit（${retry_limit}）回失敗した。フォールバックの理由に当たらないので止める"
 }
 
 # ---- Claude Code（別のセッション） ----
@@ -420,7 +420,7 @@ sq() {
 
 # reviewer_settings: Reviewer に渡す設定のファイルを作り、そのパスを出す。
 # 一時的な Worktree（PR の HEAD）の .claude/settings.json と hooks は PR が書き換えられるので使わない。
-# メインの作業ツリーの settings.json の hooks のコマンドの $CLAUDE_PROJECT_DIR（Claude Code は
+# メインの作業ツリーの settings.json の hooks のコマンドの ${CLAUDE_PROJECT_DIR}（Claude Code は
 # カレントディレクトリ＝PR の HEAD にする）を、main の絶対パスに置き換える。
 reviewer_settings() {
   local src="$root/.claude/settings.json" dst="$tmp/reviewer-settings.json"
@@ -468,9 +468,9 @@ run_claude() {
       done_reviewer="claude-fallback"
       return 0
     fi
-    info "Claude Code のレビューが失敗した（終了コード $rc、$attempt/$retry_limit 回目）"
+    info "Claude Code のレビューが失敗した（終了コード ${rc}、$attempt/$retry_limit 回目）"
   done
-  die_code 5 "Claude Code のレビューが retry_limit（$retry_limit）回失敗した"
+  die_code 5 "Claude Code のレビューが retry_limit（${retry_limit}）回失敗した"
 }
 
 github_record=""
@@ -506,21 +506,21 @@ if [ "$need_local" = 1 ]; then
   if [ "$reviewer_opt" = claude ]; then
     fallback_reason="${AGENT_FALLBACK_REASON:-}"
     is_fallback_reason "$fallback_reason" ||
-      die "--reviewer claude では AGENT_FALLBACK_REASON に理由（$fallback_reasons）を入れる"
+      die "--reviewer claude では AGENT_FALLBACK_REASON に理由（${fallback_reasons}）を入れる"
   fi
   prepare_local
   case "$reviewer_opt" in
     codex)
-      run_codex || die_code 5 "Codex が使えない（$fallback_reason）。--reviewer codex なので切り替えない"
+      run_codex || die_code 5 "Codex が使えない（${fallback_reason}）。--reviewer codex なので切り替えない"
       ;;
     claude)
       run_claude
       ;;
     '')
       if ! run_codex; then
-        [ "$allow_fallback" = "true" ] || die_code 5 "Codex が使えない（$fallback_reason）が、設定がフォールバックを許していない"
+        [ "$allow_fallback" = "true" ] || die_code 5 "Codex が使えない（${fallback_reason}）が、設定がフォールバックを許していない"
         is_fallback_reason "$fallback_reason" || die_code 5 "理由 $fallback_reason ではフォールバックしない"
-        info "別のセッションの Claude Code に切り替える（fallback_reason=$fallback_reason）"
+        info "別のセッションの Claude Code に切り替える（fallback_reason=${fallback_reason}）"
         run_claude
       fi
       ;;
@@ -542,9 +542,9 @@ emit_record() {
 # これまでの経路の記録（protected_paths_ack を持つ。round が 1 つ後）を後に出す。--out は後者。
 if [ -n "$github_record" ]; then
   emit_record "$github_record"
-  info "PR #$pr round $github_round: $(jq -r .verdict "$github_record")（$github_reviewer）"
+  info "PR #$pr round $github_round: $(jq -r .verdict "$github_record")（${github_reviewer}）"
 fi
 [ -z "$out_file" ] || cp "$record" "$out_file"
 emit_record "$record"
 verdict="$(jq -r .verdict "$record")"
-info "PR #$pr round $round: $verdict（$done_reviewer${fallback_reason:+、fallback_reason=$fallback_reason}）"
+info "PR #$pr round $round: ${verdict}（$done_reviewer${fallback_reason:+、fallback_reason=$fallback_reason}）"
