@@ -88,6 +88,34 @@ func ParseState(body string) (*State, error) {
 	return &st, nil
 }
 
+// NoMajorIssuesPhrase は、指摘がないときの receipt のコメントの文言（Issue #213）。
+// 文言が変わった・英語以外のときは一致しないので、重大な指摘なしとは判断しない（安全側）。
+const NoMajorIssuesPhrase = "Didn't find any major issues"
+
+// IsReceipt は、本文が Codex の receipt（ReceiptMarker を持つコメント・レビュー）かを返す。
+func IsReceipt(body string) bool { return strings.Contains(body, ReceiptMarker) }
+
+// NoMajorIssues は、本文が「Didn't find any major issues」（重大な指摘なし）の receipt かを返す。
+func NoMajorIssues(body string) bool {
+	return IsReceipt(body) && strings.Contains(body, NoMajorIssuesPhrase)
+}
+
+var reviewedCommitRe = regexp.MustCompile("\\*\\*Reviewed commit:\\*\\*\\s*`([0-9a-fA-F]{7,40})`")
+
+// ReviewedCommit は、本文の「**Reviewed commit:** `abc1234`」の SHA（小文字。短縮形のことがある）を返す。
+// 見つからない・複数あって食い違うときは ""。
+func ReviewedCommit(body string) string {
+	sha := ""
+	for _, m := range reviewedCommitRe.FindAllStringSubmatch(body, -1) {
+		s := strings.ToLower(m[1])
+		if sha != "" && sha != s {
+			return ""
+		}
+		sha = s
+	}
+	return sha
+}
+
 // IsFinding は、本文が Codex の指摘（行コメント）かを返す。
 func IsFinding(body string) bool { return strings.Contains(body, FindingMarker) }
 
