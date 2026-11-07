@@ -1,0 +1,17 @@
+# gitleaks の偽陽性の指紋（<コミット>:<ファイル>:<規則>:<行>）。方針は .gitleaks.toml のコメント。
+# 足してよいのは main にあるコミットの指紋だけ（scripts/check-secrets.sh が確かめる）。
+
+# web/worker/security/test-helpers.ts: テストの偽のトークン（#46）
+d862bb78cbfea3fe0e476605b3b6d4996153f818:web/worker/security/test-helpers.ts:generic-api-key:4
+# web/worker/security/test-helpers.ts: テストの偽のトークン（#46）
+d862bb78cbfea3fe0e476605b3b6d4996153f818:web/worker/security/test-helpers.ts:generic-api-key:13
+# web/worker/security/test-helpers.ts: テストの偽のトークン（#46）
+d862bb78cbfea3fe0e476605b3b6d4996153f818:web/worker/security/test-helpers.ts:generic-api-key:14
+# spike/worker/router.test.ts: テストの偽のトークン（#134）
+4073ed97f8253f072312273cff76fe119898aa86:spike/worker/router.test.ts:generic-api-key:7
+# web/worker/admin/auth.test.ts: テストの偽のトークン（#45）
+31d8b909d620c35c252e2108aa753eab0fa5d8a1:web/worker/admin/auth.test.ts:generic-api-key:5
+# web/worker/admin/ports.test.ts: テストの偽のトークン（#45）
+31d8b909d620c35c252e2108aa753eab0fa5d8a1:web/worker/admin/ports.test.ts:generic-api-key:15
+# web/worker/admin/handler.test.ts: テストの偽のトークン（#45）
+31d8b909d620c35c252e2108aa753eab0fa5d8a1:web/worker/admin/handler.test.ts:generic-api-key:9

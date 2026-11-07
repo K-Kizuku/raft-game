@@ -29,4 +29,4 @@ Open data
 Generated assets
 
 画像・効果音の一部は画像生成 AI 等で作成しています。
-使用したサービスと条件は docs/07-data-spec.md の「素材」の節に記載します。
+素材ごとの使用したサービス・作成日・利用規約は web/public/assets/CREDITS.md に記載します（素材を置くときに作成します。docs/07-data-spec.md §7）。
