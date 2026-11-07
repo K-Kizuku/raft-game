@@ -219,3 +219,91 @@ func TestSnapshotFromSimMatchesJSON(t *testing.T) {
 		t.Errorf("unexpected snapshots: %+v", snaps)
 	}
 }
+
+// CV-D4 入力ログの JSON からの再生（T-308b の復元の道筋）で、デモの嵐が同じように起きる。
+func TestReplayFromInputLogDemoTrigger(t *testing.T) {
+	t.Parallel()
+	const stageHash = "sha256:cv-d4"
+	cfg := testConfig()
+	cfg.DemoStorm = &sim.DemoStorm{Routes: [][2]uint64{{3, 2}}, DurationMs: 20000}
+	e, err := sim.New(cfg, testSeed, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	apply := func(cmd sim.Command) {
+		t.Helper()
+		if ack := e.Apply(cmd); !ack.OK {
+			t.Fatalf("t=%d: Apply(%+v) = %+v", e.Now(), cmd, ack)
+		}
+	}
+	apply(sim.Command{Type: sim.CmdGameStart})
+	e.RunUntil(3000)
+	apply(sim.Command{Type: sim.CmdDemoTrigger, Event: sim.DemoEventStorm})
+	e.RunUntil(8000)
+	apply(sim.Command{Type: sim.CmdFerryDepart, FerryID: "f1", To: 2})
+	e.RunUntil(14000)
+	if ack := e.Apply(sim.Command{Type: sim.CmdFerryDepart, FerryID: "f1", To: 3}); ack.Code != sim.CodeRouteBlocked {
+		t.Fatalf("遮断された航路への出航 = %+v, want route_blocked", ack)
+	}
+	apply(sim.Command{Type: sim.CmdFerryDepart, FerryID: "f1", To: 1})
+	e.RunUntil(30000)
+	if until := e.Snapshot().Routes[1].BlockedUntil; until != nil {
+		t.Fatalf("30000 で航路 2-3 が遮断のまま（%d）", *until)
+	}
+
+	// Durable Object が保存する形（t・cmd の列）にし、セッションのコマンドを混ぜて JSON で往復する。
+	var log []protocol.InputCommand
+	for i, en := range e.InputLog() {
+		cc, err := simconv.EncodeEngineCommand(en.Cmd)
+		if err != nil {
+			t.Fatalf("EncodeEngineCommand(%+v): %v", en.Cmd, err)
+		}
+		log = append(log, protocol.InputCommand{T: int64(en.T), Cmd: cc})
+		if i == 1 {
+			log = append(log,
+				inputCmd(int64(en.T), "cmd.game.pause", `{"paused":true}`),
+				inputCmd(int64(en.T), "cmd.game.speed", `{"speed":8}`),
+				inputCmd(int64(en.T), "cmd.game.skip", `{"until":"next_notable"}`),
+				inputCmd(int64(en.T), "cmd.sync", `{}`),
+			)
+		}
+	}
+	b, err := json.Marshal(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back []protocol.InputCommand
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := simconv.InputEntriesFromLog(back)
+	if err != nil {
+		t.Fatalf("InputEntriesFromLog: %v", err)
+	}
+	if !reflect.DeepEqual(entries, e.InputLog()) {
+		t.Fatalf("InputEntriesFromLog = %+v, want %+v", entries, e.InputLog())
+	}
+	r, err := sim.Replay(cfg, stageHash, sim.ReplayLog{
+		Format: sim.ReplayFormat, StageHash: stageHash, Seed: testSeed, Entries: entries, Until: e.Now(),
+	}, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if r.TraceHash() != e.TraceHash() {
+		t.Error("TraceHash が元と違う")
+	}
+	if got, want := r.Snapshot(), e.Snapshot(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Snapshot が元と違う:\n got  %+v\n want %+v", got, want)
+	}
+
+	// 遮断の途中（10000）まで再生しても、航路の遮断の時刻が一致する。
+	r2, err := sim.Replay(cfg, stageHash, sim.ReplayLog{
+		Format: sim.ReplayFormat, StageHash: stageHash, Seed: testSeed, Entries: entries[:2], Until: 10000,
+	}, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatalf("Replay（途中）: %v", err)
+	}
+	if until := r2.Snapshot().Routes[1].BlockedUntil; until == nil || *until != 23000 {
+		t.Errorf("途中の航路 2-3 の遮断 = %v, want 23000", until)
+	}
+}
