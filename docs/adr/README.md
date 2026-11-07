@@ -39,6 +39,7 @@
 | [0020](./0020-public-repository-apache-license.md) | リポジトリを公開し、ライセンスは Apache-2.0 にする | Accepted | 中 |
 | [0021](./0021-hootl-agent-development.md) | AI エージェントの開発は、ローカル PC の Codex CLI と Claude Code で行い、Rulesets・必須のチェック・hooks で強制する | Accepted | 中 |
 | [0022](./0022-yaml-library.md) | YAML の読み込みに `go.yaml.in/yaml/v3` を使い、未知のキーを拒否する | Proposed | 容易 |
+| [0023](./0023-durable-object-fetch-handler.md) | Durable Object は `fetch` のハンドラーで呼び、`cloudflare:workers`・RPC を使わない | Proposed | 容易（`cost-guard.ts`・`admin/client.ts` だけ） |
 
 ## 判断を差し替える手順
 
