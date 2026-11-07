@@ -2,6 +2,8 @@
 # 結果は `ci-ok` の 1 つのチェックにまとめる。
 # ワークフロー名 `ci` とチェック名 `ci-ok` は Merge Gate（#3）と Rulesets（#5）が
 # 参照する公開の契約なので、名前を変えない。
+# server: server/ の Go に gofmt・vet・mod tidy・golangci-lint（forbidigo）・test（T-005 / #13）。
+# web: web/ に lint・typecheck・test（T-005 / #13）。
 name: ci
 
 on:
@@ -125,10 +127,113 @@ jobs:
           done
           exit "$status"
 
+  server:
+    name: server
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find server/go.mod
+        id: find
+        run: |
+          set -euo pipefail
+          if [ -f server/go.mod ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "対象なし: server/go.mod がない"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@v5
+        if: steps.find.outputs.found == 'true'
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: gofmt / go vet / go mod tidy
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          status=0
+          gofmt="$(go -C server env GOROOT)/bin/gofmt"
+          unformatted="$("$gofmt" -l server)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt の差分がある: $unformatted"
+            status=1
+          fi
+          go -C server vet ./... || status=1
+          if ! go -C server mod tidy -diff; then
+            echo "::error::go mod tidy の差分がある"
+            status=1
+          fi
+          exit "$status"
+      # サードパーティのアクションもビルド済みのバイナリも使わず、server/go.mod の Go で
+      # ビルドして実行する（古い Go でビルドした golangci-lint は新しい Go のモジュールを lint できない）。
+      - name: golangci-lint
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+          # Makefile の GOLANGCI_LINT_VERSION と同じ版にする。
+          GOLANGCI_LINT_VERSION: v2.15.0
+        run: |
+          set -euo pipefail
+          go -C server run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$GOLANGCI_LINT_VERSION" run ./...
+      - name: go test
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: go -C server test -race -count=1 ./...
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find web/package.json
+        id: find
+        run: |
+          set -euo pipefail
+          if [ -f web/package.json ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "対象なし: web/package.json がない"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      # node-version-file: web/package.json は使わない。engines.node（>=22.23.0）から
+      # corepack を同梱しない新しい Node が選ばれ得るため。
+      - uses: actions/setup-node@v4
+        if: steps.find.outputs.found == 'true'
+        with:
+          node-version: "22"
+      # pnpm はルートの package.json の packageManager の版を corepack で使う。
+      - name: Enable pnpm
+        if: steps.find.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --version
+      - name: pnpm install
+        if: steps.find.outputs.found == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: lint
+        if: steps.find.outputs.found == 'true'
+        run: pnpm -C web lint
+      - name: typecheck
+        if: steps.find.outputs.found == 'true'
+        run: pnpm -C web typecheck
+      - name: test
+        if: steps.find.outputs.found == 'true'
+        run: pnpm -C web test
+
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [docs, shell, go-tools]
+    needs: [docs, shell, go-tools, server, web]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -137,10 +242,12 @@ jobs:
           RESULT_DOCS: ${{ needs.docs.result }}
           RESULT_SHELL: ${{ needs.shell.result }}
           RESULT_GO_TOOLS: ${{ needs.go-tools.result }}
+          RESULT_SERVER: ${{ needs.server.result }}
+          RESULT_WEB: ${{ needs.web.result }}
         run: |
           set -euo pipefail
           fail=0
-          for pair in "docs=$RESULT_DOCS" "shell=$RESULT_SHELL" "go-tools=$RESULT_GO_TOOLS"; do
+          for pair in "docs=$RESULT_DOCS" "shell=$RESULT_SHELL" "go-tools=$RESULT_GO_TOOLS" "server=$RESULT_SERVER" "web=$RESULT_WEB"; do
             echo "$pair"
             if [ "${pair#*=}" != "success" ]; then
               fail=1
