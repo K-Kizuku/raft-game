@@ -1,10 +1,13 @@
-/* マップ（T-404）。大きさは親（.game-map）いっぱい。お知らせは右上なので、島のボタンは左下に重ねる。 */
+/* マップ（T-404・絵は T-421）。大きさは親（.game-map）いっぱい。お知らせは右上なので、島のボタンは左下に重ねる。
+   色はデザイントークン（web/src/ui/theme/tokens.css・docs/11-visual-design.md）から取る。 */
 .map-view {
   position: relative;
   width: 100%;
   height: 100%;
   min-height: 20rem;
-  background: #bfe3f2;
+  background: var(--color-sea-mid);
+  color: var(--color-ink);
+  font-family: var(--font-body);
 }
 
 .map-view__canvas {
@@ -16,42 +19,54 @@
   display: block;
 }
 
+/* 描けないときの文字は紙の札に載せる（墨と紙のコントラスト比 9.9:1。NFR-10） */
 .map-view__fallback {
   position: absolute;
-  inset: 0 0 auto 0;
+  inset: var(--space-2) var(--space-2) auto var(--space-2);
   margin: 0;
-  padding: 1rem;
-  color: #1f2937;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-paper);
+  color: var(--color-ink);
 }
 
+/* 島のボタン（左下の列）。紙の札の見た目 */
 .map-view__islands {
   position: absolute;
-  left: 0.5rem;
-  bottom: 0.5rem;
+  left: var(--space-2);
+  bottom: var(--space-2);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
-  max-width: calc(100% - 1rem);
+  gap: var(--space-1);
+  max-width: calc(100% - 2 * var(--space-2));
 }
 
 .map-view__islands button {
-  padding: 0.25rem 0.6rem;
-  border: 2px solid #374151;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #1f2937;
+  padding: var(--space-1) var(--space-3);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-l);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-paper);
+  color: var(--color-ink);
   font: inherit;
   font-size: 0.875rem;
   cursor: pointer;
 }
 
+.map-view__islands button:hover {
+  background: var(--color-paper-deep);
+}
+
+/* 選んだ島は墨の札（色だけでなく aria-pressed の見た目の反転で区別する） */
 .map-view__islands button[aria-pressed="true"] {
-  background: #111827;
-  border-color: #111827;
-  color: #ffffff;
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-paper);
+  box-shadow: none;
 }
 
 .map-view__islands button:focus-visible {
-  outline: 3px solid #b45309;
+  outline: 3px solid var(--color-sea-deep);
   outline-offset: 2px;
 }
