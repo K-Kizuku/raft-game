@@ -362,6 +362,29 @@ p_i [ppm] = w_i × rateMilliPerMin × (slotMs / 1000) / 60
 - 発生時刻は区間内で `rng.IntN(slotMs)` によって決める
 - 種類は、ステージ定義の `random.kinds` の重みで選ぶ
 
+ランダムな依頼の引く順序（`game.PlanRequests`、T-202）:
+
+```text
+for k := 0; k*slotMs < durationMs; k++:          // 区間 k = [k*slotMs, (k+1)*slotMs)
+    for island := 1..N:                            // ノード ID の昇順
+        p := w_island * rateMilliPerMin * slotMs / 60000   // ppm。整数の割り算（切り捨て）
+        if rng.Int64N(1_000_000) < p:
+            at   := k*slotMs + rng.Int64N(slotMs)
+            kind := kinds の重みで選ぶ（x := rng.Int64N(Σweight)。kinds を順に見て、重みの累積が x より大きくなった最初の 1 つ）
+            if at <= durationMs: 依頼として足す（at > durationMs なら捨てる。引いた乱数はそのまま）
+```
+
+- 乱数は `rng("requests")`（`Sub(seed, "requests")`、[DesignDoc §9.1](./03-design-doc.md)）の 1 本だけで、ラウンドの開始の前（`New`）にすべて引く
+- 区間ごと・島ごとの 1 回目（発生の判定）は、島の重みが 0 でも必ず引く（ある島の設定を変えても、ほかの島の乱数がずれないようにするため）。発生するときだけ、続けて時刻と種類を引く
+- `rateMilliPerMin` が 0 なら乱数を 1 回も引かない。`rateMilliPerMin × slotMs` は 60,000,000 以下（`p ≤ 1,000,000`）
+- 浮動小数点を使わない
+
+台本と合わせた並べ方と ID の振り方:
+
+1. 台本の依頼（`requests.script`）を書いた順に並べ、その後ろにランダムな依頼を引いた順（区間の順・島の順）に並べる
+2. 全体を発生の時刻で**安定に**並べ替える。同じ時刻なら台本が先、ランダムは引いた順
+3. 並べた順に 1 から番号を振り、ID を `<stageId>-<番号を 4 桁以上で 0 埋め>`（例: `stage2-0007`）にする
+
 ### 4.3 所要時間から航行時間を決める
 
 計画書に所要時間が載っている航路は、次の式で航行時間を決めます（[A-06](./09-assumptions-and-open-questions.md#a-06)）。

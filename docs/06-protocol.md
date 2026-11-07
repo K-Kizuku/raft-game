@@ -366,7 +366,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
   ],
   "routesState": [ { "id": "1-2", "blockedUntil": null } ],
   "letters": [ /* 港と船の上にある Letter（§5.2）。P1 では中継倉庫も。配達済み・破棄は含めない */ ],
-  "requests": [ /* Request（§5.3）をすべて */ ],
+  "requests": [ /* 発生済みの Request（§5.3）。ID の順 */ ],
   "nodes": [ { "id": 1, "role": "leader", "term": 2, "lead": 1, "commit": 14, "applied": 14, "lastIndex": 15 } ],
   "islandsState": [ { "id": 1, "satisfaction": 64, "lastDeliveredAt": 60500 } ],
   "score": { "total": 520, "successes": 3, "target": 5, "criticalSecured": ["firework:a"] },
@@ -425,7 +425,13 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 }
 ```
 
-`status`: `received`（受付）/ `waiting`（送付待ち）/ `in_transit`（輸送中）/ `proposed`（審議中）/ `committed`（共和国で確定）/ `succeeded`（確定）/ `rejected`（予約失敗）
+`status`: `received`（受付）/ `waiting`（送付待ち）/ `in_transit`（輸送中）/ `proposed`（審議中）/ `committed`（共和国で確定）/ `succeeded`（確定）/ `rejected`（予約失敗）。各値の判定は [DesignDoc §8.2](./03-design-doc.md) を参照
+
+`result`: `null`、または `{ "status": "ok" | "rejected", "reason": "…" }`。依頼元の島の台帳の結果で、`succeeded`・`rejected` のときだけ値を持つ。`reason` は `rejected` のときだけで、台帳の理由（例: `already_reserved`・`full`）
+
+```json
+{ "status": "rejected", "reason": "already_reserved" }
+```
 
 `result` は `null` か文字列です（文字列の中身は T-202 が決める）。
 
@@ -489,8 +495,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `node.state` | `id`, `role`（`follower` / `pre_candidate` / `candidate` / `leader`）, `term`, `lead`, `commit`, `applied`, `lastIndex` | いずれかの値が変わった（同じステップ内の変化はまとめる） |
 | `node.leader_elected` | `id`, `term` | 新しい Leader が誕生した（開会式を含む） |
 | `node.stepped_down` | `id`, `term`, `reason`（`check_quorum` / `higher_term`） | Leader でなくなった |
-| `request.created` | `request`（Request 全体） | 依頼の発生 |
-| `request.updated` | `id`, `status`, `expired`, `result` | 状態の変化 |
+| `request.created` | `request`（Request 全体。`status` は `received`） | 依頼の発生 |
+| `request.updated` | `id`, `status`, `expired`, `result`（§5.3） | 状態の変化（同じステップ内の変化はまとめる） |
 | `ledger.applied` | `islandId`, `index`, `reqId`, `result`（`ok` / `rejected` / `duplicate`）, `reason`（`rejected` のときだけ） | 台帳への適用（エンジニアモード・トレース用） |
 | `island.updated` | `id`, `satisfaction`, `lastDeliveredAt` | 満足度の変化 |
 | `score.updated` | `total`, `successes`, `criticalSecured` | スコアの変化 |
