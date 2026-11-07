@@ -149,7 +149,7 @@ case "$sub" in
         exit 0
       fi
     done
-    die "空いている DEV_SLOT がない（dev_slots=$max_slots）。scripts/dev-slot.sh list で確かめる"
+    die "空いている DEV_SLOT がない（dev_slots=${max_slots}）。scripts/dev-slot.sh list で確かめる"
     ;;
   release)
     if [ -z "$num" ]; then

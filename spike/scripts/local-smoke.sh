@@ -46,12 +46,12 @@ if [ -z "${DOCKER_HOST:-}" ]; then
   docker_host="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
   if [ -n "$docker_host" ]; then
     export DOCKER_HOST="$docker_host"
-    echo "$PROG: DOCKER_HOST=$DOCKER_HOST（docker context から）"
+    echo "$PROG: DOCKER_HOST=${DOCKER_HOST}（docker context から）"
   fi
 fi
 
 if (exec 3<>"/dev/tcp/127.0.0.1/$SPIKE_DEV_PORT") 2>/dev/null; then
-  echo "$PROG: ポート $SPIKE_DEV_PORT が使われている（DEV_SLOT=$DEV_SLOT）" >&2
+  echo "$PROG: ポート $SPIKE_DEV_PORT が使われている（DEV_SLOT=${DEV_SLOT}）" >&2
   exit 1
 fi
 
@@ -66,7 +66,7 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   if [ -n "$cf_pid" ] && kill -0 "$cf_pid" 2>/dev/null; then
-    echo "$PROG: cf dev を止める（pid $cf_pid）"
+    echo "$PROG: cf dev を止める（pid ${cf_pid}）"
     kill -TERM -- "-$cf_pid" 2>/dev/null || kill -TERM "$cf_pid" 2>/dev/null || true
     local i
     for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -107,7 +107,7 @@ umask 077
 printf 'SPIKE_TOKEN=%s\n' "$(openssl rand -hex 32)" >"$DEV_VARS"
 rm -rf "$OUT_DIR/state"
 
-echo "$PROG: cf dev を起動する（$BASE、ログは $LOG）"
+echo "$PROG: cf dev を起動する（${BASE}、ログは ${LOG}）"
 set -m # cf dev を別のプロセスグループにして、子のプロセスごと止められるようにする
 (cd "$SPIKE" && exec pnpm exec cf dev) >"$LOG" 2>&1 &
 cf_pid=$!
@@ -133,7 +133,7 @@ token="$(cut -d= -f2- "$DEV_VARS")"
 measure_status=0
 SPIKE_TOKEN="$token" node "$SPIKE/scripts/measure.ts" --base "$BASE" \
   --only start,ws,ping,sql,plain,egress,crash,cpu,stop --runs 3 --idle 0 --out "$OUT" || measure_status=$?
-echo "$PROG: measure.ts の終了コード $measure_status（記録だけの項目の失敗を含む）"
+echo "$PROG: measure.ts の終了コード ${measure_status}（記録だけの項目の失敗を含む）"
 
 # 必須: start・ws（1 KiB と 16 KiB の往復・超過の破棄）・sql・plain（両方）・stop
 # 記録だけ: egress・crash・cpu
