@@ -3,7 +3,6 @@
 // 時刻は引数の receivedAt だけを使う。Raft の結果をここで決めず、届いた値をそのまま写す（ADR-0009）。
 import type {
   Clock,
-  Ferry,
   Island,
   IslandState,
   Letter,
@@ -54,7 +53,7 @@ export function worldFromSnapshot(snapshot: Snapshot, receivedAt: number): World
   const islands = indexBy<number, Island>(snapshot.stage.islands, (i) => i.id);
   const routes = indexBy<string, Route>(snapshot.stage.routes, (r) => r.id);
   const ferries = indexBy<string, FerryView>(
-    snapshot.ferries.map((f) => ({ ...f, brokenUntil: null })),
+    snapshot.ferries.map((f) => ({ ...f, brokenUntil: f.brokenUntil ?? null })),
     (f) => f.id,
   );
   const requests = indexBy<string, Request>(snapshot.requests, (r) => r.id);
@@ -255,7 +254,7 @@ export function applyEvent(world: World, event: ServerEvent): World {
     case "ferry.departed": {
       const ferry = world.ferries[event.ferryId];
       if (ferry === undefined) return next({});
-      const sailing: Mutable<Ferry> & { brokenUntil: number | null } = {
+      const sailing: Mutable<FerryView> = {
         ...ferry,
         state: "sailing",
         from: event.from,
@@ -270,7 +269,7 @@ export function applyEvent(world: World, event: ServerEvent): World {
     case "ferry.arrived": {
       const ferry = world.ferries[event.ferryId];
       if (ferry === undefined) return next({});
-      const docked: Mutable<Ferry> & { brokenUntil: number | null } = {
+      const docked: Mutable<FerryView> = {
         ...ferry,
         state: "docked",
         islandId: event.islandId,

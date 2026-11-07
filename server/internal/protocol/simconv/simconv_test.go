@@ -361,6 +361,8 @@ func TestSimEventJSONMatchesProtocol(t *testing.T) {
 		sim.LetterStale{LetterID: 30},
 		sim.FerryDeparted{FerryID: "f1", From: 1, To: 2, DepartAt: 58000, ArriveAt: 61750},
 		sim.FerryArrived{FerryID: "f1", IslandID: 2, ReadyAt: 63250},
+		sim.FerryBroken{FerryID: "f1", Until: 80000},
+		sim.FerryRepaired{FerryID: "f1", Until: 80000},
 		sim.NodeState{ID: 2, Role: "pre_candidate", Term: 3, Lead: 0, Commit: 14, Applied: 13, LastIndex: 15},
 		sim.LeaderElected{ID: 1, Term: 2},
 		sim.SteppedDown{ID: 1, Term: 2, Reason: "check_quorum"},
@@ -378,9 +380,13 @@ func TestConversionDoesNotShare(t *testing.T) {
 	until := sim.SimTime(90000)
 	mk := func() sim.Snapshot {
 		u := until
+		b := sim.SimTime(30000)
 		return sim.Snapshot{
 			Phase: sim.PhaseSailing, T: 1000, EndsAt: 120000,
-			Ferries: []sim.FerryView{{ID: "f1", Name: "ごとう丸", Capacity: 4, State: "docked", IslandID: 1, ReadyAt: 1500, Cargo: []uint64{1, 2}}},
+			Ferries: []sim.FerryView{
+				{ID: "f1", Name: "ごとう丸", Capacity: 4, State: "docked", IslandID: 1, ReadyAt: 1500, BrokenUntil: &b, Cargo: []uint64{1, 2}},
+				{ID: "f2", Name: "なる丸", Capacity: 4, State: "docked", IslandID: 2, ReadyAt: 0, Cargo: []uint64{}},
+			},
 			Routes:  []sim.RouteView{{ID: "1-2", BlockedUntil: &u}, {ID: "2-3"}},
 			Letters: []sim.LetterView{raftLetter(), requestLetter()},
 			Nodes:   []sim.NodeState{{ID: 1, Role: "leader", Term: 2, Lead: 1}},
@@ -389,7 +395,17 @@ func TestConversionDoesNotShare(t *testing.T) {
 	}
 	src := mk()
 	p := simconv.SnapshotFromSim(src)
+	if p.Ferries[0].BrokenUntil == nil || *p.Ferries[0].BrokenUntil != 30000 {
+		t.Errorf("Ferries[0].BrokenUntil = %v, want 30000", p.Ferries[0].BrokenUntil)
+	}
+	if p.Ferries[1].BrokenUntil != nil {
+		t.Errorf("Ferries[1].BrokenUntil = %v, want nil", *p.Ferries[1].BrokenUntil)
+	}
+	if b, _ := json.Marshal(p.Ferries[1]); bytes.Contains(b, []byte("brokenUntil")) {
+		t.Errorf("故障していない船の JSON に brokenUntil がある: %s", b)
+	}
 	p.Ferries[0].Cargo[0] = 99
+	*p.Ferries[0].BrokenUntil = 1
 	*p.RoutesState[0].BlockedUntil = 1
 	p.Letters[0].Raft.Entries[0].Index = 99
 	p.Letters[0].Raft.Term = 99
@@ -439,6 +455,9 @@ func TestAckFromSim(t *testing.T) {
 	want := protocol.Ack{CmdID: "c-12", OK: false, T: 61200, Code: protocol.AckCodeRouteBlocked, Message: "blocked"}
 	if got != want {
 		t.Errorf("AckFromSim = %+v, want %+v", got, want)
+	}
+	if got := simconv.AckFromSim("c-13", sim.Ack{T: 1, Code: sim.CodeFerryBroken}); got.Code != protocol.AckCodeFerryBroken {
+		t.Errorf("AckFromSim(ferry_broken).Code = %q, want %q", got.Code, protocol.AckCodeFerryBroken)
 	}
 	b, _ := json.Marshal(simconv.AckFromSim("c-1", sim.Ack{OK: true, T: 5}))
 	if string(b) != `{"cmdId":"c-1","ok":true,"t":5}` {

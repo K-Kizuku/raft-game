@@ -727,6 +727,7 @@ export interface Ferry {
   departAt: number /* int64 */;
   arriveAt: number /* int64 */;
   readyAt: number /* int64 */;
+  brokenUntil?: number /* int64 */; // 故障中だけ。この時刻から出航できる（P1）
   cargo: number /* uint64 */[];
 }
 /**

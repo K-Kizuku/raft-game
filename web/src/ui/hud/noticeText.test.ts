@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import { worldFromSnapshot } from "../../state/index.ts";
-import type { Postmaster } from "../../protocol/index.ts";
+import type { Postmaster, Snapshot } from "../../protocol/index.ts";
 import type { NoticeView, World } from "../../state/index.ts";
 import { NOTICE_KEYS, noticeText, postmasterTone, speakerName } from "./noticeText.ts";
 import type { PostmasterTone } from "./noticeText.ts";
 import { island, makeRequest, makeSnapshot } from "./testing/world.ts";
+
+// 島 2 で故障中の船 f1（ferry.broken の {船}）。
+const FERRIES: Snapshot["ferries"] = [
+  {
+    id: "f1",
+    name: "ごとう丸",
+    capacity: 4,
+    state: "docked",
+    islandId: 2,
+    departAt: 0,
+    arriveAt: 0,
+    readyAt: 0,
+    brokenUntil: 25000,
+    cargo: [],
+  },
+];
 
 function world(): World {
   return worldFromSnapshot(
@@ -15,6 +31,7 @@ function world(): World {
         makeRequest("r-fire", 2, { resource: "firework:a", critical: true }),
         makeRequest("r-lost", 3, { resource: "unknown:x" }),
       ],
+      ferries: FERRIES,
     }),
     0,
   );
@@ -44,6 +61,11 @@ describe("noticeText", () => {
       "storm.forecast",
       { routeIds: ["1-2", "1-3"], at: 15000 },
       "10 秒後に一の島と二の島の間、一の島と三の島の間が荒れるぞ！",
+    ],
+    [
+      "ferry.broken",
+      { ferryId: "f1", until: 25000 },
+      "ごとう丸が故障してしまった…20 秒は港から出られないよ",
     ],
   ])("NT-1 %s → セリフ", (key, params, want) => {
     expect(noticeText(notice(key, params), world(), false)).toBe(want);
@@ -99,11 +121,44 @@ describe("noticeText", () => {
     ],
     ["storm.forecast", { routeIds: ["2-3"], at: 5300 }, "1 秒後に二の島と三の島の間が荒れるぞ！"],
     ["storm.forecast", { routeIds: ["2-3"], at: 1000 }, "1 秒後に二の島と三の島の間が荒れるぞ！"],
+    // NX-B1 船が分からなければ「船」、until が無ければ「しばらく」。秒は切り上げ（1 以上）。
+    [
+      "ferry.broken",
+      { ferryId: "f9", until: 25000 },
+      "船が故障してしまった…20 秒は港から出られないよ",
+    ],
+    ["ferry.broken", { until: 25000 }, "船が故障してしまった…20 秒は港から出られないよ"],
+    [
+      "ferry.broken",
+      { ferryId: "toString", until: 25000 },
+      "船が故障してしまった…20 秒は港から出られないよ",
+    ],
+    ["ferry.broken", { ferryId: "f1" }, "ごとう丸が故障してしまった…しばらくは港から出られないよ"],
+    [
+      "ferry.broken",
+      { ferryId: "f1", until: "25000" },
+      "ごとう丸が故障してしまった…しばらくは港から出られないよ",
+    ],
+    [
+      "ferry.broken",
+      { ferryId: "f1", until: 5001 },
+      "ごとう丸が故障してしまった…1 秒は港から出られないよ",
+    ],
+    [
+      "ferry.broken",
+      { ferryId: "f1", until: 1000 },
+      "ごとう丸が故障してしまった…1 秒は港から出られないよ",
+    ],
+    [
+      "ferry.broken",
+      { ferryId: "f1", until: 15500 },
+      "ごとう丸が故障してしまった…11 秒は港から出られないよ",
+    ],
   ])("NT-3 既定の言葉: %s %j", (key, params, want) => {
     expect(noticeText(notice(key, params), world(), false)).toBe(want);
   });
 
-  it("NT-4 知らない key は null、NOTICE_KEYS は表の 9 個", () => {
+  it("NT-4 知らない key は null、NOTICE_KEYS は表の 10 個", () => {
     expect(noticeText(notice("future.key"), world(), false)).toBeNull();
     expect(noticeText(notice("toString"), world(), true)).toBeNull();
     expect([...NOTICE_KEYS]).toEqual([
@@ -116,6 +171,7 @@ describe("noticeText", () => {
       "leader.elected",
       "leader.stepped_down",
       "storm.forecast",
+      "ferry.broken",
     ]);
     for (const key of NOTICE_KEYS) {
       expect(noticeText(notice(key), world(), false), key).not.toBeNull();
@@ -130,6 +186,7 @@ function worldWithPostmaster(postmaster: Postmaster | undefined): World {
       makeRequest("r-stall", 1, { resource: "stall:main" }),
       makeRequest("r-fire", 2, { resource: "firework:a", critical: true }),
     ],
+    ferries: FERRIES,
   });
   const islands = base.stage.islands.map((i) =>
     i.id === 2 ? island(i.id, i.name, i.color, i.layout.x, i.layout.y, postmaster) : i,
@@ -137,7 +194,7 @@ function worldWithPostmaster(postmaster: Postmaster | undefined): World {
   return worldFromSnapshot({ ...base, stage: { ...base.stage, islands } }, 0);
 }
 
-// 9 つの key の params（NT-1 と同じ値）。
+// 10 個の key の params（NT-1 と同じ値）。
 const TONE_PARAMS: Readonly<Record<string, Record<string, unknown>>> = {
   "request.created": { reqId: "r-fire" },
   "request.succeeded": { reqId: "r-stall" },
@@ -148,6 +205,7 @@ const TONE_PARAMS: Readonly<Record<string, Record<string, unknown>>> = {
   "leader.elected": {},
   "leader.stepped_down": {},
   "storm.forecast": { routeIds: ["2-3"], at: 10000 },
+  "ferry.broken": { ferryId: "f1", until: 25000 },
 };
 
 function toneText(key: string, w: World, show = false): string | null {
@@ -155,7 +213,7 @@ function toneText(key: string, w: World, show = false): string | null {
 }
 
 describe("noticeText の口調（T-406c）", () => {
-  it("NT-T1 postmaster の無い島は今の 9 つのセリフ（casual）", () => {
+  it("NT-T1 postmaster の無い島は今の 10 個のセリフ（casual）", () => {
     const w = worldWithPostmaster(undefined);
     expect(postmasterTone(w, 2)).toBe("casual");
     expect(NOTICE_KEYS.map((key) => toneText(key, w))).toEqual([
@@ -168,6 +226,7 @@ describe("noticeText の口調（T-406c）", () => {
       "これからは二の島が代表です。よろしく！",
       "みんなの返事が来ない…いったん代表をおります",
       "5 秒後に二の島と三の島の間が荒れるぞ！",
+      "ごとう丸が故障してしまった…20 秒は港から出られないよ",
     ]);
   });
 
@@ -181,6 +240,7 @@ describe("noticeText の口調（T-406c）", () => {
     ["polite", "leader.elected", "これからは二の島が代表です。よろしくお願いします！"],
     ["polite", "leader.stepped_down", "皆さんの返事が来ません…いったん代表をおります"],
     ["polite", "storm.forecast", "5 秒後に二の島と三の島の間が荒れます！"],
+    ["polite", "ferry.broken", "ごとう丸が故障してしまいました…20 秒は港から出られません"],
     ["elder", "request.created", "大花火 Aの予約を頼みたいんじゃ！"],
     ["elder", "request.succeeded", "やったのう！ 屋台が取れたぞい！"],
     ["elder", "request.rejected", "なんと、大花火 Aはもう他の島が予約しておったのか？"],
@@ -190,6 +250,7 @@ describe("noticeText の口調（T-406c）", () => {
     ["elder", "leader.elected", "これからは二の島が代表じゃ。よろしく頼むぞい！"],
     ["elder", "leader.stepped_down", "みなの返事が来ん…いったん代表をおりるとしよう"],
     ["elder", "storm.forecast", "5 秒後に二の島と三の島の間が荒れるぞい！"],
+    ["elder", "ferry.broken", "ごとう丸が故障してしもうた…20 秒は港から出られんのう"],
   ])("NT-T2 %s の %s → セリフ", (tone, key, want) => {
     const w = worldWithPostmaster({ name: "テスト局長", tone });
     expect(postmasterTone(w, 2)).toBe(tone);

@@ -30,7 +30,8 @@ type Config struct {
 	DurationMs    SimTime // ラウンドの長さ（durationMs）。この時刻に航行が終わる
 	Raft          RaftConfig
 	Routes        []ferry.RouteConfig
-	Storms        []game.StormDef // 台本の嵐（events の kind: storm、書いた順）。nil は嵐なし
+	Storms        []game.StormDef     // 台本の嵐（events の kind: storm、書いた順）。nil は嵐なし
+	Breakdowns    []game.BreakdownDef // 台本の船の故障（events の kind: breakdown、書いた順）。nil は故障なし
 	Ferries       []ferry.FerryConfig
 	DockMs        int64                // transport.dockMs
 	PortCap       int                  // transport.portCap
@@ -84,14 +85,15 @@ type Engine struct {
 	opt Options
 	inv *invariantState // テストモードの検査が覚えておく値（invariants.go）。テストモードでなければ nil
 
-	sched   Scheduler
-	nodes   []*cluster.Node  // 添字 = ID - 1
-	ledgers []*ledger.Ledger // 添字 = ID - 1
-	tr      *ferry.Transport
-	storms  stormBook   // 嵐の帳簿（storm.go）
-	reqs    requestBook // 依頼の帳簿（request.go）
-	score   scoreBook   // 採点の帳簿（score.go）
-	stats   statsBook   // 統計と「今日の出来事」の帳簿（stats.go）
+	sched      Scheduler
+	nodes      []*cluster.Node  // 添字 = ID - 1
+	ledgers    []*ledger.Ledger // 添字 = ID - 1
+	tr         *ferry.Transport
+	storms     stormBook     // 嵐の帳簿（storm.go）
+	breakdowns breakdownBook // 船の故障の帳簿（breakdown.go）
+	reqs       requestBook   // 依頼の帳簿（request.go）
+	score      scoreBook     // 採点の帳簿（score.go）
+	stats      statsBook     // 統計と「今日の出来事」の帳簿（stats.go）
 
 	phase   Phase
 	opening cluster.OpeningResult
@@ -180,6 +182,9 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	if err := e.initStorms(seed); err != nil {
 		return nil, err
 	}
+	if err := e.initBreakdowns(seed); err != nil {
+		return nil, err
+	}
 	if err := e.initDemo(); err != nil {
 		return nil, err
 	}
@@ -252,6 +257,7 @@ func (e *Engine) start() {
 	e.phase = PhaseSailing
 	e.emit(PhaseChanged{Phase: PhaseSailing})
 	e.startStorms()
+	e.startBreakdowns()
 	e.push(e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
 	e.push(e.cfg.DurationMs, ClassGameTimer, kindRoundEnd, nil)
 	e.scheduleRequests()
@@ -383,6 +389,8 @@ func (e *Engine) handleEvent(ev Event) {
 		e.retryWaits()
 	case kindStormForecast, kindStormStart, kindStormEnd:
 		e.handleStorm(ev)
+	case kindBreakdownStart, kindBreakdownRepair:
+		e.handleBreakdown(ev)
 	case kindFerryArrive:
 		e.arrive(ev.Data.(ferry.FerryID))
 	case kindFerryReady:
@@ -411,6 +419,7 @@ func (e *Engine) arrive(id ferry.FerryID) {
 	}
 	f, _ := e.tr.Ferry(id)
 	e.emit(FerryArrived{FerryID: string(id), IslandID: f.At, ReadyAt: SimTime(f.ReadyAt)})
+	e.breakOnArrival(id)
 	e.push(SimTime(f.ReadyAt), ClassFerryReady, kindFerryReady, id)
 	e.noteDelivered(f.At, len(delivered))
 	for _, lid := range delivered {

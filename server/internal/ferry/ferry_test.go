@@ -123,6 +123,114 @@ func TestDepartArrive(t *testing.T) {
 	mustInv(t, tr)
 }
 
+// FB-1 停泊中の船の故障は出航だけを止め、直る時刻ちょうどから出航できる。
+func TestBreakDepart(t *testing.T) {
+	t.Parallel()
+	tr := newT(t, baseConfig())
+	until, err := tr.Break(100, "f1", 200)
+	if err != nil || until != 200 {
+		t.Fatalf("Break = %d, %v", until, err)
+	}
+	f, _ := tr.Ferry("f1")
+	if f.BrokenUntil != 200 || f.State != Docked {
+		t.Fatalf("f1 = %+v", f)
+	}
+	mustInv(t, tr)
+	before := tr.Ferries()
+	_, err = tr.Depart(150, "f1", 2)
+	wantErr(t, err, ErrBroken)
+	if after := tr.Ferries(); !reflect.DeepEqual(before, after) {
+		t.Fatalf("ferries changed: %+v -> %+v", before, after)
+	}
+	_, err = tr.Depart(199, "f1", 2)
+	wantErr(t, err, ErrBroken)
+	if _, err := tr.Depart(200, "f1", 2); err != nil {
+		t.Fatalf("Depart(200) = %v", err)
+	}
+	mustInv(t, tr)
+}
+
+// 故障は停泊時間の前でも ErrNotReady より先に返る。
+func TestBreakBeforeNotReady(t *testing.T) {
+	t.Parallel()
+	tr := newT(t, baseConfig())
+	at, _ := tr.Depart(0, "f1", 2)
+	if _, err := tr.Arrive(at, "f1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Break(at, "f1", at+100); err != nil {
+		t.Fatal(err)
+	}
+	_, err := tr.Depart(at+50, "f1", 1)
+	wantErr(t, err, ErrBroken)
+	// 故障が直っても停泊時間（1500）の前なら ErrNotReady。
+	_, err = tr.Depart(at+100, "f1", 1)
+	wantErr(t, err, ErrNotReady)
+}
+
+// FB-2 航行中の Break は ErrNotDocked、until <= now は ErrInvalidArgument。どちらも何も変えない。
+func TestBreakErrors(t *testing.T) {
+	t.Parallel()
+	tr := newT(t, baseConfig())
+	if _, err := tr.Depart(0, "f1", 2); err != nil {
+		t.Fatal(err)
+	}
+	before := tr.Ferries()
+	_, err := tr.Break(10, "f1", 100)
+	wantErr(t, err, ErrNotDocked)
+	_, err = tr.Break(10, "f2", 10)
+	wantErr(t, err, ErrInvalidArgument)
+	_, err = tr.Break(10, "f2", 5)
+	wantErr(t, err, ErrInvalidArgument)
+	_, err = tr.Break(10, "zz", 100)
+	wantErr(t, err, ErrUnknownFerry)
+	if after := tr.Ferries(); !reflect.DeepEqual(before, after) {
+		t.Fatalf("ferries changed: %+v -> %+v", before, after)
+	}
+	mustInv(t, tr)
+}
+
+// FB-3 重ねた故障は直る時刻の大きい方になる。
+func TestBreakOverlap(t *testing.T) {
+	t.Parallel()
+	tr := newT(t, baseConfig())
+	if u, err := tr.Break(100, "f1", 200); err != nil || u != 200 {
+		t.Fatalf("Break = %d, %v", u, err)
+	}
+	if u, err := tr.Break(120, "f1", 150); err != nil || u != 200 {
+		t.Fatalf("Break(150) = %d, %v, want 200", u, err)
+	}
+	if u, err := tr.Break(130, "f1", 300); err != nil || u != 300 {
+		t.Fatalf("Break(300) = %d, %v, want 300", u, err)
+	}
+	f, _ := tr.Ferry("f1")
+	if f.BrokenUntil != 300 {
+		t.Fatalf("BrokenUntil = %d, want 300", f.BrokenUntil)
+	}
+	_, err := tr.Depart(250, "f1", 2)
+	wantErr(t, err, ErrBroken)
+}
+
+// FB-4 故障中も積み下ろしはできる。
+func TestBreakLoadUnload(t *testing.T) {
+	t.Parallel()
+	tr := newT(t, baseConfig())
+	c, _ := post(t, tr, 0, 1, msg(pb.MsgApp, 1, 2, 1), msg(pb.MsgApp, 1, 3, 1))
+	if _, err := tr.Break(0, "f1", 1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Load("f1", c); err != nil {
+		t.Fatalf("Load = %v", err)
+	}
+	mustInv(t, tr)
+	if _, err := tr.Unload("f1", c[:1]); err != nil {
+		t.Fatalf("Unload = %v", err)
+	}
+	mustInv(t, tr)
+	f, _ := tr.Ferry("f1")
+	wantIDs(t, "cargo", f.Cargo, c[1:])
+}
+
 func TestArriveDelivers(t *testing.T) {
 	t.Parallel()
 	tr := newT(t, baseConfig())

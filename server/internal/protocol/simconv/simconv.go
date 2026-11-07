@@ -261,6 +261,10 @@ func SnapshotFromSim(s sim.Snapshot) protocol.Snapshot {
 			ReadyAt:  int64(f.ReadyAt),
 			Cargo:    cargo,
 		}
+		if f.BrokenUntil != nil {
+			until := int64(*f.BrokenUntil)
+			out.Ferries[i].BrokenUntil = &until
+		}
 	}
 	for i, r := range s.Routes {
 		rs := protocol.RouteState{ID: r.ID}

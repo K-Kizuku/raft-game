@@ -461,6 +461,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 - `islandId` は `docked` のときの島
 - `from`・`to` は `sailing` のときだけ。`departAt`・`arriveAt` は `docked` のとき `0`
 - `readyAt` は、`docked` なら出航できるようになる時刻、`sailing` なら着いてから出航できる時刻（`arriveAt + dockMs`）
+- `brokenUntil` は、故障中の船だけに入る、故障が直って出航できるようになる時刻（T-715）。故障していない船にはキーを入れない（例: `{ "id": "f2", …, "readyAt": 61500, "brokenUntil": 80000, "cargo": [] }`）
 
 `islandsState[]`・`score` の注記（T-203）:
 
@@ -595,7 +596,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `letter.stale` | `letterId` | 送信元の Term が上がり、手紙が古くなった |
 | `ferry.departed` | `ferryId`, `from`, `to`, `departAt`, `arriveAt` | 出航 |
 | `ferry.arrived` | `ferryId`, `islandId`, `readyAt` | 到着 |
-| `ferry.broken` / `ferry.repaired` | `ferryId`, `until` | 故障（P1） |
+| `ferry.broken` / `ferry.repaired` | `ferryId`, `until` | 船の故障（FR-EVT-03、T-715）。`ferry.broken` の `until` はこの時刻から出航できる（故障が延びたときももう一度出す）。`ferry.repaired` の `until` は直った時刻（= このイベントの `t`） |
 | `route.blocked` / `route.unblocked` | `routeIds`, `until` | 嵐 |
 | `forecast` | `event`, `at`, `routeIds` | 嵐の予報 |
 | `node.state` | `id`, `role`（`follower` / `pre_candidate` / `candidate` / `leader`）, `term`, `vote`（`HardState` の Vote。0 = 投票していない）, `lead`, `commit`, `applied`, `lastIndex` | いずれかの値が変わった（同じステップ内の変化はまとめる） |

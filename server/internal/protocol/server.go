@@ -235,17 +235,18 @@ type Resource struct {
 // Ferry は船の状態（§5.1 の ferries[]。sim.FerryView と同じ JSON）。
 // from・to は sailing のときだけ。departAt・arriveAt は docked のとき 0。
 type Ferry struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Capacity int        `json:"capacity"`
-	State    FerryState `json:"state"`
-	IslandID uint64     `json:"islandId,omitempty"`
-	From     uint64     `json:"from,omitempty"`
-	To       uint64     `json:"to,omitempty"`
-	DepartAt int64      `json:"departAt"`
-	ArriveAt int64      `json:"arriveAt"`
-	ReadyAt  int64      `json:"readyAt"`
-	Cargo    []uint64   `json:"cargo"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Capacity    int        `json:"capacity"`
+	State       FerryState `json:"state"`
+	IslandID    uint64     `json:"islandId,omitempty"`
+	From        uint64     `json:"from,omitempty"`
+	To          uint64     `json:"to,omitempty"`
+	DepartAt    int64      `json:"departAt"`
+	ArriveAt    int64      `json:"arriveAt"`
+	ReadyAt     int64      `json:"readyAt"`
+	BrokenUntil *int64     `json:"brokenUntil,omitempty"` // 故障中だけ。この時刻から出航できる（P1）
+	Cargo       []uint64   `json:"cargo"`
 }
 
 // RouteState は航路の状態（§5.1 の routesState[]。sim.RouteView と同じ JSON）。
