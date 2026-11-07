@@ -508,94 +508,32 @@ invoked_script() {
   esac
 }
 
-# agentctl_write_sub <セグメントの単語…>: agentctl の書き込みのサブコマンド（comment・state・claim・attempt）を
-# 呼ぶ形なら、そのサブコマンドを出す（なければ空。有効な --dry-run が true なら空。agentctl_dry_run を参照）。
-# 見る形: agentctl …（.agents/bin/agentctl・lib.sh の関数を含む）、scripts/agents/agentctl.sh …、
-# bash agentctl.sh …、go … run …（go -C tools/agentctl run . … など。cd してからの go run . も
-# 見分けられないので、go run では agentctl の有無を問わない）。
-agentctl_write_sub() {
-  local w=("$@") start=-1 i x
-  case "${w[0]##*/}" in
-    agentctl | agentctl.sh) start=1 ;;
-    bash | sh | zsh | dash | source | .)
-      for ((i = 1; i < ${#w[@]}; i++)); do
-        case "${w[$i]}" in
-          -*) ;;
-          *)
-            case "${w[$i]##*/}" in
-              agentctl | agentctl.sh) start=$((i + 1)) ;;
-            esac
-            break
-            ;;
-        esac
-      done
-      ;;
-    go)
-      for ((i = 1; i < ${#w[@]}; i++)); do
-        if [ "${w[$i]}" = "run" ]; then
-          start=$((i + 1))
-          break
-        fi
-      done
-      ;;
+# agentctl_write_hit <引用符と \ を取り除いたコマンドの全体>: コマンドの文字列のどこかに agentctl の語と
+# 書き込みの語の両方があれば、見つけた書き込みの語を出す（なければ空）。安全側の字句の判定で、構文は読まない
+# （シェルのコメント・引用符の中・フラグの値・パイプの先にあっても拒否する。--dry-run の例外もない）。
+# - agentctl の語: 部分文字列 agentctl（agentctl・agentctl.sh・.agents/bin/agentctl・tools/agentctl など）。
+#   cd してからの go run . を見分けられないので、単語 go と run の両方があるときも agentctl の語とみなす
+# - 書き込みの語: 単語 comment・state・claim・attempt と、gate のフラグ --comment・--set-status（- 1 つも）
+# 単語は英数字と _ . / = - の並び（tools/agentctl/internal/state や TestComment は単語 state・comment ではない）。
+# 読み取り（plan・recover・review・pr view・pr codex-record・pr protected-files・--comment と --set-status の
+# ない gate）は、書き込みの語を含まなければ通る。
+agentctl_write_hit() {
+  local s="$1" t mention=0 has_go=0 has_run=0 sub=""
+  case "$s" in
+    *agentctl*) mention=1 ;;
   esac
-  [ "$start" -ge 0 ] || return 0
-  local sub="" subi=-1
-  for ((i = start; i < ${#w[@]}; i++)); do
-    case "${w[$i]}" in
-      comment | state | claim | attempt)
-        sub="${w[$i]}"
-        subi=$i
-        break
-        ;;
+  while IFS= read -r t; do
+    case "$t" in
+      go) has_go=1 ;;
+      run) has_run=1 ;;
+      comment | state | claim | attempt) [ -n "$sub" ] || sub="$t" ;;
+      -comment | --comment | -comment=* | --comment=*) [ -n "$sub" ] || sub="gate --comment" ;;
+      -set-status | --set-status | -set-status=* | --set-status=*) [ -n "$sub" ] || sub="gate --set-status" ;;
     esac
-  done
-  [ -n "$sub" ] || return 0
-  agentctl_dry_run "$sub" "${w[@]:subi+1}" && return 0
-  printf '%s\n' "$sub"
-}
-
-# agentctl_dry_run <サブコマンド> <サブコマンドより後の単語…>: 最後に有効な --dry-run が true と判定できるときだけ 0。
-# Go の flag と同じく、値をとるフラグ（--reason・--repo・--pr・--cause・--worker・--session・--config・--input・
-# --body・--body-file など）の値を飛ばして読み、同じフラグが何度あれば最後のものを使う。真偽値のフラグとして扱うのは
-# --dry-run と claim の --resume だけで、ほかのフラグ（未知のものを含む）は値をとるものとみなす（値を読み違えて
-# --dry-run を見落とすのは拒否の側に倒れるだけなので安全）。判定できない形は拒否する: 元のコマンドの引用符・\
-# （単語の区切りは引用符を取り除いた後のものなので、`--reason "a --dry-run"` を見分けられない）、$・` を含む単語、
-# --（フラグの終わり）、--dry-run=<true・false 以外>。state・claim・attempt は位置引数の後もフラグを読む
-# （parseInterleaved）。comment は読み方がわからないので、最初の位置引数より後は読まない。
-agentctl_dry_run() {
-  local sub="$1" x name dry=0 skip=0
-  shift
-  case "$raw" in
-    *[\'\"\\]*) return 1 ;;
-  esac
-  for x in "$@"; do
-    case "$x" in
-      *[\$\`]*) return 1 ;;
-    esac
-    if [ "$skip" = 1 ]; then
-      skip=0
-      continue
-    fi
-    case "$x" in
-      --) return 1 ;;
-      -*)
-        name="${x#-}"
-        name="${name#-}"
-        case "$name" in
-          dry-run) dry=1 ;;
-          dry-run=true) dry=1 ;;
-          dry-run=false) dry=0 ;;
-          dry-run=*) return 1 ;;
-          *=*) ;;
-          resume) [ "$sub" = claim ] || skip=1 ;;
-          *) skip=1 ;;
-        esac
-        ;;
-      *) [ "$sub" = comment ] && break ;;
-    esac
-  done
-  [ "$dry" = 1 ]
+  done < <(printf '%s\n' "$s" | tr -c 'A-Za-z0-9_./=\n-' '\n')
+  [ "$has_go" = 1 ] && [ "$has_run" = 1 ] && mention=1
+  [ "$mention" = 1 ] && [ -n "$sub" ] && printf '%s\n' "$sub"
+  return 0
 }
 
 WRITERS=" cp mv tee install rsync ln touch rm rmdir mkdir truncate dd patch chmod chown unzip tar python python3 node perl ruby "
@@ -798,16 +736,6 @@ check_segment() {
     esac
   fi
 
-  # Worker・Reviewer: agentctl の書き込みのサブコマンド（comment・state・claim・attempt。--dry-run を除く）（Issue #86）。
-  # agentctl comment は信頼する作者の認証情報で PR にコメントを書くので、偽のレビュー記録を投稿できてしまう。
-  if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
-    local acsub
-    acsub="$(agentctl_write_sub "${w[@]}")"
-    if [ -n "$acsub" ]; then
-      deny "Worker・Reviewer は agentctl $acsub を使わない（PR へのコメントと Issue の状態の書き込みは Orchestrator が行う。--dry-run だけ許す）"
-    fi
-  fi
-
   # Reviewer: 書き込みにあたる操作
   if [ "$ROLE" = "reviewer" ]; then
     if is_interpreter "$c0b"; then
@@ -833,6 +761,16 @@ check_segment() {
     esac
   fi
 }
+
+# Worker・Reviewer: agentctl の書き込み（comment・state・claim・attempt、gate --comment・--set-status）（Issue #86）。
+# agentctl comment は信頼する作者の認証情報で PR にコメントを書くので、偽のレビュー記録を投稿できてしまう。
+# セグメントに分ける前のコマンドの全体で判定する（agentctl_write_hit を参照。--dry-run の例外はない）。
+if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
+  acsub="$(agentctl_write_hit "$noquote")"
+  if [ -n "$acsub" ]; then
+    deny "Worker・Reviewer は agentctl の書き込み（$acsub）を含むコマンドを使わない（PR へのコメントと Issue の状態の書き込みは Orchestrator が行う。--dry-run でも、コメントや引用符の中の語でも拒否する）"
+  fi
+fi
 
 # shellcheck disable=SC2020
 while IFS= read -r seg; do

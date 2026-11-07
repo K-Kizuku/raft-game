@@ -372,7 +372,31 @@ agentctl_write_cmds=(
   "scripts/agents/agentctl.sh attempt 5 --cause review:F1 --repo o/r"
   "go -C tools/agentctl run . attempt 5 --cause x --repo o/r"
   "agentctl comment --dry-run=false --pr 12"
-  # --dry-run の字句があっても、有効な値が true でなければ拒否する（PR #87 の Codex の P1）
+  # Worker・Reviewer では --dry-run の例外がない（PR #87 の Codex の P1 を受けて安全側に倒した）
+  "agentctl comment --repo o/r --pr 12 --body-file b.md --dry-run"
+  "scripts/agents/agentctl.sh state 5 in-review --repo o/r --pr 12 --dry-run"
+  "go -C tools/agentctl run . claim 5 --repo o/r --dry-run"
+  "scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r --dry-run"
+  "agentctl state 5 in-review --repo o/r --dry-run=true"
+  "agentctl claim 5 --resume --dry-run --worker issue-5 --session s --repo o/r"
+  # シェルのコメントの中の --dry-run・値をとるシェルのオプション（PR #87 の Codex の P1）
+  "agentctl state 5 in-review --repo o/r # --dry-run"
+  "bash -o pipefail scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r"
+  "bash -o pipefail scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r --dry-run"
+  # 引用符で語を分けても、引用符を取り除いてから読む
+  "agentctl st''ate 5 in-review --repo o/r"
+  "agentctl \"comment\" --pr 12"
+  "'agentctl' claim 5"
+  "agentctl\\ state 5 in-review"
+  # gate の --comment・--set-status
+  "go -C tools/agentctl run . gate --repo o/r --pr 12 --comment"
+  "agentctl gate --repo o/r --pr 12 --set-status"
+  "agentctl gate --repo o/r --pr 12 -comment=true"
+  "agentctl gate --repo o/r --pr 12 --set-status=true --json"
+  # 字句の判定なので、agentctl の語と書き込みの語があれば読み取りの形でも拒否する（安全側）
+  "grep -n comment tools/agentctl/main.go"
+  "agentctl plan --repo o/r | grep state"
+  # 前回までの --dry-run の読み違いの例（いまは --dry-run の有無を問わず拒否）
   "agentctl state 5 in-review --repo o/r --reason '--dry-run'"
   "agentctl state 5 in-review --repo o/r --reason --dry-run"
   "agentctl state 5 in-review --repo o/r --dry-run --dry-run=false"
@@ -403,28 +427,25 @@ got="$(run guard-bash.sh - "$wt" "$(bash_input "scripts/agents/agentctl.sh comme
 for cmd in "${agentctl_write_cmds[@]}"; do
   expect_bash 0 orchestrator "$repo" "$cmd"
 done
-# --dry-run と読み取りのサブコマンドは、Worker・Reviewer でも許す
+# 読み取りのサブコマンドは、Worker・Reviewer でも許す
 for role in worker reviewer orchestrator; do
   for cmd in \
-    "agentctl comment --repo o/r --pr 12 --body-file b.md --dry-run" \
-    "scripts/agents/agentctl.sh state 5 in-review --repo o/r --pr 12 --dry-run" \
-    "go -C tools/agentctl run . claim 5 --repo o/r --dry-run" \
-    "scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r --dry-run" \
-    "agentctl state 5 in-review --repo o/r --dry-run" \
-    "agentctl state 5 in-review --repo o/r --dry-run=true" \
-    "agentctl state 5 in-review --dry-run=false --repo o/r -dry-run" \
-    "agentctl state --dry-run 5 in-review --reason=x --pr 12 --cause ci:ci-ok --repo o/r" \
-    "agentctl claim 5 --resume --dry-run --worker issue-5 --session s --repo o/r" \
-    "agentctl attempt 5 --config c.json --input s.json --cause x --dry-run" \
-    "agentctl comment --repo o/r --pr 12 --body x --dry-run" \
     "scripts/agents/agentctl.sh plan --repo o/r --json" \
+    "agentctl plan --repo o/r" \
     "scripts/agents/agentctl.sh recover --repo o/r --json" \
+    ".agents/bin/agentctl pr view 12 --repo o/r --json" \
+    "agentctl pr codex-record --repo o/r --pr 12" \
+    "bash -o pipefail scripts/agents/agentctl.sh pr protected-files --repo o/r --pr 12" \
     "go -C tools/agentctl run . gate --repo o/r --pr 12 --json --input $tmp/pass.json" \
+    "agentctl gate --repo o/r --pr 12 --json" \
     "go -C tools/agentctl run . review validate $tmp/review.json" \
     "go -C tools/agentctl run . review render $tmp/review.json" \
     "go -C tools/agentctl test -race ./..." \
     "go test ./tools/agentctl/... -run TestComment" \
-    "grep -n comment tools/agentctl/main.go" \
+    "go -C tools/agentctl test ./internal/state/..." \
+    "grep -n plan tools/agentctl/main.go" \
+    "echo 'fix: state を comment にする'" \
+    "go test ./server/... -run TestClaim" \
     "git log --oneline -- tools/agentctl"; do
     expect_bash 0 "$role" "$wt" "$cmd"
   done
