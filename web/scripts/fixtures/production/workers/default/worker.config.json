@@ -22,7 +22,7 @@
   "env": {
     "ALLOWED_ORIGINS": {
       "type": "text",
-      "value": "https://raft.kizuku-hackathon.work"
+      "value": "https://raft.kizuku-hackathon.work,https://raft-demo.kizuku-hackathon.work"
     },
     "DEMO_CONTROLS": {
       "type": "text",

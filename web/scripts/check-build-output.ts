@@ -17,7 +17,7 @@ export type Mode = (typeof MODES)[number];
 
 interface Expected {
   worker: string;
-  host: string | undefined; // domains と ALLOWED_ORIGINS（ローカルは書かない）
+  host: string | undefined; // domains。undefined（ローカル）なら ALLOWED_ORIGINS も書かない
   container: string | undefined; // GameSession のコンテナ（undefined ならコンテナも GameSession もない）
   ownCostGuard: boolean; // false なら一般公開の CostGuard を参照し、GUARDS・ADMIN_TOKEN を持たない
   demoControls: string;
@@ -26,6 +26,9 @@ interface Expected {
 }
 
 const PRODUCTION_WORKER = "raft-game";
+// host のあるモード（一般公開・デモ）の ALLOWED_ORIGINS。両方とも両方のホスト名のオリジン（#130 の決定・T-601b）
+export const ALLOWED_ORIGINS =
+  "https://raft.kizuku-hackathon.work,https://raft-demo.kizuku-hackathon.work";
 
 export const EXPECTED: Record<Mode, Expected> = {
   production: {
@@ -312,7 +315,7 @@ export function checkOutput(out: BuildOutput, mode: Mode): string[] {
   // 9. 文字列
   checkText(env, "DEMO_CONTROLS", e.demoControls, errors);
   checkText(env, "CONTAINER_INSTANCE", e.instance, errors);
-  if (e.host !== undefined) checkText(env, "ALLOWED_ORIGINS", `https://${e.host}`, errors);
+  if (e.host !== undefined) checkText(env, "ALLOWED_ORIGINS", ALLOWED_ORIGINS, errors);
   const buildId = env["BUILD_ID"];
   if (buildId !== undefined) {
     const v = isObj(buildId) ? buildId["value"] : undefined;
