@@ -159,6 +159,7 @@ python3 scripts/cloudflare/budget_alert.py --check --email <アドレス>       
 
 - 終了コード: 成功 0、違反・`cf` の失敗・反映の後の差・確認の拒否 1、使い方の誤り 2
 - `spend-policies` の API が使えない（アカウントで有効でない・権限がない）と、`cf` の文を出して 1 で終わります。その出力を Issue に貼って止めます（ダッシュボードで設定するかは、Orchestrator とオーナーが決める）
+- `cf billing spend-policies list` が `[1003] spend policy not found`（404）で失敗したときは、ポリシーが 0 件とみなして続けます（下の「2026-11-08 の例外」）。404 でも、文が `spend policy not found` でない失敗（権限がないなど）は、今までどおり 1 で終わります
 - 同じ名前のポリシーが 2 つ以上あると 1 で終わります。どれを残すか人が決め、要らないものを消します（スクリプトには消すモードがない）
 
 ```bash
@@ -166,6 +167,21 @@ cd web && export CF_SEND_TELEMETRY=false
 pnpm exec cf billing spend-policies list
 pnpm exec cf billing spend-policies delete <ポリシーの ID> --if-match <version> --dry-run
 #   → 確かめてから --dry-run を外し、--force を付けて実行する
+```
+
+### 2026-11-08 の例外: ダッシュボードで設定した
+
+- **2026-11-08 時点で、予算アラートは Cloudflare のダッシュボードで設定しています。** D-22 の例外で、オーナーが判断しました（ADR-0016 はダッシュボードでの手作業の変更を使わない方針。ADR-0016 の「例外」に記録）
+- 経緯: `budget_alert.py --check` の最初の `cf billing spend-policies list` が `APIError [1003] spend policy not found`（404）で失敗し、スクリプトで作れませんでした
+- 考えられる原因（切り分けていない）: ポリシーが 0 件のとき、API が空の一覧ではなく 404 を返す（ベータ版の API の癖）可能性が高いと見ています。ほかに、アカウントで `spend-policies` がまだ有効でない、`cf` の版と API の食い違いも考えられます
+- 対応: `budget_alert.py` は、`list` のこの失敗を 0 件として扱うようにしました（Issue #223）。ダッシュボードで作ったアラートは、変更・削除しません
+- 次に確かめるときの手順（人が実行する）: `cf billing spend-policies list` を手で実行し、ダッシュボードで作ったポリシーが一覧に出るかを見ます。出れば、ダッシュボードのポリシーと `cf` の API は同じものを見ていて、0 件のときだけ 404 になると分かります。出なければ（同じ 404 なら）、ダッシュボードのアラートは `spend-policies` の API の外にあるので、`budget_alert.py --apply` で作ると二重になります。結果をこの節に書きます
+
+```bash
+cd web && export CF_SEND_TELEMETRY=false
+export CLOUDFLARE_ACCOUNT_ID=<アカウント ID>
+pnpm exec cf billing spend-policies list
+#   → ダッシュボードで作ったアラートが出るか。出ないときは失敗の文（[1003] など）をそのまま記録する
 ```
 
 ### しきい値の変え方
