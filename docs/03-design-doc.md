@@ -174,7 +174,7 @@ func Replay(cfg Config, stageHash string, in ReplayLog, opt Options) (*Engine, e
 - `cmd.ferry.autoload` は `Apply` のコマンドで、ゲームデザイン §3.4 の順に空きを埋める。入力ログには `{ferryId, to}` だけが入る（リプレイでも同じ手紙が選ばれる）
 - `demo.trigger`（`Command.Event` が `storm`）は `Apply` のコマンドで、`Config.DemoStorm`（ステージ定義の `demo.storm`）の航路を、いまの時刻から `DurationMs` だけ遮断する（予報なし。`raiseStorm`）。デモ操作を許すかはセッションが決め、Engine はステージの設定どおりに動く（リプレイでも同じ）。入力ログには `{event}` だけが入る
 - `NextNotableAt` は、航行中の船の到着（`DurationMs` 以下）、まだ発生していない最初の依頼の時刻、まだ処理していない嵐の予報・開始・終わり（`DurationMs` 以下）のうち最も小さいもの。`FerryReady` を含めない。30 秒の上限と一時停止はセッションループ（§12.4）が持つ
-- 後のタスクで次を足す: `NodeDetail(id)`（エンジニアモード用）は T-407、`Result()`（終了後のみ）は T-203
+- `NodeDetail(id uint64) (NodeDetail, bool)`（エンジニアモード用、T-407b）は、ノードの状態・ログの末尾 50 件・Leader から見た Progress・台帳・選挙の推定（最後に Leader から手紙を受け取ってからの tick 数、§3.3）を返す。読むだけで、状態・イベント・トレース・入力ログ・時刻を変えない（呼んでも呼ばなくてもトレースのハッシュは同じ）。`Intro` と範囲外の `id` は false。後のタスクで次を足す: `Result()`（終了後のみ）は T-203
 - Engine の誤り（`Process`・`PostRaft`・`Arrive`・`AdvanceTo`・`Push` のエラー、コードに対応しない `ferry` のエラー、台帳の結果の型の違い、テストモードの不変条件の違反）は panic する。正しく使えば起きない。セッションループ（T-303）が panic を回復し、そのセッションを `error`（`fatal`）で閉じる
 
 ---
@@ -317,7 +317,7 @@ type Node struct {
 
 `cluster` は `ledger` を import せず、`StateMachine` 越しに台帳を使います。`sim` が `*ledger.Ledger` を `StateMachine` に合わせる薄い包みを作って `NodeConfig.StateMachine` に渡します。台帳はノードごとに 1 つずつ持ちます（Raft の「状態機械の複製」そのもの）。V-2・V-3 の検査は、全ノードの台帳を比べて行います。
 
-読み取り用の口として、`Status()` のほかに `Log() ([]LogEntry, error)` を持ちます。ストレージにあるエントリ（index 1 から LastIndex まで）の複製を返し、Raft の状態とストレージを変えません。不変条件の検査（§11）と、エンジニアモード（T-407）が使います。
+読み取り用の口として、`Status()` のほかに `Log() ([]LogEntry, error)` と `Progress() []Progress` を持ちます。`Log()` はストレージにあるエントリ（index 1 から LastIndex まで）の複製を返し、不変条件の検査（§11）と、エンジニアモード（T-407）が使います。`Progress()` は、Leader のときだけ構成の各ノード（自分を含む・Learner を除く）の複製の進み具合（Match・Next・状態・RecentActive）を ID の昇順に返し（`RawNode.WithProgress` で読む。Leader でなければ nil）、エンジニアモード（T-407b）が使います。どちらも Raft の状態とストレージを変えません。
 
 ---
 

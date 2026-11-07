@@ -81,7 +81,7 @@ export function EngineerPanel(): ReactElement {
           {world === null ? (
             <p>まだ島の状態が届いていません。</p>
           ) : (
-            <EngineerBody world={world} targetId={targetId} subscribed={subscribe !== null} />
+            <EngineerBody world={world} targetId={targetId} />
           )}
         </aside>
       )}
@@ -131,20 +131,13 @@ function idText(id: number | null): string {
 function EngineerBody({
   world,
   targetId,
-  subscribed,
 }: {
   world: World;
   targetId: number | null;
-  subscribed: boolean;
 }): ReactElement {
-  const detail = useGameStore((s) => s.nodeDetail);
   const selection = useGameStore((s) => s.selection);
   const [letterId, setLetterId] = useState<number | null>(null);
-  // 購読を切り替えた直後に届いた古い詳細は使わない（購読する ID のものだけ）。
-  const rows = useMemo(
-    () => nodeRows(world, detail !== null && detail.id === targetId ? detail : null, targetId),
-    [world, detail, targetId],
-  );
+  const rows = useMemo(() => nodeRows(world, targetId), [world, targetId]);
   const lists = useMemo(() => letterLists(world, selection), [world, selection]);
   const lookup = useMemo(
     () => (letterId === null ? null : findLetter(world, letterId)),
@@ -158,54 +151,47 @@ function EngineerBody({
         {rows.length === 0 ? (
           <p>ノードの状態が届いていません。</p>
         ) : (
-          <>
-            <table aria-label="ノード一覧" className="engineer-table">
-              <thead>
-                <tr>
-                  {["Node", "Role", "Term", "Vote", "Lead", "Commit", "Applied", "Last Index"].map(
-                    (name) => (
-                      <th key={name} scope="col">
-                        {name}
-                      </th>
-                    ),
-                  )}
+          <table aria-label="ノード一覧" className="engineer-table">
+            <thead>
+              <tr>
+                {["Node", "Role", "Term", "Vote", "Lead", "Commit", "Applied", "Last Index"].map(
+                  (name) => (
+                    <th key={name} scope="col">
+                      {name}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  key={row.id}
+                  data-node={row.id}
+                  data-role={row.role === "leader" ? "leader" : undefined}
+                >
+                  <td>
+                    <button
+                      type="button"
+                      aria-pressed={row.target}
+                      onClick={() => {
+                        gameStore.getState().selectIsland(row.id);
+                      }}
+                    >
+                      {row.id} {row.name}
+                    </button>
+                  </td>
+                  <td>{row.roleLabel}</td>
+                  <td>{row.term}</td>
+                  <td>{idText(row.vote)}</td>
+                  <td>{idText(row.lead)}</td>
+                  <td>{row.commit}</td>
+                  <td>{row.applied}</td>
+                  <td>{row.lastIndex}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    data-node={row.id}
-                    data-role={row.role === "leader" ? "leader" : undefined}
-                  >
-                    <td>
-                      <button
-                        type="button"
-                        aria-pressed={row.target}
-                        onClick={() => {
-                          gameStore.getState().selectIsland(row.id);
-                        }}
-                      >
-                        {row.id} {row.name}
-                      </button>
-                    </td>
-                    <td>{row.roleLabel}</td>
-                    <td>{row.term}</td>
-                    <td>{idText(row.vote)}</td>
-                    <td>{idText(row.lead)}</td>
-                    <td>{row.commit}</td>
-                    <td>{row.applied}</td>
-                    <td>{row.lastIndex}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="engineer-note">
-              {subscribed
-                ? "Vote は選んでいるノードだけ表示します（node.detail）。"
-                : "サーバーにつながっていないので、Vote は表示できません。"}
-            </p>
-          </>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
       <section className="engineer-section">

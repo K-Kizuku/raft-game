@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Letter, NodeDetail, Snapshot } from "../../protocol/index.ts";
+import type { Letter, NodeSummary, Snapshot } from "../../protocol/index.ts";
 import { applyEvents, worldFromSnapshot } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
@@ -20,22 +20,6 @@ import {
 function mini(n: number): World {
   const { snapshot, events } = loadMiniRound();
   return applyEvents(worldFromSnapshot(snapshot, 0), events.slice(0, n));
-}
-
-function detail(id: number, vote: number): NodeDetail {
-  return {
-    id,
-    role: "leader",
-    term: 2,
-    vote,
-    lead: 1,
-    commit: 0,
-    applied: 0,
-    lastIndex: 1,
-    log: [],
-    ledger: {},
-    electionEstimate: { ticksSinceLeaderContact: 0, note: "" },
-  };
 }
 
 function letterOf(world: World, id: number): Letter {
@@ -103,24 +87,28 @@ describe("engineerView", () => {
 
   it("EV-3 nodeRows", () => {
     const w = mini(5);
-    const rows = nodeRows(w, null, 1);
+    const rows = nodeRows(w, 1);
     expect(rows.map((r) => r.id)).toEqual([1, 2, 3]);
     expect(rows.map((r) => r.name)).toEqual(["一の島", "二の島", "三の島"]);
     expect(rows[0]).toMatchObject({
       role: "leader",
       roleLabel: "Leader",
       term: 2,
+      vote: 1,
       lead: 1,
       lastIndex: 1,
       target: true,
     });
-    expect(rows.map((r) => r.vote)).toEqual([null, null, null]);
+    // vote は全ノードについて node.state の値（詳細の有無に依らない）。
+    expect(rows.map((r) => r.vote)).toEqual([1, 1, 1]);
     expect(rows.map((r) => r.target)).toEqual([true, false, false]);
 
-    expect(nodeRows(w, detail(1, 1), 1).map((r) => r.vote)).toEqual([1, null, null]);
-    expect(nodeRows(w, detail(2, 1), 1).map((r) => r.vote)).toEqual([null, 1, null]);
-    expect(nodeRows(w, null, 3).map((r) => r.target)).toEqual([false, false, true]);
-    expect(nodeRows(w, null, null).map((r) => r.target)).toEqual([false, false, false]);
+    const n3 = w.nodes[3] as NodeSummary;
+    const votes = { ...w, nodes: { ...w.nodes, 3: { ...n3, vote: 0 } } } as World;
+    expect(nodeRows(votes, 1).map((r) => r.vote)).toEqual([1, 1, 0]);
+    expect(nodeRows(mini(0), 1).map((r) => r.vote)).toEqual([0, 0, 0]);
+    expect(nodeRows(w, 3).map((r) => r.target)).toEqual([false, false, true]);
+    expect(nodeRows(w, null).map((r) => r.target)).toEqual([false, false, false]);
 
     const { snapshot } = loadMiniRound();
     const noStage: Snapshot = {
@@ -129,7 +117,7 @@ describe("engineerView", () => {
       nodes: [...snapshot.nodes].reverse(),
     };
     const empty = worldFromSnapshot(noStage, 0);
-    const emptyRows = nodeRows(empty, null, null);
+    const emptyRows = nodeRows(empty, null);
     expect(emptyRows.map((r) => r.id)).toEqual([1, 2, 3]);
     expect(emptyRows.map((r) => r.name)).toEqual(["島 1", "島 2", "島 3"]);
   });

@@ -25,7 +25,16 @@ function worldWith(patch: { letters?: Letter[]; cargo?: number[]; nodes?: NodeSu
 }
 
 function node(id: number, role: NodeSummary["role"], term: number): NodeSummary {
-  return { id, role, term, lead: 0, commit: 0, applied: 0, lastIndex: 0 };
+  return {
+    id,
+    role,
+    term,
+    vote: role === "leader" ? id : 0,
+    lead: 0,
+    commit: 0,
+    applied: 0,
+    lastIndex: 0,
+  };
 }
 
 const clock: ClockView = {

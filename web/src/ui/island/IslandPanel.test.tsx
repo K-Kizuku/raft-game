@@ -172,7 +172,16 @@ describe("IslandPanel", () => {
         ...base,
         nodes: [
           ...base.nodes,
-          { id: 9, role: "follower", term: 2, lead: 1, commit: 0, applied: 0, lastIndex: 0 },
+          {
+            id: 9,
+            role: "follower",
+            term: 2,
+            vote: 1,
+            lead: 1,
+            commit: 0,
+            applied: 0,
+            lastIndex: 0,
+          },
         ],
         letters: [portLetter(1, 9, 7)],
       },

@@ -107,6 +107,7 @@ func (e *Engine) Snapshot() Snapshot {
 			ID:        uint64(i + 1),
 			Role:      roleString(v.role),
 			Term:      v.term,
+			Vote:      v.vote,
 			Lead:      v.lead,
 			Commit:    v.commit,
 			Applied:   v.applied,

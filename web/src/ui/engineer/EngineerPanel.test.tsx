@@ -159,7 +159,7 @@ describe("EngineerPanel", () => {
     expect(subscribe).not.toHaveBeenCalled();
   });
 
-  it("EP-3 ノード一覧の見出しと値。Vote は node.detail のノードだけ", () => {
+  it("EP-3 ノード一覧の見出しと値。Vote は全ノードについて node.state の値", () => {
     loadMini(5);
     render(<EngineerPanel />);
     open();
@@ -176,30 +176,35 @@ describe("EngineerPanel", () => {
       "Applied",
       "Last Index",
     ]);
-    expect(rowCells(1)).toEqual(["1 一の島", "Leader", "2", "—", "1", "0", "0", "1"]);
-    expect(rowCells(2)).toEqual(["2 二の島", "Follower", "2", "—", "1", "0", "0", "0"]);
+    expect(rowCells(1)).toEqual(["1 一の島", "Leader", "2", "1", "1", "0", "0", "1"]);
+    expect(rowCells(2)).toEqual(["2 二の島", "Follower", "2", "1", "1", "0", "0", "0"]);
+    expect(rowCells(3)[3]).toBe("1");
     const leaderRows = nodeTable().querySelectorAll('tr[data-role="leader"]');
     expect([...leaderRows].map((r) => r.getAttribute("data-node"))).toEqual(["1"]);
 
+    // node.detail の vote ではなく node.state の値を出す。
     act(() => {
-      gameStore.getState().setNodeDetail(detail(1, 1));
+      gameStore.getState().setNodeDetail(detail(1, 3));
     });
-    expect(rowCells(1)[3]).toBe("1");
-    expect(rowCells(2)[3]).toBe("—");
-    expect(rowCells(3)[3]).toBe("—");
+    expect([1, 2, 3].map((id) => rowCells(id)[3])).toEqual(["1", "1", "1"]);
 
-    // 購読していないノードの詳細（切り替えの直後に届いた古いもの）は出さない。
+    // 0（投票していない）は「—」。
+    const { snapshot } = loadMiniRound();
     act(() => {
-      gameStore.getState().setNodeDetail(detail(2, 1));
+      gameStore.getState().applySnapshot(
+        {
+          ...snapshot,
+          nodes: snapshot.nodes.map((n) => (n.id === 3 ? { ...n, term: 1, vote: 3 } : n)),
+        },
+        0,
+      );
     });
-    expect([1, 2, 3].map((id) => rowCells(id)[3])).toEqual(["—", "—", "—"]);
+    expect([1, 2, 3].map((id) => rowCells(id)[3])).toEqual(["—", "—", "3"]);
 
-    expect(
-      within(panel()).getByText("サーバーにつながっていないので、Vote は表示できません。"),
-    ).toBeDefined();
+    expect(within(panel()).queryByText(/Vote は/)).toBeNull();
   });
 
-  it("EP-3 Provider があれば注記は node.detail の説明。ノードが空なら表を出さない", () => {
+  it("EP-3 Provider があっても Vote の注記は出さない。ノードが空なら表を出さない", () => {
     loadMini(5);
     render(
       <EngineerSubscriptionProvider subscribe={vi.fn<EngineerSubscriber>()}>
@@ -207,9 +212,7 @@ describe("EngineerPanel", () => {
       </EngineerSubscriptionProvider>,
     );
     open();
-    expect(
-      within(panel()).getByText("Vote は選んでいるノードだけ表示します（node.detail）。"),
-    ).toBeDefined();
+    expect(within(panel()).queryByText(/Vote は/)).toBeNull();
 
     const { snapshot } = loadMiniRound();
     act(() => {

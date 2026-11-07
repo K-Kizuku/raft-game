@@ -68,8 +68,8 @@ const (
 
 // nodeView は node.state に出す値（最後に出した値と比べる）。
 type nodeView struct {
-	role                                   raft.StateType
-	term, lead, commit, applied, lastIndex uint64
+	role                                         raft.StateType
+	term, vote, lead, commit, applied, lastIndex uint64
 }
 
 // Engine は 1 ゲーム分の世界（DesignDoc §4.3）。I/O・goroutine・実時間を使わずに動く。
@@ -99,6 +99,7 @@ type Engine struct {
 	last       []nodeView // node.state を最後に出した値。添字 = ID - 1
 	leaderTerm []uint64   // Leader になったときの Term。添字 = ID - 1
 	staleTerm  []uint64   // 送信元の手紙を古いと判定した基準の Term（letter.stale）。添字 = ID - 1
+	contactAt  []SimTime  // 最後に Leader から手紙を受け取った時刻（NodeDetail の選挙の推定。観察だけ）。添字 = ID - 1
 
 	seq     uint64        // 最後に振ったイベントの連番
 	pending []DomainEvent // まだ取り出していないイベント
@@ -138,6 +139,7 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		last:       make([]nodeView, n),
 		leaderTerm: make([]uint64, n),
 		staleTerm:  make([]uint64, n),
+		contactAt:  make([]SimTime, n),
 		trace:      newTraceHash(),
 	}
 	for i, id := range ids {
@@ -431,6 +433,7 @@ func (e *Engine) arrive(id ferry.FerryID) {
 		if err != nil {
 			panic(fmt.Sprintf("sim: node %d: process: %v", l.To, err))
 		}
+		e.noteLeaderContact(l.To, l.From)
 		e.handleOutput(l.To, out)
 	}
 }
@@ -449,6 +452,7 @@ func (e *Engine) afterStep() {
 		v := nodeView{
 			role:      st.Role,
 			term:      st.Term,
+			vote:      st.Vote,
 			lead:      st.Lead,
 			commit:    st.Commit,
 			applied:   st.Applied,
@@ -462,6 +466,7 @@ func (e *Engine) afterStep() {
 			ID:        st.ID,
 			Role:      roleString(v.role),
 			Term:      v.term,
+			Vote:      v.vote,
 			Lead:      v.lead,
 			Commit:    v.commit,
 			Applied:   v.applied,

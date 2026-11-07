@@ -32,7 +32,7 @@ func TestSnapshotAfterStart(t *testing.T) { // SN-2
 		t.Errorf("Phase, LastSeq = %s, %d; want sailing, 6", s.Phase, s.LastSeq)
 	}
 	ns := func(id uint64, role string) NodeState {
-		return NodeState{ID: id, Role: role, Term: 2, Lead: 1, Commit: 4, Applied: 4, LastIndex: 4}
+		return NodeState{ID: id, Role: role, Term: 2, Vote: 1, Lead: 1, Commit: 4, Applied: 4, LastIndex: 4}
 	}
 	if want := []NodeState{ns(1, "leader"), ns(2, "follower"), ns(3, "follower")}; !reflect.DeepEqual(s.Nodes, want) {
 		t.Errorf("Nodes = %+v, want %+v", s.Nodes, want)

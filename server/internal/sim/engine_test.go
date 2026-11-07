@@ -211,7 +211,7 @@ func TestGameStart(t *testing.T) { // S-1
 	}
 	evs := e.DrainEvents()
 	ns := func(id uint64, role string) NodeState {
-		return NodeState{ID: id, Role: role, Term: 2, Lead: 1, Commit: 4, Applied: 4, LastIndex: 4}
+		return NodeState{ID: id, Role: role, Term: 2, Vote: 1, Lead: 1, Commit: 4, Applied: 4, LastIndex: 4}
 	}
 	checkEvents(t, evs, []EventData{
 		PhaseChanged{Phase: PhaseOpening},

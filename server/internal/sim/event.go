@@ -121,6 +121,7 @@ type NodeState struct {
 	ID        uint64 `json:"id"`
 	Role      string `json:"role"` // "follower" | "pre_candidate" | "candidate" | "leader"
 	Term      uint64 `json:"term"`
+	Vote      uint64 `json:"vote"` // HardState の Vote（0 = 投票していない）
 	Lead      uint64 `json:"lead"`
 	Commit    uint64 `json:"commit"`
 	Applied   uint64 `json:"applied"`
@@ -258,25 +259,32 @@ func newRaftView(m *pb.Message, senderTerm uint64) *RaftView {
 
 // newEntryView はエントリ 1 つの表示用の値を作る。
 func newEntryView(ent *pb.Entry) EntryView {
-	v := EntryView{Index: ent.GetIndex(), Term: ent.GetTerm()}
-	switch ent.GetType() {
+	typ, summary := entryTypeSummary(ent.GetType(), ent.GetData())
+	return EntryView{Index: ent.GetIndex(), Term: ent.GetTerm(), Type: typ, Summary: summary}
+}
+
+// entryTypeSummary はエントリの種類と要約の文字列を返す（EntryView と NodeDetail の LogEntryDetail で共通）。
+// 種類は "normal" | "conf_change" | "conf_change_v2"（知らない種類は pb.EntryType の String()）。
+// 要約は、通常のエントリの "<kind> <reqId>"、読めなければ "invalid"、空のエントリと構成変更は ""。
+func entryTypeSummary(t pb.EntryType, data []byte) (typ, summary string) {
+	switch t {
 	case pb.EntryNormal:
-		v.Type = "normal"
-		if d := ent.GetData(); len(d) > 0 {
-			if c, err := ledger.Decode(d); err == nil {
-				v.Summary = c.Kind + " " + c.ReqID
+		typ = "normal"
+		if len(data) > 0 {
+			if c, err := ledger.Decode(data); err == nil {
+				summary = c.Kind + " " + c.ReqID
 			} else {
-				v.Summary = "invalid"
+				summary = "invalid"
 			}
 		}
 	case pb.EntryConfChange:
-		v.Type = "conf_change"
+		typ = "conf_change"
 	case pb.EntryConfChangeV2:
-		v.Type = "conf_change_v2"
+		typ = "conf_change_v2"
 	default:
-		v.Type = ent.GetType().String()
+		typ = t.String()
 	}
-	return v
+	return typ, summary
 }
 
 // roleString は役割の文字列（node.state の role）。pre_candidate はプロトコルにない値（設計書にない判断）。

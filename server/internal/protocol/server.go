@@ -305,6 +305,7 @@ type NodeSummary struct {
 	ID        uint64 `json:"id"`
 	Role      Role   `json:"role"`
 	Term      uint64 `json:"term"`
+	Vote      uint64 `json:"vote"` // HardState の Vote（0 = 投票していない）
 	Lead      uint64 `json:"lead"`
 	Commit    uint64 `json:"commit"`
 	Applied   uint64 `json:"applied"`
