@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-1 の準備中。実行時点の OAuth 認証成功を確認。Workers の契約・workers.dev・ローカルのビルド環境を確認し、測定コードの main へのマージを待つ。
+- 状態: H-1 の準備中。認証と OpenSSL を確認。契約一覧に Workers Paid がなく、Docker の linux/amd64 実行と Go 1.26 以上のツールチェーンを追加確認する。workers.dev と #134 のマージも待ち。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -16,7 +16,7 @@
 
 | 手順 | 状態 | 確認できたこと / 残り |
 |---|---|---|
-| H-1 準備 | 途中 | Node・pnpm・cf の版、Docker daemon の稼働、実行時点の OAuth 認証成功を確認。有料プラン・対象アカウントの最終確認・workers.dev サブドメインは未確認。#134 のマージ後に依存のインストールと check.sh を確認する |
+| H-1 準備 | 途中 | Node・pnpm・cf、Docker daemon、OAuth、OpenSSL を確認。契約一覧に Workers Paid がない。linux/amd64 の実行と Go 1.26 以上の利用可否は未確認。workers.dev も未確認。#134 のマージ後に依存のインストールと check.sh を確認する |
 | H-2 トークンの準備 | 未実施 | 測定コードが main に入ってから実施する |
 | H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
 | H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
@@ -111,12 +111,12 @@ pnpm -C web exec cf auth whoami
 
 | 項目 | 方法 | 状態 |
 |---|---|---|
-| Workers の有料プラン | `cf accounts subscriptions get` の結果で Workers の契約を確認。権限不足や不明な結果なら、ダッシュボードの Workers の契約表示で補足する | 未実施 |
+| Workers の有料プラン | `cf accounts subscriptions get` の結果で Workers の契約を確認。権限不足や不明な結果なら、ダッシュボードの Workers の契約表示で補足する | 一覧の取得に成功。Workers Paid は含まれない。ダッシュボードで最終確認する |
 | workers.dev のサブドメイン | 対象アカウントの Workers & Pages に表示される `<サブドメイン>.workers.dev` を読む | 未確認 |
-| linux/amd64 のビルド環境 | `docker buildx inspect` の Platforms を確認。実際のイメージのビルド・実行は #134 の check.sh で確認する | 未実施 |
-| ローカルの Go | `go version`。#134 の仕様の go.mod は `go 1.26`。測定用のローカル実行に使えるツールチェーンか確認する | 未実施 |
-| トークン生成用の OpenSSL | `openssl version`。この段階ではシークレットを生成しない | 未実施 |
-| ユーザーの手元のコミット | `git rev-parse HEAD`。GitHub で確認した main の SHA と区別して記録する | 未実施 |
+| linux/amd64 のビルド環境 | `docker buildx inspect` の Platforms を確認。実際のスパイクのイメージのビルド・実行は #134 の check.sh で確認する | Platforms に linux/amd64 がない。小さい既存イメージで実行を追加確認する |
+| ローカルの Go | `go version`。#134 の仕様の go.mod は `go 1.26`。測定用のローカル実行に使えるツールチェーンか確認する | 既定は go1.25.5。1.26 以上のツールチェーンの実行を追加確認する |
+| トークン生成用の OpenSSL | `openssl version`。この段階ではシークレットを生成しない | OpenSSL 3.4.0 の起動を確認 |
+| ユーザーの手元のコミット | `git rev-parse HEAD`。GitHub で確認した main の SHA と区別して記録する | 31d8b909d620c35c252e2108aa753eab0fa5d8a1 |
 
 次にユーザーがリポジトリのルートで実行するコマンド:
 
@@ -137,6 +137,41 @@ workers.dev の表示場所は [Cloudflare の公式手順](https://developers.c
 上記の前提条件が確認できたら、#134 のマージを待つ。マージ後に手元の測定用の作業ツリーを最新化し、`spike/README.md` の実装済みの手順を確認してから、`pnpm install` と `bash spike/scripts/check.sh` に進む。
 
 その後のローカル動作確認、シークレットの生成と gitignore の確認、spike/ からのビルド・デプロイは、実装された README の手順に合わせて順に案内する。ここまでの出力で H-1 全体を完了扱いにはしない。
+
+## 2026-11-07: 契約・Docker・Go・OpenSSL の確認
+
+共有されたプロンプトの開始時刻は 14:57:50。前節の 5 コマンドの出力をユーザーから受け取った。
+
+### 共有された結果
+
+| 項目 | 結果 | 判定 |
+|---|---|---|
+| アカウントの契約一覧 | Teams Free Base (teams_free) と R2 Paid (r2_paid) の 2 件。全 1 ページ、total_count: 2 | 一覧に Workers Paid はない。Workers の契約をダッシュボードで確認する |
+| Docker builder | desktop-linux、driver: docker、status: running、BuildKit v0.11.6+616c3f613b54 | builder は稼働中 |
+| builder の Platforms | linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/mips64, linux/arm/v7, linux/arm/v6 | linux/amd64 が含まれない。実行可能かはまだ試していない |
+| Go | go1.25.5 darwin/arm64 | #134 の仕様の go 1.26 より古い。ただし自動ツールチェーン選択の設定・1.26 以上のダウンロード可否は未確認 |
+| OpenSSL | OpenSSL 3.4.0 22 Oct 2024 / Library: OpenSSL 3.4.0 22 Oct 2024 | コマンドの起動を確認。シークレットはまだ生成していない |
+| 手元の HEAD | 31d8b909d620c35c252e2108aa753eab0fa5d8a1 | ユーザーの端末の出力として記録。最新の main と同一かは未確認 |
+| workers.dev | 今回の共有には含まれない | 引き続き未確認 |
+
+契約の state が Paid でも、Teams Free Base や R2 Paid を Workers Paid と同一視しない。契約 ID・外部課金 ID・支払い関連フィールドは公開記録には転載しない。
+
+### 次の手順
+
+1. 対象アカウントのダッシュボードで Workers の契約を確認し、Workers Paid が未契約なら有効にする。Containers には Workers Paid が必要で、基本料金は月 5 USD、利用状況に応じて追加の従量料金が発生する。あわせて workers.dev のサブドメインを確認する。
+2. Go 1.26 系のツールチェーンをコマンド単位で指定して起動する。確認した [Go の配布一覧](https://go.dev/dl/) の 1.26.9 を使い、既存の Go のグローバル設定は変えない。[GOTOOLCHAIN の公式説明](https://go.dev/doc/toolchain) に従い、未取得なら Go コマンドがダウンロードする。
+3. linux/amd64 の軽量なコンテナを 1 回実行して、エミュレーションが機能するかを確認する。builder の表示だけでは故障箇所を断定しない。Docker の設定変更や再起動は、実行結果を見てから判断する。
+
+```fish
+env GOTOOLCHAIN=go1.26.9 go version
+docker run --rm --platform linux/amd64 alpine:3.22 uname -m
+```
+
+期待する出力はそれぞれ `go version go1.26.9 darwin/arm64` と `x86_64`。これは次に案内したコマンドであり、まだユーザーの実行結果は受け取っていない。Go の取得やイメージの pull のエラーが出た場合も、ツールチェーンやエミュレーションの問題と区別して記録する。
+
+Docker の確認用コンテナは `--rm` で実行終了時に消える。取得した `alpine:3.22` のイメージは残り得るので、測定用資源の後片付けとは区別する。スパイクのイメージのビルド・実行確認と性能測定は未実施。
+
+参考: [Containers の提供プラン](https://developers.cloudflare.com/containers/)、[Workers の料金](https://developers.cloudflare.com/workers/platform/pricing/)、[Docker のエミュレーション](https://docs.docker.com/build/building/multi-platform/)。
 
 ## 測定前に確定・確認する事項
 
