@@ -37,6 +37,19 @@ make dev                          # 開発用のサーバーを起動する
 - 複数の作業ツリーで並列に動かすときは、先に `scripts/dev-slot.sh acquire` で `DEV_SLOT` を取る。ポートの決まりは [ADR-0019](docs/adr/0019-parallel-local-development.md)、この作業ツリーの値は `make dev-env` で確かめる
 - コマンドの一覧は `make help`。ほかのコマンドは [CLAUDE.md](CLAUDE.md) の「コマンド」を見る
 
+## E2E テスト（`make e2e`）
+
+```bash
+export DEV_SLOT="$(scripts/dev-slot.sh acquire)"   # 未設定なら、この作業ツリーの枠（scripts/dev-slot.sh current）を使う
+make e2e                                           # pnpm -C web test:e2e と同じ
+```
+
+- Playwright（`web/e2e/`・`web/playwright.config.ts`）で、タイトル → ステージ選択 → 紹介 → 出航 → ゲーム画面（残り時間・島・郵便局長の通知）→ フェリーの操作（船を選ぶ・手紙を積む・出航）→ エンジニアモード（E キー）を順にたどる
+- 開発のサーバーはテストが自分で起動する（`scripts/dev-env.sh dev`。Go の standalone・`VITE_GAME_MOCK=off`・Turnstile なし）。ポートは `DEV_SLOT` から計算する。同じ作業ツリーで `make dev` が動いているとポートがぶつかって失敗するので、先に止める
+- ブラウザは `PLAYWRIGHT_CHROMIUM_EXECUTABLE` → Playwright が入れた Chromium（`pnpm -C web exec playwright install chromium`）→ macOS の Google Chrome の順に探す。見つからなければテストを飛ばし、理由を出す
+- 各画面のスクリーンショットと開発のサーバーのログは `web/e2e/artifacts/` に保存する（コミットしない）。サーバーが起動しないときは、ログの末尾を出して失敗する
+- CI では必須でないジョブ `e2e` が動く（`ci-ok` には入らない）
+
 ## 作業の流れ
 
 - タスクは GitHub の Issue で管理する。作業の前に、対応する Issue を確かめる

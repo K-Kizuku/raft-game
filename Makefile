@@ -11,7 +11,7 @@
 SHELL := bash
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint gen gen-check sync-data dev dev-env clean-docker demo-local
+.PHONY: help test lint e2e gen gen-check sync-data dev dev-env clean-docker demo-local
 
 # golangci-lint の版。.github/workflow-sources/ci.yml の server ジョブの
 # GOLANGCI_LINT_VERSION と同じ版にする。PATH の golangci-lint は使わず、
@@ -34,7 +34,7 @@ PRELUDE = status=0; \
 
 help: ## 各ターゲットの説明を出す（既定）
 	@echo "使い方: make <ターゲット>"
-	@awk 'BEGIN { FS = ":.*## " } /^[a-z][a-z-]*:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## " } /^[a-z][a-z0-9-]*:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 test: ## Go（tools/*・server）・web・scripts/ の Python・tests/run.sh のテストを実行する
 	@$(PRELUDE); \
@@ -89,6 +89,11 @@ lint: ## go vet・gofmt（tools/*・server）・golangci-lint（server）・web 
 	else run shellcheck -- "$${files[@]}"; fi; \
 	if [ $$status -ne 0 ]; then echo "make lint: 失敗したものがある" >&2; fi; \
 	exit $$status
+
+e2e: ## Playwright の E2E（タイトル → ステージ選択 → 出航 → 航行 → エンジニアモード）を DEV_SLOT のポートで実行する（T-506）
+	@if ! command -v pnpm >/dev/null 2>&1; then echo "make e2e: pnpm がない" >&2; exit 1; fi; \
+	echo "==> pnpm -C web test:e2e"; \
+	pnpm -C web test:e2e
 
 gen: ## Go のプロトコルの型から TS の型を生成する（T-301）
 	@if ! command -v go >/dev/null 2>&1; then echo "make gen: go がない" >&2; exit 1; fi; \
