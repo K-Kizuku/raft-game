@@ -1,4 +1,4 @@
-# デモ（五島版・サブ）。値は進行表 §8 のとおり（調整は T-501）。
+# デモ（五島版・サブ）。値は進行表 §8 のとおり（T-501b で調整。最終の値は T-501 でオーナーが決める）。
 format: 1
 id: demo-goto
 title: 嵐の五島列島（デモ・五島版）
@@ -15,20 +15,21 @@ islands:
   - { ref: nagasaki-naru, layout: { x: 420, y: 230 }, color: "#3D85C6" }
   - { ref: nagasaki-nakadori, layout: { x: 640, y: 120 }, color: "#81B29A" }
 
-routes:                         # ゲーム上の設定（Stage 2 の 0.6 倍）
+routes:                         # ゲーム上の設定（Stage 2 の 0.6 倍。奈留島–中通島だけは、嵐の間の選挙を速めるため 0.3 倍。T-501b）
   - { a: nagasaki-fukue, b: nagasaki-naru, travelMs: 2400, provenance: creative }
-  - { a: nagasaki-naru, b: nagasaki-nakadori, travelMs: 3600, provenance: creative }
+  - { a: nagasaki-naru, b: nagasaki-nakadori, travelMs: 1800, provenance: creative }
   - { a: nagasaki-fukue, b: nagasaki-nakadori, travelMs: 5400, provenance: creative }
 
-ferries:
+ferries:                        # f3 は、嵐の間も奈留島・中通島の側に船が残るように足した（T-501b）
   - { id: f1, name: ごとう丸, home: nagasaki-fukue, capacity: 4, speed: 1.0 }
   - { id: f2, name: しまかぜ, home: nagasaki-naru, capacity: 3, speed: 0.8 }
+  - { id: f3, name: なかどおり丸, home: nagasaki-nakadori, capacity: 3, speed: 1.0 }
 
 raft:
   initialLeader: nagasaki-fukue
   tickMs: 500
   heartbeatTick: 2
-  electionTick: 16              # 8〜16 秒（進行表 §8）
+  electionTick: 32              # 16〜32 秒（進行表 §8。T-501b）
   checkQuorum: true
   preVote: true
   maxInflightMsgs: 4
@@ -60,7 +61,7 @@ demo:
   endOnAllCriticalSecured: true
   storm:
     routes: [[nagasaki-fukue, nagasaki-naru], [nagasaki-fukue, nagasaki-nakadori]]   # 福江島（1 島）と残りの 2 島に分かれる
-    durationMs: 20000
+    durationMs: 40000           # 代表がおりて新しい代表が決まるまで続くように（T-501b）
     flavor:
       text: 台風が近づき、福江島のまわりの海が荒れています
       provenance: derived
