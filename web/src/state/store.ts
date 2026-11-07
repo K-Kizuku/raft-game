@@ -8,6 +8,8 @@ import type { StoreApi } from "zustand";
 
 import type { Clock, NodeDetail, RoundResult, ServerEvent, Snapshot } from "../protocol/index.ts";
 import { applyEvents, withClock, worldFromSnapshot } from "./applyEvent.ts";
+import { EMPTY_TIMELINE, appendTimelineEvents, timelineFromSnapshot } from "./timeline.ts";
+import type { Timeline } from "./timeline.ts";
 import type { World } from "./world.ts";
 
 export type UiSelection = Readonly<{ islandId: number | null; ferryId: string | null }>;
@@ -17,6 +19,7 @@ export type GameState = Readonly<{
   roundResult: RoundResult | null; // round.result（T-408 が読む）
   nodeDetail: NodeDetail | null; // node.detail（T-407 が読む）
   selection: UiSelection; // マップ・島の詳細・フェリー操作が共有する選択
+  timeline: Timeline; // リザルトのタイムラインの記録（T-701）。round.result を受けても消さない
   applySnapshot(snapshot: Snapshot, receivedAt: number): void;
   applyEvents(clock: Clock, events: readonly ServerEvent[], receivedAt: number): void;
   setRoundResult(result: RoundResult): void;
@@ -27,7 +30,7 @@ export type GameState = Readonly<{
 }>;
 export type GameStore = StoreApi<GameState>;
 
-type DataState = Pick<GameState, "world" | "roundResult" | "nodeDetail" | "selection">;
+type DataState = Pick<GameState, "world" | "roundResult" | "nodeDetail" | "selection" | "timeline">;
 
 function initialData(): DataState {
   return {
@@ -35,6 +38,7 @@ function initialData(): DataState {
     roundResult: null,
     nodeDetail: null,
     selection: { islandId: null, ferryId: null },
+    timeline: EMPTY_TIMELINE,
   };
 }
 
@@ -55,7 +59,7 @@ export function createGameStore(): GameStore {
 
     applySnapshot(snapshot, receivedAt) {
       const world = worldFromSnapshot(snapshot, receivedAt);
-      const { selection } = get();
+      const { selection, timeline } = get();
       const islandId =
         selection.islandId !== null && hasIsland(world, selection.islandId)
           ? selection.islandId
@@ -63,13 +67,20 @@ export function createGameStore(): GameStore {
       const ferryId =
         selection.ferryId !== null && hasFerry(world, selection.ferryId) ? selection.ferryId : null;
       const keep = islandId === selection.islandId && ferryId === selection.ferryId;
-      set({ world, selection: keep ? selection : { islandId, ferryId } });
+      set({
+        world,
+        selection: keep ? selection : { islandId, ferryId },
+        timeline: timelineFromSnapshot(timeline, snapshot),
+      });
     },
 
     applyEvents(clock, events, receivedAt) {
-      const { world } = get();
+      const { world, timeline } = get();
       if (world === null) return;
-      set({ world: withClock(applyEvents(world, events), clock, receivedAt) });
+      set({
+        world: withClock(applyEvents(world, events), clock, receivedAt),
+        timeline: appendTimelineEvents(timeline, events),
+      });
     },
 
     setRoundResult(result) {

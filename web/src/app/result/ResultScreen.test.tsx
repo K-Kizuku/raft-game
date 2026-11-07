@@ -315,6 +315,26 @@ describe("ResultScreen", () => {
     expect(buttons.map((b) => b.className)).toEqual(["btn btn-primary", "btn", "btn"]);
   });
 
+  it("RS-T1 結果があるときだけ「E エンジニアモード」のボタンが出来事の節の後にある", () => {
+    loadWorld(3);
+    setResult(FULL_RESULT);
+    const { unmount } = renderResult();
+    const story = section("今日起きた分散システムの出来事");
+    const toggle = screen.getByRole("button", { name: "E エンジニアモード" });
+    expect(story.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(story.contains(toggle)).toBe(false);
+    fireEvent.click(toggle);
+    expect(section("タイムライン")).toBeDefined();
+    unmount();
+
+    act(() => {
+      gameStore.getState().reset();
+    });
+    loadWorld(3);
+    renderResult();
+    expect(screen.queryByRole("button", { name: "E エンジニアモード" })).toBeNull();
+  });
+
   describe("RS-8 用語", () => {
     afterEach(() => {
       act(() => {

@@ -10,6 +10,7 @@ import { formatDuration } from "../format.ts";
 import type { StageSummary } from "../types.ts";
 import { tokens } from "../../ui/theme/tokens.ts";
 import { Fireworks } from "./Fireworks.tsx";
+import { ResultEngineer } from "./ResultEngineer.tsx";
 import {
   deliveredRows,
   formatPoints,
@@ -317,6 +318,7 @@ export function ResultScreen({
           <RequestsSection view={view} />
           <TechnicalSection technical={view.technical} world={world} />
           <StorySection view={view} />
+          <ResultEngineer />
         </>
       )}
       <div className="result-actions">

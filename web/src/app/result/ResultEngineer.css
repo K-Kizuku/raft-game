@@ -1,0 +1,45 @@
+/* リザルトのエンジニアモード（T-701）。.result の下にだけ効かせる。色・余白・文字は T-420 のトークンを使う。 */
+
+.result .result-engineer-area {
+  margin: var(--space-6) 0 0;
+}
+
+.result .result-engineer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  padding: var(--space-1) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font-size: calc(var(--font-size-body) * 0.9);
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.result .result-engineer-toggle:hover {
+  background: var(--color-paper-deep);
+}
+
+.result .result-engineer-toggle[aria-expanded="true"] {
+  color: var(--color-paper);
+  background: var(--color-sea-deep);
+  border-color: var(--color-sea-deep);
+}
+
+.result .result-section.result-engineer {
+  margin-top: var(--space-4);
+  scroll-margin-top: var(--space-4);
+}
+
+.result .result-engineer-lead {
+  margin: 0 0 var(--space-4);
+}
+
+.result .result-engineer-note {
+  margin: var(--space-3) 0 0;
+  color: var(--color-ink-muted);
+}
