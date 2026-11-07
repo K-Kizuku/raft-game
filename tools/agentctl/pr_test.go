@@ -97,8 +97,10 @@ func TestPRCodexRecordFromInput(t *testing.T) {
 		if f.ID == "C4700" && f.Severity == "medium" && f.Status == "open" {
 			found = true
 		}
-		if f.ID == "C4101" {
-			t.Error("古い SHA の指摘を含めた")
+		// 古い SHA の P2（C4101）は、要約に未解決の指摘があり、最新の receipt が重大な指摘なしなので、
+		// 重大でない指摘として open のまま引き継ぐ（Issue #213）。重大な指摘にはしない。
+		if f.ID == "C4101" && (f.Severity != "medium" || f.Status != "open" || !strings.Contains(f.Title, "引き継いだ")) {
+			t.Errorf("古い SHA の指摘 = %+v", f)
 		}
 	}
 	if !found {
