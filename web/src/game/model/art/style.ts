@@ -101,4 +101,12 @@ export const MAP_ART_STYLE = Object.freeze({
   stampInset: 2,
   flapStrokeWidth: 1.2,
   starStrokeWidth: 2.5,
+
+  // 文字の倍率（labelScale。T-425）。画面の幅が labelScaleMinWidth 以下で labelScaleMin、
+  // labelScaleMaxWidth 以上で labelScaleMax、その間は直線で補う。大きな画面（プロジェクター）で
+  // 島の名前・船の文字を読みやすくする（1920 の幅で島の名前が 16px 以上）。
+  labelScaleMinWidth: 1280,
+  labelScaleMaxWidth: 1920,
+  labelScaleMin: 1,
+  labelScaleMax: 1.3,
 });

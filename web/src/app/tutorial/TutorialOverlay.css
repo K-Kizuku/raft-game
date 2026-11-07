@@ -154,3 +154,13 @@
     animation: none;
   }
 }
+
+/* 置き場所（T-425）: 上から 4rem の位置では大きな画面で HUD に重なるので、アンカー配置が使えるときは
+   マップの左上の隅に合わせる（--game-map は GameScreen.css）。高さはマップの高さの 6 割まで。 */
+@supports (anchor-name: --a) {
+  .tutorial {
+    top: calc(anchor(--game-map top, 4rem) + var(--space-3));
+    left: calc(anchor(--game-map left, var(--space-4)) + var(--space-3));
+    max-height: min(40vh, calc(anchor-size(--game-map height, 40vh) * 0.6));
+  }
+}

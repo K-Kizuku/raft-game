@@ -1,10 +1,8 @@
 /* 船の一覧（T-426）。フェリー操作のパネルで何も選んでいないときに出す、紙のカードの列。
-   文字は --color-ink・--color-ink-muted（紙の地で 4.5:1 以上。NFR-10）。色はデザイントークンから取る。
+   文字は --color-ink・--color-ink-muted・故障中は --color-danger-text（紙の地で 4.5:1 以上。NFR-10）。色はデザイントークンから取る。
+   フォーカスの輪は base.css のトークンの輪（T-425）。
    FerryPanel.css の .ferry-panel button（紙の札）より詳細度を上げて、カードの見た目にする。 */
 .ferry-list {
-  /* 故障中の文字（郵便の赤を墨で暗くし、紙の地で 4.5:1 以上。FerryPanel.css と同じ作り方）。 */
-  --ferry-list-danger-text: color-mix(in srgb, var(--color-danger) 60%, var(--color-ink));
-
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
   gap: var(--space-2) var(--space-3);
@@ -46,11 +44,6 @@
   transform: translateY(1px);
 }
 
-.ferry-list .ferry-list__card:focus-visible {
-  outline: 3px solid var(--color-sea-deep);
-  outline-offset: 2px;
-}
-
 /* 選んだ船（一覧は何も選んでいないときに出すが、念のため太い枠と海の淡い青の地で区別する）。 */
 .ferry-list .ferry-list__card[aria-pressed="true"] {
   background: var(--color-sea-light);
@@ -75,7 +68,7 @@
 }
 
 .ferry-list__broken {
-  color: var(--ferry-list-danger-text);
+  color: var(--color-danger-text);
   font-weight: bold;
 }
 

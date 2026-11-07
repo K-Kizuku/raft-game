@@ -45,11 +45,6 @@
   transform: translateY(1px);
 }
 
-.island-list__card:focus-visible {
-  outline: 3px solid var(--color-sea-deep);
-  outline-offset: 2px;
-}
-
 /* 島の色の丸（飾り）。紙の色の縁と墨の細い輪で、明るい色でも暗い色でも見分けられる。 */
 .island-list__dot {
   grid-area: dot;

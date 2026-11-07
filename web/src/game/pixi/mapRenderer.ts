@@ -10,6 +10,9 @@
 //
 // 構図（T-426）: 島・手紙の山・船は、MAP_STYLE の px で描いた表示物を scene.markScale（描画領域の大きさに
 // 合わせた絵の拡大率）で拡大する。文字は拡大してもぼやけないよう、拡大の上限の分だけ高い解像度で作る。
+//
+// 大きな画面（T-425）: 島の名前と船の文字は、画面の幅から決める倍率（labelScale）でさらに大きくする。
+// 倍率は画面の大きさが変わったときだけ計算し、変わった表示物の scale と名札・積み荷の並びだけを直す。
 import { Application, Container, Graphics, Text } from "pixi.js";
 
 import { formatDuration } from "../../app/format.ts";
@@ -26,6 +29,7 @@ import type { Point, Size } from "../model/viewport.ts";
 import { cloudOutline } from "../model/art/cloud.ts";
 import { dotPositions, insetSegment } from "../model/art/dots.ts";
 import { islandOutline, scaleOutline, smoothOutline } from "../model/art/islandShape.ts";
+import { labelScale } from "../model/art/labelScale.ts";
 import { bobOffset, rainOffset, seedOf, waveOffset } from "../model/art/motion.ts";
 import { seaBlobs, waveMarks } from "../model/art/sea.ts";
 import type { SeaTone } from "../model/art/sea.ts";
@@ -44,10 +48,15 @@ const A = MAP_ART_STYLE;
 // 島の絵は当たり判定の円（islandRadius + islandHitSlop）の中に収める。浅瀬の輪がその円いっぱい。
 const ISLAND_OUTER = S.islandRadius + S.islandHitSlop;
 
-// 文字の解像度。絵の拡大率の上限まで拡大しても、画面の画素より粗くならないようにする。
+// 文字の解像度。絵の拡大率の上限と文字の倍率の上限まで拡大しても、画面の画素より粗くならないようにする。
 function textResolution(): number {
   const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio;
-  return (Number.isFinite(dpr) && dpr > 0 ? dpr : 1) * MAP_VIEW.maxMarkScale;
+  return (Number.isFinite(dpr) && dpr > 0 ? dpr : 1) * MAP_VIEW.maxMarkScale * A.labelScaleMax;
+}
+
+// 今の画面の幅での文字の倍率（画面の大きさが変わったときだけ呼ぶ）。
+function currentLabelScale(): number {
+  return typeof window === "undefined" ? labelScale(0) : labelScale(window.innerWidth);
 }
 
 // 絵の拡大率（buildMapScene はいつも入れる。無ければ 1）。
@@ -404,7 +413,7 @@ function drawNameTag(view: IslandView): void {
     .stroke({ width: A.nameTagStrokeWidth, color: S.colors.nameTagStroke });
 }
 
-function updateIsland(view: IslandView, island: IslandNode, k: number): void {
+function updateIsland(view: IslandView, island: IslandNode, k: number, ls: number): void {
   view.root.position.set(island.at.x, island.at.y);
   view.root.scale.set(k);
   const key = `${island.id}|${island.color}|${island.selected}|${island.candidate}`;
@@ -412,7 +421,10 @@ function updateIsland(view: IslandView, island: IslandNode, k: number): void {
     view.key = key;
     drawIsland(view.body, island);
   }
-  if (setText(view.name, island.name)) drawNameTag(view);
+  // 文字の倍率が変わったとき（画面の大きさが変わったとき）だけ、名前を拡大して名札を描き直す。
+  const rescaled = view.name.scale.x !== ls;
+  if (rescaled) view.name.scale.set(ls);
+  if (setText(view.name, island.name) || rescaled) drawNameTag(view);
   setText(view.mark, island.roleMark === null ? "" : ROLE_GLYPH[island.roleMark]);
   view.mark.alpha = island.roleMark === "leader_stale" ? D.staleLeaderAlpha : 1;
 }
@@ -579,9 +591,25 @@ function layoutCargo(view: FerryView): void {
   view.cargo.x = left + A.cargoIconWidth + A.cargoIconGap;
 }
 
-function updateFerry(view: FerryView, ferry: FerrySprite, motion: Motion, k: number): void {
+// 船の文字（名前・積み荷・到着まで）を文字の倍率で拡大し、行の間隔もその分だけ広げる。
+function scaleFerryText(view: FerryView, ls: number): void {
+  for (const text of [view.name, view.cargo, view.eta]) text.scale.set(ls);
+  view.cargoIcon.y = D.ferryRingRadius + (D.ferryLineHeight * ls) / 2;
+  view.eta.y = D.ferryRingRadius + D.ferryLineHeight * ls;
+}
+
+function updateFerry(
+  view: FerryView,
+  ferry: FerrySprite,
+  motion: Motion,
+  k: number,
+  ls: number,
+): void {
   view.root.position.set(ferry.at.x, ferry.at.y);
   view.root.scale.set(k);
+  // 文字の倍率が変わったとき（画面の大きさが変わったとき）だけ、文字の大きさと並びを直す。
+  const rescaled = view.name.scale.x !== ls;
+  if (rescaled) scaleFerryText(view, ls);
   if (view.selected !== ferry.selected) {
     view.selected = ferry.selected;
     view.ring.clear();
@@ -601,7 +629,7 @@ function updateFerry(view: FerryView, ferry: FerrySprite, motion: Motion, k: num
   view.hull.y = bob.y;
   view.hull.rotation = bob.rotation;
   setText(view.name, ferry.name);
-  if (setText(view.cargo, `${ferry.cargoCount}/${ferry.capacity}`)) layoutCargo(view);
+  if (setText(view.cargo, `${ferry.cargoCount}/${ferry.capacity}`) || rescaled) layoutCargo(view);
   const eta =
     ferry.state === "sailing" && ferry.etaMs !== null
       ? `あと ${formatDuration(Math.ceil(ferry.etaMs / 1000) * 1000)}`
@@ -723,12 +751,16 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   const ferryViews = new Map<string, FerryView>();
   let shown: number | null = null;
   let lastScene: MapScene | null = null;
+  let textScale = currentLabelScale();
 
   const tick = (): void => {
     const now = deps.now();
     const motion: Motion = { now, reduced: reducedMotion };
     const size = { width: app.screen.width, height: app.screen.height };
-    if (size.width !== sea.size.width || size.height !== sea.size.height) drawSea(sea, size);
+    if (size.width !== sea.size.width || size.height !== sea.size.height) {
+      drawSea(sea, size);
+      textScale = currentLabelScale();
+    }
     sea.waves.x = waveOffset(now, reducedMotion);
 
     const { world, selection } = deps.store.getState();
@@ -755,7 +787,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       (i) => i.id,
       () => createIsland(layers),
       (v, i) => {
-        updateIsland(v, i, k);
+        updateIsland(v, i, k, textScale);
       },
       (v) => v.root.destroy({ children: true }),
     );
@@ -775,7 +807,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       (f) => f.id,
       (id) => createFerry(layers, id),
       (v, f) => {
-        updateFerry(v, f, motion, k);
+        updateFerry(v, f, motion, k, textScale);
       },
       (v) => v.root.destroy({ children: true }),
     );

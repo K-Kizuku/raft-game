@@ -68,10 +68,25 @@
   color: var(--color-ink);
 }
 
-/* フォーカスの輪。紙の上でも海の上でも見えるよう、深い海の青の太い輪にする。 */
+/* フォーカスの輪（T-425）。:focus-visible のときだけ、太さ 3px・地から 2px 離した輪を出す。
+   色は --focus-ring-color（紙の地は深い海の青）。海・夜の配色の上に置く部品は、その部品の CSS で
+   --focus-ring-color を --focus-ring-color-on-sea（墨）・--focus-ring-color-on-night（封筒の金）に変える。
+   部品の CSS で別の色・太さの輪を書かない（輪を書き直すときも、このトークンを使う）。 */
 :where(:focus-visible) {
-  outline: 3px solid var(--color-sea-deep);
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* キーボードで移ったとき、要素が画面や巻き取りの領域の端に貼り付かないよう、少し余白を取る。 */
+:where(a, button, input, select, textarea, summary, [tabindex]) {
+  scroll-margin-block: var(--space-6);
+}
+
+/* 線を太くする設定（prefers-contrast: more）のときは、輪を 1px 太くする。 */
+@media (prefers-contrast: more) {
+  :root {
+    --focus-ring-width: 4px;
+  }
 }
 
 /* ボタン。.btn に種類のクラスを 1 つ足して使う（T-426）。

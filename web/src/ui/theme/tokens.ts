@@ -19,6 +19,7 @@ export const tokens = {
   "--color-success": "#5b9a68",
   "--color-warning": "#e0a84f",
   "--color-danger": "#c0503a",
+  "--color-danger-text": "#8b4738",
   "--font-body":
     '"Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Zen Maru Gothic", "Yu Gothic", system-ui, sans-serif',
   "--font-number": 'ui-rounded, "SF Pro Rounded", var(--font-body)',
@@ -35,6 +36,11 @@ export const tokens = {
   "--radius-s": "6px",
   "--radius-m": "12px",
   "--radius-l": "20px",
+  "--focus-ring-width": "3px",
+  "--focus-ring-offset": "2px",
+  "--focus-ring-color": "var(--color-sea-deep)",
+  "--focus-ring-color-on-sea": "var(--color-ink)",
+  "--focus-ring-color-on-night": "var(--color-gold)",
   "--shadow-paper": "0 1px 0 rgba(59, 58, 54, 0.08), 0 4px 12px rgba(59, 58, 54, 0.12)",
 } as const;
 
@@ -76,4 +82,5 @@ export const palette = {
   success: colorNumber("--color-success"),
   warning: colorNumber("--color-warning"),
   danger: colorNumber("--color-danger"),
+  dangerText: colorNumber("--color-danger-text"),
 } as const;

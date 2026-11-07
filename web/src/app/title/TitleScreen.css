@@ -9,6 +9,8 @@
     0 10px 22px color-mix(in srgb, var(--color-ink) 20%, transparent);
   /* 控えめなカードの縁 */
   --title-card-border: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  /* メニューはタイトルの絵（水彩の海）の上にあるので、フォーカスの輪は海の上で見える墨にする（T-425） */
+  --focus-ring-color: var(--focus-ring-color-on-sea);
 }
 
 .app-title.app-screen {
@@ -157,6 +159,13 @@
 
 .app-title .title-menu-item-play .title-menu-card:active {
   transform: translateY(1px);
+}
+
+/* 大きな画面（T-425）: 文字が 1.25 倍になる分、メニューの幅も広げる。 */
+@media (min-width: 1600px) {
+  .app-title .title-nav {
+    width: min(46rem, 100%);
+  }
 }
 
 /* 狭い画面（768px まで）: 文字と余白を少し詰める。 */

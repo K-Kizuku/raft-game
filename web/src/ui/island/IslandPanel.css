@@ -1,11 +1,9 @@
 /* 島の詳細（T-406・ゲームデザイン §7.2 の右）。見た目は T-422（docs/11-visual-design.md）:
    紙のパネルの上に、海図風の点線の小見出し。文字は --color-ink・--color-ink-muted（パネルの地で 4.5:1 以上。NFR-10）。
-   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 がトークンに入れるかを決める）。 */
+   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 の整理: 1 か所だけで使う色はローカルのまま。2 か所以上で使う失敗の文字の色は --color-danger-text にした）。 */
 .island-panel {
   /* 依頼の ★（封筒の金を墨で暗くし、文字として紙の地で 4.5:1 以上。約 4.8:1）。 */
   --island-gold-text: color-mix(in srgb, var(--color-gold) 35%, var(--color-ink));
-  /* 期限切れの文字（郵便の赤を墨で暗くし、紙の地で 4.5:1 以上。約 5.4:1）。 */
-  --island-danger-text: color-mix(in srgb, var(--color-danger) 60%, var(--color-ink));
   /* 満足度の帯の縞（色が見えなくても、塗った長さが分かる）。 */
   --island-meter-stripe: color-mix(in srgb, var(--color-success) 70%, var(--color-ink));
 
@@ -63,8 +61,8 @@
 .island-satisfaction meter {
   appearance: none;
   box-sizing: border-box;
-  width: 6rem;
-  height: 1rem;
+  width: 6em;
+  height: 1em;
   overflow: hidden;
   background: var(--color-paper);
   border: 2px solid var(--color-ink);
@@ -190,6 +188,6 @@
 }
 
 .island-request-expired {
-  color: var(--island-danger-text);
+  color: var(--color-danger-text);
   font-weight: bold;
 }
