@@ -315,8 +315,8 @@ go -C tools/agentctl run . review render "$PWD/review.json"
 | C3 | 「テスト」「ドキュメント」のチェックボックスがすべてチェック済み | — | どちらかの節にチェックボックスがない・チェックされていないものがある |
 | C4 | 必須のチェック（`ci-ok`）が HEAD で成功し、失敗したチェックがない | 必須のチェックが未実行・実行中 | 必須のチェックが成功していない・ほかの check run が `failure`・`cancelled`・`timed_out`・`action_required`・ほかのステータスが `failure`・`error`（`merge-gate` と `merge-gate-evaluate` 自身は数えない） |
 | C5 | 信頼する作者（`trusted_authors`）のレビュー記録か、Codex の GitHub 連携（`codex_bot_authors`）の完了したレビューがある | どちらもない | — |
-| C6 | 最新のレビュー記録が HEAD に対する `approve` | 記録がない・最新の記録が古い SHA のもの（再レビュー待ち） | 最新の記録の verdict が `approve` ではない |
-| C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビュー | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す）・最新の要約の `has_unresolved_findings` が `true` で、前の SHA の Codex の P0・P1 が Codex 以外の後の記録で `resolved` になっていない・Codex のレビューが最新でも、Codex の GitHub 連携の変換ではない最新の記録で、それまでの重大な指摘（Codex の指摘。信頼する作者の行コメントに対応する `C<コメントの ID>` を除く）が `resolved` になっていない |
+| C6 | 最新のレビュー記録が HEAD に対する `approve`（`main` の取り込みだけなら、前の SHA の記録を引き継ぐ。[レビュー記録の引き継ぎ](#レビュー記録の引き継ぎmain-の取り込みだけのとき)） | 記録がない・最新の記録が古い SHA のもので、引き継げない（再レビュー待ち） | 最新の記録の verdict が `approve` ではない |
+| C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビューで、引き継げない | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す）・最新の要約の `has_unresolved_findings` が `true` で、前の SHA の Codex の P0・P1 が Codex 以外の後の記録で `resolved` になっていない・Codex のレビューが最新でも、Codex の GitHub 連携の変換ではない最新の記録で、それまでの重大な指摘（Codex の指摘。信頼する作者の行コメントに対応する `C<コメントの ID>` を除く）が `resolved` になっていない |
 | C8 | レビュー役が `codex` か、正しいフォールバック（Codex の GitHub 連携は `codex`） | 記録がない | `reviewer` が認めない値・`allow_fallback` が false なのに `claude-fallback`・`fallback_reason` が `fallback_reasons` にない |
 | C9 | コンフリクトがない | `mergeable` が未計算 | `mergeable=false`・`mergeable_state=dirty` |
 | C10 | ベースより遅れていない | — | 比較の結果がない・`main` より遅れている（`behind_by > 0`） |
@@ -337,6 +337,32 @@ go -C tools/agentctl run . gate --repo K-Kizuku/raft-game --pr 12 --json
 ```bash
 go -C tools/agentctl run . gate --repo K-Kizuku/raft-game --pr 12 --json --input "$PWD/tools/agentctl/internal/gate/testdata/pass.json"
 ```
+
+### レビュー記録の引き継ぎ（`main` の取り込みだけのとき）
+
+C10 があるので、PR を 1 つマージすると、ほかの開いた PR はすべて遅れる。`main` を取り込むと HEAD の SHA が変わるが、PR の自分の変更が変わっていなければ、レビューをやり直さず、前の SHA（以下 S）の最新のレビューを HEAD のものとして使う（Issue #120）。C6・C7・C12 が使う「最新のレビュー」を S のもので代えるのは、次を**すべて**確かめられたときだけ:
+
+1. HEAD から最初の親をたどると S に着き、その間のコミットはすべてマージコミットで、2 番目以降の親は `main` の履歴に含まれる（S のあとに PR の作者が自分の変更のコミットを足していない）
+2. PR の自分の変更（`main` とのマージベースから S までの差分と、マージベースから HEAD までの差分）が、正規化した patch-id で一致する。正規化は `git patch-id --stable` と同じ考え方で、ハンクの見出しの行番号と空白の違いだけを無視し、ファイル名と、ハンクの区切り・見出しの残り（関数名など）・文脈の行・変更行（`+`・`-`）の中身と順番で比べる（文脈の行も比べるので、変更行が同じでも変更の場所が違えば一致しない）。ファイルの一覧（追加・削除・名前の変更を含む）と、ファイルのモード（実行権限など。差分の両端のマージベースと先端のそれぞれ）も一致する。`patch` がない（大きすぎる・バイナリ・中身の変更がない）・ハンクの形が読めない（見出しの行数と中身が合わないなど）・モードを確かめられないファイルがあれば引き継がない
+3. S の最新のレビュー（`agent-review/v1` の記録か、Codex の GitHub 連携のレビュー）が `approve`（Codex なら重大な指摘がない）で、C7 と C8 を満たす
+4. PR が保護されたパス（`protected_paths`。名前を変えたファイルは前の名前も）を変えていない。保護されたパスを変える PR は、今までどおり HEAD での新しい記録を求める
+5. 設定 `.agents/config.json` の `review.carry_over_on_base_merge` が `true`（既定は `false`）
+
+- 引き継ぐのは**最新の**レビューだけ。それより新しい `request_changes` があれば、古い `approve` は使わない（HEAD のものなら C6 が fail、古い SHA のものなら pending）
+- コンフリクトを解消したマージコミットは、2 番目の親が `main` にあっても、差分が変われば条件 2 で引き継がない。PR が変えたファイルの、変更から離れた場所に `main` の変更が入った（行番号だけが変わった）なら引き継ぎ、新しい HEAD で C4（CI）が通ることで確かめる。変更のすぐ近く（差分の文脈の行）に `main` の変更が入ったときは、引き継がない（変更の場所が同じだと確かめられないので、レビューし直す）
+- 判定に要る材料（S から HEAD までのコミットとその親・マージベースから S までの差分・変更ファイルのモード）は、`agentctl gate` が GitHub の API（`git/commits`・`compare`・`git/trees`）から集め、スナップショットの `carry_over` 欄に入れる（`--input` でも判定できる。例は [carry-over.json](../../tools/agentctl/internal/gate/testdata/carry-over.json)）。集めるのに失敗した・材料が足りないときは引き継がない（C6 は fail ではなく pending）
+- 引き継いだときは、C6 の詳細（JSON とコメント）に「round N（S）を引き継いだ: main の取り込みだけ」のように出る。引き継がなかったときは、その理由が notes に出る
+- C4（CI）・C9（コンフリクト）・C10（遅れ）の判定は変わらない
+- `agentctl recover` は、`in-review` で HEAD のレビュー記録がなくても、同じ条件で引き継げる PR には `request-review` を出さない
+
+### マージは 1 つずつ
+
+並列に開いた PR は、1 つずつマージする。1 つマージしたら、ほかの PR は C10 が fail（遅れ）になるので、次のようにする。
+
+1. 遅れた PR のブランチに `main` を**マージで**取り込む（`git merge origin/main`、または GitHub の「Update branch」のマージ）。rebase すると S が HEAD の祖先でなくなり、引き継げない
+2. 新しい HEAD で CI（C4）と Merge Gate が動くのを待つ。上の条件を満たせば、C6 はレビューをやり直さずに pass する。Orchestrator は `review.sh` を呼ばない（`agentctl recover` も `request-review` を出さない）
+3. C6 が pending のまま（notes に引き継がない理由が出る）なら、今までどおり `review.sh` で新しい HEAD をレビューする
+4. Merge Gate が pass になったら `merge.sh` でマージし、次の PR に進む
 
 ## Conflict の解消の手順
 
