@@ -1,0 +1,43 @@
+{
+  "protocol": 1,
+  "session": { "id": "s_abc.def", "stageId": "stage2", "seed": 20261101, "demo": false, "restored": false },
+  "phase": "sailing",
+  "clock": { "t": 61200, "speed": 1, "paused": false, "endsAt": 210000, "allowedSpeeds": [0.5, 1, 2, 4] },
+  "stage": {
+    "title": "島から返事が来ない！",
+    "islands": [
+      { "id": 1, "name": "福江島", "municipality": "五島市", "layout": { "x": 620, "y": 180 },
+        "population": { "value": 31945, "asOf": "令和8年4月1日", "provenance": "fact", "source": "mlit-ritou-2026" },
+        "color": "#E07A5F" },
+      { "id": 2, "name": "小豆島", "municipality": "小豆島町・土庄町", "layout": { "x": 300, "y": 420 },
+        "population": { "value": 25881, "asOf": "令和8年4月1日", "provenance": "derived", "note": "小豆島町 13,870 人と土庄町 12,011 人の合計", "source": "mlit-ritou-2026" },
+        "color": "#3D405B" }
+    ],
+    "routes": [ { "id": "1-2", "a": 1, "b": 2, "travelMs": 4000, "provenance": "creative" } ],
+    "resources": [ { "id": "firework:a", "kind": "firework", "label": "大花火 A", "critical": true } ]
+  },
+  "ferries": [
+    { "id": "f1", "name": "ごとう丸", "capacity": 4, "state": "sailing", "from": 1, "to": 2,
+      "departAt": 58000, "arriveAt": 67000, "readyAt": 68500, "cargo": [31, 32] },
+    { "id": "f2", "name": "なる丸", "capacity": 4, "state": "docked", "islandId": 3,
+      "departAt": 0, "arriveAt": 0, "readyAt": 61500, "cargo": [] }
+  ],
+  "routesState": [ { "id": "1-2", "blockedUntil": null }, { "id": "2-3", "blockedUntil": 90000 } ],
+  "letters": [
+    { "id": 31, "kind": "raft", "from": 1, "to": 2, "createdAt": 57000,
+      "loc": { "type": "ferry", "ferryId": "f1" }, "label": "heartbeat",
+      "raft": { "type": "MsgHeartbeat", "term": 2, "logTerm": 0, "index": 0, "commit": 13,
+        "entries": [], "reject": false, "rejectHint": 0, "stale": false } },
+    { "id": 33, "kind": "request", "from": 2, "to": 1, "createdAt": 60000,
+      "loc": { "type": "port", "islandId": 2 }, "label": "request",
+      "request": { "reqId": "stage2-0005", "hops": 1 } }
+  ],
+  "requests": [
+    { "id": "stage2-0005", "origin": 2, "kind": "stall.reserve", "resource": "stall:main", "critical": false,
+      "createdAt": 10000, "deadline": 70000, "status": "proposed", "expired": false, "result": null }
+  ],
+  "nodes": [ { "id": 1, "role": "leader", "term": 2, "lead": 1, "commit": 14, "applied": 14, "lastIndex": 15 } ],
+  "islandsState": [ { "id": 1, "satisfaction": 64, "lastDeliveredAt": 60500 }, { "id": 2, "satisfaction": 50, "lastDeliveredAt": null } ],
+  "score": { "total": 520, "successes": 3, "target": 5, "criticalSecured": ["firework:a"] },
+  "lastSeq": 41
+}

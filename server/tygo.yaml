@@ -1,0 +1,10 @@
+# tygo の設定（T-301 / ADR-0014）。make gen が `go -C server run github.com/gzuidhof/tygo@<版> generate --config tygo.yaml` で使う。
+# パスはこのファイルのあるディレクトリ（server/）からの相対パス。
+packages:
+  - path: "github.com/K-Kizuku/raft-game/server/internal/protocol"
+    output_path: "../web/src/protocol/protocol.gen.ts"
+    enum_style: "union"
+    type_mappings:
+      json.RawMessage: "unknown"
+    frontmatter: |
+      import type { ServerEvent } from "./events.ts";
