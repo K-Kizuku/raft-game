@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: #134 のマージ前にできる環境準備は完了。ユーザーが Workers Paid の有効化と kizuku.workers.dev を確認。スパイクの PR #138 は未マージ。マージ後に H-1 の依存のインストール・check.sh へ進む。
+- 状態: #134 / PR #138 のマージを確認。環境準備は完了。最新の #15 とマージ後の spike/ を読み、H-1 の依存のインストール・check.sh をユーザーに案内する段階。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -16,7 +16,7 @@
 
 | 手順 | 状態 | 確認できたこと / 残り |
 |---|---|---|
-| H-1 準備 | 途中 | 環境準備は完了。Workers Paid の有効化と kizuku.workers.dev はユーザー報告で確認。#134 の PR #138 のマージ後に依存のインストールと check.sh を確認する |
+| H-1 準備 | 途中 | 環境準備と #134 / PR #138 のマージを確認。手元の main 更新・依存のインストール・check.sh の実行結果待ち |
 | H-2 トークンの準備 | 未実施 | 測定コードが main に入ってから実施する |
 | H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
 | H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
@@ -240,6 +240,54 @@ x86_64
 次は PR #138 のマージ待ち。マージ後に `spike/README.md` と実装されたスクリプトを確認し、ユーザーの測定用作業ツリーを最新化してから、`pnpm install` と `check.sh` を案内する。Go を呼ぶ手順では、必要に応じて `env GOTOOLCHAIN=go1.26.9` を付ける。
 
 H-1 全体はまだ途中であり、依存のインストール・スパイクのビルド・構成の検査・dry-run は未実施。シークレットの準備 (H-2) と実デプロイ (H-3) にもまだ進んでいない。
+
+## 2026-11-07: #134 のマージ後、最新の #15 とスクリプトを確認
+
+### 確認したリビジョンと状態
+
+- [PR #138](https://github.com/K-Kizuku/raft-game/pull/138) は merged。マージ時刻は 2026-11-07 15:29:53 JST、マージコミットは `4073ed97f8253f072312273cff76fe119898aa86`。
+- 確認時の main は `d862bb78cbfea3fe0e476605b3b6d4996153f818`。この SHA の README・構成・スクリプトを読んだ。
+- 最新の Issue #15 を再取得。open / status:backlog / needs-human、本文の更新日時は 2026-11-07 14:27:49 JST (`2026-11-07T05:27:49Z`)、コメントは 0 件。手順は H-1〜H-8、チェックは未完了のまま。
+- `spike/README.md`・`spike/scripts/check.sh`・`spike/scripts/local-smoke.sh`・`spike/scripts/measure.ts`・`spike/scripts/lib.ts`・`spike/cloudflare.config.ts`・`spike/package.json`・`spike/container/go.mod`・`spike/container/Dockerfile` を確認した。ここでコードを読んだことは、ユーザーの環境での実行成功とは区別する。
+
+### 解決までの順序
+
+| 段階 | 実施すること |
+|---|---|
+| H-1 と M-12 | 手元の main を更新し、固定した依存をインストール。check.sh に続き、DEV_SLOT を確保して local-smoke.sh と手元の Go の基準値を確認する |
+| H-2〜H-3 | 検証用トークンを作り、gitignore を確認。spike/ からビルド・実デプロイし、時間・イメージの大きさ・URL を記録する |
+| H-4〜H-5 | lite と standard-1 の測定、M-9 の対照、Workers Logs の CPU 時間を確認する。limits.cpuMs・起動待ち・インスタンスの判断を整理する |
+| H-6 | 使った番号の停止を確認し、検証用のクラウド資源とローカルの不要なものを削除する。翌日の費用も確認する |
+| H-7〜H-8 | ADR-0016 と必要な関連文書を更新して PR を作成し、後続タスクへ実測結果を引き継ぐ |
+
+### 次にユーザーが実行するコマンド (H-1)
+
+リポジトリのルートで fish から実行する。各段階を `and` でつなぎ、失敗時に後続へ進まないようにする。
+
+```fish
+set -gx AGENT_ROLE human
+git switch main
+and git pull --ff-only origin main
+and git rev-parse HEAD
+and pnpm install --frozen-lockfile
+and env GOTOOLCHAIN=go1.26.9 SPIKE_CPU_MS=50 bash spike/scripts/check.sh
+```
+
+`check.sh` は型検査・TS テスト・Go の整形検査/vet/race テスト・Docker の確認・cf build・構成の検査・linux/amd64 の検査・`cf deploy --prebuilt --dry-run` を行う。shellcheck は手元にある場合に行う。実デプロイは含まない。
+
+Go は手元で取得済みの 1.26.9 を環境変数で渡す。Dockerfile の Go は実装で固定された 1.26.4 なので、手元の基準値とコンテナの値の比較では版の違いも記録する。
+
+これらは次に案内したコマンドで、まだユーザーから実行結果は受け取っていない。check.sh の最後の `check: すべて成功` とバインディング・コンテナの表、または失敗した箇所を受け取って判断する。
+
+### 実装を読んで補う注意点
+
+- **M-9 の番号**: 最新の #15 の H-4 は `--only egress --internet-control` に `--first` を書いていない。README の注意に従い、初回の通常測定で使っていない `--first 10` を補う。初回の標準的な割り当ては lite が s-1〜s-9、standard-1 が s-16〜s-24。結果の sessions を確認し、再試行で使った番号があれば割り当てを見直す。
+- **再実行**: 同じ Durable Object は起動 3 回まで。measure.ts の SessionPool はその実行の中の回数だけを数えるため、別の実行で消費した回数は把握しない。失敗した測定を同じ番号でそのまま繰り返さない。
+- **local-smoke.sh**: DEV_SLOT が必要。DOCKER_HOST が未設定なら Docker context のソケットを自動で渡すので、最初から手で固定する必要はない。実行後は spike/.cloudflare/local-smoke.json と終了時の Docker の残存一覧を受け取る。
+- **CPU の判定**: ローカルで CPU の反復が成功したことだけで本番の limits.cpuMs を決めない。Cloudflare 上の測定と Worker/DO の Logs で CPU 時間を確認する。
+- **測定の成功フラグ**: egress は応答を取得できれば ok: true を返すため、result.ok だけで外部通信の遮断を判断しない。DNS・TCP・HTTPS の各結果と internet0AllFailed を読む。同様に各項目の実測値を読んで設計判断する。
+- **未確定の基準**: #15 の提案 (復元 5 秒) と現行 NFR-03 (復元 3 秒) の差は残っている。両方との比較を記録し、提案値を承認済みとして扱わない。
+- **測定データ**: .cloudflare/ は無視される場所なので、結果の JSON と表を共有してもらい、必要な実測値をこの記録と最終 ADR に残す。
 
 ## 測定前に確定・確認する事項
 
