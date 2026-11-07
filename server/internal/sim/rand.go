@@ -10,8 +10,9 @@ import (
 const (
 	StreamRequests  = "requests"         // 依頼の発生時刻・種類
 	StreamEvents    = "events"           // 台本の「この時間帯のどこか」の時刻
-	StreamDrift     = "drift"            // 漂流瓶で複製する手紙
+	StreamDrift     = "drift"            // 漂流瓶の時刻と、複製する手紙
 	StreamBreakdown = "events/breakdown" // 台本の船の故障の時刻・船
+	StreamRush      = "events/rush"      // 台本の注文ラッシュの時刻・島・種類
 )
 
 // Sub は、ラウンドのシードと用途の名前から独立した乱数列を作る。

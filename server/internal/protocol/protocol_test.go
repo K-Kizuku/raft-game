@@ -250,3 +250,53 @@ func TestEncodeEnvelope(t *testing.T) {
 		}
 	}
 }
+
+// PR-R1 forecast の往復（islandIds あり・なし）。なしのときは JSON に islandIds が出ない。
+func TestForecastIslandIDs(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want protocol.ForecastEvent
+	}{
+		{
+			name: "rush",
+			in:   `{"seq":3,"t":55000,"type":"forecast","event":"rush","at":60000,"routeIds":[],"islandIds":[1,3]}`,
+			want: protocol.ForecastEvent{
+				EventHeader: protocol.EventHeader{Seq: 3, T: 55000},
+				Type:        protocol.EventTypeForecast,
+				Event:       "rush",
+				At:          60000,
+				RouteIDs:    []string{},
+				IslandIDs:   []uint64{1, 3},
+			},
+		},
+		{
+			name: "storm",
+			in:   `{"seq":4,"t":60000,"type":"forecast","event":"storm","at":70000,"routeIds":["1-2"]}`,
+			want: protocol.ForecastEvent{
+				EventHeader: protocol.EventHeader{Seq: 4, T: 60000},
+				Type:        protocol.EventTypeForecast,
+				Event:       "storm",
+				At:          70000,
+				RouteIDs:    []string{"1-2"},
+			},
+		},
+	}
+	for _, c := range cases {
+		var got protocol.ForecastEvent
+		if err := decodeStrict([]byte(c.in), &got); err != nil {
+			t.Fatalf("%s: decode: %v", c.name, err)
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: decode = %+v, want %+v", c.name, got, c.want)
+		}
+		out, err := json.Marshal(got)
+		if err != nil {
+			t.Fatalf("%s: Marshal: %v", c.name, err)
+		}
+		if string(out) != c.in {
+			t.Errorf("%s: Marshal = %s, want %s", c.name, out, c.in)
+		}
+	}
+}
