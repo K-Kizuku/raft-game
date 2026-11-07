@@ -9,6 +9,7 @@ import { Link } from "../router/Link.tsx";
 import type { StageCatalogEntry } from "../types.ts";
 import { learningView } from "./introView.ts";
 import { StageIntroText } from "./StageIntroText.tsx";
+import "./StageIntro.css";
 
 export type StageIntroScreenProps = {
   stage: StageCatalogEntry;
@@ -20,7 +21,7 @@ export function StageIntroScreen({ stage, onDepart, busy }: StageIntroScreenProp
   return (
     <div className="app-screen stage-intro">
       <h1 tabIndex={-1}>{stage.title}</h1>
-      <p>{stage.region}</p>
+      <p className="stage-intro-region">{stage.region}</p>
       <dl className="stage-intro-facts">
         <div>
           <dt>島の数</dt>
@@ -41,12 +42,17 @@ export function StageIntroScreen({ stage, onDepart, busy }: StageIntroScreenProp
           </dd>
         </div>
       </dl>
-      <section aria-label="島の紹介">
+      <section aria-label="島の紹介" className="stage-intro-letter">
         <h2>島の紹介</h2>
         <StageIntroText intro={stage.intro} />
       </section>
       <StageLearning stageId={stage.id} learning={stage.learning} />
-      <button type="button" disabled={busy} onClick={onDepart}>
+      <button
+        type="button"
+        className="btn btn-primary stage-intro-depart"
+        disabled={busy}
+        onClick={onDepart}
+      >
         出航する
       </button>
       <Link to={{ name: "stageSelect" }}>ステージ選択へ戻る</Link>
@@ -66,7 +72,7 @@ function StageLearning({
     return null;
   }
   return (
-    <section aria-label="学べること">
+    <section aria-label="学べること" className="stage-intro-learning">
       <h2>このステージで学べること</h2>
       {view.status === "hidden" ? (
         <p>遊び終わったあとで種明かしします。</p>

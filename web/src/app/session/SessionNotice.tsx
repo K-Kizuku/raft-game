@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 
 import { SESSION_ERROR_MESSAGES } from "./errors.ts";
 import type { SessionCreationState } from "./useSessionCreation.ts";
+import "./SessionNotice.css";
 
 export type SessionNoticeProps = {
   state: SessionCreationState;
@@ -20,7 +21,7 @@ export function SessionNotice({
       return null;
     case "pending":
       return (
-        <p role="status" className="session-notice">
+        <p role="status" className="session-notice session-notice-pending">
           ステージを準備しています…
         </p>
       );
@@ -29,7 +30,7 @@ export function SessionNotice({
         <div role="alert" className="session-notice session-notice-error">
           <p>{SESSION_ERROR_MESSAGES[state.kind]}</p>
           {allowOffline && (
-            <button type="button" onClick={onOffline}>
+            <button type="button" className="btn" onClick={onOffline}>
               サーバーなしで進む（開発用）
             </button>
           )}

@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { StageCatalogEntry } from "../types.ts";
+import type { StageCatalogEntry, StageCatalogState } from "../types.ts";
 import { StageSelectScreen } from "./StageSelectScreen.tsx";
 
 const STAGES: StageCatalogEntry[] = [
@@ -147,5 +147,50 @@ describe("StageSelectScreen の紹介文（T-416）", () => {
     } else {
       expect(onSelect).toHaveBeenCalledWith(STAGES[0]);
     }
+  });
+});
+
+describe("StageSelectScreen の見た目（T-424）", () => {
+  function renderCatalog(catalog: StageCatalogState) {
+    return render(
+      <StageSelectScreen catalog={catalog} onRetry={() => {}} onSelect={() => {}} busy={false} />,
+    );
+  }
+
+  it("葉書のカードに地域名の切手と札があり、選ぶボタンは主ボタン。見出しとボタンの名前は変わらない", () => {
+    renderCatalog({ status: "ready", stages: STAGES });
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("ステージ選択");
+    const items = screen.getAllByRole("listitem");
+    expect(items.map((item) => item.className)).toEqual(["stage-select-item", "stage-select-item"]);
+    const first = items[0]!;
+    expect(first.querySelector(".stage-select-region")?.textContent).toBe("瀬戸内");
+    expect(
+      Array.from(first.querySelectorAll(".stage-select-fact"), (fact) => fact.textContent),
+    ).toEqual(["島 3", "船 1 隻", "制限時間 3:00"]);
+    expect(first.querySelector(".stage-select-facts")?.textContent).toBe(
+      "島 3・船 1 隻・制限時間 3:00",
+    );
+    for (const button of buttons()) {
+      expect(button.classList.contains("btn")).toBe(true);
+      expect(button.classList.contains("btn-primary")).toBe(true);
+    }
+    expect(screen.getByRole("link", { name: "タイトルへ" })).toBeDefined();
+  });
+
+  it("読み込み中・失敗・空の一覧の文は紙のカード（失敗は ⚠ の印の付く枠）", () => {
+    const { unmount } = renderCatalog({ status: "loading" });
+    expect(screen.getByRole("status").className).toBe("stage-select-message");
+    unmount();
+
+    const error = renderCatalog({ status: "error" });
+    expect(screen.getByRole("alert").className).toBe("stage-select-message stage-select-error");
+    expect(screen.getByRole("button", { name: "もう一度読み込む" }).classList.contains("btn")).toBe(
+      true,
+    );
+    error.unmount();
+
+    renderCatalog({ status: "ready", stages: [] });
+    expect(screen.getByText("遊べるステージがありません。").className).toBe("stage-select-message");
   });
 });
