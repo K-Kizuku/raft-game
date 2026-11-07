@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { worldFromSnapshot } from "../../state/index.ts";
+import type { Postmaster } from "../../protocol/index.ts";
 import type { NoticeView, World } from "../../state/index.ts";
-import { NOTICE_KEYS, noticeText } from "./noticeText.ts";
-import { makeRequest, makeSnapshot } from "./testing/world.ts";
+import { NOTICE_KEYS, noticeText, postmasterTone, speakerName } from "./noticeText.ts";
+import type { PostmasterTone } from "./noticeText.ts";
+import { island, makeRequest, makeSnapshot } from "./testing/world.ts";
 
 function world(): World {
   return worldFromSnapshot(
@@ -118,5 +120,109 @@ describe("noticeText", () => {
     for (const key of NOTICE_KEYS) {
       expect(noticeText(notice(key), world(), false), key).not.toBeNull();
     }
+  });
+});
+
+// 島 2 の郵便局長を postmaster にした世界（ほかの値は world() と同じ）。
+function worldWithPostmaster(postmaster: Postmaster | undefined): World {
+  const base = makeSnapshot({
+    requests: [
+      makeRequest("r-stall", 1, { resource: "stall:main" }),
+      makeRequest("r-fire", 2, { resource: "firework:a", critical: true }),
+    ],
+  });
+  const islands = base.stage.islands.map((i) =>
+    i.id === 2 ? island(i.id, i.name, i.color, i.layout.x, i.layout.y, postmaster) : i,
+  );
+  return worldFromSnapshot({ ...base, stage: { ...base.stage, islands } }, 0);
+}
+
+// 9 つの key の params（NT-1 と同じ値）。
+const TONE_PARAMS: Readonly<Record<string, Record<string, unknown>>> = {
+  "request.created": { reqId: "r-fire" },
+  "request.succeeded": { reqId: "r-stall" },
+  "request.rejected": { reqId: "r-fire" },
+  "request.expired": { reqId: "r-stall" },
+  "island.silent": {},
+  "node.campaign": {},
+  "leader.elected": {},
+  "leader.stepped_down": {},
+  "storm.forecast": { routeIds: ["2-3"], at: 10000 },
+};
+
+function toneText(key: string, w: World, show = false): string | null {
+  return noticeText(notice(key, TONE_PARAMS[key]), w, show);
+}
+
+describe("noticeText の口調（T-406c）", () => {
+  it("NT-T1 postmaster の無い島は今の 9 つのセリフ（casual）", () => {
+    const w = worldWithPostmaster(undefined);
+    expect(postmasterTone(w, 2)).toBe("casual");
+    expect(NOTICE_KEYS.map((key) => toneText(key, w))).toEqual([
+      "大花火 Aの予約をお願いしたいんだ！",
+      "やった！ 屋台が取れたよ！",
+      "えっ、大花火 Aはもう他の島が予約してたの？",
+      "屋台、間に合わなかったなあ…",
+      "最近、だれからも手紙が来ないなあ…",
+      "代表と連絡がつかない…わたしが代表に立候補します！",
+      "これからは二の島が代表です。よろしく！",
+      "みんなの返事が来ない…いったん代表をおります",
+      "5 秒後に二の島と三の島の間が荒れるぞ！",
+    ]);
+  });
+
+  it.each<[PostmasterTone, string, string]>([
+    ["polite", "request.created", "大花火 Aの予約をお願いします！"],
+    ["polite", "request.succeeded", "やりました！ 屋台が取れました！"],
+    ["polite", "request.rejected", "えっ、大花火 Aはもう他の島が予約していたのですか？"],
+    ["polite", "request.expired", "屋台、間に合いませんでした…"],
+    ["polite", "island.silent", "最近、だれからも手紙が来ません…"],
+    ["polite", "node.campaign", "代表と連絡がつきません…わたくしが代表に立候補いたします！"],
+    ["polite", "leader.elected", "これからは二の島が代表です。よろしくお願いします！"],
+    ["polite", "leader.stepped_down", "皆さんの返事が来ません…いったん代表をおります"],
+    ["polite", "storm.forecast", "5 秒後に二の島と三の島の間が荒れます！"],
+    ["elder", "request.created", "大花火 Aの予約を頼みたいんじゃ！"],
+    ["elder", "request.succeeded", "やったのう！ 屋台が取れたぞい！"],
+    ["elder", "request.rejected", "なんと、大花火 Aはもう他の島が予約しておったのか？"],
+    ["elder", "request.expired", "屋台、間に合わなんだのう…"],
+    ["elder", "island.silent", "近ごろ、だれからも手紙が来んのう…"],
+    ["elder", "node.campaign", "代表と連絡がつかん…わしが代表に立候補するぞい！"],
+    ["elder", "leader.elected", "これからは二の島が代表じゃ。よろしく頼むぞい！"],
+    ["elder", "leader.stepped_down", "みなの返事が来ん…いったん代表をおりるとしよう"],
+    ["elder", "storm.forecast", "5 秒後に二の島と三の島の間が荒れるぞい！"],
+  ])("NT-T2 %s の %s → セリフ", (tone, key, want) => {
+    const w = worldWithPostmaster({ name: "テスト局長", tone });
+    expect(postmasterTone(w, 2)).toBe(tone);
+    expect(toneText(key, w)).toBe(want);
+  });
+
+  it("NT-T3 知らない tone は casual のセリフ", () => {
+    const w = worldWithPostmaster({ name: "テスト局長", tone: "dialect-x" });
+    expect(postmasterTone(w, 2)).toBe("casual");
+    expect(postmasterTone(w, 9)).toBe("casual");
+    expect(toneText("request.succeeded", w)).toBe("やった！ 屋台が取れたよ！");
+    expect(toneText("island.silent", w)).toBe("最近、だれからも手紙が来ないなあ…");
+  });
+
+  it("NT-T4 併記がオンでも、polite・elder の node.campaign の「代表（Leader）」は最初の 1 か所だけ", () => {
+    const polite = worldWithPostmaster({ name: "テスト局長", tone: "polite" });
+    const elder = worldWithPostmaster({ name: "テスト局長", tone: "elder" });
+    expect(toneText("node.campaign", polite, true)).toBe(
+      "代表（Leader）と連絡がつきません…わたくしが代表に立候補いたします！",
+    );
+    expect(toneText("node.campaign", elder, true)).toBe(
+      "代表（Leader）と連絡がつかん…わしが代表に立候補するぞい！",
+    );
+  });
+
+  it("NT-T5 speakerName", () => {
+    expect(speakerName(worldWithPostmaster({ name: "テスト局長", tone: "polite" }), 2)).toBe(
+      "二の島のテスト局長",
+    );
+    expect(speakerName(worldWithPostmaster(undefined), 2)).toBe("二の島の郵便局長");
+    expect(speakerName(worldWithPostmaster({ name: "  ", tone: "polite" }), 2)).toBe(
+      "二の島の郵便局長",
+    );
+    expect(speakerName(worldWithPostmaster(undefined), 9)).toBe("島 9の郵便局長");
   });
 });

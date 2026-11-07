@@ -1,7 +1,21 @@
 // テストのための Snapshot（T-406）。hud・island のテストだけが import する（本番のコードから import しない）。
-import type { Island, Letter, Request, Route, Snapshot } from "../../../protocol/index.ts";
+import type {
+  Island,
+  Letter,
+  Postmaster,
+  Request,
+  Route,
+  Snapshot,
+} from "../../../protocol/index.ts";
 
-function island(id: number, name: string, color: string, x: number, y: number): Island {
+export function island(
+  id: number,
+  name: string,
+  color: string,
+  x: number,
+  y: number,
+  postmaster?: Postmaster,
+): Island {
   return {
     id,
     name,
@@ -9,6 +23,7 @@ function island(id: number, name: string, color: string, x: number, y: number): 
     layout: { x, y },
     population: { value: 1000 * id, asOf: "2020-10-01", provenance: "fact", source: "テスト" },
     color,
+    ...(postmaster === undefined ? {} : { postmaster }),
   };
 }
 

@@ -12,9 +12,22 @@ durationMs: 180000
 unlock: null
 
 islands:
-  - { ref: kagawa-shodoshima, layout: { x: 680, y: 260 }, color: "#E07A5F" }
-  - { ref: kagawa-teshima, layout: { x: 430, y: 300 }, color: "#3D85C6" }
-  - { ref: kagawa-naoshima, layout: { x: 200, y: 330 }, color: "#81B29A" }
+  - ref: kagawa-shodoshima
+    layout: { x: 680, y: 260 }
+    color: "#E07A5F"
+    postmaster:               # 名前は計画書の記述にちなむ（ゲームデザイン §7.3）
+      name: オリーブ局長
+      tone: casual
+      provenance: derived
+      source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: LOCAL_INDUSTRY_TOURISM, quote: "オリーブ製品" }
+  - ref: kagawa-teshima
+    layout: { x: 430, y: 300 }
+    color: "#3D85C6"
+    postmaster: { name: しおさい局長, tone: polite, provenance: creative }
+  - ref: kagawa-naoshima
+    layout: { x: 200, y: 330 }
+    color: "#81B29A"
+    postmaster: { name: うみかぜ局長, tone: elder, provenance: creative }
 
 routes:
   - a: kagawa-shodoshima

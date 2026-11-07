@@ -11,12 +11,34 @@ durationMs: 120000
 unlock: null
 
 islands:
-  - { ref: tokyo-oshima, layout: { x: 160, y: 90 }, color: "#E07A5F" }
-  - { ref: tokyo-toshima, layout: { x: 300, y: 70 }, color: "#3D85C6" }
-  - { ref: tokyo-miyakejima, layout: { x: 300, y: 200 }, color: "#81B29A" }
-  - { ref: tokyo-mikurajima, layout: { x: 400, y: 250 }, color: "#F2CC8F" }
-  - { ref: tokyo-hachijojima, layout: { x: 560, y: 340 }, color: "#9C6ADE" }
-  - { ref: tokyo-aogashima, layout: { x: 680, y: 400 }, color: "#5FB3B3" }
+  - ref: tokyo-oshima
+    layout: { x: 160, y: 90 }
+    color: "#E07A5F"
+    postmaster: { name: はまかぜ局長, tone: casual, provenance: creative }
+  - ref: tokyo-toshima
+    layout: { x: 300, y: 70 }
+    color: "#3D85C6"
+    postmaster: { name: しまかげ局長, tone: polite, provenance: creative }
+  - ref: tokyo-miyakejima
+    layout: { x: 300, y: 200 }
+    color: "#81B29A"
+    postmaster: { name: あかつき局長, tone: elder, provenance: creative }
+  - ref: tokyo-mikurajima
+    layout: { x: 400, y: 250 }
+    color: "#F2CC8F"
+    postmaster: { name: いさりび局長, tone: casual, provenance: creative }
+  - ref: tokyo-hachijojima
+    layout: { x: 560, y: 340 }
+    color: "#9C6ADE"
+    postmaster:               # 名前は計画書の記述にちなむ（ゲームデザイン §7.3）
+      name: フルーツレモン局長
+      tone: casual
+      provenance: derived
+      source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: LOCAL_INDUSTRY_TOURISM, quote: "八丈フルーツレモン" }
+  - ref: tokyo-aogashima
+    layout: { x: 680, y: 400 }
+    color: "#5FB3B3"
+    postmaster: { name: ほしぞら局長, tone: elder, provenance: creative }
 
 routes:                         # つながりは計画書のヘリコミューターの区間（§4.5）。時間は Stage 3 の 0.6 倍
   - a: tokyo-toshima

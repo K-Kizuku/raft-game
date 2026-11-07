@@ -190,6 +190,14 @@ type Island struct {
 	Layout       IslandLayout `json:"layout"`
 	Population   Population   `json:"population"`
 	Color        string       `json:"color"`
+	Postmaster   *Postmaster  `json:"postmaster,omitempty"` // ステージに書いていなければ出さない（T-406c）
+}
+
+// Postmaster は島の郵便局長（ゲームデザイン §7.3）。
+type Postmaster struct {
+	Name     string `json:"name"`
+	Tone     string `json:"tone"`               // "casual" | "polite" | "elder"。知らない値は casual として扱う（§8）
+	Portrait string `json:"portrait,omitempty"` // 絵のファイル名。なければ出さない
 }
 
 // IslandLayout は島の描画の位置。

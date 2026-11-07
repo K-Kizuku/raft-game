@@ -62,15 +62,25 @@ type Stage struct {
 
 // Island はステージの島。
 type Island struct {
-	NodeID              uint64 // 1..N（islands の順）
-	Ref                 string // islands.json の id
-	Name                string // islands.json の name
-	Prefecture          string // islands.json の prefecture
-	X, Y                int64  // layout
-	Color               string // "#RRGGBB"（書いたとおり）
-	Population          int64  // islands.json の population.value
-	PopulationSqrtCenti int64  // islands.json の populationSqrt × 100
-	WeightPermille      int64  // データ仕様 §4.1 の w_i。全島の合計は 1000
+	NodeID              uint64      // 1..N（islands の順）
+	Ref                 string      // islands.json の id
+	Name                string      // islands.json の name
+	Prefecture          string      // islands.json の prefecture
+	X, Y                int64       // layout
+	Color               string      // "#RRGGBB"（書いたとおり）
+	Population          int64       // islands.json の population.value
+	PopulationSqrtCenti int64       // islands.json の populationSqrt × 100
+	WeightPermille      int64       // データ仕様 §4.1 の w_i。全島の合計は 1000
+	Postmaster          *Postmaster // nil = 書いていない
+}
+
+// Postmaster は島の郵便局長（ゲームデザイン §7.3、データ仕様 §5.4）。
+type Postmaster struct {
+	Name       string
+	Tone       string     // "casual" | "polite" | "elder"
+	Portrait   string     // "" = 書いていない
+	Provenance Provenance // Derived か Creative
+	Source     *Source    // nil = 書いていない
 }
 
 // Route は島と島の間の航路。

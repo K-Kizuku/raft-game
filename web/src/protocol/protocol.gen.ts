@@ -666,6 +666,15 @@ export interface Island {
   layout: IslandLayout;
   population: Population;
   color: string;
+  postmaster?: Postmaster; // ステージに書いていなければ出さない（T-406c）
+}
+/**
+ * Postmaster は島の郵便局長（ゲームデザイン §7.3）。
+ */
+export interface Postmaster {
+  name: string;
+  tone: string; // "casual" | "polite" | "elder"。知らない値は casual として扱う（§8）
+  portrait?: string; // 絵のファイル名。なければ出さない
 }
 /**
  * IslandLayout は島の描画の位置。

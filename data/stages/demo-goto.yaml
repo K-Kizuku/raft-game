@@ -11,9 +11,18 @@ durationMs: 120000
 unlock: null
 
 islands:
-  - { ref: nagasaki-fukue, layout: { x: 200, y: 320 }, color: "#E07A5F" }
-  - { ref: nagasaki-naru, layout: { x: 420, y: 230 }, color: "#3D85C6" }
-  - { ref: nagasaki-nakadori, layout: { x: 640, y: 120 }, color: "#81B29A" }
+  - ref: nagasaki-fukue
+    layout: { x: 200, y: 320 }
+    color: "#E07A5F"
+    postmaster: { name: あさなぎ局長, tone: polite, provenance: creative }
+  - ref: nagasaki-naru
+    layout: { x: 420, y: 230 }
+    color: "#3D85C6"
+    postmaster: { name: ゆうなぎ局長, tone: casual, provenance: creative }
+  - ref: nagasaki-nakadori
+    layout: { x: 640, y: 120 }
+    color: "#81B29A"
+    postmaster: { name: なみのり局長, tone: elder, provenance: creative }
 
 routes:                         # ゲーム上の設定（Stage 2 の 0.6 倍。奈留島–中通島だけは、嵐の間の選挙を速めるため 0.3 倍。T-501b）
   - { a: nagasaki-fukue, b: nagasaki-naru, travelMs: 2400, provenance: creative }
