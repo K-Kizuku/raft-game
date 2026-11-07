@@ -195,7 +195,7 @@ scripts/agents/autospawn.sh
 |---|---|
 | C10 が fail | main の取り込みを依頼する（`PUT pulls/<PR>/update-branch`）。HTTP 422 の merge conflict は「止まった」。それ以外の失敗（通信・HTTP 5xx・API の上限など）は次の周で試す。成功したら次の周で判定し直す |
 | C9 が fail | 「止まった」（コンフリクト） |
-| 最新のレビュー記録の round が `review.max_rounds` 以上で、C6 が pass でないか C12 が fail | 強制マージ待ち（下の「レビューは 2 往復まで」）。`review.sh` を起動せず、「止まった」にもしない |
+| 最新のレビュー記録の round が `review.max_rounds` 以上で、C6 が pass でないか C12 が fail | 強制マージ待ち（下の「レビューは 1 往復まで」）。`review.sh` を起動せず、「止まった」にもしない |
 | C6 が fail、または C6 が pass で C7 が fail | 「止まった」（`request_changes`・重大な指摘） |
 | C6 が pass でなく、C10 が pass | `review.sh` をバックグラウンドで起動する（PR ごとに 1 つまで。`.agents/run/train/review-<PR>.pid` で判定し、終わっていれば起動し直す） |
 | C6 が pass で C12 が fail、C10 が pass | 保護されたパスの確認の記録（`protected_paths_ack`）が足りない（最新の記録が Codex の GitHub 連携など）。`review.sh` を HEAD ごとに 1 回だけバックグラウンドで起動する（`.agents/run/train/review-c12-<PR>` に HEAD を記録する）。そのレビューのあとも C12 が fail なら「止まった」 |
@@ -206,7 +206,7 @@ scripts/agents/autospawn.sh
 - `agentctl gate` の結果が空・不正（API の上限など）のときは、その周はその PR に何もしない。`gh` が失敗しても止まらず、次の周で試す。`gh api rate_limit` の残りが 300 未満なら、戻る時刻まで休む
 - マージ済み・閉じた PR は列から外す（`merge.sh` がマージの後の処理で 0 以外を返したときも）
 - **凍結（#240）**: 保護されたパスの PR（C12 が fail・pending か、C12 の detail が「保護されたパスの変更（」で始まる）の `review.sh` を起動したら、それが動いている間は、ほかの PR を（Merge Gate が pass でも）マージしない。保護されたパスの PR はレビューの引き継ぎ（#120）が使えないので、レビューの間に main が進むと「取り込み → 再レビュー」を繰り返し、いつまでもマージできないため（#209・#214）。印は `.agents/run/train/freeze-<PR>`（起動した時刻）。`review.sh` が終わるか、`review.sh` の待ちの上限（`AGENT_CODEX_GITHUB_TIMEOUT`＋`AGENT_CODEX_TIMEOUT`、既定 900＋300 秒）を超えたら解く。凍結した PR 自身は pass ならマージする
-- **レビューは 2 往復まで（#240）**: オーナーの決まり（2026-11-08）。最新のレビュー記録（Merge Gate の `latest_review.round`）が `.agents/config.json` の `review.max_rounds`（書かなければ 2）以上で、C6 が pass でない（か C12 が fail の）PR には、もう `review.sh` を起動しない。`ci-ok` が pass なら「強制マージ待ち」として `.agents/run/train/force-merge-<PR>.json`（`pr`・`issue`・`head_sha`・`round`・`max_rounds`・`ci_ok`・`failed`＝pass でない条件・`recorded_at`）に記録し、ログに「強制マージ待ち」と出す（同じ HEAD の間は「強制マージ待ちのまま」）。Orchestrator はこれをオーナーに知らせ、オーナーが強制マージする。`ci-ok` が pass でない間は記録を作らず、ログに「ci-ok が pass になるのを待つ」と出す。記録は、列から外したとき（マージ済み・閉じた）と、上限に当たらなくなったときに消す
+- **レビューは 1 往復まで（#240・#336）**: オーナーの決まり（2026-11-08。08:50 に 2 往復から 1 往復に変えた）。最新のレビュー記録（Merge Gate の `latest_review.round`）が `.agents/config.json` の `review.max_rounds`（今は 1。書かなければ 2）以上で、C6 が pass でない（か C12 が fail の）PR には、もう `review.sh` を起動しない。`ci-ok` が pass なら「強制マージ待ち」として `.agents/run/train/force-merge-<PR>.json`（`pr`・`issue`・`head_sha`・`round`・`max_rounds`・`ci_ok`・`failed`＝pass でない条件・`recorded_at`）に記録し、ログに「強制マージ待ち」と出す（同じ HEAD の間は「強制マージ待ちのまま」）。Orchestrator はこれをオーナーに知らせ、オーナーが強制マージする。`ci-ok` が pass でない間は記録を作らず、ログに「ci-ok が pass になるのを待つ」と出す。記録は、列から外したとき（マージ済み・閉じた）と、上限に当たらなくなったときに消す
 - **review.sh を子にしない（#240）**: `review.sh` は、`merge-train.sh` と別のセッション（`setsid` がなければ、ジョブ制御 `set -m` で別のプロセスグループ）で、二重の fork で起動する。`merge-train.sh` を止めても（TaskStop・Ctrl-C でプロセスグループごと止めても）、`review.sh` は止まらない
 
 [autospawn.sh](../../scripts/agents/autospawn.sh)（Worker の自動起動）:

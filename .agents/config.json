@@ -14,7 +14,7 @@
     "trusted_authors": ["K-Kizuku", "kizuku-claude[bot]"],
     "codex_bot_authors": ["chatgpt-codex-connector[bot]"],
     "carry_over_on_base_merge": true,
-    "max_rounds": 2,
+    "max_rounds": 1,
     "skip_small_prs": true,
     "skip_paths": ["docs/**", "**/*_test.go", "**/*.test.ts", "**/*.test.tsx", "**/testdata/**", "**/fixtures/**"],
     "skip_max_lines": 300
