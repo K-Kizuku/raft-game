@@ -512,6 +512,29 @@ check "dev-slot: パスで解放する" test "$RC" = 0 -a ! -d "$repo/.git/agent
 rm -rf "$repo/.git/agent-slots"
 unset AGENT_CONFIG
 
+# リポジトリの設定（dev_slots=15）で 15 番まで割り当て、16 個目は枠がないと伝える（#205）
+check "dev-slot: .agents/config.json の dev_slots は 15" test "$(jq -r '.dev_slots' "$src_root/.agents/config.json")" = 15
+# ds_fill <説明>: q1〜q15 を確保して 1〜15 が出ること、q16 が dev_slots=15 で断られることを確かめる
+ds_fill() {
+  local i got="" want=""
+  for i in $(seq 1 15); do
+    mkdir -p "$tmp/q$i"
+    got="$got $(bash "$DS" acquire --path "$tmp/q$i" 2>/dev/null)"
+    want="$want $i"
+  done
+  check "dev-slot（$1）: 1〜15 番を割り当てる" test "$got" = "$want"
+  mkdir -p "$tmp/q16"
+  run_rc bash "$DS" acquire --path "$tmp/q16"
+  check "dev-slot（$1）: 16 個目は終了コード 1" test "$RC" = 1
+  check "dev-slot（$1）: 枠がないことを dev_slots=15 で伝える" grep -qF "空いている DEV_SLOT がない（dev_slots=15）" "$tmp/err"
+  rm -rf "$repo/.git/agent-slots"
+}
+ds_fill "設定の値"
+# 設定がないときの既定値も 15
+export AGENT_CONFIG="$tmp/no-such-config.json"
+ds_fill "既定値"
+unset AGENT_CONFIG
+
 # ================= Worker のプロンプト（#117）=================
 # 文言があることだけを確かめる（web の依存の用意・ci-ok だけを待つ・補足の行をチェックボックスにしない）。
 # merge-gate を含む --required・--watch・--fail-fast を gh pr checks に付けていないことも確かめる。
