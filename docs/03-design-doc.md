@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.5 |
-| 更新日 | 2026-11-07 |
+| 版 | v0.6 |
+| 更新日 | 2026-11-08 |
 | 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
 | 対象読者 | 実装者（サーバー・フロントエンド・インフラ）、レビュアー |
 | 前提ドキュメント | [要件定義書](./01-requirements.md)、[アーキテクチャ](./02-architecture.md)、[ゲームデザイン仕様](./04-game-design.md) |
@@ -1316,8 +1316,8 @@ T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.
 | ステージ選択で選ぶ → ステージ紹介 | `push` |
 | ステージ紹介の「出航する」 → `/play` | `replace` |
 | ゲームの終わり → `/result` | `replace` |
-| リザルトの「同じ条件でもう一度」 → `/play` | `replace` |
-| リザルトの「次のステージ」 → 次のステージの紹介・「ステージ選択」 → `/stages` | `push` |
+| リザルトの「同じ条件でもう一度」 → `/play`（セッションを作ってから） | `replace` |
+| リザルトの「次のステージ」 → 次のステージの紹介（セッションを作ってから）・「ステージ選択」 → `/stages` | `push` |
 
 タイトル → ステージ選択 → 紹介 → ゲーム → リザルトと進んだ後の履歴は `[/, /stages, /result]` になり、リザルトで戻ると `/stages` に戻ります。
 
@@ -1336,7 +1336,39 @@ T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.
 | （重ねて表示） | `DemoKeys`（`web/src/ui/demo/DemoKeys.tsx`） | T-411 |
 | （重ねて表示） | `TutorialOverlay`（`web/src/app/tutorial/TutorialOverlay.tsx`、`stageId` を受ける） | T-409 |
 
-WS の接続（T-402 の `createGameConnection`）とストア（T-403 の `gameStore`）を `GameScreen` につなぎ、`round.result` で `onRoundEnd` を呼ぶのは、後続のタスクです。セッションの作成（`StageSelection.session` を入れること）は T-413 です。
+WS の接続（T-402 の `createGameConnection`）とストア（T-403 の `gameStore`）を `GameScreen` につなぎ、`round.result` で `onRoundEnd` を呼ぶのは、後続のタスクです。`RoundContext.session`・`seed` を入れるのは、下の「セッションの作成（T-413）」です。
+
+**セッションの作成（T-413）**
+
+画面が `POST /api/sessions`（[06-protocol.md §2](./06-protocol.md)）を呼んでセッションを作ります。部品は `web/src/app/session/`（`api.ts`・`errors.ts`・`config.ts`・`turnstile.ts`・`seed.ts`・`useSessionCreation.ts`・`SessionNotice.tsx`）にあり、配線は `App.tsx` が行います。セッションを作る操作は次の 4 つで、どれも `useSessionCreation` の `create` を通します（`demo` はそのステージの一覧の `demo`）。
+
+| 操作 | 作らずに済むとき | シード | 成功したとき |
+|---|---|---|---|
+| ステージ選択の「<タイトル>を選ぶ」 | `flow.selection` の `stageId` が同じで `session` がある → そのまま紹介へ `push` | 新しく決める | `stageSelected({ stageId, session, seed })` → `/stages/<id>` へ `push` |
+| ステージ紹介の「出航する」 | `flow.selection` の `stageId` が同じで `session` がある → 今のまま `departed` → `/play` へ `replace` | 新しく決める | `stageSelected` → `departed` → `/play` へ `replace` |
+| リザルトの「同じ条件でもう一度」 | なし（1 つのセッションは 1 ラウンドだけ） | `round.seed`（`null` なら新しく決める） | `retried({ session, seed })` → `/play` へ `replace` |
+| リザルトの「次のステージ」 | `flow.selection` の `stageId` が次のステージで `session` がある → 紹介へ `push` | 新しく決める | 次のステージの紹介へ `push` してから `stageSelected({ stageId, session, seed })`（先に `round` を消すと `/result` の転送が先に走るため） |
+
+- **画面がシードを決めて送る**（`randomSeed`。`crypto.getRandomValues` の 32 ビットの整数）。Worker に任せると、「同じ条件でもう一度」（FR-GAME-06）に使うシードが画面に分からないためです。サーバーなしで進んだときも、決めたシードを `RoundContext.seed` に持ちます
+- **画面からの要求 1 回で、セッションは多くても 1 つ**（ADR-0018）。作成中の 2 つ目の操作は無視します（作成中かどうかは ref で持ち、描画を待たずに判定する）。ステージ選択と紹介のボタンは作成中に `disabled` にします。リザルトのボタンは押せますが、押し直しは無視します。同じステージを選び直したときは、使っていないセッションを使い回します。使われなかったセッションは、Durable Object の側（T-308）が接続のないまま一定時間で止めます
+- **作成中に画面を移ったとき**: `create` を始めたときと終わったときのルート（`formatRoute` の文字列）が違えば、成功しても画面を移しません。`stageSelected({ stageId, session, seed })` だけを行い、同じステージを選び直したときに使います。失敗したときは何も表示しません
+- 失敗したときは画面を移さず、下の文言を出します（`SessionNotice`。ステージ選択・紹介・リザルトの画面の後ろ）。自動で送り直しません。ルートが変わると、文言は消えます
+- **Turnstile**（G4・[ADR-0018](./adr/0018-cost-guard.md)）: サイトキーはビルドのときの環境変数 `VITE_TURNSTILE_SITE_KEY`（秘密ではない。リポジトリに書かず、デプロイのビルドで渡す。T-603）。一般公開とデモのホスト名を 1 つのウィジェットに入れる（T-606）ので、両方のビルドで同じ値です。ウィジェットは App の `<main>` の最後にある `.turnstile-host` に 1 つだけ、`explicit` で描画します。`execution: "execute"`（選んだときに確認を始める）・`appearance: "interaction-only"`（操作が要るときだけ見える）・`retry: "never"`・`refresh-expired: "never"` です。トークンは 1 回だけ使い、作成の成否によらず必ず `reset` します。サイトキーがない（未設定・空・形が違う）ときは、スクリプトを読み込まず、`turnstileToken` を送りません（Turnstile を無効にした Worker と `standalone` はこれで通る）。スクリプトは `index.html` に書かず、`turnstile.ts` が最初に要るときに読み込みます
+- トークン（Turnstile とセッション）は `POST /api/sessions` の本文と App の状態だけに置き、保存領域・URL・`console`・例外のメッセージに出しません（NFR-08）
+- 201 の本文は `sessionId`（`^[A-Za-z0-9._-]{1,256}$`）・`token`（`^[A-Za-z0-9_-]{22}$`）・`wsPath`（ちょうど `/ws/sessions/<sessionId>`）を確かめ、合わなければそのセッションを使いません（別のホストやパスに接続しない）
+
+| 種類 | 当てはまるもの | 文言 |
+|---|---|---|
+| `budget_exhausted` | `503 budget_exhausted` | 本日の受付は終了しました。 |
+| `sessions_disabled` | `503 sessions_disabled` | ただいま受付を停止しています。 |
+| `rate_limited` | `429 rate_limited`（`code` のない 429 も） | 少し待ってからお試しください。 |
+| `turnstile_failed` | `403 turnstile_failed` | 確認できませんでした。もう一度お試しください。 |
+| `challenge_failed` | Turnstile のウィジェットの読み込み・確認の失敗（POST しない） | 確認の画面を表示できませんでした。もう一度お試しください。 |
+| `forbidden_origin` | `403 forbidden_origin` | このページからはステージを始められません。ページを読み込み直してください。 |
+| `bad_request` | `400 bad_request` | このステージは始められませんでした。ステージの一覧を読み込み直してください。 |
+| `unavailable` | 上のどれでもない（`internal_error`・`not_found`・知らない `code`・JSON でない本文・201 以外の 2xx・形の違う 201・通信の失敗） | ステージを始められませんでした。もう一度お試しください。 |
+
+開発のとき（`import.meta.env.DEV`）だけ、失敗の文言の下に「サーバーなしで進む（開発用）」を出します。押すと、成功したときの続きを `session: null`（シードは決めた値のまま）で行います。`make dev` で Worker に `GameSession` がなくても画面を確認できるようにするためで、本番のビルドでは出しません。
 
 **ルーターのライブラリを使わない理由**
 
@@ -1348,7 +1380,7 @@ WS の接続（T-402 の `createGameConnection`）とストア（T-403 の `game
 
 **島の紹介文**
 
-ステージ紹介の島の紹介文と「学べること」のデータの出どころ（`/api/stages` に足すか、別の API か）は未定です（T-401 では「準備中」の表示）。
+データは `/api/stages` の `intro`・`learning`（T-311）です。画面への表示は後続のタスクです（それまでは「準備中」の表示）。
 
 ### 13.7 Raft の用語の併記
 

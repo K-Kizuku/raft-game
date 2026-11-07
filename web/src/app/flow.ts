@@ -1,5 +1,5 @@
-// 画面の流れの状態（T-401・DesignDoc §13.6）。純粋な reducer。
-import type { RoundContext, StageSelection, StageSummary } from "./types.ts";
+// 画面の流れの状態（T-401・T-413・DesignDoc §13.6）。純粋な reducer。
+import type { RoundContext, SessionHandle, StageSelection, StageSummary } from "./types.ts";
 
 export type FlowState = { selection: StageSelection | null; round: RoundContext | null };
 
@@ -7,7 +7,7 @@ export type FlowAction =
   | { type: "stageSelected"; selection: StageSelection }
   | { type: "departed"; stage: StageSummary }
   | { type: "roundEnded" }
-  | { type: "retried" };
+  | { type: "retried"; session: SessionHandle | null; seed: number | null };
 
 export const initialFlowState: FlowState = { selection: null, round: null };
 
@@ -16,12 +16,11 @@ export function flowReducer(state: FlowState, action: FlowAction): FlowState {
     case "stageSelected":
       return { selection: action.selection, round: null };
     case "departed": {
-      const session =
-        state.selection !== null && state.selection.stageId === action.stage.id
-          ? state.selection.session
-          : null;
+      const same = state.selection !== null && state.selection.stageId === action.stage.id;
+      const session = same ? (state.selection?.session ?? null) : null;
+      const seed = same ? (state.selection?.seed ?? null) : null;
       // 1 つのセッションは 1 ラウンドだけに使う。
-      return { selection: null, round: { stage: action.stage, session, finished: false } };
+      return { selection: null, round: { stage: action.stage, session, seed, finished: false } };
     }
     case "roundEnded":
       if (state.round === null) {
@@ -32,8 +31,16 @@ export function flowReducer(state: FlowState, action: FlowAction): FlowState {
       if (state.round === null) {
         return state;
       }
-      // 同じ条件のセッションを作り直すのは T-408・T-413。
-      return { ...state, round: { stage: state.round.stage, session: null, finished: false } };
+      // 同じ条件で作り直したセッション（App が作る。T-413）。
+      return {
+        ...state,
+        round: {
+          stage: state.round.stage,
+          session: action.session,
+          seed: action.seed,
+          finished: false,
+        },
+      };
   }
 }
 

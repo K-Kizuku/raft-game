@@ -32,3 +32,21 @@
   list-style: none;
   padding: 0;
 }
+
+/* Turnstile のウィジェット（T-413）。操作が要るときだけ中身が見える。 */
+.turnstile-host {
+  display: flex;
+  justify-content: center;
+  margin: 1rem 0;
+}
+
+/* セッションの作成の状態（T-413）。 */
+.session-notice {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.session-notice-error p {
+  color: #b91c1c;
+}

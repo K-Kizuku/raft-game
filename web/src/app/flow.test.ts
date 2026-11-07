@@ -16,6 +16,7 @@ const stage1: StageSummary = {
   islands: 3,
   ferries: 1,
   durationMs: 180000,
+  demo: false,
 };
 const stage2: StageSummary = { ...stage1, id: "stage2", title: "島から返事が来ない！" };
 const stage3: StageSummary = { ...stage1, id: "stage3", title: "嵐の夜" };
@@ -32,69 +33,88 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe("flowReducer", () => {
-  it("FL-1 同じステージで出航すると、選んだセッションをラウンドに渡す", () => {
+  it("F-1 同じステージで出航すると、選んだセッションとシードをラウンドに移す", () => {
     const selected = flowReducer(initialFlowState, {
       type: "stageSelected",
-      selection: { stageId: "stage1", session },
+      selection: { stageId: "stage1", session, seed: 7 },
     });
-    expect(selected).toEqual({ selection: { stageId: "stage1", session }, round: null });
+    expect(selected).toEqual({ selection: { stageId: "stage1", session, seed: 7 }, round: null });
 
     const departed = flowReducer(selected, { type: "departed", stage: stage1 });
     expect(departed).toEqual({
       selection: null,
-      round: { stage: stage1, session, finished: false },
+      round: { stage: stage1, session, seed: 7, finished: false },
     });
   });
 
-  it.each<[string, FlowState]>([
-    ["別のステージ", { selection: { stageId: "stage2", session }, round: null }],
-    ["null", { selection: null, round: null }],
-  ])("FL-2 selection が%sなら session は null", (_label, state) => {
+  it("F-1 サーバーなしで選んだときも、シードをラウンドに移す", () => {
+    const state: FlowState = {
+      selection: { stageId: "stage1", session: null, seed: 9 },
+      round: null,
+    };
     const departed = flowReducer(state, { type: "departed", stage: stage1 });
-    expect(departed.round).toEqual({ stage: stage1, session: null, finished: false });
+    expect(departed.round).toEqual({ stage: stage1, session: null, seed: 9, finished: false });
+  });
+
+  it.each<[string, FlowState]>([
+    ["別のステージ", { selection: { stageId: "stage2", session, seed: 7 }, round: null }],
+    ["null", { selection: null, round: null }],
+  ])("F-1 selection が%sなら session と seed は null", (_label, state) => {
+    const departed = flowReducer(state, { type: "departed", stage: stage1 });
+    expect(departed.round).toEqual({ stage: stage1, session: null, seed: null, finished: false });
     expect(departed.selection).toBeNull();
   });
 
-  it("FL-3 roundEnded と retried", () => {
+  it("F-2 roundEnded と retried", () => {
     const playing: FlowState = {
       selection: null,
-      round: { stage: stage1, session, finished: false },
+      round: { stage: stage1, session, seed: 7, finished: false },
     };
     const ended = flowReducer(playing, { type: "roundEnded" });
-    expect(ended.round).toEqual({ stage: stage1, session, finished: true });
+    expect(ended.round).toEqual({ stage: stage1, session, seed: 7, finished: true });
 
-    const retried = flowReducer(ended, { type: "retried" });
-    expect(retried.round).toEqual({ stage: stage1, session: null, finished: false });
+    const next: SessionHandle = { sessionId: "s-2", token: "t-2", wsPath: "/ws/s-2" };
+    const retried = flowReducer(ended, { type: "retried", session: next, seed: 7 });
+    expect(retried.round).toEqual({ stage: stage1, session: next, seed: 7, finished: false });
     expect(retried.round?.stage).toBe(stage1);
 
-    const empty: FlowState = { selection: { stageId: "stage1", session: null }, round: null };
+    const offline = flowReducer(ended, { type: "retried", session: null, seed: 8 });
+    expect(offline.round).toEqual({ stage: stage1, session: null, seed: 8, finished: false });
+
+    const empty: FlowState = {
+      selection: { stageId: "stage1", session: null, seed: null },
+      round: null,
+    };
     expect(flowReducer(empty, { type: "roundEnded" })).toBe(empty);
-    expect(flowReducer(empty, { type: "retried" })).toBe(empty);
+    expect(flowReducer(empty, { type: "retried", session, seed: 1 })).toBe(empty);
   });
 
   it("FL-4 stageSelected で round が null になる", () => {
     const state: FlowState = {
       selection: null,
-      round: { stage: stage1, session: null, finished: true },
+      round: { stage: stage1, session: null, seed: null, finished: true },
     };
     const next = flowReducer(state, {
       type: "stageSelected",
-      selection: { stageId: "stage2", session: null },
+      selection: { stageId: "stage2", session: null, seed: null },
     });
-    expect(next).toEqual({ selection: { stageId: "stage2", session: null }, round: null });
+    expect(next).toEqual({
+      selection: { stageId: "stage2", session: null, seed: null },
+      round: null,
+    });
   });
 
   const actions: FlowAction[] = [
-    { type: "stageSelected", selection: { stageId: "stage2", session: null } },
+    { type: "stageSelected", selection: { stageId: "stage2", session: null, seed: null } },
     { type: "departed", stage: stage1 },
     { type: "roundEnded" },
-    { type: "retried" },
+    { type: "retried", session, seed: 3 },
   ];
   const states: FlowState[] = [
     initialFlowState,
-    { selection: { stageId: "stage1", session }, round: null },
-    { selection: null, round: { stage: stage1, session, finished: false } },
-    { selection: null, round: { stage: stage1, session, finished: true } },
+    { selection: { stageId: "stage1", session, seed: 7 }, round: null },
+    { selection: null, round: { stage: stage1, session, seed: 7, finished: false } },
+    { selection: null, round: { stage: stage1, session, seed: 7, finished: true } },
   ];
   it.each(actions)("FL-4 %j は引数の state を書き換えない", (action) => {
     for (const state of states) {
