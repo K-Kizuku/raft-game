@@ -508,6 +508,43 @@ invoked_script() {
   esac
 }
 
+# agentctl_write_hit <引用符と \ を取り除いたコマンドの全体>: コマンドの文字列のどこかに agentctl の語と
+# 書き込みの語の両方があれば、見つけた書き込みの語を出す（なければ空）。安全側の字句の判定で、構文は読まない
+# （シェルのコメント・引用符の中・フラグの値・パイプの先にあっても拒否する。--dry-run の例外もない）。
+# - agentctl の語: 部分文字列 agentctl（agentctl・agentctl.sh・.agents/bin/agentctl・tools/agentctl など）。
+#   cd してからの go run . を見分けられないので、単語 go と run の両方があるときも agentctl の語とみなす
+# - 書き込みの語: 単語 comment・state・claim・attempt と、gate のフラグ --comment・--set-status（- 1 つも）
+# 単語は英数字と _ . / = - の並び（tools/agentctl/internal/state や TestComment は単語 state・comment ではない）。
+# 読み取り（plan・recover・review・pr view・pr codex-record・pr protected-files・--comment と --set-status の
+# ない gate）は、書き込みの語を含まなければ通る。
+# 第 2 引数に any を渡すと、agentctl の語と書き込みの語のどちらか一方でもあれば出す。
+# 呼び出し側で、行の継続（\ と改行）・$'...'・$"..." を正規化してから渡す。改行・タブも語の区切りになる。
+agentctl_write_hit() {
+  local s="$1" t mention=0 has_go=0 has_run=0 sub=""
+  case "$s" in
+    *agentctl*) mention=1 ;;
+  esac
+  while IFS= read -r t; do
+    case "$t" in
+      go) has_go=1 ;;
+      run) has_run=1 ;;
+      comment | state | claim | attempt) [ -n "$sub" ] || sub="$t" ;;
+      -comment | --comment | -comment=* | --comment=*) [ -n "$sub" ] || sub="gate --comment" ;;
+      -set-status | --set-status | -set-status=* | --set-status=*) [ -n "$sub" ] || sub="gate --set-status" ;;
+    esac
+  done < <(printf '%s\n' "$s" | tr -c 'A-Za-z0-9_./=\n-' '\n')
+  [ "$has_go" = 1 ] && [ "$has_run" = 1 ] && mention=1
+  if [ "${2:-}" = any ]; then
+    # どちらか一方でもあれば出す（正規化しきれない $'...' があるとき）
+    if [ "$mention" = 1 ] || [ -n "$sub" ]; then
+      printf '%s\n' "${sub:-agentctl}"
+    fi
+    return 0
+  fi
+  [ "$mention" = 1 ] && [ -n "$sub" ] && printf '%s\n' "$sub"
+  return 0
+}
+
 WRITERS=" cp mv tee install rsync ln touch rm rmdir mkdir truncate dd patch chmod chown unzip tar python python3 node perl ruby "
 
 # is_interpreter <コマンド名>: 任意のコードを実行できるインタプリタなら 0。
@@ -733,6 +770,31 @@ check_segment() {
     esac
   fi
 }
+
+# Worker・Reviewer: agentctl の書き込み（comment・state・claim・attempt、gate --comment・--set-status）（Issue #86）。
+# agentctl comment は信頼する作者の認証情報で PR にコメントを書くので、偽のレビュー記録を投稿できてしまう。
+# セグメントに分ける前のコマンドの全体で判定する（agentctl_write_hit を参照。--dry-run の例外はない）。
+if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
+  # Bash と同じく「\ と改行の組」（行の継続）を丸ごと取り除き、$'...'・$"..." の $ を取り除いてから、
+  # 引用符と \ を取り除く（st\<改行>ate・st$'a'te のように語を分けた形も state と読む）。
+  acraw="${raw//$'\\\n'/}"
+  ansi_c=0
+  case "$acraw" in
+    *"\$'"*) ansi_c=1 ;;
+  esac
+  acraw="${acraw//\$\'/\'}"
+  acraw="${acraw//\$\"/\"}"
+  acnorm="$(printf '%s\n' "$acraw" | tr -d "\"'\\\\")"
+  acsub="$(agentctl_write_hit "$acnorm")"
+  # $'\x73tate' のようなエスケープは正規化しきれないので、$'...' があるときは agentctl の語か
+  # 書き込みの語のどちらか一方でもあれば拒否する
+  if [ -z "$acsub" ] && [ "$ansi_c" = 1 ] && [ -n "$(agentctl_write_hit "$acnorm" any)" ]; then
+    acsub="ANSI-C 引用 \$'...'"
+  fi
+  if [ -n "$acsub" ]; then
+    deny "Worker・Reviewer は agentctl の書き込み（$acsub）を含むコマンドを使わない（PR へのコメントと Issue の状態の書き込みは Orchestrator が行う。--dry-run でも、コメントや引用符の中の語でも拒否する）"
+  fi
+fi
 
 # shellcheck disable=SC2020
 while IFS= read -r seg; do
