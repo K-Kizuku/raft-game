@@ -728,7 +728,7 @@ Durable Object だけが送る電文です。ブラウザから届いた `intern
 
 ### 10.6 記録を再生するモック（開発・テスト用）
 
-- `web/src/net/mock/` は、`simcli record` の記録（[DesignDoc §13.5](./03-design-doc.md)。`format: 1`）を、このプロトコルの電文で再生するモックのサーバー（`createRecordServer`）を持つ。WebSocket の層で差し替えるので、`createGameConnection` はモックでも本物でも同じものが動く
+- `web/src/net/replay/` は、`simcli record` の記録（[DesignDoc §13.5](./03-design-doc.md)。`format: 1`）を、このプロトコルの電文で再生するモックのサーバー（`createRecordServer`）を持つ。開発のモック（`net/mock/` から再輸出）と、ブラウザでのリプレイ（ADR-0028）が使う。WebSocket の層で差し替えるので、`createGameConnection` はモックでも本物でも同じものが動く
 - 記録に無い値（`session`・`stage`・`requests`・`score`・`round.result`）はモックの値で埋める。**画面の確認に使わない**（島・航路を描くときは、ステージの表示用の値を呼び出し側が渡す）
 - モックは本番のビルドに入れない（`web/src/net/index.ts` から再輸出しない）
 
