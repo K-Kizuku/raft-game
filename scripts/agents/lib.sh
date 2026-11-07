@@ -146,6 +146,18 @@ agentctl() {
   fi
 }
 
+# ensure_github_token: GITHUB_TOKEN も GH_TOKEN もなければ、gh auth token の値を GH_TOKEN に入れる
+# （agentctl の REST のサブコマンドが使う）。gh がない・ログインしていなければ何もしない。
+ensure_github_token() {
+  local t
+  if [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ]; then
+    return 0
+  fi
+  command -v gh >/dev/null 2>&1 || return 0
+  t="$(gh auth token 2>/dev/null || true)"
+  [ -z "$t" ] || export GH_TOKEN="$t"
+}
+
 now_utc() {
   date -u +%Y-%m-%dT%H:%M:%SZ
 }

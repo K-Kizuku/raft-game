@@ -134,34 +134,32 @@ package sim
 
 type Engine struct { /* 非公開 */ }
 
-func New(st *stage.Stage, seed uint64, opt Options) (*Engine, error)
+// 設定（Config）・シードから Engine を作り、開会式（§5.3）まで計算する。Phase() は Intro、Now() は 0。
+func New(cfg Config, seed uint64, opt Options) (*Engine, error)
 
 func (e *Engine) Now() SimTime
-func (e *Engine) Phase() Phase // Opening / Sailing / Ended
+func (e *Engine) Phase() Phase // Intro / Opening / Sailing / Ended
 
-// コマンドを Now() の時刻で適用する。入力ログに記録される。
-func (e *Engine) Apply(cmd protocol.Command) protocol.Ack
+// コマンドを Now() の時刻で適用する。成功したコマンドだけが入力ログに記録される。
+// 失敗したときは、状態・イベント・入力ログ・時刻のどれも変えない。
+func (e *Engine) Apply(cmd Command) Ack
 
-// t 以下の時刻のイベントをすべて処理し、Now() を t にする。
+// t 以下の時刻のイベントをすべて処理し、Now() を t にする。航行中（Sailing）でなければ何もしない。
 // ラウンド終了時刻を超える t を渡しても、終了時刻で止まる。
 func (e *Engine) RunUntil(t SimTime)
 
-// 前回呼んでから発生したドメインイベントを取り出す。
-func (e *Engine) DrainEvents() []protocol.Event
+// 前回呼んでから発生したドメインイベントを取り出す（呼ばなければ溜まり続ける）。
+func (e *Engine) DrainEvents() []DomainEvent
 
-func (e *Engine) Snapshot() protocol.Snapshot          // 再接続時などに送る全体の状態
-func (e *Engine) NodeDetail(id uint64) protocol.NodeDetail // エンジニアモード用
-func (e *Engine) Result() (protocol.RoundResult, bool)   // 終了後のみ
-func (e *Engine) InputLog() protocol.InputLog
-func (e *Engine) TraceHash() [32]byte
-
-// 次に「プレイヤーに見せたい出来事」（船の到着・台本のイベント・依頼の発生）が起きる時刻。
-// デモ操作の「次の出来事まで進める」に使う。
-func (e *Engine) NextNotableAt() (SimTime, bool)
-
-// 入力ログを最初から適用し直して、同じ状態のエンジンを作る（コンテナが止まったときの復元、リプレイ）。
-func Replay(st *stage.Stage, log protocol.InputLog, opt Options) (*Engine, error)
+func (e *Engine) InputLog() []InputEntry // 成功したコマンドと適用した時刻（§10.1）
+func (e *Engine) TraceHash() [32]byte    // §10.2
 ```
+
+- `Phase` の `Intro` は `cmd.game.start` を待つ間（ステージ紹介）。この間の `RunUntil` は時刻を進めない（開会式はゲーム内時間を使わないため）
+- 開会式は `New` の中で計算し（決定的な計算なので結果は同じ）、そのイベント（`phase.changed`・`node.*`）は `cmd.game.start` を適用したときに出す。Leader が決まらないような設定の誤りは、`New` のエラーになる
+- `stage`（T-201）と `protocol`（T-301）ができるまでは、`sim` の中で定義した型（`Config`・`Command`・`Ack`・`DomainEvent`・`InputEntry`）で受け、返す。`stage.Stage` → `Config` の変換は T-201、`sim` の型 ⇔ `protocol` の型の変換は T-301 で作る
+- 後のタスクで次を足す: `Snapshot()`（再接続時などに送る全体の状態）と `NextNotableAt()`（次に「プレイヤーに見せたい出来事」が起きる時刻。デモ操作の「次の出来事まで進める」に使う）は T-106b、`NodeDetail(id)`（エンジニアモード用）は T-407、`Result()`（終了後のみ）は T-203、`Replay`（入力ログを最初から適用し直して同じ状態のエンジンを作る）は T-304
+- Engine の誤り（`Process`・`PostRaft`・`Arrive`・`AdvanceTo`・`Push` のエラー、コードに対応しない `ferry` のエラー、台帳の結果の型の違い、テストモードの不変条件の違反）は panic する。正しく使えば起きない。セッションループ（T-303）が panic を回復し、そのセッションを `error`（`fatal`）で閉じる
 
 ---
 
@@ -200,7 +198,7 @@ func Replay(st *stage.Stage, log protocol.InputLog, opt Options) (*Engine, error
 5. Leader がちょうど 1 人に決まり、全ノードがその Leader を知っていて、全ノードが Leader の最初の（空の）エントリまで適用したことを確かめる（満たさなければエラー）
 6. 港は空のまま（開会式の手紙は港を通らない）、`SimTime = 0` で航行フェーズを始める
 
-この手順は `cluster.Opening(nodes, initialLeader)` が行います。開会式の間もドメインイベントは記録します。`Opening` が `RoleChange` の列と配達した手紙を返し、`sim.Engine` がそれを記録するので、エンジニアモードでは最初の選挙の様子も見られます。画面上は「開会式：代表に〇〇島が選ばれました」という演出にします。
+この手順は `cluster.Opening(nodes, initialLeader)` が行います（`sim.New` の中で呼ぶ）。開会式の間もドメインイベントは記録します。`Opening` が返す `RoleChange` の列を、`sim.Engine` が `cmd.game.start` の適用のときに `node.leader_elected`・`node.stepped_down`・`node.state` のイベントにするので、最初の選挙の結果も見られます。即時配達した手紙は港を通らず、手紙の ID もないので、手紙のイベントにはしません。画面上は「開会式：代表に〇〇島が選ばれました」という演出にします。
 
 > **Leader を指定するのは「ゲーム側が Leader を決めない」（C-05）に反しないか？** `Campaign()` は「選挙タイムアウトが来た」のと同じ扱いで、立候補させるだけです。当選するかどうかは Raft の投票で決まります。実際に、開会式で他のノードが先に立候補していれば別の島が当選し得ます（決定的な乱数のもとでは毎回同じ結果になります）。
 
@@ -314,22 +312,38 @@ type LetterID uint64
 
 type LetterKind uint8
 const (
-    LetterRaft LetterKind = iota // Raft のメッセージ
-    LetterRequest                // 依頼書（アプリケーションの手紙）
+    LetterRaft    LetterKind = iota + 1 // Raft のメッセージ（0 は使わない）
+    LetterRequest                       // 依頼書（アプリケーションの手紙）
 )
+
+type LocationKind uint8
+const (
+    LocPort      LocationKind = iota + 1 // 港（Island = その港の島 = 送信元）
+    LocFerry                             // 船（Ferry）
+    LocDelivered                         // 配達済み（Island = 宛先）
+    LocDropped                           // 港の規則で破棄した
+)
+
+type Location struct {
+    Kind   LocationKind
+    Island uint64
+    Ferry  FerryID
+}
 
 type Letter struct {
     ID        LetterID
     Kind      LetterKind
     From, To  uint64       // 島（= ノード）ID
-    CreatedAt sim.SimTime
+    CreatedAt int64        // ミリ秒（sim.SimTime と同じ値。ferry は sim を import しない）
     Raft      *pb.Message  // Kind == LetterRaft のとき。生成後は変更しない
     Req       *RequestNote // Kind == LetterRequest のとき
-    Location  Location     // 港 / 船 / 中継倉庫 / 配達済み / 破棄
+    Location  Location
 }
 ```
 
-- 手紙の ID はエンジン内の連番（決定的）
+- 時刻は `int64`（ミリ秒、`sim.SimTime` と同じ値）。変換は `sim.Engine` が行う
+- 中継倉庫（P1）の場所の種類は、まだ定義しない
+- 手紙の ID はエンジン内の連番（1 から、決定的）
 - `Raft` は Ready から取り出した時点で複製済み。以降は読み取り専用
 - 手紙の内容（Raft メッセージ）は**一切書き換えない**（企画書 §5.3）
 
@@ -368,22 +382,24 @@ stateDiagram-v2
 
 ```go
 type Ferry struct {
-    ID       FerryID
-    Name     string
-    Capacity int
-    Speed    float64 // 航行時間の倍率（1.0 = 航路の標準時間）
-    State    FerryState // Docked / Sailing / Broken
-    At       uint64     // Docked のときの島
-    From, To uint64     // Sailing のとき
-    DepartAt, ArriveAt sim.SimTime
-    ReadyAt  sim.SimTime
-    Cargo    []LetterID // 積んだ順
+    ID            FerryID
+    Name          string
+    Capacity      int
+    SpeedPermille int64      // 航行時間の倍率の千分率（1000 = 航路の標準時間、1200 = 1.2 倍の時間がかかる）
+    State         FerryState // Docked / Sailing（Broken は P1 で足す）
+    At            uint64     // Docked のときの島。Sailing のときは 0
+    From, To      uint64     // Sailing のとき。Docked のときは 0
+    DepartAt      int64      // Sailing のとき（ミリ秒、sim.SimTime と同じ値）
+    ArriveAt      int64      // Sailing のとき
+    ReadyAt       int64      // Docked のとき、この時刻から出航できる
+    Cargo         []LetterID // 積んだ順
 }
 ```
 
-- 航行時間 = `round(route.travelMs × ferry.Speed)`
+- 航行時間 = `(route.travelMs × ferry.SpeedPermille + 500) / 1000`（整数で四捨五入。1 未満なら 1）
 - 出航の条件: `Docked` であること、`now ≥ ReadyAt`、行き先へ直接の航路があり、その航路が遮断されていないこと
-- **到着時の処理**: 積み荷のうち、宛先がその島の手紙を、積んだ順に配達します。Raft の手紙は `Node.Deliver`、依頼書はアプリケーション層（§8）へ渡します。配達のたびに、そのノードの Ready を処理します
+- 故障（`Broken`）と中継倉庫は P1 で、まだ定義しない
+- **到着時の処理**: 積み荷のうち、宛先がその島の手紙を、積んだ順に配達します。Raft の手紙は `Node.Deliver`（`proto.Clone` した複製を渡す）、依頼書はアプリケーション層（§8、T-202）へ渡します。配達のたびに、そのノードの Ready を処理します（返事がすぐにその島の港に並び、同じ船で持ち帰れる）
 - 宛先が別の島の手紙は、そのまま積んでおきます（経由輸送、FR-FERRY-05）
 - 航行中に嵐が来ても、船はそのまま進みます（[04-game-design.md §6](./04-game-design.md)）
 
@@ -426,12 +442,17 @@ type Ferry struct {
 
 ```go
 type Result struct {
+    ReqID  string // Decode できないときと reqId が空のときは ""
     Status string // "ok" | "rejected" | "duplicate"
-    Reason string // "already_reserved" | "full" | "insufficient_budget" | ...
+    Reason string // rejected のときだけ（下の一覧）。ほかは ""
 }
 
 func (l *Ledger) Apply(index uint64, data []byte) Result
 ```
+
+- `Reason` の一覧: `already_reserved`（花火がすでに予約されている）・`full`（屋台の定員に達している）・`unknown_resource`・`resource_kind_mismatch`（`kind` と資源の種類が合わない）・`unknown_kind`・`unsupported_version`・`invalid_command`（Decode できない・`reqId` が空・`origin` が 0）
+- `budget.spend` は P1 まで `unknown_kind` で `rejected` にする
+- `index` が前回の `index` 以下（0 を含む）なら、プログラムの誤りとして panic する
 
 1. `reqId` がすでに適用済みなら、何もせず `duplicate` を返す（再送による二重消費を防ぐ、FR-REQ-06）
 2. `kind` ごとの成功条件を判定し、成功なら資源を消費して `ok`、失敗なら `rejected`
@@ -565,7 +586,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 
 ドメインイベント（[06-protocol.md §5](./06-protocol.md) のイベントと同じ型）を、発生順に連番を付けて JSON Lines で並べたものです。
 
-- **トレースのハッシュ** = 各イベントの正規化 JSON を改行区切りで連結した SHA-256。決定性のテスト（V-6）に使います
+- **トレースのハッシュ** = 各イベントの JSON（`seq`・`t`・`type`、そのあと中身のフィールドの順に並べた平らなオブジェクト。`encoding/json` の出力で、余分な空白なし）の後ろに改行（`\n`）を 1 つ付けて、出した順に連結したものの SHA-256。最後のイベントの後ろにも改行を付ける。イベントが 0 件なら空のバイト列の SHA-256。`DrainEvents` で取り出したかどうかに関係なく、`New` からの全イベントが対象。決定性のテスト（V-6）に使います
 - リザルトの統計（Leader の交代回数、平均 Commit Latency など）はトレースから計算します。トレースを持っていれば、あとから別の統計を足すこともできます
 
 ### 10.3 統計の定義
@@ -852,6 +873,83 @@ WS の接続と、ラウンドの終わりで `onRoundEnd` を呼ぶのは T-402
 **島の紹介文**
 
 ステージ紹介の島の紹介文と「学べること」のデータの出どころ（`/api/stages` に足すか、別の API か）は未定です（T-401 では「準備中」の表示）。
+
+### 13.7 Raft の用語の併記
+
+T-412 で決めた、設定「Raft の用語を併記する」（[FR-UI-10](./01-requirements.md)・[04-game-design.md §8](./04-game-design.md)・[Q-10](./09-assumptions-and-open-questions.md)）と、その表示の部品です。ファイルは `web/src/ui/terms/`（`preference.ts`・`glossary.ts`・`RaftTerm.tsx`）にあります。
+
+**設定の持ち方**
+
+設定は画面をまたいで使い、React の外（PixiJS のマップ）からも読むので、App の状態ではなく、ルーター（§13.6）と同じ「モジュールに 1 つの外部ストア＋`useSyncExternalStore`」で持ちます（`termsPreference`）。Provider が要らないので `App.tsx`・`main.tsx` を変えずに済み、ラウンドが消えても設定は残ります。ゲームの世界の状態ではないので、T-403 のストアには入れません。
+
+- localStorage のキーは `raft-game.settings`、値は JSON の文字列 `{"v":1,"showRaftTerms":<boolean>}`（キーの順序はこのとおり）。既定はオフ（種明かしの驚きを守る）
+- 読み込みは遅延し、最初の `getSnapshot()` で 1 回だけ読む。以降は値が変わるまで同じオブジェクトを返す
+- 保存された値が壊れている・形が違う・`v` が 1 でないときはオフとして扱い、読んだだけでは書き戻さない（利用者が切り替えたときに上書きする。知らないキーは保たない）
+- localStorage が使えない（`window` が無い・アクセスで `SecurityError`・`getItem` が投げる）ときや、`setItem` が投げる（容量の上限など）ときも、切り替えは画面にすぐ効く。そのときはスナップショットの `persistent` が `false` になり、設定画面に「このブラウザには設定を保存できませんでした。ページを閉じると元に戻ります。」を出す。例外は外に投げない
+- 別のタブとの同期はしない（各タブは開いたときの値を読む）。`reload()` は読み込みをやり直すので、後で `storage` イベントにつなげられる
+- [NFR-08](./01-requirements.md) との関係: 保存する値は真偽値 1 つだけで、サーバーには送らない。Cookie・sessionStorage は使わない。localStorage に触れるのは `preference.ts` の `openBrowserStorage` だけ
+
+**部品の API**
+
+| export | 使い方 |
+|---|---|
+| `RaftTerm`（`{ id: RaftTermId; children?: ReactNode }`） | 用語集の言葉。`children` を省くと `RAFT_TERMS[id].game` を出す。活用形などは `children` で渡す（例: `<RaftTerm id="commit">確定</RaftTerm>`） |
+| `WithRaftTerm`（`{ raft: string \| null; children: ReactNode }`） | 任意の言葉（手紙の名前など）。`raft` が `null`・`""` なら何も添えない |
+| `withRaftTerm(game, raft, show)` | 文字列が要るところ（PixiJS の文字・`aria-label`・`title`）。`show` で `raft` があれば「`game`（`raft`）」、なければ `game` |
+| `letterRaftTerm(label)` | 手紙の `label`（[06-protocol.md §5.2](./06-protocol.md)）から添える用語。知らない `label` は `null`（§8） |
+| `RAFT_TERMS`・`LETTER_RAFT_TERMS` | 下の表 |
+| `useShowRaftTerms()`・`useTermsPreference()`・`setShowRaftTerms(value)` | React から読む・切り替える |
+| `termsPreference` | 外部ストア（`getSnapshot`・`subscribe`・`setShowRaftTerms`・`reload`）。React の外から読む |
+
+オフのとき（または `raft` が `null`・`""`）は `children` だけを返し、要素を足しません（レイアウトを変えない）。オンのときは後ろに `<small class="raft-term-note" data-raft-term="…">（<span lang="en">…</span>）</small>` を添えます（例:「代表（Leader）」）。括弧は部品と `withRaftTerm` が付けるので、表の `raft` には全角の括弧を含めません。
+
+**`RAFT_TERMS`（ゲームの言葉 ⇔ Raft の用語。画面に出す文字列の正本）**
+
+| `id` | `game` | `raft` |
+|---|---|---|
+| `leader` | 代表 | Leader |
+| `follower` | 一般の島 | Follower |
+| `preCandidate` | 立候補の相談中 | PreCandidate |
+| `candidate` | 立候補中 | Candidate |
+| `term` | 代表の任期 | Term |
+| `ledger` | 共和国の台帳 | Log |
+| `entry` | 記録 | Log Entry |
+| `commit` | 共和国で確定 | Commit |
+| `apply` | 確定 | Apply |
+| `quorum` | 過半数 | Quorum |
+| `node` | 島 | Node |
+| `letter` | 手紙 | Message |
+| `heartbeat` | 定期便 | Heartbeat |
+| `vote` | 投票 | Vote |
+| `electionTimeout` | 定期便が途切れる | Election Timeout |
+| `checkQuorum` | 孤立した代表が退く | CheckQuorum |
+| `partition` | 嵐 | Network Partition |
+| `staleLetter` | 古い手紙 | 古い Term |
+
+**`LETTER_RAFT_TERMS`（手紙の `label` ⇔ `Msg*`。[04-game-design.md §2.1](./04-game-design.md)）**
+
+| `label` | 添える用語 |
+|---|---|
+| `heartbeat` | MsgHeartbeat |
+| `heartbeat_resp` | MsgHeartbeatResp |
+| `append`・`append_probe` | MsgApp |
+| `append_resp` | MsgAppResp |
+| `append_reject` | MsgAppResp・Reject |
+| `prevote` | MsgPreVote |
+| `prevote_resp` | MsgPreVoteResp |
+| `vote` | MsgVote |
+| `vote_resp` | MsgVoteResp |
+| `request`・`other` | なし（住民の依頼書は Raft の手紙ではない） |
+
+手紙のゲーム上の名前（「お元気ですか？」など）はこの表に持たず、表示する側（T-404・T-405・T-406）が §2.1 の名前を使い、`letterRaftTerm(label)` で添える用語を得ます。`LetterLabel` はローカルの型で、T-301 の生成された型ができたら置き換えます。
+
+**使い分け**
+
+- 通常画面と通知で、ゲームの言葉を出すところに使う。1 つの画面・パネルの中では、同じ言葉の**最初の 1 か所**にだけ付ける（毎回付けると読みにくい）
+- エンジニアモード（T-407）とリザルトの解説（T-408）には使わない（設定に関係なく、常に Raft の用語で書く）
+- React の外（PixiJS）では、`termsPreference.getSnapshot().showRaftTerms` を読み、`termsPreference.subscribe()` で変更を知って、`withRaftTerm` で文字列を作る
+- 各画面に併記を付けるのは、それぞれのタスク（マップ T-404・フェリー操作 T-405・HUD／島の詳細／通知 T-406・チュートリアル T-409）。今は遊び方の画面の「手紙」「確定」に付けている
+- export の名前・意味を変えるとき、`RAFT_TERMS` に項目を足すときは、この節も直す
 
 ---
 
