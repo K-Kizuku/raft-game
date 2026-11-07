@@ -58,6 +58,8 @@ func TestSessionRoundResult(t *testing.T) {
 		ts := newTestServer(t, ModeStandalone, nil)
 		cr := ts.createSession(t, `{"stageId":"alpha","seed":3}`)
 		c := ts.dialSession(t, cr)
+		c.send(protocol.MessageTypeHello, "", protocol.HelloPayload{}) // standalone は hello の snapshot の後だけ events を送る（T-303）
+		c.expect(protocol.MessageTypeSnapshot, nil)
 		c.send(protocol.MessageTypeCmdGameStart, "c-1", struct{}{})
 		c.expect(protocol.MessageTypeAck, nil)
 		c.expect(protocol.MessageTypeEvents, nil)
@@ -100,8 +102,17 @@ func TestSessionHandle(t *testing.T) {
 		}
 	}
 
-	notImplemented := []protocol.MessageType{
+	// cmd.game.pause・speed・skip は T-303 が処理する（payload {} は必須のキーがないので bad_request）。
+	for _, typ := range []protocol.MessageType{
 		protocol.MessageTypeCmdGamePause, protocol.MessageTypeCmdGameSpeed, protocol.MessageTypeCmdGameSkip,
+	} {
+		c.send(typ, "n-1", struct{}{})
+		expectAck("n-1", false, protocol.AckCodeBadRequest, "bad payload")
+		c.send(typ, "", struct{}{})
+		c.expectError(codeBadRequest, false)
+	}
+
+	notImplemented := []protocol.MessageType{
 		protocol.MessageTypeSubEngineer, protocol.MessageTypeDemoTrigger, protocol.MessageTypeCmdRelayLoad,
 	}
 	for _, typ := range notImplemented {
@@ -230,7 +241,7 @@ func TestBuildSnapshotStage(t *testing.T) {
 	if got := mustJSON(t, v.Resources); got != `[{"id":"stall:a","kind":"stall","label":"屋台","critical":false}]` {
 		t.Errorf("resources = %s", got)
 	}
-	if got := mustJSON(t, allowedSpeeds(st)); got != "[0.5,1,2,4]" {
+	if got := mustJSON(t, allowedSpeeds(allowedSpeedsPermille(st, false))); got != "[0.5,1,2,4]" {
 		t.Errorf("allowedSpeeds = %s", got)
 	}
 
