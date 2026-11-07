@@ -417,7 +417,9 @@ check "spawn --dry-run --mode conflict: mode を出す" grep -q "^mode: conflict
 check "spawn --dry-run --mode conflict: Worktree がなければ -w" grep -q -- " -w issue-7 " "$tmp/out"
 run_rc env AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run --mode bogus
 check "spawn: 不正な --mode は拒否する" test "$RC" = 1
-# max_workers に達していると拒否する
+# max_workers に達していると拒否する（実際の設定の値に依存しないよう、コピーした設定で 2 に固定する）
+cfg_mw="$tmp/config-max-workers-2.json"
+jq '.max_workers = 2' "$repo/.agents/config.json" >"$cfg_mw"
 mkdir -p "$repo/.agents/run"
 sleep 30 &
 sleeper1=$!
@@ -425,15 +427,15 @@ sleep 30 &
 sleeper2=$!
 jq -n --argjson pid "$sleeper1" '{issue:1, pid:$pid}' >"$repo/.agents/run/issue-1.json"
 jq -n --argjson pid "$sleeper2" '{issue:2, pid:$pid}' >"$repo/.agents/run/issue-2.json"
-run_rc env AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run
+run_rc env AGENT_ROLE=orchestrator AGENT_CONFIG="$cfg_mw" bash "$A/spawn-worker.sh" 7 --dry-run
 check "spawn: max_workers（2）に達していると拒否する" test "$RC" = 1
 check "spawn: max_workers の理由を出す" grep -q "max_workers" "$tmp/err"
 kill "$sleeper2" 2>/dev/null || true
 wait "$sleeper2" 2>/dev/null || true
-run_rc env AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run
+run_rc env AGENT_ROLE=orchestrator AGENT_CONFIG="$cfg_mw" bash "$A/spawn-worker.sh" 7 --dry-run
 check "spawn: 止まった Worker は数えない" test "$RC" = 0
 jq -n --argjson pid "$sleeper1" '{issue:7, pid:$pid}' >"$repo/.agents/run/issue-7.json"
-run_rc env AGENT_ROLE=orchestrator bash "$A/spawn-worker.sh" 7 --dry-run
+run_rc env AGENT_ROLE=orchestrator AGENT_CONFIG="$cfg_mw" bash "$A/spawn-worker.sh" 7 --dry-run
 check "spawn: 同じ Issue の Worker が動いていれば拒否する" test "$RC" = 1
 kill "$sleeper1" 2>/dev/null || true
 wait "$sleeper1" 2>/dev/null || true
