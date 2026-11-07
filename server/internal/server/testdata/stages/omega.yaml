@@ -1,0 +1,57 @@
+# テスト用の最小のステージ（架空の島）。値はテストのためのもので、ゲームの調整値ではない。
+format: 1
+id: omega
+title: テストの外海
+region: 波間県（架空）
+intro:
+  text: 架空の穏やかな海です。
+  provenance: derived
+  source: { dataset: fixture-2026, region: 星砂地域, field: NATURAL_CLIMATE_FEATURES }
+durationMs: 180000
+unlock: alpha
+islands:
+  - { ref: hama-hoshizuna, layout: { x: 600, y: 200 }, color: "#E07A5F" }
+  - { ref: hama-tsukikage, layout: { x: 400, y: 300 }, color: "#3D85C6" }
+  - { ref: hama-todai, layout: { x: 200, y: 300 }, color: "#81B29A" }
+routes:
+  - a: hama-hoshizuna
+    b: hama-tsukikage
+    travelMs: 1500
+    provenance: derived
+    source: { dataset: fixture-2026, region: 星砂地域, field: MARITIME_TRANSPORT, quote: "月影~星砂(3km・10分" }
+  - { a: hama-tsukikage, b: hama-todai, travelMs: 4000, provenance: creative }
+ferries:
+  - { id: f1, name: テスト丸, home: hama-hoshizuna, capacity: 4, speed: 1.0 }
+raft:
+  initialLeader: hama-hoshizuna
+  tickMs: 500
+  heartbeatTick: 2
+  electionTick: 40
+  checkQuorum: true
+  preVote: true
+  maxInflightMsgs: 4
+  maxSizePerMsg: 4096
+transport: { dockMs: 1500, perLinkAppCap: 4, portCap: 24, relayCap: 12 }
+resources:
+  - { id: "firework:a", kind: firework, label: 大花火, critical: true }
+  - { id: "stall:main", kind: stall, label: 屋台の出店枠, capacity: 2 }
+requests:
+  deadlineMs: { normal: 60000, critical: 90000 }
+  retryMs: 25000
+  script:
+    - { at: 5000, island: hama-todai, kind: firework.reserve, resource: "firework:a" }
+    - { at: 6000, island: hama-tsukikage, kind: stall.reserve, resource: "stall:main" }
+  random:
+    rateMilliPerMin: 500
+    slotMs: 10000
+    populationExponent: 0.5
+    kinds: [ { kind: stall.reserve, resource: "stall:main", weight: 1 } ]
+events: []
+scoring:
+  target: { successes: 2, score3: 500 }
+satisfaction:
+  initial: 60
+  silenceAfterMs: 30000
+  silencePenalty: { everyMs: 10000, amount: 2 }
+speed:
+  allowed: [0.5, 1, 2, 4]
