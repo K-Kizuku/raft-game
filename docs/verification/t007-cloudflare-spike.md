@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 の lite・standard-1・M-9 の対照実験を実施済み。JSON の抜粋から DO の CPU 超過によるリセットと stopFailures が空であることを確認。次は H-5 のデプロイ済み CPU 設定と通常要求の CPU p99/最大値の取得。後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 の lite・standard-1・M-9 の対照実験を実施済み。H-5 の設定取得は CLI の引数エラー、CPU 集計は結果が空で未取得。次はインストール済み CLI のヘルプを確認する。後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -22,7 +22,7 @@
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
-| H-5 limits.cpuMs の判断 | 途中 | DO の 502 は CPU 超過によるリセット。Worker の 503 は resource limits。次にデプロイ済みの上限と、CPU 負荷試験を除く通常要求の CPU p99/最大値を取得する |
+| H-5 limits.cpuMs の判断 | 途中 | DO の CPU 超過リセットを確認済み。設定取得は worker-id 不足で失敗、通常要求の集計は空。CLI のヘルプと実際のログ項目を確認して再取得する |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -852,6 +852,44 @@ CPU 設定を抽出する Node 部分は node --check で構文を確認した�
 
 この出力を受けて limits.cpuMs の値を判断する。H-6 の資源削除は、設定の取得と必要なログの確認を終えてから案内する。
 
+## 2026-11-07: H-5 の設定取得失敗と空の集計結果
+
+添付されたコマンド出力を確認した。設定の取得にも、通常要求の CPU 時間の測定にもまだ成功していない。
+
+### デプロイ済み設定の取得
+
+案内した `cf workers versions get <version-id> --worker raft-game-spike` は、手元の CLI で次のエラーになった。
+
+```text
+Missing required argument: worker-id
+```
+
+その後の Node の `Unexpected end of JSON input` は、失敗した cf コマンドの空の標準出力を JSON として解析した結果。設定が存在しないという意味ではない。
+
+前節で参照したのは Cloudflare 公式リポジトリの特定コミットであり、手元にインストールされた配布物の引数と一致することまでは確認できていなかった。パッケージの表示バージョンだけを根拠に、公開版の仕様確認済みとは扱わない。次は実際の CLI のヘルプを確認し、修正後の設定取得では cf の成功と JSON の解析を別々に確認する。
+
+### 通常要求の CPU 集計
+
+Observability API はリクエストを受け付け、2026-11-07 17:05:24.015 JST に status=COMPLETED / dry=true を返した。しかし n / cpu_p99_ms / cpu_max_ms はすべて aggregates=[]、series の各 data も空だった。
+
+- API の呼び出しの成功と、測定値の取得を区別する。通常要求の件数・CPU p99・最大値は未取得。
+- 空の結果を CPU 時間 0 ms と解釈しない。statistics.rows_read は内部の走査行数であり、通常要求の一致件数ではない。
+- フィルターのフィールド名・値、CPU 項目の記録有無、ログ設定などはまだ切り分けられていない。
+- この結果だけでは、デプロイ済みの上限が 50 ms であることも、50 ms が適切であることも確認できない。
+- lite / standard-1 / 外部通信の既存の測定結果は引き続き利用する。再デプロイや測定の再実行はまだ案内しない。
+
+### 次の手順: インストール済み CLI のヘルプ
+
+リポジトリのルートで次の 3 コマンドを実行し、出力を確認する。いずれもヘルプの表示で、Cloudflare の設定変更・コンテナの起動は行わない。
+
+```fish
+pnpm -C spike exec cf workers versions get --help
+pnpm -C spike exec cf workers get --help
+pnpm -C spike exec cf o11y telemetry keys --help
+```
+
+その出力で、バージョンの取得に必要な worker-id の指定、設定取得用コマンド、実際に記録されているログ項目の調べ方を確定する。H-5 は途中のままとし、資源の削除と最終 ADR/PR は未完了として維持する。
+
 ## 測定前に確定・確認する事項
 
 Issue #15 に残っている設計判断は、環境確認の成功だけで承認済みとは扱わない。
@@ -859,4 +897,4 @@ Issue #15 に残っている設計判断は、環境確認の成功だけで承�
 - 8 倍速の step p99 <=25ms、30 分の再計算 <=5 秒、起動 p95 <=5 秒は Issue の提案値。現行 NFR-03 の復元 <=3 秒とは異なるため、判定時に混同しない。
 - workers.dev での一時公開、M-9 の固定宛先への外部通信の対照実験、スパイクのコードを削除する時期は、該当手順の前に確認する。
 - H-7 の文書化は今回のユーザー指示により AI が支援し、このブランチに記録する。
-- 一般公開の CONTAINER_INSTANCE、limits.cpuMs、起動待ちの上限、継承しない Durable Object の可否、cf dev の制約は、実測後に判断する。実測値はまだない。
+- 一般公開の CONTAINER_INSTANCE、limits.cpuMs、起動待ちの上限、継承しない Durable Object の可否、cf dev の制約は、実測後に判断する。測定結果に基づく最終判断はまだ確定していない。
