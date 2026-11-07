@@ -21,7 +21,7 @@ func SimConfig(st *Stage) (sim.Config, error) {
 	}
 
 	// cluster は CheckQuorum・PreVote を常に有効にする（ADR-0007）。黙って落とすと、
-	// ステージに書いた値と違う動きになるので誤りにする。relayCap（P1）は使わない。
+	// ステージに書いた値と違う動きになるので誤りにする。
 	var issues []Issue
 	if !st.Raft.CheckQuorum {
 		issues = append(issues, Issue{
@@ -81,6 +81,7 @@ func SimConfig(st *Stage) (sim.Config, error) {
 		DockMs:        st.Transport.DockMs,
 		PortCap:       st.Transport.PortCap,
 		PerLinkAppCap: st.Transport.PerLinkAppCap,
+		RelayCap:      st.Transport.RelayCap,
 		Resources:     resources,
 		Requests:      requestConfig(st),
 		Score:         scoreConfig(st),

@@ -76,7 +76,7 @@ func encodePayload(c sim.Command) (any, error) {
 	switch c.Type {
 	case sim.CmdGameStart:
 		return payloadEmpty{}, nil
-	case sim.CmdFerryLoad, sim.CmdFerryUnload:
+	case sim.CmdFerryLoad, sim.CmdFerryUnload, sim.CmdRelayLoad:
 		ids := c.LetterIDs
 		if ids == nil {
 			ids = []uint64{}
@@ -256,7 +256,7 @@ func decodeEntry(msg json.RawMessage) (in sim.InputEntry, ignored bool, err erro
 		if err := strictUnmarshal(cmd.Payload, &p); err != nil {
 			return in, false, fmt.Errorf(".cmd.payload: %w", err)
 		}
-	case sim.CmdFerryLoad, sim.CmdFerryUnload:
+	case sim.CmdFerryLoad, sim.CmdFerryUnload, sim.CmdRelayLoad:
 		var p rawPayloadLetters
 		if err := strictUnmarshal(cmd.Payload, &p); err != nil {
 			return in, false, fmt.Errorf(".cmd.payload: %w", err)

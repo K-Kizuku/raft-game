@@ -39,6 +39,8 @@ func TestDecodeEngineCommand(t *testing.T) {
 		{"cmd.game.start", `{"x":1}`, sim.Command{Type: sim.CmdGameStart}},
 		{"cmd.ferry.load", `{"ferryId":"f1","letterIds":[12,13]}`, sim.Command{Type: sim.CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{12, 13}}},
 		{"cmd.ferry.unload", `{"ferryId":"f2","letterIds":[12],"extra":true}`, sim.Command{Type: sim.CmdFerryUnload, FerryID: "f2", LetterIDs: []uint64{12}}},
+		{"cmd.relay.load", `{"ferryId":"f2","letterIds":[31,7]}`, sim.Command{Type: sim.CmdRelayLoad, FerryID: "f2", LetterIDs: []uint64{31, 7}}},
+		{"cmd.relay.load", `{"ferryId":"f1","letterIds":[5],"extra":true}`, sim.Command{Type: sim.CmdRelayLoad, FerryID: "f1", LetterIDs: []uint64{5}}},
 		{"cmd.ferry.autoload", `{"ferryId":"f1","to":2}`, sim.Command{Type: sim.CmdFerryAutoload, FerryID: "f1", To: 2}},
 		{"cmd.ferry.depart", `{"ferryId":"f1","to":99}`, sim.Command{Type: sim.CmdFerryDepart, FerryID: "f1", To: 99}},
 	}
@@ -59,7 +61,7 @@ func TestDecodeEngineCommand(t *testing.T) {
 
 	for _, typ := range []protocol.MessageType{
 		"hello", "cmd.game.pause", "cmd.game.speed", "cmd.game.skip", "cmd.sync",
-		"cmd.relay.load", "internal.init", "", "cmd.foo",
+		"internal.init", "", "cmd.foo",
 	} {
 		_, err := simconv.DecodeEngineCommand(typ, json.RawMessage(`{"ferryId":"f1","letterIds":[1],"to":2}`))
 		if !errors.Is(err, simconv.ErrNotEngineCommand) {
@@ -88,6 +90,12 @@ func TestDecodeEngineCommand(t *testing.T) {
 		{"cmd.ferry.unload", `{"ferryId":"f1","letterIds":[18446744073709551616]}`},
 		{"cmd.ferry.unload", `{"ferryId":"f1","letterIds":"1"}`},
 		{"cmd.ferry.unload", `{"FerryId":"f1","letterIds":[1]}`},
+		{"cmd.relay.load", `[]`},
+		{"cmd.relay.load", `{"letterIds":[1]}`},
+		{"cmd.relay.load", `{"ferryId":"","letterIds":[1]}`},
+		{"cmd.relay.load", `{"ferryId":"f1"}`},
+		{"cmd.relay.load", `{"ferryId":"f1","letterIds":[]}`},
+		{"cmd.relay.load", `{"ferryId":"f1","letterIds":[-1]}`},
 		{"cmd.ferry.autoload", `[]`},
 		{"cmd.ferry.autoload", `{"ferryId":1,"to":2}`},
 		{"cmd.ferry.autoload", `{"to":2}`},
@@ -207,6 +215,7 @@ func TestEncodeEngineCommand(t *testing.T) {
 		{sim.Command{Type: sim.CmdGameStart}, "cmd.game.start", `{}`},
 		{sim.Command{Type: sim.CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{12, 13}}, "cmd.ferry.load", `{"ferryId":"f1","letterIds":[12,13]}`},
 		{sim.Command{Type: sim.CmdFerryUnload, FerryID: "f1", LetterIDs: []uint64{12}}, "cmd.ferry.unload", `{"ferryId":"f1","letterIds":[12]}`},
+		{sim.Command{Type: sim.CmdRelayLoad, FerryID: "f2", LetterIDs: []uint64{31, 7}}, "cmd.relay.load", `{"ferryId":"f2","letterIds":[31,7]}`},
 		{sim.Command{Type: sim.CmdFerryAutoload, FerryID: "f1", To: 2}, "cmd.ferry.autoload", `{"ferryId":"f1","to":2}`},
 		{sim.Command{Type: sim.CmdFerryDepart, FerryID: "f1", To: 2}, "cmd.ferry.depart", `{"ferryId":"f1","to":2}`},
 	}
@@ -252,6 +261,7 @@ func TestInputEntriesFromLog(t *testing.T) {
 		inputCmd(1200, "cmd.ferry.depart", `{"ferryId":"f1","to":2}`),
 		inputCmd(1300, "cmd.ferry.autoload", `{"ferryId":"f1","to":3}`),
 		inputCmd(1400, "cmd.ferry.unload", `{"ferryId":"f1","letterIds":[2]}`),
+		inputCmd(1500, "cmd.relay.load", `{"ferryId":"f2","letterIds":[2]}`),
 	}
 	got, err := simconv.InputEntriesFromLog(cmds)
 	if err != nil {
@@ -263,6 +273,7 @@ func TestInputEntriesFromLog(t *testing.T) {
 		{T: 1200, Cmd: sim.Command{Type: sim.CmdFerryDepart, FerryID: "f1", To: 2}},
 		{T: 1300, Cmd: sim.Command{Type: sim.CmdFerryAutoload, FerryID: "f1", To: 3}},
 		{T: 1400, Cmd: sim.Command{Type: sim.CmdFerryUnload, FerryID: "f1", LetterIDs: []uint64{2}}},
+		{T: 1500, Cmd: sim.Command{Type: sim.CmdRelayLoad, FerryID: "f2", LetterIDs: []uint64{2}}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("InputEntriesFromLog = %+v, want %+v", got, want)
@@ -273,7 +284,7 @@ func TestInputEntriesFromLog(t *testing.T) {
 		want error
 	}{
 		{inputCmd(800, "hello", `{"client":"web","resume":false}`), simconv.ErrNotEngineCommand},
-		{inputCmd(800, "cmd.relay.load", `{"ferryId":"f1","letterIds":[1]}`), simconv.ErrNotEngineCommand},
+		{inputCmd(800, "cmd.relay.load", `{"ferryId":"f1","letterIds":[]}`), simconv.ErrBadPayload},
 		{inputCmd(800, "cmd.ferry.load", `{"ferryId":"f1","letterIds":[]}`), simconv.ErrBadPayload},
 		{inputCmd(800, "cmd.ferry.depart", `{"ferryId":"f1","to":`), simconv.ErrBadPayload},
 	} {

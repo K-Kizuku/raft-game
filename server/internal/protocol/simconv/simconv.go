@@ -24,7 +24,7 @@ var (
 
 // DecodeEngineCommand は、Engine が受けるコマンドの電文を sim.Command にする。
 //
-// 対象は cmd.game.start・cmd.ferry.load・cmd.ferry.unload・cmd.ferry.autoload・cmd.ferry.depart・demo.trigger。
+// 対象は cmd.game.start・cmd.ferry.load・cmd.ferry.unload・cmd.relay.load・cmd.ferry.autoload・cmd.ferry.depart・demo.trigger。
 // それ以外の typ は ErrNotEngineCommand。payload の形が不正なら ErrBadPayload（demo.trigger の event は "storm" だけ）。
 // payload が空・null なら {} として扱い、知らないキーは無視する（§8）。
 // 島の範囲・手紙の重複・船があるかなどは検査しない（Engine.Apply が §4.1 のコードで返す）。
@@ -36,7 +36,7 @@ func DecodeEngineCommand(typ protocol.MessageType, payload json.RawMessage) (sim
 		}
 		return sim.Command{Type: sim.CmdGameStart}, nil
 
-	case protocol.MessageTypeCmdFerryLoad, protocol.MessageTypeCmdFerryUnload:
+	case protocol.MessageTypeCmdFerryLoad, protocol.MessageTypeCmdFerryUnload, protocol.MessageTypeCmdRelayLoad:
 		m, err := decodeObject(typ, payload)
 		if err != nil {
 			return sim.Command{}, err
@@ -55,8 +55,11 @@ func DecodeEngineCommand(typ protocol.MessageType, payload json.RawMessage) (sim
 			return sim.Command{}, fmt.Errorf("%w: %s: letterIds is empty", ErrBadPayload, typ)
 		}
 		t := sim.CmdFerryLoad
-		if typ == protocol.MessageTypeCmdFerryUnload {
+		switch typ {
+		case protocol.MessageTypeCmdFerryUnload:
 			t = sim.CmdFerryUnload
+		case protocol.MessageTypeCmdRelayLoad:
+			t = sim.CmdRelayLoad
 		}
 		return sim.Command{Type: t, FerryID: p.FerryID, LetterIDs: p.LetterIDs}, nil
 
@@ -112,10 +115,13 @@ func EncodeEngineCommand(c sim.Command) (protocol.ClientCommand, error) {
 	switch c.Type {
 	case sim.CmdGameStart:
 		typ, payload = protocol.MessageTypeCmdGameStart, struct{}{}
-	case sim.CmdFerryLoad, sim.CmdFerryUnload:
+	case sim.CmdFerryLoad, sim.CmdFerryUnload, sim.CmdRelayLoad:
 		typ = protocol.MessageTypeCmdFerryLoad
-		if c.Type == sim.CmdFerryUnload {
+		switch c.Type {
+		case sim.CmdFerryUnload:
 			typ = protocol.MessageTypeCmdFerryUnload
+		case sim.CmdRelayLoad:
+			typ = protocol.MessageTypeCmdRelayLoad
 		}
 		ids := c.LetterIDs
 		if ids == nil {

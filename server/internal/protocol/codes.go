@@ -11,6 +11,7 @@ const (
 	AckCodeLetterNotHere    AckCode = "letter_not_here"
 	AckCodeNoRoute          AckCode = "no_route"
 	AckCodeRouteBlocked     AckCode = "route_blocked"
+	AckCodeRelayFull        AckCode = "relay_full"
 	AckCodePhaseInvalid     AckCode = "phase_invalid"
 	AckCodeRateLimited      AckCode = "rate_limited"
 	AckCodeBadRequest       AckCode = "bad_request"
@@ -26,6 +27,7 @@ func AckCodes() []AckCode {
 		AckCodeLetterNotHere,
 		AckCodeNoRoute,
 		AckCodeRouteBlocked,
+		AckCodeRelayFull,
 		AckCodePhaseInvalid,
 		AckCodeRateLimited,
 		AckCodeBadRequest,

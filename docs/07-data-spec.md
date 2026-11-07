@@ -678,7 +678,7 @@ demo:
 | `raft.electionTick` | 整数 | 必須 | `heartbeatTick` より大きい（etcd-io/raft の制約） |
 | `raft.checkQuorum`・`preVote` | 真偽値 | 必須 | — |
 | `transport` | マッピング | 必須 | — |
-| `transport.dockMs`・`relayCap` | 整数 | 必須 | 0 以上 |
+| `transport.dockMs`・`relayCap` | 整数 | 必須 | 0 以上（`relayCap` は島ごとの中継倉庫の上限。0 = 積み替えなし） |
 | `transport.perLinkAppCap`・`portCap` | 整数 | 必須 | 1 以上 |
 | `resources` | 列 | 必須 | 1 個以上 |
 | `resources[].id` | 文字列 | 必須 | 空でない、重複なし |
@@ -796,7 +796,7 @@ ferries:
 | `Parse(name, data, islands)` | 1 つのステージ定義を読んで検証し（§5.4）、重み（§4.1）・警告・ハッシュを計算する。I/O をしない純粋な関数 |
 | `LoadDir(fsys, islandsPath, stagesDir)` | `io/fs.FS` から `islands.json` とディレクトリの直下の `*.yaml` を読み、ファイルをまたぐ検査（§5.4）をする。ステージはファイルの名前の順。呼び出し側が `os.DirFS` か `embed.FS` を渡す |
 | `Weights(values)` | 整数の最大剰余法で、合計 1000 の千分率の重みを計算する（§4.1） |
-| `SimConfig(st)` | 検証済みの `Stage` から `sim.New` に渡す `sim.Config` を作る。`raft.checkQuorum`・`raft.preVote` が `false` なら誤り（`cluster` は常に `true`。ADR-0007）。`relayCap`（P1）は使わない。`scoring.*`・`satisfaction.*` は `Score`（`game.ScoreConfig`）に入れる。`demo.endOnAllCriticalSecured` は `Score.EndOnStar2` に入れる。`events` の扱いは §5.3 |
+| `SimConfig(st)` | 検証済みの `Stage` から `sim.New` に渡す `sim.Config` を作る。`raft.checkQuorum`・`raft.preVote` が `false` なら誤り（`cluster` は常に `true`。ADR-0007）。`transport.relayCap` は `RelayCap` に入れる（島ごとの中継倉庫の上限。T-721）。`scoring.*`・`satisfaction.*` は `Score`（`game.ScoreConfig`）に入れる。`demo.endOnAllCriticalSecured` は `Score.EndOnStar2` に入れる。`events` の扱いは §5.3 |
 | `Embedded()` | `-tags embeddata` で埋め込んだステージ定義（`make sync-data` で `server/internal/stage/embedded/` にコピーしたもの。`islands.json` と `stages/` を根に持つ `fs.FS`）。タグなしでは `false`（[ADR-0025](./adr/0025-stage-data-source.md)、T-302） |
 
 リポジトリのステージ（`data/stages/*.yaml`）は、外部テストのパッケージ `stage_test`（`repo_stages_test.go`・`repo_greedy*_test.go`）で、docs の値と greedy ボットの結果（Stage 1 の★1 が 90% 以上のシード。M2 の完了条件）を確かめます（T-207）。このテストだけが `sim`・`bot` を使います。シードの数は、`-race` なしで 1000、`-race`（CI）で 100 です。★1 の割合の確認は、今の値では満たせないため、ビルドタグ `balance` を付けたテスト（`repo_greedy_balance_test.go`。`go -C server test -tags balance -run Greedy ./internal/stage/...`）に分けています。タグなしのテスト（CI）は、greedy ボットで 1 ラウンドが不変条件の違反なしに最後まで動くことだけを確かめます（調整は T-501）。

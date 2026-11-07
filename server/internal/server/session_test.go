@@ -114,16 +114,6 @@ func TestSessionHandle(t *testing.T) {
 		c.expectError(codeBadRequest, false)
 	}
 
-	notImplemented := []protocol.MessageType{
-		protocol.MessageTypeCmdRelayLoad,
-	}
-	for _, typ := range notImplemented {
-		c.send(typ, "n-1", struct{}{})
-		expectAck("n-1", false, protocol.AckCodeBadRequest, "not implemented")
-		c.send(typ, "", struct{}{})
-		c.expectError(codeBadRequest, false)
-	}
-
 	// demo.trigger は T-305 が処理する（payload {} は event がないので bad_request。デモの可否より先に調べる）。
 	c.send(protocol.MessageTypeDemoTrigger, "n-1", struct{}{})
 	expectAck("n-1", false, protocol.AckCodeBadRequest, "bad payload")

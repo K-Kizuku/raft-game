@@ -19,11 +19,11 @@ const (
 )
 
 // Command はプレイヤーのコマンド（プロトコル §4 の type と payload を平らにしたもの）。
-// Type は上の定数・CmdFerryAutoload（autoload.go）・CmdDemoTrigger（demo.go）のどれか。
+// Type は上の定数・CmdFerryAutoload（autoload.go）・CmdRelayLoad（relay.go）・CmdDemoTrigger（demo.go）のどれか。
 type Command struct {
 	Type      CommandType
-	FerryID   string   // load・unload・depart・autoload
-	LetterIDs []uint64 // load・unload
+	FerryID   string   // load・unload・depart・autoload・relay.load
+	LetterIDs []uint64 // load・unload・relay.load
 	To        uint64   // depart・autoload
 	Event     string   // demo.trigger
 }
@@ -75,7 +75,7 @@ var ferryErrCodes = []struct {
 	{ferry.ErrBroken, CodeFerryBroken},
 	{ferry.ErrUnknownFerry, CodeBadRequest},
 	{ferry.ErrInvalidArgument, CodeBadRequest},
-	{ferry.ErrRelayNotSupported, CodeBadRequest},
+	{ferry.ErrRelayFull, CodeRelayFull},
 }
 
 // ferryErrCode は ferry のエラーをエラーコードに変える。表にないエラーは Engine の誤りなので panic する。

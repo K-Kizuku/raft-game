@@ -93,8 +93,10 @@ func (t *Transport) Load(id FerryID, letters []LetterID) error {
 	return nil
 }
 
-// Unload は停泊中の船から手紙を降ろし、ID の昇順に今いる島の港に入れる（規則 R1〜R6 を適用する）。
-// 1 通でも降ろせなければ 1 通も降ろさない。
+// Unload は停泊中の船から手紙を降ろす。ID の昇順に、送信元が今いる島の手紙はその島の港に戻し
+// （規則 R1〜R6 を適用する）、そうでない手紙（経由の手紙）はその島の中継倉庫に預ける（合流・破棄しない）。
+// 預けると倉庫が relayCap 通を超えるなら ErrRelayFull。1 通でも降ろせなければ 1 通も降ろさない。
+// 返す dropped は港へ戻した手紙の破棄だけ（倉庫では破棄は起きない）。
 func (t *Transport) Unload(id FerryID, letters []LetterID) (dropped []Drop, err error) {
 	f, err := t.ferry(id)
 	if err != nil {
@@ -111,18 +113,67 @@ func (t *Transport) Unload(id FerryID, letters []LetterID) (dropped []Drop, err 
 			return nil, fmt.Errorf("%w: letter %d is not on %q", ErrLetterNotHere, lid, id)
 		}
 	}
+	relayN := 0
 	for _, lid := range letters {
-		if l := t.letter(lid); l.From != f.At {
-			return nil, fmt.Errorf("%w: letter %d is from %d, ferry %q is at %d", ErrRelayNotSupported, lid, l.From, id, f.At)
+		if t.letter(lid).From != f.At {
+			relayN++
 		}
+	}
+	if relayN > 0 && len(t.relays[f.At])+relayN > t.relayCap {
+		return nil, fmt.Errorf("%w: relay %d has %d of %d, storing %d", ErrRelayFull, f.At, len(t.relays[f.At]), t.relayCap, relayN)
 	}
 	f.Cargo = slices.DeleteFunc(f.Cargo, func(x LetterID) bool { return slices.Contains(letters, x) })
 	sorted := slices.Clone(letters)
 	slices.Sort(sorted)
 	for _, lid := range sorted {
-		dropped = t.enqueue(f.At, lid, dropped)
+		if t.letter(lid).From == f.At {
+			dropped = t.enqueue(f.At, lid, dropped)
+			continue
+		}
+		t.store(f.At, lid)
 	}
 	return dropped, nil
+}
+
+// store は手紙 id を island の中継倉庫の ID の順の位置に入れる。規則 R1〜R6 は当てはめない。
+func (t *Transport) store(island uint64, id LetterID) {
+	relay := t.relays[island]
+	pos, _ := slices.BinarySearch(relay, id)
+	t.relays[island] = slices.Insert(relay, pos, id)
+	t.letter(id).Location = Location{Kind: LocRelay, Island: island}
+}
+
+// RelayLoad は停泊中の船に、今いる島の中継倉庫の手紙を渡した順に積む（どの船でもよい）。
+// 1 通でも積めなければ 1 通も積まない。
+func (t *Transport) RelayLoad(id FerryID, letters []LetterID) error {
+	f, err := t.ferry(id)
+	if err != nil {
+		return err
+	}
+	if f.State != Docked {
+		return fmt.Errorf("%w: %q", ErrNotDocked, id)
+	}
+	if err := checkIDs(letters); err != nil {
+		return err
+	}
+	here := Location{Kind: LocRelay, Island: f.At}
+	for _, lid := range letters {
+		if l := t.letter(lid); l == nil || l.Location != here {
+			return fmt.Errorf("%w: letter %d is not in relay %d", ErrLetterNotHere, lid, f.At)
+		}
+	}
+	if len(f.Cargo)+len(letters) > f.Capacity {
+		return fmt.Errorf("%w: %q has %d of %d, loading %d", ErrCapacityExceeded, id, len(f.Cargo), f.Capacity, len(letters))
+	}
+	for _, lid := range letters {
+		relay := t.relays[f.At]
+		if i, ok := slices.BinarySearch(relay, lid); ok {
+			t.relays[f.At] = slices.Delete(relay, i, i+1)
+		}
+		t.letter(lid).Location = Location{Kind: LocFerry, Ferry: id}
+		f.Cargo = append(f.Cargo, lid)
+	}
+	return nil
 }
 
 // Depart は停泊中の船を to に向けて出航させ、到着の時刻を返す。

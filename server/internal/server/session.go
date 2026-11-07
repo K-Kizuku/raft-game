@@ -372,9 +372,6 @@ func (s *session) handleEnvelope(env protocol.Envelope) {
 	case protocol.MessageTypeSubEngineer:
 		s.handleSubEngineer(env)
 		return
-	case protocol.MessageTypeCmdRelayLoad: // P1
-		s.reject(env, "not implemented")
-		return
 	}
 
 	cmd, err := simconv.DecodeEngineCommand(env.Type, env.Payload)

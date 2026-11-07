@@ -39,6 +39,7 @@ type Config struct {
 	DockMs        int64                // transport.dockMs
 	PortCap       int                  // transport.portCap
 	PerLinkAppCap int                  // transport.perLinkAppCap
+	RelayCap      int                  // transport.relayCap（島ごとの中継倉庫の上限。0 = 積み替えなし）
 	Resources     []ledger.ResourceDef // 台帳の資源（各ノードに同じ定義で 1 つずつ作る）
 	Requests      game.RequestConfig   // 依頼（requests.*）。ゼロ値は依頼なし
 	Score         game.ScoreConfig     // スコア・満足度・クリア判定（scoring.*・satisfaction.*）。ゼロ値は採点しない
@@ -179,6 +180,7 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		DockMs:        cfg.DockMs,
 		PortCap:       cfg.PortCap,
 		PerLinkAppCap: cfg.PerLinkAppCap,
+		RelayCap:      cfg.RelayCap,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sim: %w", err)
@@ -236,7 +238,7 @@ func (e *Engine) Apply(cmd Command) Ack {
 			return e.fail(CodePhaseInvalid, fmt.Sprintf("sim: %s in phase %s", cmd.Type, e.phase))
 		}
 		e.start()
-	case CmdFerryLoad, CmdFerryUnload, CmdFerryDepart, CmdFerryAutoload:
+	case CmdFerryLoad, CmdFerryUnload, CmdFerryDepart, CmdFerryAutoload, CmdRelayLoad:
 		if e.phase != PhaseSailing {
 			return e.fail(CodePhaseInvalid, fmt.Sprintf("sim: %s in phase %s", cmd.Type, e.phase))
 		}
@@ -281,7 +283,7 @@ func (e *Engine) start() {
 	e.startScore()
 }
 
-// applyFerry は cmd.ferry.* を適用し、成功したらイベントを出す。失敗したら何も変えずに ferry のエラーを返す。
+// applyFerry は cmd.ferry.*・cmd.relay.load を適用し、成功したらイベントを出す。失敗したら何も変えずに ferry のエラーを返す。
 func (e *Engine) applyFerry(cmd Command) error {
 	id := ferry.FerryID(cmd.FerryID)
 	switch cmd.Type {
@@ -301,7 +303,13 @@ func (e *Engine) applyFerry(cmd Command) error {
 		sorted := slices.Clone(cmd.LetterIDs)
 		slices.Sort(sorted)
 		for _, lid := range sorted {
-			e.emit(LetterMoved{LetterID: lid, Loc: portLoc(f.At)})
+			// 送信元がこの島の手紙は港へ戻し、経由の手紙は中継倉庫に預けた（ferry.Transport.Unload）。
+			// 港で破棄された手紙も From はこの島なので港の位置を出す（破棄は下の emitDrops）。
+			loc := portLoc(f.At)
+			if l, _ := e.tr.Letter(ferry.LetterID(lid)); l.From != f.At {
+				loc = relayLoc(f.At)
+			}
+			e.emit(LetterMoved{LetterID: lid, Loc: loc})
 		}
 		e.emitDrops(dropped)
 	case CmdFerryDepart:
@@ -322,6 +330,8 @@ func (e *Engine) applyFerry(cmd Command) error {
 		e.chargeVoyage(SimTime(arriveAt) - e.Now())
 	case CmdFerryAutoload:
 		return e.autoload(id, cmd.To)
+	case CmdRelayLoad:
+		return e.applyRelayLoad(id, cmd.LetterIDs)
 	}
 	return nil
 }

@@ -340,6 +340,7 @@ const (
     LocFerry                             // 船（Ferry）
     LocDelivered                         // 配達済み（Island = 宛先）
     LocDropped                           // 港の規則で破棄した
+    LocRelay                             // 中継倉庫（Island = 倉庫の島。送信元・宛先のどちらでもない）
 )
 
 type Location struct {
@@ -360,7 +361,6 @@ type Letter struct {
 ```
 
 - 時刻は `int64`（ミリ秒、`sim.SimTime` と同じ値）。変換は `sim.Engine` が行う
-- 中継倉庫（P1）の場所の種類は、まだ定義しない
 - 手紙の ID はエンジン内の連番（1 から、決定的）
 - `Raft` は Ready から取り出した時点で複製済み。以降は読み取り専用
 - 手紙の内容（Raft メッセージ）は**一切書き換えない**（企画書 §5.3）
@@ -416,7 +416,7 @@ type Ferry struct {
 
 - 航行時間 = `(route.travelMs × ferry.SpeedPermille + 500) / 1000`（整数で四捨五入。1 未満なら 1）
 - 出航の条件: `Docked` であること、`now ≥ ReadyAt`、行き先へ直接の航路があり、その航路が遮断されていないこと
-- 故障（`Broken`）と中継倉庫は P1 で、まだ定義しない
+- 故障（`Broken`）は P1 で、まだ定義しない
 - **到着時の処理**: 積み荷のうち、宛先がその島の手紙を、積んだ順に配達します。Raft の手紙は `Node.Deliver`（`proto.Clone` した複製を渡す）、依頼書はアプリケーション層（§8、T-202）へ渡します。配達のたびに、そのノードの Ready を処理します（返事がすぐにその島の港に並び、同じ船で持ち帰れる）
 - 宛先が別の島の手紙は、そのまま積んでおきます（経由輸送、FR-FERRY-05）
 - 航行中に嵐が来ても、船はそのまま進みます（[04-game-design.md §6](./04-game-design.md)）
@@ -435,7 +435,14 @@ type Ferry struct {
 
 ### 6.5 中継倉庫（P1）
 
-船から降ろした、その島宛てではない手紙を預かる場所です。預かった手紙は Raft では処理されません（企画書 §10.2）。別の船に積み直せます。
+船から降ろした、その島宛てではない手紙を預かる場所です。預かった手紙は Raft では処理されません（企画書 §10.2・ADR-0006）。別の船に積み直せます（FR-FERRY-06、T-721）。
+
+- **預ける**: 停泊中の船の積み荷のうち、送信元（`From`）が船のいる島でない手紙（経由の手紙）を `cmd.ferry.unload` で降ろすと、その島の中継倉庫に入る（`letter.moved` の `loc` は `{type: "relay", islandId}`）。送信元がその島の手紙は今までどおり港に戻す（R1〜R6 を当てはめる）。1 つのコマンドに両方が混ざってよい
+- **積み直す**: 停泊中の船に、その島の倉庫の手紙を `cmd.relay.load` で積む。どの船でも積める（預けた船でもよい）。積載量の検査は `cmd.ferry.load` と同じで、渡した順に積み荷の末尾に足す
+- **Raft では処理しない**: 倉庫の手紙はどのノードにも渡さず、港キューにも入れない（R5 の `portCap` に数えない）。宛先の島に船で運ばれ、到着したときだけ配達する（§6.3）。船が倉庫のある島に着いても、倉庫の手紙を自動では積まない
+- **上限**: 島ごとの倉庫の手紙は `relayCap`（`transport.relayCap`）通まで。預けると超えるなら、そのコマンドは 1 通も降ろさず `relay_full` で失敗する（港へ戻す手紙が混ざっていても全体を断る）。`relayCap` が 0 なら積み替えはできない
+- **合流・破棄しない**: 倉庫では R1〜R6 を当てはめず、破棄は起きない。期限もない。古くなった Raft の手紙も残し、`letter.stale` を出す（§6.2）。依頼書が倉庫にあるあいだ、依頼の状態は「運搬中」（`in_transit`）。ラウンドが終わったときに倉庫に残った手紙は配達されない
+- 積み替えを使わないラウンドでは、乱数の引き方・イベント・トレースのハッシュは変わらない
 
 ---
 
@@ -658,7 +665,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 - Engine は成功したコマンドをすべて記録するので、最初のコマンドは `cmd.game.start` です（`Engine.InputLog()`）
 - 一時停止・速度変更のコマンドも記録しますが、エンジンの結果には影響しません（記録はするがリプレイ時には無視してよい）
 - `cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` はリプレイで無視します。そのほかの未知の `type`・未知のキーは誤りです
-- `payload` の形はプロトコル（[06-protocol.md §4](./06-protocol.md)）のとおりで、キーは `type`・`payload` の順です（`cmd.game.start` は `{}`、`cmd.ferry.load`・`cmd.ferry.unload` は `ferryId`・`letterIds`、`cmd.ferry.depart`・`cmd.ferry.autoload` は `ferryId`・`to`、`demo.trigger` は `event`）
+- `payload` の形はプロトコル（[06-protocol.md §4](./06-protocol.md)）のとおりで、キーは `type`・`payload` の順です（`cmd.game.start` は `{}`、`cmd.ferry.load`・`cmd.ferry.unload`・`cmd.relay.load` は `ferryId`・`letterIds`、`cmd.ferry.depart`・`cmd.ferry.autoload` は `ferryId`・`to`、`demo.trigger` は `event`）
 - T-301（`protocol`）ができるまで、JSON との変換は `server/cmd/simcli`（`inputlog.go`）が持ちます。`simcli` は 1 行目にヘッダーと `"commands":[`、続けてコマンドを 1 件 1 行、最後の行に `]}` と書きます（件数が 0 なら 1 行）。読み込みは厳密で、必須のキー（`format`・`stageId`・`stageHash`・`seed`・`commands`、`payload` の各キー）がない・`t` が 0 以上の整数でない・JSON の後ろに余分なデータがあるときは、場所（例: `commands[3].cmd.payload.to`）を書いて誤りにします。`build` は読みますが使いません
 - **保存先**: 入力ログは Durable Object の SQLite に保存します。コンテナはコマンドを適用したら `ack` に適用時刻 `t` を入れて返し、Durable Object が `(t, cmd)` を追記します（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）
 - **復元**: コンテナが止まったら、Durable Object が新しいコンテナに入力ログを渡し、`Replay` で同じ状態に戻します
@@ -726,7 +733,7 @@ FR-LOG-04（入力ログを読み込むとリプレイできる）は、同じ G
 - **I-4**: 「Commit された時点で」より強い条件として、毎回 Commit 済みのすべての index を検査する（Commit 済みのエントリはどのログからも消えないので、正しい Raft では常に成り立つ）
 - **I-5**: 補助の条件として「Applied ≤ Commit」も検査する
 - **I-6**: 各台帳の `CheckInvariants` と「台帳の `AppliedIndex` ≤ ノードの Applied」を検査し、`AppliedIndex` が等しい台帳どうしの `Snapshot` を比べる（`AppliedIndex` はデータのあるエントリだけで進むので、ノードの Applied より小さいことがある）
-- **I-7**: `Transport.CheckInvariants`（港の上限・同じ宛先の `MsgApp` の上限・合流・積載量）。依頼書の数の上限は T-202、中継倉庫の上限は P1 で足す
+- **I-7**: `Transport.CheckInvariants`（港の上限・同じ宛先の `MsgApp` の上限・合流・積載量・中継倉庫の上限と場所）。依頼書の数の上限は T-202
 - **違反したとき**: 最初の 1 つで `panic("sim: invariant violated at t=<Now>: I-<n>: <説明>")` を出す（島の ID は 1 から）
 
 ---

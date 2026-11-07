@@ -177,7 +177,7 @@ type LetterView struct {
 
 // LocView は手紙のある場所（プロトコル §5.2 の loc）。
 type LocView struct {
-	Type     string `json:"type"` // "port" | "ferry" | "delivered" | "dropped"
+	Type     string `json:"type"` // "port" | "ferry" | "relay" | "delivered" | "dropped"
 	IslandID uint64 `json:"islandId,omitempty"`
 	FerryID  string `json:"ferryId,omitempty"`
 }

@@ -427,7 +427,9 @@ func TestUnload(t *testing.T) {
 
 	t.Run("errors", func(t *testing.T) {
 		t.Parallel()
-		tr := newT(t, baseConfig())
+		cfg := baseConfig()
+		cfg.RelayCap = 0
+		tr := newT(t, cfg)
 		c, _ := post(t, tr, 0, 1, msg(pb.MsgApp, 1, 2, 1), msg(pb.MsgApp, 1, 3, 1))
 		_, err := tr.Unload("f1", []LetterID{c[0]})
 		wantErr(t, err, ErrLetterNotHere)
@@ -446,10 +448,36 @@ func TestUnload(t *testing.T) {
 		if _, err := tr.Arrive(at, "f1"); err != nil {
 			t.Fatal(err)
 		}
+		// relayCap 0 では経由の手紙を預けられない。
 		_, err = tr.Unload("f1", []LetterID{c[1]})
-		wantErr(t, err, ErrRelayNotSupported)
+		wantErr(t, err, ErrRelayFull)
 		f, _ := tr.Ferry("f1")
 		wantIDs(t, "cargo", f.Cargo, []LetterID{c[1]})
+		wantIDs(t, "relay", tr.Relay(2), nil)
+		mustInv(t, tr)
+	})
+
+	t.Run("relays letters from elsewhere", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseConfig()
+		cfg.RelayCap = 12
+		tr := newT(t, cfg)
+		c, _ := post(t, tr, 0, 1, msg(pb.MsgApp, 1, 3, 1))
+		if err := tr.Load("f1", c); err != nil {
+			t.Fatal(err)
+		}
+		at, _ := tr.Depart(0, "f1", 2)
+		if _, err := tr.Arrive(at, "f1"); err != nil {
+			t.Fatal(err)
+		}
+		d, err := tr.Unload("f1", c)
+		if err != nil || len(d) != 0 {
+			t.Fatalf("Unload: %v %v", d, err)
+		}
+		wantIDs(t, "relay", tr.Relay(2), c)
+		if got := loc(t, tr, c[0]); got != (Location{Kind: LocRelay, Island: 2}) {
+			t.Fatalf("location = %+v", got)
+		}
 		mustInv(t, tr)
 	})
 }

@@ -372,10 +372,10 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `cmd.game.speed` | `{ "speed": 2 }` | 0.5 / 1 / 2 / 4。デモ操作が有効なセッションでは 8 も。`speed` は `snapshot` の `clock.allowedSpeeds` のどれか | P0 |
 | `cmd.game.skip` | `{ "until": "next_notable" }` | デモ用。次の船の到着・台本の出来事・依頼の発生まで進めて一時停止する（最大 30 秒先まで）。デモ操作が有効なセッションだけ。次の出来事が 30 秒より先なら進めずに止まる | P0 |
 | `cmd.ferry.load` | `{ "ferryId": "f1", "letterIds": [12, 13] }` | 港の手紙を積む。全部積めない場合は全体を拒否する | P0 |
-| `cmd.ferry.unload` | `{ "ferryId": "f1", "letterIds": [12] }` | 積んだ手紙をいまいる港へ戻す（P1 で中継倉庫へ預けるのにも使う） | P0 |
+| `cmd.ferry.unload` | `{ "ferryId": "f1", "letterIds": [12] }` | 積んだ手紙を降ろす。送信元がいまいる島の手紙はその港へ戻し、それ以外（経由の手紙）はその島の中継倉庫へ預ける（積み替え、P1。倉庫が `relayCap` を超えるなら 1 通も降ろさず `relay_full`） | P0 |
 | `cmd.ferry.autoload` | `{ "ferryId": "f1", "to": 2 }` | おまかせ積み込み。港の手紙のうち `to` 宛てのものを、ゲームデザイン §3.4 の順に空きの数だけ積む。`to` への直接の航路がなければ `no_route`、積む手紙がなければ `letter_not_here`、満載なら `capacity_exceeded` | P0 |
 | `cmd.ferry.depart` | `{ "ferryId": "f1", "to": 2 }` | 出航 | P0 |
-| `cmd.relay.load` | `{ "ferryId": "f1", "letterIds": [20] }` | 中継倉庫の手紙を積む | P1 |
+| `cmd.relay.load` | `{ "ferryId": "f1", "letterIds": [20] }` | いまいる島の中継倉庫の手紙を、渡した順に積む（どの船でもよい。検査は `cmd.ferry.load` と同じ。倉庫にない手紙は `letter_not_here`） | P1 |
 | `cmd.sync` | `{}` | スナップショットを要求する | P0 |
 | `sub.engineer` | `{ "enabled": true, "nodeId": 2 }` | エンジニアモードの購読（`nodeId` の詳細 `node.detail` を、すぐに 1 つと、以後 2Hz で送る）。`{ "enabled": false }` でやめる（`nodeId` は見ない）。注記は表の下 | P0 |
 | `demo.trigger` | `{ "event": "storm" }` | デモ用。ステージ定義の `demo.storm`（対象の航路・時間）で嵐を起こす。デモ操作が有効なセッションだけ。嵐は送った時刻に始まり、`demo.storm.durationMs` だけ続く（予報なし。嵐の途中でもう一度送ると遮断が延びる）。成功すると `ok: true` の `ack`（`t` は起こした時刻）を返し、入力ログに記録してリプレイで再現する | P0 |
@@ -402,6 +402,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `letter_not_here` | 手紙がその港（または船）にない |
 | `no_route` | 直接の航路がない |
 | `route_blocked` | 嵐で航路が使えない |
+| `relay_full` | 預けると中継倉庫の手紙が `relayCap` を超える（1 通も降ろさない。`relayCap` が 0 なら積み替えはできない） |
 | `phase_invalid` | いまのフェーズでは使えないコマンド |
 | `rate_limited` | コマンドが多すぎる |
 | `bad_request` | 形式が不正 |
@@ -462,7 +463,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
         "color": "#E07A5F", "postmaster": { "name": "あさなぎ局長", "tone": "polite" } }
     ],
     "routes": [ { "id": "1-2", "a": 1, "b": 2, "travelMs": 4000, "provenance": "creative" } ],
-    "resources": [ { "id": "firework:a", "kind": "firework", "label": "大花火 A", "critical": true } ]
+    "resources": [ { "id": "firework:a", "kind": "firework", "label": "大花火 A", "critical": true } ],
+    "relayCap": 12
   },
   "ferries": [
     { "id": "f1", "name": "ごとう丸", "capacity": 4, "state": "sailing", "from": 1, "to": 2,
@@ -470,7 +472,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
     { "id": "f2", "name": "…", "capacity": 4, "state": "docked", "islandId": 3, "readyAt": 61500, "cargo": [] }
   ],
   "routesState": [ { "id": "1-2", "blockedUntil": null } ],
-  "letters": [ /* 港と船の上にある Letter（§5.2）。P1 では中継倉庫も。配達済み・破棄は含めない */ ],
+  "letters": [ /* 港・船・中継倉庫にある Letter（§5.2）。ID の昇順。配達済み・破棄は含めない */ ],
   "requests": [ /* 発生済みの Request（§5.3）。ID の順 */ ],
   "nodes": [ { "id": 1, "role": "leader", "term": 2, "vote": 1, "lead": 1, "commit": 14, "applied": 14, "lastIndex": 15 } ],
   "islandsState": [ { "id": 1, "satisfaction": 64, "lastDeliveredAt": 60500 } ],
@@ -497,6 +499,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 - `islandsState` は全島を ID の順に並べる。`satisfaction` は 0〜100、`lastDeliveredAt` は最後にその島宛ての手紙が配達された時刻で、最初は `0`（開会式で全島に配達したものとして数える）
 - `score.target` はステージ定義の `scoring.target.successes`。`criticalSecured` は確定した重要な資源の ID を、資源の定義の順に並べる（空なら `[]`）
+
+`stage.relayCap` の注記（T-721）: 島ごとの中継倉庫の上限（ステージ定義の `transport.relayCap`）。0 ならキーごと省く（積み替えはできない）。後方互換なフィールドの追加です（§8）。
 
 `stage.demoStorm` の注記（T-305b）:
 
@@ -526,7 +530,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 }
 ```
 
-- `loc.type`: `port`（`islandId`）/ `ferry`（`ferryId`）/ `relay`（`islandId`、P1）/ `delivered` / `dropped`
+- `loc.type`: `port`（`islandId`）/ `ferry`（`ferryId`）/ `relay`（`islandId` = 中継倉庫の島。送信元・宛先のどちらでもない。P1、T-721）/ `delivered` / `dropped`
 - `label`: ゲーム上の手紙の区分。`heartbeat` / `heartbeat_resp` / `append` / `append_probe` / `append_resp` / `append_reject` / `prevote` / `prevote_resp` / `vote` / `vote_resp` / `request` / `other`
 - `raft`: `kind` が `raft` のとき。**通常の表示には `label` だけを使い**、`raft` の中身はエンジニアモードでだけ使う
 - `stale`: 手紙を作った島の今の Term より、手紙の Term が古いとき `true`（`letter.stale` イベントで更新される）

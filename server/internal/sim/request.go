@@ -263,7 +263,8 @@ func (e *Engine) refreshRequests() {
 		}
 		if r.track.Outcome == game.OutcomeLetter {
 			l, ok := e.tr.Letter(r.letter)
-			r.track.OnFerry = ok && l.Location.Kind == ferry.LocFerry
+			// 中継倉庫に預けた依頼書も、まだ運んでいる途中なので「運搬中」（in_transit）にする。
+			r.track.OnFerry = ok && (l.Location.Kind == ferry.LocFerry || l.Location.Kind == ferry.LocRelay)
 		}
 		v := r.view()
 		if v.equal(r.last) {

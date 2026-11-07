@@ -27,6 +27,7 @@ const (
 	LocFerry                             // 船（Ferry）
 	LocDelivered                         // 配達済み（Island = 宛先）
 	LocDropped                           // 港の規則で破棄した
+	LocRelay                             // 中継倉庫（Island = 倉庫の島。送信元・宛先のどちらでもない）
 )
 
 // Location は手紙のある場所。
