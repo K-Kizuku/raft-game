@@ -57,9 +57,9 @@
 .app-howto .howto-step {
   position: relative;
   box-sizing: border-box;
-  /* 1 行の文が絵の高さの真ん中に来るよう、上下の余白で寄せる（2 行以上なら行の高さが伸びる） */
-  min-height: 4.4em;
-  padding: 1.25em var(--space-4) 1.25em 8em;
+  /* 絵の高さに合わせて最低の高さを取る（文が長ければ伸びる） */
+  min-height: 5em;
+  padding: var(--space-4) var(--space-4) var(--space-4) 8em;
   background: var(--color-paper);
   border: 2px solid color-mix(in srgb, var(--color-ink) 25%, transparent);
   border-radius: var(--radius-m);
@@ -71,7 +71,7 @@
 
 .app-howto .howto-step::before {
   position: absolute;
-  top: 50%;
+  top: var(--space-4);
   left: var(--space-3);
   display: grid;
   place-items: center;
@@ -84,19 +84,72 @@
   border-radius: 50%;
   font-family: var(--font-number);
   font-weight: bold;
-  transform: translateY(-50%);
 }
 
 .app-howto .howto-step-icon {
   position: absolute;
-  top: 50%;
+  top: var(--space-4);
   left: 2.8em;
   width: 4.8em;
   height: 3.8em;
-  transform: translateY(-50%);
 }
 
-.app-howto .howto-note {
-  margin: var(--space-5) 0 0;
-  color: var(--color-ink-muted);
+/* 節の見出しと中身（T-417）。番号と絵は節の上の端にそろえ、文は右に流す。 */
+.app-howto .howto-step-title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.15em;
+  line-height: 1.6;
+}
+
+.app-howto .howto-step p,
+.app-howto .howto-list,
+.app-howto .howto-keys {
+  margin: 0;
+}
+
+/* 箇条書きの行（ページの中の list は手順の 1 つだけにするため、<p> の行に点を付ける） */
+.app-howto .howto-list p {
+  position: relative;
+  padding-left: 1.1em;
+}
+
+.app-howto .howto-list p::before {
+  position: absolute;
+  left: 0;
+  content: "・";
+}
+
+.app-howto .howto-step > p + .howto-list {
+  margin-top: var(--space-1);
+}
+
+/* キーの行の下に、説明を少し下げて置く */
+.app-howto .howto-keys dd {
+  margin: 0 0 var(--space-1) 1.1em;
+}
+
+.app-howto kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0 0.35em;
+  background: var(--color-paper-deep);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-s);
+  font-family: var(--font-number);
+  font-size: 0.9em;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* 広い画面（1280px 以上）では、節を 2 列に並べて、スクロールを減らす */
+@media (min-width: 80rem) {
+  .app-howto.app-card.app-screen {
+    max-width: 84rem;
+  }
+
+  .app-howto .howto-steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
 }
