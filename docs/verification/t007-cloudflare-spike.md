@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 の lite・standard-1・M-9 の対照実験を実施済み。H-5 の設定取得は CLI の引数エラー、CPU 集計は結果が空で未取得。インストール済み CLI のヘルプで worker-id の指定を確認済み。次はデプロイ済み設定とログ項目の取得。後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 の測定を実施済み。H-5 の対象デプロイの CPU 上限 50 ms とログ設定を取得し、CPU 時間・実行モデルなどのログ項目を確認済み。次は通常処理の CPU p99/最大値の集計。後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -22,7 +22,7 @@
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
-| H-5 limits.cpuMs の判断 | 途中 | CPU 集計は空で未取得。CLI のヘルプで versions get の --worker-id と workers get の位置引数を確認済み。デプロイ済み設定とログ項目を取得する |
+| H-5 limits.cpuMs の判断 | 途中 | 対象バージョンの limits.cpu_ms=50、ログ保存・invocation logs・サンプリング率 1 を確認。cpuTimeMs が存在。通常処理の p99/最大値は未取得 |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -940,6 +940,75 @@ pnpm -C spike exec cf o11y telemetry keys \
 ```
 
 どちらも読み取り。Node 部分の JavaScript と keys の JSON は構文を確認した。実際の API 結果はまだ受領しておらず、上限と CPU p99/最大値は未確定のまま。
+
+## 2026-11-07: デプロイ済み CPU 上限とログ項目の取得に成功
+
+添付の出力を確認した。workers versions get と workers get が成功し、保存した JSON から指定した項目を抽出できた。ログ項目の取得のプロンプト表示は 17:17:40。
+
+### 取得した実際の設定
+
+| 対象 | 項目 | 値 |
+|---|---|---|
+| バージョン b402a25d-9b2d-418d-b710-f577294a7eb9 | limits.cpu_ms | 50 |
+| Worker | observability.enabled | true |
+| Worker | observability.head_sampling_rate | 1 |
+| Worker | observability.logs.enabled | true |
+| Worker | observability.logs.head_sampling_rate | 1 |
+| Worker | observability.logs.invocation_logs | true |
+| Worker | observability.logs.persist | true |
+| Worker | observability.traces.enabled | false |
+
+CPU 上限は対象デプロイのメタデータで確認した値。ふだんの処理に十分な余裕があるかの判断は、CPU 時間の集計を待つ。空の集計の原因がログ無効化だったとは現時点では言えない。
+
+### 利用可能なログ項目
+
+keys の出力には次が存在した。ここでは型が確認できた項目名だけを記録し、イベント本体やヘッダーの値は取得・転載しない。
+
+| 項目 | 型 | 用途 |
+|---|---|---|
+| $workers.cpuTimeMs | number | CPU 時間 |
+| $workers.wallTimeMs | number | 経過時間。CPU 時間とは区別する |
+| $workers.scriptName | string | Worker の指定 |
+| $workers.executionModel | string | Worker / DO の実行モデルの分類 |
+| $workers.entrypoint | string | エントリーポイントの分類 |
+| $workers.eventType | string | イベントの種類の分類 |
+| $workers.outcome | string | 実行結果 |
+| $workers.event.request.path | string | 要求のパス |
+| $workers.event.path | string | 別のイベント形式のパス |
+| $workers.event.request.search.iters | number | 反復負荷試験の判別 |
+| $workers.event.search.iters | number | 別のイベント形式の反復負荷試験の判別 |
+
+前回の集計が空だった原因の断定はしない。次の集計では scriptName を指定し、request.path への除外条件とグループ化を外す。測定コードの itemCpu は /spike/cpu と /spike/s/<番号>/cpu に iters を指定するため、実際に存在する 2 種類の iters 項目がどちらもないイベントを通常処理の対象にする。
+
+### 次に CPU 時間を集計する
+
+[Observability API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/) の DOES_NOT_EXIST、P99、Max、Count、グループ化を使用する。実行モデル・エントリーポイント・イベントの種類ごとに分け、alarm などと fetch を混同しない。CPU 時間が存在するログだけを対象とするため、件数は測定スクリプト全体の要求件数と同一とは限らない。
+
+```fish
+pnpm -C spike exec cf o11y telemetry query \
+  --query-id t007-normal-cpu-v2 --preview --view calculations \
+  --timeframe-from 1794035511730 --timeframe-to 1794038049020 \
+  --parameters-filters '[{"key":"$workers.scriptName","operation":"eq","type":"string","value":"raft-game-spike"},{"key":"$workers.cpuTimeMs","operation":"exists","type":"number"},{"key":"$workers.event.request.search.iters","operation":"DOES_NOT_EXIST","type":"number"},{"key":"$workers.event.search.iters","operation":"DOES_NOT_EXIST","type":"number"}]' \
+  --parameters-calculations '[{"operator":"count","alias":"n"},{"operator":"p99","key":"$workers.cpuTimeMs","keyType":"number","alias":"cpu_p99_ms"},{"operator":"max","key":"$workers.cpuTimeMs","keyType":"number","alias":"cpu_max_ms"}]' \
+  --parameters-group-bys '[{"type":"string","value":"$workers.executionModel"},{"type":"string","value":"$workers.entrypoint"},{"type":"string","value":"$workers.eventType"}]' \
+  --parameters-limit 50 \
+  > spike/.cloudflare/normal-cpu-query.json
+and node -e '
+const fs = require("node:fs");
+const r = JSON.parse(fs.readFileSync("spike/.cloudflare/normal-cpu-query.json", "utf8"));
+console.log(JSON.stringify({
+  status: r.run?.status,
+  filters: r.run?.query?.parameters?.filters,
+  groupBys: r.run?.query?.parameters?.groupBys,
+  calculations: r.calculations?.map(c => ({
+    alias: c.alias, calculation: c.calculation, aggregates: c.aggregates
+  })),
+  statistics: r.statistics
+}, null, 2));
+'
+```
+
+CLI に通す JSON と抽出用の JavaScript の構文は確認した。--preview による読み取りのみで、再デプロイや追加の負荷試験はしない。集計結果はまだ受領していない。
 
 ## 測定前に確定・確認する事項
 
