@@ -21,4 +21,6 @@ dist/
 web/.cloudflare/
 .cloudflare/
 server/internal/stage/embedded/
+# リプレイの WASM と wasm_exec.js（scripts/build-replay-wasm.sh・make wasm が作る。T-720b）
+web/public/wasm/
 coverage/

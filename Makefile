@@ -149,6 +149,15 @@ clean-docker: ## この作業ツリーの Docker のコンテナとイメージ�
 demo-local: ## デモの保険: ノート PC で Go（standalone・デモ操作あり）と Vite を起動する（CHECK=1 で準備の確認、DRY_RUN=1 で表示だけ）（T-504）
 	@bash scripts/demo-local.sh $(if $(CHECK),--check) $(if $(DRY_RUN),--dry-run) $(if $(DEMO_DATA_DIR),--data "$(DEMO_DATA_DIR)")
 
+# wasm・wasm-check の中身は scripts/build-replay-wasm.sh。Node が要るので test・lint には入れない。
+.PHONY: wasm wasm-check
+
+wasm: ## リプレイの WASM を web/public/wasm/ に作る（ADR-0028・T-720b）
+	@bash scripts/build-replay-wasm.sh
+
+wasm-check: ## リプレイの WASM を作り、ネイティブの simcli replay と traceHash が一致するかを確かめる
+	@bash scripts/build-replay-wasm.sh --verify
+
 .PHONY: check-secrets check-license
 
 check-secrets: ## gitleaks で git の履歴にシークレットがないかを検査する（CI の secrets ジョブ。T-009）

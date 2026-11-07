@@ -2,7 +2,8 @@
 # 結果は `ci-ok` の 1 つのチェックにまとめる。
 # ワークフロー名 `ci` とチェック名 `ci-ok` は Merge Gate（#3）と Rulesets（#5）が
 # 参照する公開の契約なので、名前を変えない。
-# server: server/ の Go に gofmt・vet・mod tidy・golangci-lint（forbidigo）・test（T-005 / #13）。
+# server: server/ の Go に gofmt・vet・mod tidy・golangci-lint（forbidigo）・test（T-005 / #13）と、
+#   リプレイの WASM の確かめ（scripts/build-replay-wasm.sh --verify。T-720b / #321）。
 # web: web/ に lint・typecheck・test（T-005 / #13）。
 # e2e: Playwright の E2E（make e2e。T-506 / #310）。必須ではないので ci-ok の needs に入れない。
 # secrets: gitleaks で git の履歴全体にシークレットがないかを検査する（scripts/check-secrets.sh。T-009 / #17）。
@@ -195,6 +196,17 @@ jobs:
         env:
           GOTOOLCHAIN: auto
         run: go -C server test -race -count=1 ./...
+      # リプレイの WASM（ADR-0028・T-720b）を作り、ネイティブの simcli replay と traceHash が一致するかを
+      # Node で確かめる。node-version-file を使わない理由は web ジョブと同じ。
+      - uses: actions/setup-node@v4
+        if: steps.find.outputs.found == 'true'
+        with:
+          node-version: "22"
+      - name: replay wasm
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: bash scripts/build-replay-wasm.sh --verify
 
   web:
     name: web
