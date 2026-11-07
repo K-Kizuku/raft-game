@@ -2,6 +2,7 @@
 // 色だけに頼らず、形・塗り・破線・印の組でも区別する（NFR-10）。マップ（T-404）は山と数だけを描き、
 // 1 通ずつのアイコン（LetterIcon）は DOM のパネルに出す（DesignDoc §13.3）。
 import type { LetterLabel } from "../../protocol/index.ts";
+import { tokens } from "../theme/tokens.ts";
 
 export type LetterShape = "circle" | "square" | "triangle" | "star" | "diamond";
 export type LetterMark = "none" | "dot" | "check" | "cross" | "reply";
@@ -15,11 +16,14 @@ export type LetterKindStyle = Readonly<{
   countBadge: boolean; // 記録の件数のバッジ（append だけ）
 }>;
 
-const GRAY = "#6B7280";
-const BLUE = "#2563EB";
-const RED = "#DC2626";
-const GOLD = "#CA8A04";
-const WHITE = "#FFFFFF";
+// 種類ごとの色はデザイントークン（T-420・T-422）の値。SVG の属性には var() が効かないことがあるので値を入れる。
+// 縁取りだけの形（outline）の線の色になるので、白の塗り・パネルの地（--color-paper-deep）と 3:1 以上の色にする。
+const GRAY = tokens["--color-ink-muted"];
+const BLUE = tokens["--color-sea-deep"];
+const RED = tokens["--color-postal"];
+const GOLD = tokens["--color-gold"];
+// その他の手紙は生成りの紙の色（墨の線で形を示す）。
+const PAPER = tokens["--color-paper"];
 
 function kind(
   name: string,
@@ -53,7 +57,7 @@ export const LETTER_KINDS: Readonly<Record<LetterLabel, LetterKindStyle>> = Obje
     "reply",
   ),
   request: kind("住民の依頼書", GOLD, "star", "solid", false, "none"),
-  other: kind("その他の手紙", WHITE, "diamond", "solid", false, "none"),
+  other: kind("その他の手紙", PAPER, "diamond", "solid", false, "none"),
 });
 
 function isLetterLabel(label: string): label is LetterLabel {

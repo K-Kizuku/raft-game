@@ -72,6 +72,13 @@ function IslandDetail({ world, islandId }: { world: World; islandId: number }): 
   return (
     <div className="island-panel">
       <header className="island-header">
+        {island !== undefined && (
+          <span
+            aria-hidden="true"
+            className="island-color-dot"
+            style={{ backgroundColor: island.color }}
+          />
+        )}
         <h2>{islandName(world, islandId)}</h2>
         {island !== undefined && island.municipality !== "" && (
           <small className="island-municipality">{island.municipality}</small>

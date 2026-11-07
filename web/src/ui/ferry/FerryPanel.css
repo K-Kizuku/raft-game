@@ -1,37 +1,60 @@
-/* フェリー操作（T-405・ゲームデザイン §7.2 の下）。文字は白地に #111827・#374151・#7f1d1d・#1e3a8a
-   （コントラスト比 4.5:1 以上。NFR-10）。T-409（チュートリアル）が指すので、ferry-panel・ferry-panel__tabs・
+/* フェリー操作（T-405・ゲームデザイン §7.2 の下）。見た目は T-422（docs/11-visual-design.md）:
+   紙のパネルの上に、紙の札の船のタブと、封筒の形の積み荷のスロット。文字は --color-ink・--color-ink-muted
+   （パネルの地で 4.5:1 以上。NFR-10）。T-409（チュートリアル）が指すので、ferry-panel・ferry-panel__tabs・
    ferry-panel__port・ferry-panel__cargo・ferry-panel__destinations・ferry-panel__autoload・
-   ferry-panel__depart・ferry-panel__status の className を変えない。 */
+   ferry-panel__depart・ferry-panel__status の className を変えない。
+   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 がトークンに入れるかを決める）。 */
 .ferry-panel {
+  /* 封筒のふた・空きの輪郭の線（補足の文字の色を紙に寄せた淡い線）。 */
+  --ferry-envelope-line: color-mix(in srgb, var(--color-ink-muted) 60%, var(--color-paper));
+  /* 不明な手紙の灰色の封筒（嵐の灰を紙に混ぜた地。墨の文字は約 7:1）。 */
+  --ferry-unknown-paper: color-mix(in srgb, var(--color-storm) 25%, var(--color-paper));
+  /* 落とせる場所の枠（淡い線）。 */
+  --ferry-area-line: color-mix(in srgb, var(--color-ink-muted) 40%, var(--color-paper));
+  /* 故障中の文字（郵便の赤を墨で暗くし、紙・パネル・海の淡い青の上で 4.5:1 以上）。 */
+  --ferry-danger-text: color-mix(in srgb, var(--color-danger) 60%, var(--color-ink));
+  /* 「行き先宛て」の札の文字と線（深い海の青を墨で暗くし、紙の上で 4.5:1 以上）。 */
+  --ferry-target-text: color-mix(in srgb, var(--color-sea-deep) 80%, var(--color-ink));
+  /* 嵐で通れない行き先の札の地（嵐の灰を紙に混ぜた地。--color-storm-deep の文字は約 8.7:1）。 */
+  --ferry-storm-paper: color-mix(in srgb, var(--color-storm) 15%, var(--color-paper));
+
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  color: #111827;
+  gap: var(--space-3);
+  color: var(--color-ink);
 }
 
+/* ボタンは紙の札（base.css の .btn に合わせる）。 */
 .ferry-panel button {
   font: inherit;
-  color: #111827;
-  background: #ffffff;
-  border: 1px solid #6b7280;
-  border-radius: 6px;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
   cursor: pointer;
+}
+
+.ferry-panel button:active {
+  box-shadow: none;
 }
 
 .ferry-panel button:focus-visible,
 .ferry-panel h3:focus-visible,
 .ferry-panel input:focus-visible {
-  outline: 3px solid #1d4ed8;
+  outline: 3px solid var(--color-sea-deep);
   outline-offset: 2px;
 }
 
 /* 押せないボタンは disabled にせず aria-disabled にする（フォーカスを失わないため）。
-   薄く見せるが、文字は #374151 on #f3f4f6 でコントラスト比 4.5:1 以上を保つ（opacity は使わない）。 */
+   色だけでなく破線の枠で示し、文字は --color-ink-muted でパネルの地とのコントラスト比 4.5:1 以上を保つ
+   （opacity は使わない）。 */
 .ferry-panel button[aria-disabled="true"] {
-  color: #374151;
-  background: #f3f4f6;
+  color: var(--color-ink-muted);
+  background: var(--color-paper-deep);
   border-style: dashed;
-  border-color: #9ca3af;
+  border-color: var(--color-ink-muted);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -39,54 +62,76 @@
 .ferry-panel__ready,
 .ferry-panel__reason {
   margin: 0;
-  color: #374151;
+  color: var(--color-ink-muted);
 }
 
-.ferry-panel__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.ferry-panel__tab {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem 0.6rem;
-  min-height: 44px;
-  padding: 0.35rem 0.7rem;
+.ferry-panel__ready {
+  font-family: var(--font-number);
   font-variant-numeric: tabular-nums;
 }
 
-.ferry-panel__tab[aria-pressed="true"] {
+/* 船のタブ（紙の札）。選んだタブは太い枠と海の淡い青の地（色だけでなく枠の太さでも区別する）。 */
+.ferry-panel__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ferry-panel .ferry-panel__tab {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-3);
+  border-width: 1px;
+  border-color: var(--color-ink-muted);
+  border-radius: var(--radius-s);
+  font-variant-numeric: tabular-nums;
+}
+
+.ferry-panel .ferry-panel__tab[aria-pressed="true"] {
+  padding: calc(var(--space-1) - 2px) calc(var(--space-3) - 2px);
+  background: var(--color-sea-light);
   border-width: 3px;
-  background: #e0ecff;
+  border-color: var(--color-ink);
 }
 
 .ferry-panel__tab-name {
   font-weight: bold;
 }
 
+.ferry-panel__tab-cargo {
+  font-family: var(--font-number);
+}
+
 .ferry-panel__broken {
-  color: #7f1d1d;
+  color: var(--ferry-danger-text);
+  font-weight: bold;
 }
 
 .ferry-panel__detail {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .ferry-panel__title {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: var(--font-size-h3);
   font-variant-numeric: tabular-nums;
+}
+
+.ferry-panel__title-state {
+  font-family: var(--font-number);
+  font-size: var(--font-size-body);
+  font-weight: normal;
 }
 
 .ferry-panel__areas {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .ferry-panel__section {
@@ -94,25 +139,31 @@
   min-width: 0;
 }
 
+/* 小見出しは、海図の航路のような点線の下線。 */
 .ferry-panel__section h3 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
-  border-bottom: 1px solid #c8d3dc;
+  margin: 0 0 var(--space-2);
+  padding-bottom: var(--space-1);
+  font-size: var(--font-size-body);
+  font-variant-numeric: tabular-nums;
+  border-bottom: 2px dotted var(--color-ink-muted);
 }
 
+/* 手紙を落とせる場所（港・積み荷）。紙の地に淡い線の枠。 */
 .ferry-panel__port,
 .ferry-panel__cargo {
-  min-height: 56px;
-  padding: 0.35rem;
-  border: 2px solid #c8d3dc;
-  border-radius: 6px;
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: var(--space-2);
+  background: var(--color-paper);
+  border: 2px solid var(--ferry-area-line);
+  border-radius: var(--radius-s);
 }
 
 /* ドラッグ中に上に来たら、枠を太い破線にする（色だけで示さない）。 */
 .ferry-panel__port.is-over,
 .ferry-panel__cargo.is-over {
-  border: 4px dashed #1d4ed8;
-  padding: calc(0.35rem - 2px);
+  padding: calc(var(--space-2) - 2px);
+  border: 4px dashed var(--color-sea-deep);
 }
 
 .ferry-panel__piles,
@@ -120,7 +171,7 @@
 .ferry-panel__cargo {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: var(--space-2);
   margin: 0;
   list-style: none;
 }
@@ -138,79 +189,147 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
-  margin: 0 0 0.2rem;
-  font-size: 0.95rem;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 0 var(--space-1);
+  font-size: 0.95em;
+  overflow-wrap: anywhere;
 }
 
 .ferry-panel__pile-target {
-  padding: 0 0.35rem;
-  font-size: 0.8rem;
-  color: #1e3a8a;
-  border: 1px solid #1e3a8a;
-  border-radius: 4px;
+  padding: 0 var(--space-2);
+  font-size: 0.8em;
+  color: var(--ferry-target-text);
+  background: var(--color-paper-deep);
+  border: 1px solid var(--ferry-target-text);
+  border-radius: var(--radius-s);
 }
 
-.ferry-panel__letter {
+/* 積み荷のスロット。中の封筒（手紙・空き・不明）はどれも同じ大きさなので、満杯・空き・不明が混ざってもそろう。 */
+.ferry-panel__slot {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
   min-width: 44px;
   min-height: 44px;
-  padding: 0.25rem 0.45rem;
-  touch-action: none;
 }
 
-.ferry-panel__letter.is-dragging {
+/* 封筒（港の手紙・積み荷のスロット）。どれも同じ大きさ（幅 8rem・高さ 52px 以上）にそろえ、
+   上のふたの線を ::before で描く。中身（アイコン・文字）はふたの線より手前に出す。 */
+.ferry-panel .ferry-panel__letter,
+.ferry-panel__cargo-letter,
+.ferry-panel__slot--empty,
+.ferry-panel__slot--unknown {
   position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  width: 8rem;
+  min-width: 44px;
+  min-height: 52px;
+  padding: var(--space-4) var(--space-2) var(--space-1);
+  color: var(--color-ink);
+  font-size: 0.875em;
+  line-height: 1.3;
+  text-align: center;
+  overflow-wrap: anywhere;
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-s);
+}
+
+.ferry-panel .ferry-panel__letter::before,
+.ferry-panel__cargo-letter::before,
+.ferry-panel__slot--empty::before,
+.ferry-panel__slot--unknown::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: -1;
+  height: var(--space-3);
+  content: "";
+  pointer-events: none;
+  background:
+    linear-gradient(
+        to top right,
+        transparent calc(50% - 1px),
+        var(--ferry-envelope-line) calc(50% - 1px),
+        var(--ferry-envelope-line) calc(50% + 1px),
+        transparent calc(50% + 1px)
+      )
+      left / 50% 100% no-repeat,
+    linear-gradient(
+        to top left,
+        transparent calc(50% - 1px),
+        var(--ferry-envelope-line) calc(50% - 1px),
+        var(--ferry-envelope-line) calc(50% + 1px),
+        transparent calc(50% + 1px)
+      )
+      right / 50% 100% no-repeat;
+}
+
+/* 手紙の封筒（港の手紙のボタン）。紙の封筒の上に手紙のアイコン。 */
+.ferry-panel .ferry-panel__letter {
+  touch-action: none;
+  box-shadow: var(--shadow-paper);
+}
+
+/* ドラッグ中の封筒は、影を重ねて持ち上がって見せる。 */
+.ferry-panel .ferry-panel__letter.is-dragging {
   z-index: 1;
-  box-shadow: 0 4px 10px rgb(0 0 0 / 25%);
+  box-shadow: var(--shadow-paper), var(--shadow-paper), var(--shadow-paper);
+}
+
+.ferry-panel__letter-to {
+  max-width: 100%;
 }
 
 .ferry-panel__letter-note {
-  margin-left: 0.25rem;
-  font-size: 0.8rem;
-  color: #374151;
+  margin-left: var(--space-1);
+  font-size: 0.8em;
+  color: var(--color-ink-muted);
 }
 
-.ferry-panel__slot {
-  display: inline-flex;
-  align-items: center;
-  min-width: 44px;
-  min-height: 44px;
+/* 空き: 破線の封筒の輪郭。 */
+.ferry-panel__slot--empty {
+  color: var(--color-ink-muted);
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--color-ink-muted);
 }
 
-.ferry-panel__slot--empty,
+/* 不明: 灰色の封筒。 */
 .ferry-panel__slot--unknown {
-  justify-content: center;
-  padding: 0 0.5rem;
-  color: #374151;
-  border: 1px dashed #6b7280;
-  border-radius: 6px;
+  background: var(--ferry-unknown-paper);
+  border-color: var(--color-storm);
 }
 
-.ferry-panel__cargo-letter {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0 0.35rem;
-}
-
+/* 行き先 */
 .ferry-panel__destinations {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 1rem;
+  gap: var(--space-1) var(--space-4);
   margin: 0;
-  padding: 0.35rem 0.6rem;
-  border: 1px solid #c8d3dc;
-  border-radius: 6px;
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  background: var(--color-paper);
+  border: 2px solid var(--ferry-area-line);
+  border-radius: var(--radius-s);
+}
+
+.ferry-panel__destinations legend {
+  padding: 0 var(--space-1);
+  font-weight: bold;
 }
 
 .ferry-panel__destination {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-1);
   min-height: 44px;
   cursor: pointer;
 }
@@ -218,35 +337,49 @@
 .ferry-panel__destination input {
   width: 1.2rem;
   height: 1.2rem;
+  accent-color: var(--color-sea-deep);
 }
 
+/* 嵐で通れない行き先: 嵐の濃い灰の文字に雲の印の札。 */
 .ferry-panel__storm {
-  color: #7f1d1d;
+  padding: 0 var(--space-2);
+  color: var(--color-storm-deep);
+  font-weight: bold;
+  background: var(--ferry-storm-paper);
+  border: 1px solid var(--color-storm-deep);
+  border-radius: var(--radius-s);
 }
 
 .ferry-panel__forecast {
-  color: #374151;
+  color: var(--color-ink-muted);
 }
 
 .ferry-panel__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .ferry-panel__action {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-2);
 }
 
 .ferry-panel__autoload,
 .ferry-panel__depart {
   min-width: 44px;
   min-height: 44px;
-  padding: 0.35rem 1rem;
+  padding: var(--space-2) var(--space-5);
   font-weight: bold;
+}
+
+/* 出航は主ボタン（郵便の赤に白の文字。コントラスト比 4.7:1）。おまかせは副ボタン（紙の札）。 */
+.ferry-panel .ferry-panel__depart:not([aria-disabled="true"]) {
+  color: white;
+  background: var(--color-postal);
+  border-color: var(--color-postal);
 }
 
 .ferry-panel__status {

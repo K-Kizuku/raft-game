@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Letter, LetterEntry } from "../../protocol/index.ts";
 import { setShowRaftTerms } from "../terms/preference.ts";
+import { tokens } from "../theme/tokens.ts";
 import { LetterIcon } from "./LetterIcon.tsx";
+import { LETTER_KINDS } from "./letterKinds.ts";
 
 afterEach(() => {
   cleanup();
@@ -22,6 +24,18 @@ function letter(overrides: Partial<Letter>): Letter {
     label: "heartbeat",
     ...overrides,
   };
+}
+
+// WCAG 2 の相対輝度とコントラスト比（#RRGGBB）。
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+  const [r, g, b] = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+}
+
+function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return ((hi ?? 0) + 0.05) / ((lo ?? 0) + 0.05);
 }
 
 function entry(index: number): LetterEntry {
@@ -97,5 +111,28 @@ describe("LetterIcon", () => {
     render(<LetterIcon letter={unknown} />);
     const icon = screen.getByRole("img", { name: "その他の手紙" });
     expect(icon.getAttribute("data-shape")).toBe("diamond");
+  });
+
+  it("LI-3 縁の輪は borderColor の島の色そのまま、形の線は白・紙・パネルの地と 3:1 以上（WCAG 1.4.11）", () => {
+    const labels = Object.keys(LETTER_KINDS) as Letter["label"][];
+    for (const label of labels) {
+      const view = render(<LetterIcon letter={letter({ label })} borderColor="#FFEE00" />);
+      const svg = view.container.querySelector("svg");
+      expect(svg?.querySelector('[data-part="border"]')?.getAttribute("stroke"), label).toBe(
+        "#FFEE00",
+      );
+      // 形は title・縁の輪のあとの最初の要素。
+      const shape = svg?.querySelector(":scope > :not(title):not([data-part])");
+      const stroke = shape?.getAttribute("stroke") ?? "";
+      expect(stroke, label).toMatch(/^#[0-9a-f]{6}$/);
+      // 背景は白の塗り・縁取りの形の中の塗りと封筒（--color-paper）・パネルの地（--color-paper-deep）。
+      for (const background of ["#ffffff", tokens["--color-paper"], tokens["--color-paper-deep"]]) {
+        expect(
+          contrastRatio(stroke, background),
+          `${label} の線と ${background}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+      cleanup();
+    }
   });
 });

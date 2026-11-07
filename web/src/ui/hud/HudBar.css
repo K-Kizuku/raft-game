@@ -1,69 +1,196 @@
-/* 状況（T-406・ゲームデザイン §7.2 の上部）。文字は白地に #111827（コントラスト比 4.5:1 以上。NFR-10）。 */
+/* 状況（T-406・ゲームデザイン §7.2 の上部）。見た目は T-422（docs/11-visual-design.md）:
+   紙のパネルの上に、小さな紙の札として項目を並べる。文字は --color-ink（パネルの地とのコントラスト比 9:1）。
+   トークンに無い色は、トークンから作ったローカルの変数にする（T-425 がトークンに入れるかを決める）。 */
 .hud {
+  /* 失敗の文の色。郵便の赤（--color-danger）を墨で暗くし、紙の地で 4.5:1 以上（約 5.4:1）にする。 */
+  --hud-danger-text: color-mix(in srgb, var(--color-danger) 60%, var(--color-ink));
+  /* フェス準備度の帯の縞（色が見えなくても、塗った長さが分かる）。 */
+  --hud-meter-stripe: color-mix(in srgb, var(--color-gold) 70%, var(--color-ink));
+
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 1.25rem;
-  color: #111827;
+  gap: var(--space-2) var(--space-3);
+  color: var(--color-ink);
   font-variant-numeric: tabular-nums;
 }
 
 .hud-item {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-2);
+  min-height: 2.25rem;
+  padding: var(--space-1) var(--space-3);
   white-space: nowrap;
+  background: var(--color-paper);
+  border: 1px solid color-mix(in srgb, var(--color-ink-muted) 40%, var(--color-paper));
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-paper);
+}
+
+/* 残り時間・スコア・確定の数は、等幅の丸い数字で大きめに。 */
+.hud-time,
+.hud-score,
+.hud-successes {
+  font-family: var(--font-number);
+  font-size: var(--font-size-h3);
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
+  line-height: 1.2;
 }
 
 .hud-time {
-  font-weight: bold;
+  border-width: 2px;
+  border-color: var(--color-ink);
 }
 
+.hud-fest {
+  font-variant-numeric: tabular-nums;
+}
+
+/* フェス準備度の帯（封筒の金）。枠の線と縞で、色が見えなくても長さが分かる。 */
 .hud-fest meter {
+  appearance: none;
+  box-sizing: border-box;
   width: 6rem;
+  height: 1rem;
+  overflow: hidden;
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: 999px;
+}
+
+.hud-fest meter::-webkit-meter-bar {
+  height: 100%;
+  background: var(--color-paper);
+  border: 0;
+  border-radius: 999px;
+}
+
+.hud-fest meter::-webkit-meter-optimum-value {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-gold) 0 6px,
+    var(--hud-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
+}
+
+.hud-fest meter::-webkit-meter-suboptimum-value {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-gold) 0 6px,
+    var(--hud-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
+}
+
+.hud-fest meter::-webkit-meter-even-less-good-value {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-gold) 0 6px,
+    var(--hud-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
+}
+
+.hud-fest meter::-moz-meter-bar {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-gold) 0 6px,
+    var(--hud-meter-stripe) 6px 8px
+  );
+  border-radius: 999px;
 }
 
 .hud-critical-list {
   display: inline-flex;
-  gap: 0.15rem;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* 重要な資源。まだのものは薄い灰色（不透明度とグレースケール。文字ではない絵文字だけ）。 */
 .hud-critical {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
   opacity: 0.35;
   filter: grayscale(1);
 }
 
+/* 確定したものは、封筒の金の丸の上に出す。 */
 .hud-critical.is-secured {
+  background: var(--color-gold);
+  box-shadow: 0 0 0 2px var(--color-ink);
   opacity: 1;
   filter: none;
 }
 
+/* 速度のボタン（紙の札のボタン。base.css の .btn に合わせる）。 */
 .hud-speed button {
-  min-width: 2rem;
-  color: #111827;
-  background: #ffffff;
-  border: 1px solid #4b5563;
-  border-radius: 4px;
-  padding: 0.15rem 0.5rem;
+  min-width: 2.75rem;
+  min-height: 2.25rem;
+  padding: var(--space-1) var(--space-3);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font: inherit;
+  font-weight: bold;
   cursor: pointer;
+  transition:
+    transform 0.12s ease-out,
+    box-shadow 0.12s ease-out;
 }
 
+.hud-speed button:hover {
+  transform: translateY(-1px);
+}
+
+.hud-speed button:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+/* 押せないときは、色だけでなく破線の枠で示す（opacity は使わない）。 */
 .hud-speed button:disabled {
-  color: #4b5563;
-  background: #f3f4f6;
+  color: var(--color-ink-muted);
+  background: var(--color-paper-deep);
+  border-style: dashed;
+  border-color: var(--color-ink-muted);
+  box-shadow: none;
+  transform: none;
   cursor: not-allowed;
 }
 
 .hud-speed-value {
   min-width: 2.5rem;
+  font-family: var(--font-number);
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
   text-align: center;
 }
 
 .hud-status {
   flex-basis: 100%;
   margin: 0;
-  color: #b91c1c;
+  color: var(--hud-danger-text);
+  font-weight: bold;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-speed button {
+    transition: none;
+  }
+
+  .hud-speed button:hover,
+  .hud-speed button:active {
+    transform: none;
+  }
 }

@@ -5,12 +5,15 @@ import type { ReactElement } from "react";
 import type { Letter } from "../../protocol/index.ts";
 import { letterRaftTerm, withRaftTerm } from "../terms/glossary.ts";
 import { useShowRaftTerms } from "../terms/preference.ts";
+import { tokens } from "../theme/tokens.ts";
 import { letterKind } from "./letterKinds.ts";
 import type { LetterKindStyle, LetterMark } from "./letterKinds.ts";
 
-// 白の塗りでも見えるように、塗りつぶしの形の線は濃い色にする。
-const STROKE = "#374151";
-const WHITE = "#FFFFFF";
+// 色はデザイントークン（T-420・T-422）の値（SVG の属性には var() が効かないことがあるので値を入れる）。
+// 明るい塗りでも見えるように、塗りつぶしの形の線は墨の色にする。
+const STROKE = tokens["--color-ink"];
+// 縁取りだけの形の塗りと、塗りつぶしの形の上の印の色（生成りの紙の白）。
+const WHITE = tokens["--color-paper"];
 
 function Shape({ kind }: { kind: LetterKindStyle }): ReactElement {
   const props = {

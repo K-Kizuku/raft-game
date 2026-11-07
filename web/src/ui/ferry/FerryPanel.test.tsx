@@ -7,6 +7,7 @@ import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Ack, ServerEvent, Snapshot } from "../../protocol/index.ts";
+import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
 import { gameStore } from "../../state/index.ts";
 import { GameCommandProvider } from "../commands/GameCommands.tsx";
 import type { GameCommandSender } from "../commands/GameCommands.tsx";
@@ -687,5 +688,49 @@ describe("FerryPanel", () => {
     renderPanel(okSender());
     const btn = button("お元気ですか？（→ 島 9）を積む");
     expect(btn.querySelector('[data-part="border"]')?.getAttribute("stroke")).toBe("#9CA3AF");
+  });
+});
+
+// 記録（web/src/net/fixtures の mini-record）をストアに入れて、封筒のスロットが並ぶことを確かめる（T-422）。
+describe("記録を入れたときの封筒のスロット（T-422）", () => {
+  function playUntil(lastSeq: number): void {
+    const { snapshot, events: recorded } = loadMiniRound();
+    const list = recorded.filter((e) => e.seq <= lastSeq);
+    act(() => {
+      const state = gameStore.getState();
+      state.applySnapshot(snapshot, performance.now());
+      state.applyEvents(
+        { t: list.at(-1)?.t ?? 0, speed: 1, paused: false, endsAt: 60000 },
+        list,
+        performance.now(),
+      );
+      state.selectFerry("f1");
+    });
+  }
+
+  function slots(): Element[] {
+    return [...document.querySelectorAll(".ferry-panel__cargo > .ferry-panel__slot")];
+  }
+
+  it("FP-T422-1 停泊中: 港の手紙は封筒のボタン、積み荷は定員の数の空きのスロット", () => {
+    playUntil(8);
+    renderPanel(okSender());
+    const port = document.querySelector(".ferry-panel__port");
+    expect(port?.querySelectorAll("button.ferry-panel__letter")).toHaveLength(2);
+    expect(slots()).toHaveLength(4);
+    expect(slots().every((slot) => slot.classList.contains("ferry-panel__slot--empty"))).toBe(true);
+  });
+
+  it("FP-T422-2 航行中: 積んだ手紙は押せない封筒、残りは空きのスロット", () => {
+    playUntil(11);
+    renderPanel(okSender());
+    expect(slots()).toHaveLength(4);
+    expect(
+      document.querySelectorAll(".ferry-panel__cargo .ferry-panel__cargo-letter"),
+    ).toHaveLength(1);
+    expect(document.querySelectorAll(".ferry-panel__cargo .ferry-panel__slot--empty")).toHaveLength(
+      3,
+    );
+    expect(document.querySelector(".ferry-panel__cargo button")).toBeNull();
   });
 });
