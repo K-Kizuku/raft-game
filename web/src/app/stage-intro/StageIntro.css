@@ -1,0 +1,25 @@
+/* ステージの紹介文（StageIntroText）と学べること（T-416）。出典は小さく、本文の下に置く。 */
+.stage-intro-text {
+  margin: 0.5em 0;
+}
+
+.stage-intro-text__body {
+  margin: 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.stage-intro-text__meta,
+.stage-intro-text__quote {
+  margin: 0.25em 0 0;
+  font-size: 0.8em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.stage-intro-text__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25em 0.75em;
+}
