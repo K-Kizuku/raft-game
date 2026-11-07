@@ -180,13 +180,15 @@ var wantStages = []wantStage{
 	},
 	{
 		id: "demo-goto", title: "嵐の五島列島（デモ・五島版）", durationMs: 120000, unlock: "", tutorial: "",
-		refs: gotoRefs, weights: gotoWeights, electionTick: 16,
+		refs: gotoRefs, weights: gotoWeights, electionTick: 32,
 		routes: []wantRoute{
 			{1, 2, 2400, stage.Creative},
-			{2, 3, 3600, stage.Creative},
+			{2, 3, 1800, stage.Creative},
 			{1, 3, 5400, stage.Creative},
 		},
-		ferries:       gotoFerries,
+		// Stage 2 の 2 隻に、嵐の間も奈留島・中通島の側に残る f3 を足す（T-501b）。
+		ferries: append(append([]wantFerry{}, gotoFerries...),
+			wantFerry{"f3", "なかどおり丸", 3, 3, 1000, stage.Creative}),
 		critical:      []string{fwA, fwB},
 		stallCapacity: 3,
 		script: []stage.ScriptRequest{
@@ -432,15 +434,16 @@ func TestRepoStagesSources(t *testing.T) {
 	})
 }
 
-// ST-4 警告。stage1・stage2 はなし。デモは raft.electionTick の警告がちょうど 1 件（データ仕様 §5.4。値は docs のとおり）。
+// ST-4 警告。stage1・stage2・demo-goto はなし（demo-goto は T-501b で electionTick を 32 にして警告が消えた）。
+// demo-izu は raft.electionTick の警告がちょうど 1 件（データ仕様 §5.4。値は docs のとおり）。
 func TestRepoStagesWarnings(t *testing.T) {
 	t.Parallel()
-	for _, id := range []string{"stage1", "stage2"} {
-		if st := repoStage(t, id); st.Warnings != nil {
-			t.Errorf("%s: Warnings = %+v, want nil", id, st.Warnings)
+	for _, id := range []string{"stage1", "stage2", "demo-goto"} {
+		if st := repoStage(t, id); len(st.Warnings) != 0 {
+			t.Errorf("%s: Warnings = %+v, want なし", id, st.Warnings)
 		}
 	}
-	for _, id := range []string{"demo-izu", "demo-goto"} {
+	for _, id := range []string{"demo-izu"} {
 		st := repoStage(t, id)
 		if len(st.Warnings) != 1 || st.Warnings[0].Path != "raft.electionTick" {
 			t.Errorf("%s: Warnings = %+v, want raft.electionTick の 1 件", id, st.Warnings)
@@ -486,13 +489,14 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 		}
 	}
 	for _, d := range []struct {
-		id     string
-		routes [][2]uint64
+		id         string
+		routes     [][2]uint64
+		durationMs int64
 	}{
-		{"demo-izu", [][2]uint64{{1, 3}}},
-		{"demo-goto", [][2]uint64{{1, 2}, {1, 3}}},
+		{"demo-izu", [][2]uint64{{1, 3}}, 20000},
+		{"demo-goto", [][2]uint64{{1, 2}, {1, 3}}, 40000}, // T-501b で 40 秒に延ばした
 	} {
-		id, routes := d.id, d.routes
+		id, routes, durationMs := d.id, d.routes, d.durationMs
 		st := get(t, id)
 		if st.Demo == nil || st.Demo.Storm == nil {
 			t.Errorf("%s: Demo = %+v, want demo.storm あり", id, st.Demo)
@@ -501,8 +505,8 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 		if !st.Demo.EndOnAllCriticalSecured {
 			t.Errorf("%s: Demo.EndOnAllCriticalSecured = false, want true", id)
 		}
-		if st.Demo.Storm.DurationMs != 20000 {
-			t.Errorf("%s: Demo.Storm.DurationMs = %d, want 20000", id, st.Demo.Storm.DurationMs)
+		if st.Demo.Storm.DurationMs != durationMs {
+			t.Errorf("%s: Demo.Storm.DurationMs = %d, want %d", id, st.Demo.Storm.DurationMs, durationMs)
 		}
 		if !reflect.DeepEqual(st.Demo.Storm.Routes, routes) {
 			t.Errorf("%s: Demo.Storm.Routes = %v, want %v", id, st.Demo.Storm.Routes, routes)
