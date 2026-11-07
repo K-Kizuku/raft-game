@@ -1,10 +1,12 @@
 // ステージ選択（FR-UI-02 の一覧の部分）。
 // 選んだステージを onSelect で渡すだけ。Turnstile とセッションの作成は App が行う（T-413）。
 // 作成中（busy）は、すべての「<タイトル>を選ぶ」を押せなくする。
+// 各ステージに紹介文・出典区分・出典を出す（T-416）。学べることは紹介の画面だけに出す。
 import type { ReactElement } from "react";
 
 import { formatDuration } from "../format.ts";
 import { Link } from "../router/Link.tsx";
+import { StageIntroText } from "../stage-intro/StageIntroText.tsx";
 import type { StageCatalogState, StageSummary } from "../types.ts";
 
 export type StageSelectScreenProps = {
@@ -45,6 +47,7 @@ function StageCatalogBody({
             <li key={stage.id} className="stage-select-item">
               <h2>{stage.title}</h2>
               <p>{stage.region}</p>
+              <StageIntroText intro={stage.intro} />
               <p>
                 <span>島 {stage.islands}</span>・<span>船 {stage.ferries} 隻</span>・
                 <span>制限時間 {formatDuration(stage.durationMs)}</span>

@@ -1,5 +1,6 @@
-// 画面の間で受け渡すローカルの型（T-401・T-413）。
-// T-301 の生成された型ができたら、StageSummary・SessionHandle を置き換える。
+// 画面の間で受け渡すローカルの型（T-401・T-413・T-416）。
+// T-301 の生成された型ができたら、StageSummary・SessionHandle・StageText を置き換える。
+import type { Provenance } from "../ui/provenance/ProvenanceLabel.tsx";
 
 // プロトコル §2 の GET /api/stages の 1 件のうち、画面が読む欄。
 export type StageSummary = {
@@ -13,6 +14,17 @@ export type StageSummary = {
   // 必ず真偽値を入れる。省略できるのは、範囲の外のテスト（result・game）が作る値のため。
   demo?: boolean;
 };
+
+// プロトコル §2 の GET /api/stages の intro（データ仕様 §5.2）。T-301 の生成された型に揃えるまでのローカルの型。
+export type StageTextSource = {
+  dataset: string;
+  region: string;
+  field: string;
+  quote: string | null;
+};
+export type StageText = { text: string; provenance: Provenance; source: StageTextSource | null };
+// 一覧の 1 件（紹介文と学べることつき）。RoundContext の stage には StageSummary として渡せる。
+export type StageCatalogEntry = StageSummary & { intro: StageText; learning: readonly string[] };
 
 // プロトコル §2 のセッションの作成（POST）の 201 の本文（T-413）。
 export type SessionHandle = { sessionId: string; token: string; wsPath: string };
@@ -36,4 +48,4 @@ export type RoundContext = {
 
 // ステージの一覧の読み込みの状態。App が持ち、ステージ選択に渡す。
 export type StageCatalogState =
-  { status: "loading" } | { status: "error" } | { status: "ready"; stages: StageSummary[] };
+  { status: "loading" } | { status: "error" } | { status: "ready"; stages: StageCatalogEntry[] };

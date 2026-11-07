@@ -29,14 +29,20 @@ import { SettingsScreen } from "./settings/SettingsScreen.tsx";
 import { StageIntroScreen } from "./stage-intro/StageIntroScreen.tsx";
 import { StageSelectScreen } from "./stage-select/StageSelectScreen.tsx";
 import { TitleScreen } from "./title/TitleScreen.tsx";
-import type { RoundContext, SessionHandle, StageCatalogState, StageSummary } from "./types.ts";
+import type {
+  RoundContext,
+  SessionHandle,
+  StageCatalogEntry,
+  StageCatalogState,
+  StageSummary,
+} from "./types.ts";
 import "../ui/theme/index.ts";
 import "./app.css";
 
 export { TITLE } from "./constants.ts";
 
 export type AppDeps = {
-  loadStages: (signal: AbortSignal) => Promise<StageSummary[]>;
+  loadStages: (signal: AbortSignal) => Promise<StageCatalogEntry[]>;
   postSession: (request: SessionRequest) => Promise<SessionHandle>; // 既定: createSession
   turnstile: TurnstileClient | null; // 既定: TURNSTILE_SITE_KEY があれば createTurnstileClient、なければ null
   newSeed: () => number; // 既定: randomSeed

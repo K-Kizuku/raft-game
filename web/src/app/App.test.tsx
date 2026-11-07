@@ -10,9 +10,9 @@ import {
   type SessionErrorKind,
 } from "./session/errors.ts";
 import type { TurnstileClient } from "./session/turnstile.ts";
-import type { SessionHandle, StageSummary } from "./types.ts";
+import type { SessionHandle, StageCatalogEntry } from "./types.ts";
 
-const STAGES: StageSummary[] = [
+const STAGES: StageCatalogEntry[] = [
   {
     id: "stage1",
     title: "はじめての郵便船",
@@ -21,6 +21,17 @@ const STAGES: StageSummary[] = [
     ferries: 1,
     durationMs: 180000,
     demo: false,
+    intro: {
+      text: "温暖で雨の少ない瀬戸内の海。",
+      provenance: "derived",
+      source: {
+        dataset: "mlit-ritou-2026",
+        region: "小豆島地域",
+        field: "NATURAL_CLIMATE_FEATURES",
+        quote: "温暖、小雨の典型的な瀬戸内式気候",
+      },
+    },
+    learning: ["log_replication", "commit"],
   },
   {
     id: "stage2",
@@ -30,6 +41,8 @@ const STAGES: StageSummary[] = [
     ferries: 2,
     durationMs: 210000,
     demo: false,
+    intro: { text: "島から返事が来ない海。", provenance: "creative", source: null },
+    learning: ["heartbeat"],
   },
 ];
 
@@ -58,7 +71,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function stagesLoader(stages: StageSummary[] = STAGES) {
+function stagesLoader(stages: StageCatalogEntry[] = STAGES) {
   return vi.fn<AppDeps["loadStages"]>(async () => stages);
 }
 
@@ -315,7 +328,9 @@ describe("App", () => {
   });
 
   it("AP-5 読み込み中", async () => {
-    const loadStages = vi.fn<AppDeps["loadStages"]>(() => new Promise<StageSummary[]>(() => {}));
+    const loadStages = vi.fn<AppDeps["loadStages"]>(
+      () => new Promise<StageCatalogEntry[]>(() => {}),
+    );
     renderApp({ loadStages });
     clickLink("遊ぶ");
 
@@ -382,10 +397,10 @@ describe("App", () => {
 
   it("AP-6 読み込みの途中で画面を離れたら中断し、結果を反映しない", async () => {
     const signals: AbortSignal[] = [];
-    const resolvers: Array<(stages: StageSummary[]) => void> = [];
+    const resolvers: Array<(stages: StageCatalogEntry[]) => void> = [];
     const loadStages = vi.fn<AppDeps["loadStages"]>(
       (signal) =>
-        new Promise<StageSummary[]>((resolve) => {
+        new Promise<StageCatalogEntry[]>((resolve) => {
           signals.push(signal);
           resolvers.push(resolve);
         }),
@@ -738,7 +753,7 @@ describe("App のセッションの作成（T-413）", () => {
   });
 
   it("AS-10 一覧で demo のステージは demo: true で送る", async () => {
-    const demoStage: StageSummary = {
+    const demoStage: StageCatalogEntry = {
       ...STAGES[1]!,
       id: "demo-izu",
       title: "伊豆の島じま",

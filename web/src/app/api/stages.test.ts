@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import { fetchStages, StagesLoadError } from "./stages.ts";
 
+const derivedIntro = {
+  text: "温暖で雨の少ない瀬戸内の海。",
+  provenance: "derived",
+  source: {
+    dataset: "mlit-ritou-2026",
+    region: "小豆島地域",
+    field: "NATURAL_CLIMATE_FEATURES",
+    quote: "温暖、小雨の典型的な瀬戸内式気候",
+  },
+};
+const creativeIntro = { text: "島から返事が来ない海。", provenance: "creative", source: null };
 const stage1 = {
   id: "stage1",
   title: "はじめての郵便船",
@@ -10,6 +21,8 @@ const stage1 = {
   ferries: 1,
   durationMs: 180000,
   demo: false,
+  intro: derivedIntro,
+  learning: ["log_replication", "commit"],
 };
 const stage2 = {
   id: "stage2",
@@ -19,6 +32,8 @@ const stage2 = {
   ferries: 2,
   durationMs: 210000,
   demo: false,
+  intro: creativeIntro,
+  learning: [],
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -102,15 +117,11 @@ describe("fetchStages", () => {
   it("L-1 demo が true・false の要素を読む", async () => {
     const demoStage = { ...stage2, id: "demo-izu", demo: true };
     const stages = await fetchStages({
-      fetch: fakeFetch(() =>
-        jsonResponse({ stages: [stage1, { ...demoStage, intro: { text: "x" }, learning: [] }] }),
-      ),
+      fetch: fakeFetch(() => jsonResponse({ stages: [stage1, demoStage] })),
     });
     expect(stages).toEqual([stage1, demoStage]);
     expect(stages[0]?.demo).toBe(false);
     expect(stages[1]?.demo).toBe(true);
-    expect(stages[1]).not.toHaveProperty("intro");
-    expect(stages[1]).not.toHaveProperty("learning");
   });
 
   it.each<[string, unknown]>([
@@ -120,6 +131,89 @@ describe("fetchStages", () => {
   ])("L-1 %s 要素が 1 つでもあれば失敗", async (_label, broken) => {
     await expect(
       fetchStages({ fetch: fakeFetch(() => jsonResponse({ stages: [stage1, broken] })) }),
+    ).rejects.toBeInstanceOf(StagesLoadError);
+  });
+
+  // T-416 の intro・learning。
+  async function loadOne(stage: unknown) {
+    const stages = await fetchStages({
+      fetch: fakeFetch(() => jsonResponse({ stages: [stage] })),
+    });
+    expect(stages).toHaveLength(1);
+    return stages[0]!;
+  }
+
+  it("ST-1 intro（derived・引用つき）と learning を読み、intro の知らないキーを落とす", async () => {
+    const stage = await loadOne({
+      ...stage1,
+      intro: { ...derivedIntro, extra: 1, source: { ...derivedIntro.source, extra: 2 } },
+      learning: ["log_replication", "commit"],
+    });
+
+    expect(stage.intro).toEqual(derivedIntro);
+    expect(stage.intro).not.toHaveProperty("extra");
+    expect(stage.intro.source).not.toHaveProperty("extra");
+    expect(stage.learning).toEqual(["log_replication", "commit"]);
+  });
+
+  it("ST-1 text・quote は前後の空白も変えない", async () => {
+    const intro = {
+      ...derivedIntro,
+      text: "  前後に空白 ",
+      source: { ...derivedIntro.source, quote: " 引用 " },
+    };
+    const stage = await loadOne({ ...stage1, intro });
+
+    expect(stage.intro.text).toBe("  前後に空白 ");
+    expect(stage.intro.source?.quote).toBe(" 引用 ");
+  });
+
+  it.each<[string, unknown]>([
+    ["source が null", { ...creativeIntro, source: null }],
+    ["quote が null", { ...derivedIntro, source: { ...derivedIntro.source, quote: null } }],
+    ["fact", { ...derivedIntro, provenance: "fact" }],
+  ])("ST-2 %s はそのまま読む", async (_label, intro) => {
+    const stage = await loadOne({ ...stage1, intro });
+
+    expect(stage.intro).toEqual(intro);
+  });
+
+  it("ST-3 learning の重複は最初の 1 つだけ残す", async () => {
+    const stage = await loadOne({ ...stage1, learning: ["quorum", "quorum", "commit"] });
+
+    expect(stage.learning).toEqual(["quorum", "commit"]);
+  });
+
+  it.each<[string, unknown]>([
+    ["intro が無い", { ...stage1, intro: undefined }],
+    ["intro が文字列", { ...stage1, intro: "紹介文" }],
+    ["intro が null", { ...stage1, intro: null }],
+    ["text が空白だけ", { ...stage1, intro: { ...derivedIntro, text: "  " } }],
+    ["text が数", { ...stage1, intro: { ...derivedIntro, text: 1 } }],
+    ["provenance が知らない値", { ...stage1, intro: { ...derivedIntro, provenance: "x" } }],
+    ["source が無い", { ...stage1, intro: { text: "x", provenance: "creative" } }],
+    [
+      "source に field が無い",
+      {
+        ...stage1,
+        intro: { ...derivedIntro, source: { ...derivedIntro.source, field: undefined } },
+      },
+    ],
+    [
+      "source.dataset が空",
+      { ...stage1, intro: { ...derivedIntro, source: { ...derivedIntro.source, dataset: "" } } },
+    ],
+    [
+      "quote が数",
+      { ...stage1, intro: { ...derivedIntro, source: { ...derivedIntro.source, quote: 1 } } },
+    ],
+    ["learning が無い", { ...stage1, learning: undefined }],
+    ["learning が文字列", { ...stage1, learning: "commit" }],
+    ["learning に Bad-Key", { ...stage1, learning: ["commit", "Bad-Key"] }],
+    ["learning に数", { ...stage1, learning: ["commit", 1] }],
+  ])("ST-4 %s → 一覧全体が StagesLoadError", async (_label, broken) => {
+    await expect(
+      fetchStages({ fetch: fakeFetch(() => jsonResponse({ stages: [stage2, broken] })) }),
     ).rejects.toBeInstanceOf(StagesLoadError);
   });
 

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { StageSummary } from "../types.ts";
+import type { StageCatalogEntry } from "../types.ts";
 import { StageSelectScreen } from "./StageSelectScreen.tsx";
 
-const STAGES: StageSummary[] = [
+const STAGES: StageCatalogEntry[] = [
   {
     id: "stage1",
     title: "はじめての郵便船",
@@ -14,6 +14,17 @@ const STAGES: StageSummary[] = [
     ferries: 1,
     durationMs: 180000,
     demo: false,
+    intro: {
+      text: "温暖で雨の少ない瀬戸内の海。",
+      provenance: "derived",
+      source: {
+        dataset: "mlit-ritou-2026",
+        region: "小豆島地域",
+        field: "NATURAL_CLIMATE_FEATURES",
+        quote: "温暖、小雨の典型的な瀬戸内式気候",
+      },
+    },
+    learning: ["log_replication", "commit"],
   },
   {
     id: "demo-izu",
@@ -23,6 +34,8 @@ const STAGES: StageSummary[] = [
     ferries: 2,
     durationMs: 210000,
     demo: true,
+    intro: { text: "<b>伊豆</b>の島じまを結ぶ郵便船。", provenance: "creative", source: null },
+    learning: ["heartbeat", "check_quorum"],
   },
 ];
 
@@ -72,5 +85,67 @@ describe("StageSelectScreen", () => {
       fireEvent.click(button);
     }
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("StageSelectScreen の紹介文（T-416）", () => {
+  function renderReady(onSelect = vi.fn(), busy = false) {
+    render(
+      <StageSelectScreen
+        catalog={{ status: "ready", stages: STAGES }}
+        onRetry={() => {}}
+        onSelect={onSelect}
+        busy={busy}
+      />,
+    );
+    return screen.getAllByRole("listitem");
+  }
+
+  it("SS-1 各ステージに紹介文とラベル、derived だけに出典", () => {
+    const [first, second] = renderReady();
+
+    expect(within(first!).getByText("温暖で雨の少ない瀬戸内の海。")).toBeDefined();
+    expect(first!.querySelector(".provenance-label")?.getAttribute("data-provenance")).toBe(
+      "derived",
+    );
+    expect(
+      within(first!).getByText("離島振興計画書（小豆島地域）の「自然・気象特性」から"),
+    ).toBeDefined();
+    expect(first!.querySelector("q")?.textContent).toBe("温暖、小雨の典型的な瀬戸内式気候");
+
+    expect(within(second!).getByText("<b>伊豆</b>の島じまを結ぶ郵便船。")).toBeDefined();
+    expect(second!.querySelector("b")).toBeNull();
+    expect(second!.querySelector(".provenance-label")?.getAttribute("data-provenance")).toBe(
+      "creative",
+    );
+    expect(second!.querySelector(".stage-intro-text__source")).toBeNull();
+    expect(second!.querySelector("q")).toBeNull();
+  });
+
+  it("SS-2 学べることは一覧に出さない", () => {
+    renderReady();
+
+    for (const text of ["定期便", "Heartbeat", "記録の複製", "このステージで学べること"]) {
+      expect(screen.queryByText(text, { exact: false })).toBeNull();
+    }
+  });
+
+  it.each<[string, boolean]>([
+    ["busy でない", false],
+    ["busy", true],
+  ])("SS-3 %s ときの onSelect は変わらない", (_label, busy) => {
+    const onSelect = vi.fn();
+    renderReady(onSelect, busy);
+
+    const button = screen.getByRole<HTMLButtonElement>("button", {
+      name: "はじめての郵便船を選ぶ",
+    });
+    expect(button.disabled).toBe(busy);
+    fireEvent.click(button);
+    if (busy) {
+      expect(onSelect).not.toHaveBeenCalled();
+    } else {
+      expect(onSelect).toHaveBeenCalledWith(STAGES[0]);
+    }
   });
 });
