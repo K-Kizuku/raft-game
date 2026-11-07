@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
@@ -42,22 +43,36 @@ func OpenData(dataDir string) (fsys fs.FS, desc string, err error) {
 type Catalog struct {
 	stages   []*stage.Stage
 	byID     map[string]*stage.Stage
+	displays map[string][]stage.IslandDisplay // stage の id → 島の表示用の値（ノード ID の順）
 	warnings []string
 }
 
 // LoadCatalog は stage.LoadDir(fsys, "islands.json", "stages") で読み、すべてのステージで
-// stage.SimConfig が誤りにならないことを確かめる。誤りがあれば起動を止めるためのエラーを返す。
-// ステージが 0 個でもエラーにしない。
+// stage.SimConfig が誤りにならないことを確かめる。続けて stage.LoadDisplay(fsys, "islands.json") で
+// 島の表示用の値を読み、各ステージで ForStage を呼んで結果を持つ（T-201b）。
+// 誤りがあれば起動を止めるためのエラーを返す。ステージが 0 個でもエラーにしない（LoadDisplay は呼ぶ）。
 func LoadCatalog(fsys fs.FS) (*Catalog, error) {
 	stages, err := stage.LoadDir(fsys, "islands.json", "stages")
 	if err != nil {
 		return nil, fmt.Errorf("ステージ定義を読めない:\n%w", err)
 	}
-	c := &Catalog{byID: make(map[string]*stage.Stage, len(stages))}
+	display, err := stage.LoadDisplay(fsys, "islands.json")
+	if err != nil {
+		return nil, fmt.Errorf("ステージ定義を読めない:\n%w", err)
+	}
+	c := &Catalog{
+		byID:     make(map[string]*stage.Stage, len(stages)),
+		displays: make(map[string][]stage.IslandDisplay, len(stages)),
+	}
 	for _, st := range stages {
 		if _, err := stage.SimConfig(st); err != nil {
 			return nil, fmt.Errorf("stage %s: %w", st.ID, err)
 		}
+		islands, err := display.ForStage(st)
+		if err != nil {
+			return nil, err
+		}
+		c.displays[st.ID] = islands
 		for _, w := range st.Warnings {
 			if w.Path == "" {
 				c.warnings = append(c.warnings, st.ID+": "+w.Message)
@@ -82,6 +97,26 @@ func (c *Catalog) Stages() []*stage.Stage {
 func (c *Catalog) Lookup(id string) (*stage.Stage, bool) {
 	st, ok := c.byID[id]
 	return st, ok
+}
+
+// islands は id のステージの島の表示用の値（ノード ID の順）を返す。返すたびに複製する
+// （stage.Display.ForStage と同じく、Municipalities・Plan も新しい値。呼び出し側が変えてもよい）。
+func (c *Catalog) islands(id string) ([]stage.IslandDisplay, bool) {
+	src, ok := c.displays[id]
+	if !ok {
+		return nil, false
+	}
+	out := make([]stage.IslandDisplay, len(src))
+	for i, isl := range src {
+		isl.Municipalities = slices.Clone(isl.Municipalities)
+		if isl.Plan != nil {
+			pl := *isl.Plan
+			pl.Texts = slices.Clone(pl.Texts)
+			isl.Plan = &pl
+		}
+		out[i] = isl
+	}
+	return out, true
 }
 
 // Warnings は、ステージの検査の警告を "<stageId>: <Path>: <Message>" の形で返す（Path が空なら省く）。
