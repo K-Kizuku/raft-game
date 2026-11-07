@@ -133,7 +133,7 @@ PR の中の変更でガードを弱められないように、次の 2 つを�
 | スクリプト | `install-workflows.sh` | human 以外 |
 | スクリプト | `merge.sh`・`review.sh`・`spawn-worker.sh`・`wt.sh` | Worker・Reviewer |
 | スクリプト | `agentctl state … merged`・`ready-to-merge` | Worker・Reviewer |
-| スクリプト | `agentctl` の書き込みのサブコマンド `comment`・`state`・`claim`・`attempt`（`agentctl.sh`・`go … run .` の形も。`--dry-run` を除く）。`comment` は信頼する作者の認証情報で PR に書くため | Worker・Reviewer |
+| スクリプト | `agentctl` の書き込みのサブコマンド `comment`・`state`・`claim`・`attempt`（`agentctl.sh`・`go … run .` の形も。フラグの値を飛ばして読んだ最後の `--dry-run` が true のときを除く。引用符を含むなど判定できない形は拒否）。`comment` は信頼する作者の認証情報で PR に書くため | Worker・Reviewer |
 | インフラ | `wrangler`、`cf deploy`（`--dry-run` を除く） | 全員 |
 | ファイル | `.github/workflows/` への書き込み（Edit・Write、リダイレクト、`cp` などの Bash） | human 以外 |
 | ファイル | すべての書き込み | Reviewer |
