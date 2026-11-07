@@ -196,7 +196,7 @@ func mustNew(t *testing.T, name string, seed uint64) Bot {
 func TestNamesAndNew(t *testing.T) {
 	t.Parallel()
 	names := Names()
-	if want := []string{"greedy", "random", "steady"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"greedy", "novice", "random", "steady"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("Names() = %q, want %q", names, want)
 	}
 	names[0] = "x"
@@ -211,10 +211,12 @@ func TestNamesAndNew(t *testing.T) {
 		{"random", false},
 		{"greedy", false},
 		{"steady", false},
+		{"novice", false},
 		{"", true},
 		{"Random", true},
 		{"GREEDY", true},
 		{"Steady", true},
+		{"Novice", true},
 		{" greedy", true},
 		{"x", true},
 	}

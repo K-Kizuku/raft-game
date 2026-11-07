@@ -10,7 +10,7 @@ import (
 
 // Bot はボット船長。1 つの Bot は 1 つの Engine だけに使う。goroutine から同時に使わない。
 type Bot interface {
-	// Name は New に渡した名前（"greedy"・"random"・"steady" のどれか）。
+	// Name は New に渡した名前（"greedy"・"novice"・"random"・"steady" のどれか）。
 	Name() string
 	// Act は、今の時刻に行う操作を e に Apply する。e.Phase() が PhaseSailing でなければ何もしない。
 	// RunUntil・DrainEvents は呼ばない。失敗した Ack が返ったら、そこで止めて error を返す（ボットの誤り）。
@@ -20,16 +20,17 @@ type Bot interface {
 // ボットの名前。
 const (
 	nameGreedy = "greedy"
+	nameNovice = "novice"
 	nameRandom = "random"
 	nameSteady = "steady"
 )
 
-// Names はボットの名前の一覧を昇順で返す（["greedy", "random", "steady"]）。返す slice は呼ぶたびに新しく作る。
+// Names はボットの名前の一覧を昇順で返す（["greedy", "novice", "random", "steady"]）。返す slice は呼ぶたびに新しく作る。
 func Names() []string {
-	return []string{nameGreedy, nameRandom, nameSteady}
+	return []string{nameGreedy, nameNovice, nameRandom, nameSteady}
 }
 
-// New は name のボットを作る。乱数は sim.Sub(seed, "bot/"+name) から取る（greedy・steady は乱数を引かない）。
+// New は name のボットを作る。乱数は sim.Sub(seed, "bot/"+name) から取る（greedy・novice・steady は乱数を引かない）。
 // name が Names() にない（空・大文字を含む）ならエラー。
 func New(name string, seed uint64) (Bot, error) {
 	switch name {
@@ -37,6 +38,8 @@ func New(name string, seed uint64) (Bot, error) {
 		return newRandom(sim.Sub(seed, streamName(name))), nil
 	case nameGreedy:
 		return newGreedy(), nil
+	case nameNovice:
+		return newNovice(), nil
 	case nameSteady:
 		return newSteady(), nil
 	}
