@@ -388,6 +388,20 @@ agentctl_write_cmds=(
   "agentctl \"comment\" --pr 12"
   "'agentctl' claim 5"
   "agentctl\\ state 5 in-review"
+  # 行の継続（\ と改行）は Bash と同じく丸ごと取り除いてから読む
+  "agentctl st\\"$'\n'"ate 5 in-review --repo o/r"
+  "agent\\"$'\n'"ctl state 5 in-review --repo o/r"
+  "agentctl \\"$'\n'"  state 5 in-review --repo o/r"
+  # 改行・タブも語の区切り
+  "agentctl"$'\t'"state 5 in-review --repo o/r"
+  "agentctl plan"$'\n'"state"
+  # ANSI-C 引用（\$'...'）・\$"..." の \$ を取り除いてから読む。正規化しきれないエスケープは拒否する
+  "agentctl st\$'a'te 5 in-review --repo o/r"
+  "agentctl st\$\"a\"te 5 in-review --repo o/r"
+  "agent\$'ctl' state 5 in-review --repo o/r"
+  "agentctl \$'\\x73tate' 5 in-review --repo o/r"
+  "scripts/agents/agentctl.sh \$'\\143omment' --pr 12"
+  "\$'\\x61gentctl' state 5 in-review --repo o/r"
   # gate の --comment・--set-status
   "go -C tools/agentctl run . gate --repo o/r --pr 12 --comment"
   "agentctl gate --repo o/r --pr 12 --set-status"
@@ -446,6 +460,8 @@ for role in worker reviewer orchestrator; do
     "grep -n plan tools/agentctl/main.go" \
     "echo 'fix: state を comment にする'" \
     "go test ./server/... -run TestClaim" \
+    "agentctl plan --repo o/r \\"$'\n'"  --json" \
+    "printf \$'a\\tb\\n'" \
     "git log --oneline -- tools/agentctl"; do
     expect_bash 0 "$role" "$wt" "$cmd"
   done
