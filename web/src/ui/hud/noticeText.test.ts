@@ -69,6 +69,12 @@ describe("noticeText", () => {
       { ferryId: "f1", until: 25000 },
       "ごとう丸が故障してしまった…20 秒は港から出られないよ",
     ],
+    // NX-C1 欠航。
+    [
+      "route.cancelled",
+      { routeIds: ["1-2", "2-3"], until: 15000 },
+      "一の島と二の島の間、二の島と三の島の間の船は欠航だって…10 秒は出られないよ",
+    ],
   ])("NT-1 %s → セリフ", (key, params, want) => {
     expect(noticeText(notice(key, params), world(), false)).toBe(want);
   });
@@ -160,11 +166,33 @@ describe("noticeText", () => {
       { ferryId: "f1", until: 15500 },
       "ごとう丸が故障してしまった…11 秒は港から出られないよ",
     ],
+    // NX-C1 until が無ければ「しばらく」、航路が分からなければ「どこかの海」。秒は切り上げ（1 以上）。
+    [
+      "route.cancelled",
+      { routeIds: ["2-3"] },
+      "二の島と三の島の間の船は欠航だって…しばらくは出られないよ",
+    ],
+    ["route.cancelled", { until: 15000 }, "どこかの海の船は欠航だって…10 秒は出られないよ"],
+    [
+      "route.cancelled",
+      { routeIds: ["9-9"], until: 15000 },
+      "どこかの海の船は欠航だって…10 秒は出られないよ",
+    ],
+    [
+      "route.cancelled",
+      { routeIds: ["2-3"], until: 1000 },
+      "二の島と三の島の間の船は欠航だって…1 秒は出られないよ",
+    ],
+    [
+      "route.cancelled",
+      { routeIds: ["2-3"], until: 5001 },
+      "二の島と三の島の間の船は欠航だって…1 秒は出られないよ",
+    ],
   ])("NT-3 既定の言葉: %s %j", (key, params, want) => {
     expect(noticeText(notice(key, params), world(), false)).toBe(want);
   });
 
-  it("NT-4 知らない key は null、NOTICE_KEYS は表の 11 個", () => {
+  it("NT-4 知らない key は null、NOTICE_KEYS は表の 12 個", () => {
     expect(noticeText(notice("future.key"), world(), false)).toBeNull();
     expect(noticeText(notice("toString"), world(), true)).toBeNull();
     expect([...NOTICE_KEYS]).toEqual([
@@ -179,6 +207,7 @@ describe("noticeText", () => {
       "storm.forecast",
       "rush.forecast",
       "ferry.broken",
+      "route.cancelled",
     ]);
     for (const key of NOTICE_KEYS) {
       expect(noticeText(notice(key), world(), false), key).not.toBeNull();
@@ -201,7 +230,7 @@ function worldWithPostmaster(postmaster: Postmaster | undefined): World {
   return worldFromSnapshot({ ...base, stage: { ...base.stage, islands } }, 0);
 }
 
-// 11 個の key の params（NT-1 と同じ値）。
+// 12 個の key の params（NT-1 と同じ値。route.cancelled は航路 1 つ）。
 const TONE_PARAMS: Readonly<Record<string, Record<string, unknown>>> = {
   "request.created": { reqId: "r-fire" },
   "request.succeeded": { reqId: "r-stall" },
@@ -214,6 +243,7 @@ const TONE_PARAMS: Readonly<Record<string, Record<string, unknown>>> = {
   "storm.forecast": { routeIds: ["2-3"], at: 10000 },
   "rush.forecast": { at: 10000 },
   "ferry.broken": { ferryId: "f1", until: 25000 },
+  "route.cancelled": { routeIds: ["2-3"], until: 15000 },
 };
 
 function toneText(key: string, w: World, show = false): string | null {
@@ -221,7 +251,7 @@ function toneText(key: string, w: World, show = false): string | null {
 }
 
 describe("noticeText の口調（T-406c）", () => {
-  it("NT-T1 postmaster の無い島は今の 11 個のセリフ（casual）", () => {
+  it("NT-T1 postmaster の無い島は今の 12 個のセリフ（casual）", () => {
     const w = worldWithPostmaster(undefined);
     expect(postmasterTone(w, 2)).toBe("casual");
     expect(NOTICE_KEYS.map((key) => toneText(key, w))).toEqual([
@@ -236,6 +266,7 @@ describe("noticeText の口調（T-406c）", () => {
       "5 秒後に二の島と三の島の間が荒れるぞ！",
       "5 秒後に、あちこちの島から注文がどっと来るぞ！",
       "ごとう丸が故障してしまった…20 秒は港から出られないよ",
+      "二の島と三の島の間の船は欠航だって…10 秒は出られないよ",
     ]);
   });
 
@@ -251,6 +282,7 @@ describe("noticeText の口調（T-406c）", () => {
     ["polite", "storm.forecast", "5 秒後に二の島と三の島の間が荒れます！"],
     ["polite", "rush.forecast", "5 秒後に、あちこちの島から注文がどっと来ます！"],
     ["polite", "ferry.broken", "ごとう丸が故障してしまいました…20 秒は港から出られません"],
+    ["polite", "route.cancelled", "二の島と三の島の間の船は欠航です…10 秒は出られません"],
     ["elder", "request.created", "大花火 Aの予約を頼みたいんじゃ！"],
     ["elder", "request.succeeded", "やったのう！ 屋台が取れたぞい！"],
     ["elder", "request.rejected", "なんと、大花火 Aはもう他の島が予約しておったのか？"],
@@ -262,6 +294,7 @@ describe("noticeText の口調（T-406c）", () => {
     ["elder", "storm.forecast", "5 秒後に二の島と三の島の間が荒れるぞい！"],
     ["elder", "rush.forecast", "5 秒後に、あちこちの島から注文がどっと来るぞい！"],
     ["elder", "ferry.broken", "ごとう丸が故障してしもうた…20 秒は港から出られんのう"],
+    ["elder", "route.cancelled", "二の島と三の島の間の船は欠航じゃ…10 秒は出られんのう"],
   ])("NT-T2 %s の %s → セリフ", (tone, key, want) => {
     const w = worldWithPostmaster({ name: "テスト局長", tone });
     expect(postmasterTone(w, 2)).toBe(tone);

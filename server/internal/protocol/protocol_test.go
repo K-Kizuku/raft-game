@@ -300,3 +300,52 @@ func TestForecastIslandIDs(t *testing.T) {
 		}
 	}
 }
+
+// PR-C1 route.blocked の往復（cause・islandId あり = 欠航、なし = 嵐）。嵐では JSON に cause・islandId が出ない。
+func TestRouteBlockedCause(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want protocol.RouteBlockedEvent
+	}{
+		{
+			name: "cancellation",
+			in:   `{"seq":5,"t":30000,"type":"route.blocked","routeIds":["3-4","4-5"],"until":40000,"cause":"cancellation","islandId":4}`,
+			want: protocol.RouteBlockedEvent{
+				EventHeader: protocol.EventHeader{Seq: 5, T: 30000},
+				Type:        protocol.EventTypeRouteBlocked,
+				RouteIDs:    []string{"3-4", "4-5"},
+				Until:       40000,
+				Cause:       protocol.RouteBlockCauseCancellation,
+				IslandID:    4,
+			},
+		},
+		{
+			name: "storm",
+			in:   `{"seq":6,"t":70000,"type":"route.blocked","routeIds":["1-2"],"until":100000}`,
+			want: protocol.RouteBlockedEvent{
+				EventHeader: protocol.EventHeader{Seq: 6, T: 70000},
+				Type:        protocol.EventTypeRouteBlocked,
+				RouteIDs:    []string{"1-2"},
+				Until:       100000,
+			},
+		},
+	}
+	for _, c := range cases {
+		var got protocol.RouteBlockedEvent
+		if err := decodeStrict([]byte(c.in), &got); err != nil {
+			t.Fatalf("%s: decode: %v", c.name, err)
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: decode = %+v, want %+v", c.name, got, c.want)
+		}
+		out, err := json.Marshal(got)
+		if err != nil {
+			t.Fatalf("%s: Marshal: %v", c.name, err)
+		}
+		if string(out) != c.in {
+			t.Errorf("%s: Marshal = %s, want %s", c.name, out, c.in)
+		}
+	}
+}

@@ -13,8 +13,9 @@ import (
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
-// noticeKeys は §7.3 の 11 個のキー。
+// noticeKeys は §7.3 の 12 個のキー。
 var noticeKeys = map[string]bool{
+	noticeRouteCancelled:    true,
 	noticeRequestCreated:    true,
 	noticeRequestSucceeded:  true,
 	noticeRequestRejected:   true,
@@ -266,6 +267,65 @@ func TestNoticeFerryBrokenEngine(t *testing.T) {
 	want := noticeData{IslandID: f.IslandID, Key: noticeFerryBroken, Params: noticeParams{FerryID: "f1", Until: ptr(int64(13750))}}
 	if got, ok := out[i+1].Data.(noticeData); !ok || !reflect.DeepEqual(got, want) || f.IslandID != 2 {
 		t.Errorf("ferry.broken の次 = %+v, want %+v（船は島 %d）", out[i+1].Data, want, f.IslandID)
+	}
+}
+
+// NT-C1: cause が cancellation の route.blocked の直後に route.cancelled（話すのは欠航の島）。嵐の route.blocked では出さない。
+func TestNoticeRouteCancelled(t *testing.T) {
+	t.Parallel()
+	n := testNoticer(0)
+	out := n.expand([]sim.DomainEvent{domainEvent(1, 30000, sim.RouteBlocked{
+		RouteIDs: []string{"1-3", "2-3"}, Until: 40000, Cause: sim.BlockCauseCancellation, IslandID: 3,
+	})})
+	if len(out) != 2 {
+		t.Fatalf("out = %+v", out)
+	}
+	want := `{"seq":2,"t":30000,"type":"notice","islandId":3,"key":"route.cancelled","params":{"routeIds":["1-3","2-3"],"until":40000}}`
+	if got := noticeJSON(t, out[1]); got != want {
+		t.Errorf("notice = %s, want %s", got, want)
+	}
+	// 延びた欠航（2 回目）でも出す。
+	wantNotices(t, "extended", observeAt(n, 60000, sim.RouteBlocked{RouteIDs: []string{"2-3"}, Until: 70000, Cause: sim.BlockCauseCancellation, IslandID: 3}),
+		noticeData{IslandID: 3, Key: noticeRouteCancelled, Params: noticeParams{RouteIDs: []string{"2-3"}, Until: ptr(int64(70000))}})
+	// 嵐・島が範囲の外は出さない。
+	wantNotices(t, "storm", observeAt(n, 30000, sim.RouteBlocked{RouteIDs: []string{"1-2"}, Until: 50000}))
+	wantNotices(t, "out of range", observeAt(n, 30000, sim.RouteBlocked{RouteIDs: []string{"1-2"}, Until: 50000, Cause: sim.BlockCauseCancellation, IslandID: 4}))
+	wantNotices(t, "no island", observeAt(n, 30000, sim.RouteBlocked{RouteIDs: []string{"1-2"}, Until: 50000, Cause: sim.BlockCauseCancellation}))
+}
+
+// NT-C1: Engine で欠航を起こし、route.blocked の直後に欠航の島の notice が入る。
+func TestNoticeRouteCancelledEngine(t *testing.T) {
+	t.Parallel()
+	cfg := sim.Config{
+		Islands:       3,
+		InitialLeader: 1,
+		DurationMs:    60000,
+		Raft:          sim.RaftConfig{TickMs: 500, HeartbeatTick: 2, ElectionTick: 40, MaxSizePerMsg: 4096, MaxInflightMsgs: 4},
+		Routes:        []ferry.RouteConfig{{A: 1, B: 2, TravelMs: 3750}, {A: 2, B: 3, TravelMs: 5250}},
+		Ferries:       []ferry.FerryConfig{{ID: "f1", Home: 1, Capacity: 4, SpeedPermille: 1000}},
+		Cancellations: []game.CancellationDef{{Island: 2, ProbabilityPermille: 1000, SlotMs: 30000, DurationMs: 10000}},
+		DockMs:        1500,
+		PortCap:       24,
+		PerLinkAppCap: 4,
+	}
+	e, err := sim.New(cfg, 1, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := newNoticer(&stage.Stage{Islands: make([]stage.Island, 3), Ferries: []stage.Ferry{{ID: "f1", Home: 1}}})
+	if ack := e.Apply(sim.Command{Type: sim.CmdGameStart}); !ack.OK {
+		t.Fatal(ack)
+	}
+	n.expand(e.DrainEvents())
+	e.RunUntil(30000)
+	out := n.expand(e.DrainEvents())
+	i := slices.IndexFunc(out, func(ev sim.DomainEvent) bool { return ev.Type == sim.EvRouteBlocked })
+	if i < 0 || i+1 >= len(out) {
+		t.Fatalf("route.blocked がない: %+v", out)
+	}
+	want := noticeData{IslandID: 2, Key: noticeRouteCancelled, Params: noticeParams{RouteIDs: []string{"1-2", "2-3"}, Until: ptr(int64(40000))}}
+	if got, ok := out[i+1].Data.(noticeData); !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("route.blocked の次 = %+v, want %+v", out[i+1].Data, want)
 	}
 }
 

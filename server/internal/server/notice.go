@@ -22,6 +22,7 @@ const (
 	noticeStormForecast     = "storm.forecast"
 	noticeRushForecast      = "rush.forecast"
 	noticeFerryBroken       = "ferry.broken"
+	noticeRouteCancelled    = "route.cancelled"
 )
 
 // 通知の判定に使う、Engine のイベントの値（sim のイベントの文字列）。
@@ -221,6 +222,8 @@ func (n *noticer) observe(ev sim.DomainEvent) []noticeData {
 		n.setFerryAt(d.FerryID, d.IslandID)
 	case sim.FerryBroken:
 		return n.ferryBroken(d)
+	case sim.RouteBlocked:
+		return n.routeCancelled(d)
 	case sim.RequestCreated:
 		if _, ok := n.island(d.Request.Origin); !ok {
 			return nil
@@ -302,6 +305,23 @@ func (n *noticer) ferryBroken(d sim.FerryBroken) []noticeData {
 		IslandID: f.at,
 		Key:      noticeFerryBroken,
 		Params:   noticeParams{FerryID: d.FerryID, Until: &until},
+	}}
+}
+
+// routeCancelled は欠航の notice。route.blocked の cause が欠航のときだけ出し、話すのは欠航の島（範囲の外なら出さない）。
+// 嵐の route.blocked では出さない。延びた欠航（同じ島の 2 回目の route.blocked）でも出す。
+func (n *noticer) routeCancelled(d sim.RouteBlocked) []noticeData {
+	if d.Cause != sim.BlockCauseCancellation {
+		return nil
+	}
+	if _, ok := n.island(d.IslandID); !ok {
+		return nil
+	}
+	until := int64(d.Until)
+	return []noticeData{{
+		IslandID: d.IslandID,
+		Key:      noticeRouteCancelled,
+		Params:   noticeParams{RouteIDs: d.RouteIDs, Until: &until},
 	}}
 }
 

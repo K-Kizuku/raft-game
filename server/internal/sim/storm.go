@@ -25,8 +25,10 @@ type Forecast struct {
 
 // RouteBlocked は route.blocked（遮断が始まった・延びた）。
 type RouteBlocked struct {
-	RouteIDs []string `json:"routeIds"` // 遮断が延びた航路（定義の順）
-	Until    SimTime  `json:"until"`    // この時刻から出航できる
+	RouteIDs []string `json:"routeIds"`           // 遮断が延びた航路（定義の順）
+	Until    SimTime  `json:"until"`              // この時刻から出航できる
+	Cause    string   `json:"cause,omitempty"`    // 欠航なら BlockCauseCancellation。嵐では入れない
+	IslandID uint64   `json:"islandId,omitempty"` // 欠航の島。嵐では入れない
 }
 
 // RouteUnblocked は route.unblocked（遮断が終わった）。
@@ -50,7 +52,7 @@ const (
 	kindStormEnd                             // ClassWorldEvent。Data は帳簿の添字 int
 )
 
-// stormBook は嵐の帳簿。台本の嵐は New で全部を決める。
+// stormBook は嵐の帳簿。台本の嵐は New で全部を決める。欠航（FR-EVT-08）も cause つきで載る。
 type stormBook struct {
 	list        []stormEntry
 	unblockedAt []SimTime // 添字 = e.tr.Routes() の添字。その航路の route.unblocked を出した時刻。初期値 -1
@@ -64,6 +66,8 @@ type stormEntry struct {
 	forecastDone bool     // HasForecast でなければ最初から true
 	startDone    bool
 	endDone      bool
+	cause        string // "" = 嵐、BlockCauseCancellation = 欠航
+	island       uint64 // 欠航の島。嵐では 0
 }
 
 // initStorms は台本の嵐の時刻を決めて帳簿に入れる（New の中）。嵐がなければ乱数を引かない。
@@ -84,9 +88,14 @@ func (e *Engine) initStorms(seed uint64) error {
 	return nil
 }
 
-// addStorm は s を帳簿の末尾に足して添字を返す。航路は向きを問わずに e.tr.Routes() から線形に探す。
-// 見つからない組があれば ferry.ErrNoRoute を包んで返し、何も変えない。
+// addStorm は嵐 s を帳簿の末尾に足して添字を返す（addBlock の嵐の場合）。
 func (e *Engine) addStorm(s game.Storm) (int, error) {
+	return e.addBlock(s, "", 0)
+}
+
+// addBlock は s を cause・island つきで帳簿の末尾に足して添字を返す。航路は向きを問わずに e.tr.Routes() から線形に探す。
+// 見つからない組があれば ferry.ErrNoRoute を包んで返し、何も変えない。
+func (e *Engine) addBlock(s game.Storm, cause string, island uint64) (int, error) {
 	routes := e.tr.Routes()
 	ids := make([]string, 0, len(s.Routes))
 	idx := make([]int, 0, len(s.Routes))
@@ -111,11 +120,13 @@ func (e *Engine) addStorm(s game.Storm) (int, error) {
 		ids:          ids,
 		idx:          idx,
 		forecastDone: !s.HasForecast,
+		cause:        cause,
+		island:       island,
 	})
 	return len(e.storms.list) - 1, nil
 }
 
-// startStorms は帳簿の嵐をスケジューラに積む（cmd.game.start）。
+// startStorms は帳簿の嵐（欠航も含む）をスケジューラに積む（cmd.game.start）。
 // 予報・開始・終わりの 3 回に分けて積むので、同じ時刻では予報 → 開始 → 終わり（それぞれ定義の順）になる。
 func (e *Engine) startStorms() {
 	for i, st := range e.storms.list {
@@ -171,7 +182,7 @@ func (e *Engine) stormStart(i int) {
 		}
 	}
 	if len(ids) > 0 {
-		e.emit(RouteBlocked{RouteIDs: ids, Until: SimTime(st.s.End)})
+		e.emit(RouteBlocked{RouteIDs: ids, Until: SimTime(st.s.End), Cause: st.cause, IslandID: st.island})
 	}
 }
 
