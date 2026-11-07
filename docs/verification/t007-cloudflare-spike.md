@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-2・H-3 完了。検証用 Worker・DO・コンテナの構成をデプロイし、healthz が応答。次は H-4 の lite の測定。クラウドのコンテナ起動・性能はまだ未測定。
+- 状態: lite の初回クラウド測定が終了コード 0 で完了。負荷模型の性能は目安内。inactivity の解釈・CPU の 502 と上限の適用は確認が残る。次は standard-1 (--first 16) と raw JSON の確認。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -21,8 +21,8 @@
 | M-2・M-3 手元の基準値 | 取得済み | Apple M2 / Go 1.26.9。30 分の再計算 79.343 ms、8 倍速 step p99 0.289 ms。クラウドの性能とは区別する |
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
-| H-4 測定 / M-1〜M-14 | 未実施 | 次に lite / --first 1 / --runs 10。standard-1 と外部通信の対照はその後に行う |
-| H-5 limits.cpuMs の判断 | 未実施 | Worker・Durable Object の CPU 時間と WS 中継を確認する |
+| H-4 測定 / M-1〜M-14 | 途中 | lite / --first 1 / --runs 10 が終了コード 0。raw JSON は未受領。次に standard-1 / --first 16、M-9 の対照 |
+| H-5 limits.cpuMs の判断 | 未確定 | cpuMs=50 の構成だが Worker の 1e9 反復は成功、DO の 1e9 は 502。JSON の本文・設定の反映と Logs の CPU 時間を確認する |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -579,6 +579,87 @@ printf 'measure exit status: %s\n' $status
 - stop の失敗があれば、性能の比較より先に対象番号の停止を確認する。
 
 このコマンドは次に案内したもので、クラウド測定の実行結果はまだ受け取っていない。standard-1 と M-9 の対照は lite の結果を確認してから進める。
+
+## 2026-11-07: lite の初回クラウド測定
+
+ユーザーが H-4 の lite / --runs 10 / --first 1 を実行し、コンソール出力・結果の表・終了コードを共有した。**終了コードは 0**。この時点では **lite.json 自体はまだ受け取っていない**。以下は表示された値 (丸められた数値を含む) の記録。
+
+### 測定値
+
+| ID | 項目 | lite の初回結果 |
+|---|---|---|
+| M-1 | 起動 | DO 内 p50 247 / p95 1112 / 最大 1112 ms (10/10 回)。初回 1112 ms。クライアント p50 610 ms。同時 3 つは全成功、最大 1706 ms |
+| M-2 | 30 分相当の再計算 | wall 561 ms、53.4 分/秒、CPU 481 ms |
+| M-3 | ループの step / 遅れ / CPU | ×1: step p99 0.56 ms、遅れ p99 202 ms、CPU 0.004。×4: 1.2 ms / 2.2 ms / 0.007。×8: 1.2 ms / 1.8 ms / 0.008 |
+| M-4 | CPU テスト | Worker は 1e9 まで成功。DO は 3e8 まで成功、1e9 で 502。表の本文は [object Object] と表示されたため、元の JSON が必要 |
+| M-5 | WS | 1 KiB 200 回、RTT p50 140 / p99 171 ms。16 KiB 20/20。超過は破棄。500 件は 500/500・順序 ok。無通信 120 秒 ok。ブラウザ側切断の中継は ok、コンテナ側切断では 1011 |
+| M-6 | DO→コンテナの HTTP | 200/200 回、p50 3 / p99 9 ms |
+| M-7 | SQLite | 100 行 193 ms、1,000 行 227 ms (クライアント)。コンテナ再起動後も 1100 行が残った |
+| M-8 | 非継承 DO | PlainStore と ControlStore がともに ok。SpikeSession の SQLite・container・alarm が動作 |
+| M-9 | enableInternet: false | DNS・TCP・HTTPS がすべて失敗。TCP は dial tcp 1.1.1.1:443: i/o timeout。internet=true の対照は未実施 |
+| M-10 | 停止 | destroy 38 ms、running=false。60000 ms のアラームで停止。inactivityMs=30000 の実験では、60 秒後の確認時点でまだ動いていた |
+| M-11 | 異常終了と再起動 | 検知 127 ms、再起動 1066 ms |
+| M-12 | ローカル | 前節のローカル結果を使う |
+| M-13 | デプロイ | 前節の 33.77 秒・ローカルのイメージ 10.5 MB を使う |
+| M-14 | 資源 | CPU 1、GOMAXPROCS 1、cpu.max null、memory.max null、env MODE=single / PORT=8080、colo=SEA |
+
+通常起動 10 回: 1112、329、420、205、209、447、247、191、390、202 ms。同時起動は 452、1557、1706 ms。起動の p95 は混在する通常 10 回の値であり、10 個の初回起動だけを測った結果ではない。
+
+### 暫定評価
+
+- 負荷模型の再計算 561 ms は、#15 の提案 5 秒と NFR-03 の 3 秒のどちらも下回る。手元の Apple M2 の 79.343 ms と比べると表示値の比は約 7.1 倍。
+- 8 倍速の step p99 1.2 ms は、#15 の提案値 25 ms を下回る。ただし実際のゲームのエンジンの測定ではなく、最終的な一般公開のサイズの判断は保留する。
+- ×1 の遅れ p99 202 ms は、step の CPU 処理時間とは別の問題。standard-1 との比較に残す。
+- WS は必要な電文の往復・順序・120 秒の無通信を確認できた。RTT p99 171 ms と NFR-02 の「国内から p95 150 ms」を同じ指標として直接比較しない。
+- 終了コード 0 は全設定の効果や全性能条件の合格を意味しない。inactivity は HTTP 200 なら ok、cpu は最初の 1e6 の成功を ok とする実装なので、内訳を読む必要がある。
+
+### inactivity と monitor の仕様を確認
+
+[Cloudflare の Durable Object Container API](https://developers.cloudflare.com/containers/api/durable-object-container/) で確認した。
+
+- setInactivityTimeout は **DO が非アクティブになった後**にコンテナをどれだけ動かすかの設定。
+- pending の monitor() は、コンテナの終了または最大 15 分まで DO の退避を抑える。
+- スパイクの SessionCore.boot は起動ごとに watch を呼び、watch は c.monitor() の Promise を保持している。
+- したがって、起動から 60 秒後に動いていたことは、この monitor と inactivity の組み合わせで説明できる可能性がある。**API の不具合や inactivity の全面的な無効とは断定しない**。
+- 本番の設計では明示的な destroy とアラームによる期限を主要な停止手段にする。inactivity のみを「無通信から 30 秒で停止する仕組み」と扱わない。これは T-308・ADR-0016/0017 に引き継ぐべき制約。
+- コンストラクターで稼働中のコンテナに inactivity timeout と monitor を再設定する必要性も、上記公式仕様に記載されている。現在の SpikeSession は起動時だけ設定するので、再起動・退避を含む本体設計時に確認する。
+
+### colo の読み方をコードで確認
+
+M-14 の colo=SEA は、router.ts が **入口の request.cf.colo** をヘッダーで DO に渡し、起動結果に載せた値。[Cloudflare の Request API](https://developers.cloudflare.com/workers/runtime-apis/request/#incomingrequestcfproperties) の定義も、リクエストが到達した拠点を指す。**DO や Go コンテナの実際の配置場所を測った値ではない**。
+
+測定経路と RTT の関係は要確認。利用者の VPN やネットワーク設定が原因だと推測で断定しない。国内向けの応答性を満たしたとの判定もしない。
+
+### CPU 上限の判断は保留
+
+構成は limits.cpuMs=50 だったが、Worker は 1e9 まで成功し、DO は 1e9 で 502 を返した。502 の詳細は表だけでは失われている。
+
+- lite.json の items.cpu の各要求の status・error・clientMs を確認する。
+- 必要に応じてデプロイ済みの設定と Workers Logs の CPU 時間・outcome を調べる。
+- 502 が 50 ms の CPU 制限によるものだとは、現時点では断定しない。
+- [Durable Objects の CPU 制限の公式説明](https://developers.cloudflare.com/durable-objects/platform/limits/) と実際の反映状態を照合する。コンテナの CPU と Worker/DO の CPU を混同しない。
+
+### 使用した番号と停止
+
+計画と表示された起動から、s-1〜s-8 は起動 3 回分を消費したと読める。s-9 は inactivity の 1 回。実際の sessions・stopFailures と詳細は JSON で確認する。
+
+measure.ts は各項目の最後に stop を呼ぶ実装で、終了コード 0、stop 失敗の表示はなかった。H-6 の全番号の停止状態の最終確認は別途行う。
+
+ローカルで TCP が通った挙動とは異なり、クラウドでは enableInternet: false の DNS/TCP/HTTPS はすべて失敗した。対照を行うまでは、成功するべき通信が有効な環境だったかの確認を完了扱いにはしない。
+
+### 次の手順: standard-1
+
+同じターミナル・リポジトリのルートで実行する。今回使った s-1〜s-9 と重ならない --first 16 を使う。
+
+```fish
+node spike/scripts/measure.ts \
+  --base https://raft-game-spike.kizuku.workers.dev \
+  --instance standard-1 --runs 10 --first 16 \
+  --out spike/.cloudflare/standard-1.json
+printf 'measure exit status: %s\n' $status
+```
+
+通常の割り当ては s-16〜s-24。結果を受け取ってから、未使用の s-10 などで M-9 の対照に進む。lite.json と standard-1.json も共有してもらい、丸める前の値・502 の本文・inactivity の結果・停止 API の結果を読む。このコマンドはまだ実行結果を受け取っていない。
 
 ## 測定前に確定・確認する事項
 
