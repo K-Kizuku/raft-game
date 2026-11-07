@@ -23,7 +23,8 @@ import { islandLabel, openingResult } from "./openingView.ts";
 import type { OpeningResult } from "./openingView.ts";
 import "./OpeningCeremony.css";
 
-const NO_COLOR = "#9e9e9e";
+// 紙吹雪の紙片の数（飾り。置き場所・色は OpeningCeremony.css の nth-child）。
+const CONFETTI: readonly number[] = Array.from({ length: 16 }, (_, i) => i);
 
 type Role = NonNullable<World["nodes"][number]>["role"];
 
@@ -141,40 +142,47 @@ function CeremonyBanner({ result, world, onClose }: BannerProps): ReactElement {
   };
 
   return (
-    <section
-      ref={sectionRef}
-      className="opening-ceremony"
-      role="status"
-      aria-label="開会式"
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
-      onBlur={onBlur}
-    >
-      <h2 className="opening-ceremony__title">開会式</h2>
-      <p className="opening-ceremony__message">
-        <RaftTerm id="leader" />に
-        <span className="opening-ceremony__island">
-          <span
-            className="opening-ceremony__dot"
-            style={{ backgroundColor: result.color ?? NO_COLOR }}
-            aria-hidden="true"
-          />
-          <span className="opening-ceremony__crown" aria-hidden="true">
-            👑
+    <>
+      <div className="opening-ceremony__confetti" aria-hidden="true">
+        {CONFETTI.map((i) => (
+          <span key={i} />
+        ))}
+      </div>
+      <section
+        ref={sectionRef}
+        className="opening-ceremony"
+        role="status"
+        aria-label="開会式"
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+        onFocus={() => setFocused(true)}
+        onBlur={onBlur}
+      >
+        <h2 className="opening-ceremony__title">開会式</h2>
+        <p className="opening-ceremony__message">
+          <RaftTerm id="leader" />に
+          <span className="opening-ceremony__island">
+            <span
+              className="opening-ceremony__dot"
+              style={result.color === null ? undefined : { backgroundColor: result.color }}
+              aria-hidden="true"
+            />
+            <span className="opening-ceremony__crown" aria-hidden="true">
+              👑
+            </span>
+            {result.islandName}
           </span>
-          {result.islandName}
-        </span>
-        が選ばれました
-      </p>
-      <button type="button" className="opening-ceremony__close" onClick={onCloseClick}>
-        閉じる
-      </button>
-      <details className="opening-ceremony__election" onToggle={onToggle}>
-        <summary>選挙の記録</summary>
-        <ElectionRecord result={result} world={world} />
-      </details>
-    </section>
+          が選ばれました
+        </p>
+        <button type="button" className="btn opening-ceremony__close" onClick={onCloseClick}>
+          閉じる
+        </button>
+        <details className="opening-ceremony__election" onToggle={onToggle}>
+          <summary>選挙の記録</summary>
+          <ElectionRecord result={result} world={world} />
+        </details>
+      </section>
+    </>
   );
 }
 

@@ -1,0 +1,76 @@
+/* デモの嵐の紹介の文（T-305b）。ゲーム画面の上の中央に重ねる。地図の操作を妨げないよう、マウスでは押せない。
+   見た目（T-425a・docs/11-visual-design.md §9）: 「新聞の切り抜き」風のカード。紙に細かい網点、上下に二重の罫、
+   少し傾けてテープで留める。嵐との対比は、左の嵐の色の太い帯と見出しの色（--color-storm-deep）で出す。
+   文字は紙の上で 4.5:1 以上（NFR-10）。 */
+.demo-storm-flavor {
+  position: fixed;
+  top: var(--space-4);
+  left: 50%;
+  z-index: 20;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(36em, calc(100vw - 2rem));
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-6);
+  color: var(--color-ink);
+  background:
+    radial-gradient(
+        circle,
+        color-mix(in srgb, var(--color-ink) 7%, transparent) 0.6px,
+        transparent 1px
+      )
+      0 0 / 4px 4px,
+    linear-gradient(
+      to right,
+      var(--color-storm-deep) 0,
+      var(--color-storm-deep) var(--space-2),
+      transparent var(--space-2)
+    ),
+    var(--color-paper);
+  border-block: 4px double var(--color-ink);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--font-size-body);
+  text-align: left;
+  transform: translateX(-50%) rotate(-0.8deg);
+  pointer-events: none;
+}
+
+/* 留めたテープ（封筒の金をうすく）。 */
+.demo-storm-flavor::before {
+  position: absolute;
+  top: -0.7em;
+  left: 50%;
+  width: 4.5em;
+  height: 1.3em;
+  content: "";
+  background: color-mix(in srgb, var(--color-gold) 45%, transparent);
+  border-radius: 2px;
+  transform: translateX(-50%) rotate(2deg);
+}
+
+.demo-storm-flavor-text {
+  margin: 0;
+  color: var(--color-storm-deep);
+  font-size: var(--font-size-h3);
+  font-weight: bold;
+  line-height: 1.35;
+}
+
+.demo-storm-flavor-quote {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  color: var(--color-ink);
+  border-top: 1px solid var(--color-ink-muted);
+  font-size: 0.9em;
+}
+
+.demo-storm-flavor .provenance-label {
+  display: inline-block;
+  margin-top: var(--space-2);
+  padding: 0 var(--space-2);
+  color: var(--color-ink-muted);
+  background: var(--color-paper);
+  border: 1px solid var(--color-ink-muted);
+  border-radius: var(--radius-s);
+  font-size: 0.75em;
+}

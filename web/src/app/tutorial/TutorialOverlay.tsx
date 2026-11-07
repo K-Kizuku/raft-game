@@ -271,14 +271,17 @@ export function TutorialOverlay({ stageId }: { stageId: string }): ReactElement 
           data-step={step.id}
           style={position}
         >
+          <span className="tutorial__speaker" aria-hidden="true">
+            局
+          </span>
           <p className="tutorial__text" aria-live="polite">
             <StepText parts={step.text} />
           </p>
           <div className="tutorial__actions">
-            <button type="button" onClick={onPrimary}>
+            <button type="button" className="btn btn-primary" onClick={onPrimary}>
               {step.advance === "click" ? "次へ" : "わかった"}
             </button>
-            <button type="button" onClick={onFinish}>
+            <button type="button" className="btn" onClick={onFinish}>
               チュートリアルを終える
             </button>
           </div>
@@ -292,14 +295,17 @@ export function TutorialOverlay({ stageId }: { stageId: string }): ReactElement 
           data-step={step.id}
           style={position}
         >
+          <span className="tutorial__speaker" aria-hidden="true">
+            局
+          </span>
           <p className="tutorial__text">
             <StepText parts={step.text} />
           </p>
           <div className="tutorial__actions">
-            <button type="button" onClick={onExpand}>
+            <button type="button" className="btn btn-primary" onClick={onExpand}>
               開く
             </button>
-            <button type="button" onClick={onFinish}>
+            <button type="button" className="btn" onClick={onFinish}>
               チュートリアルを終える
             </button>
           </div>
