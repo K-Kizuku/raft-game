@@ -76,3 +76,31 @@ func TestSeverityAndTitle(t *testing.T) {
 		t.Error(ReviewerVersion)
 	}
 }
+
+func TestReceipt(t *testing.T) {
+	ok := ReceiptMarker + "\nCodex Review: Didn't find any major issues. Keep it up!\n\n**Reviewed commit:** `ABCDEF1`\n"
+	if !IsReceipt(ok) || !NoMajorIssues(ok) || ReviewedCommit(ok) != "abcdef1" {
+		t.Errorf("receipt: %v %v %q", IsReceipt(ok), NoMajorIssues(ok), ReviewedCommit(ok))
+	}
+	for name, body := range map[string]string{
+		"目印がない":   "Codex Review: Didn't find any major issues.",
+		"指摘がある":   ReceiptMarker + "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n",
+		"英語以外":    ReceiptMarker + "\nCodex のレビュー: 大きな問題は見つかりませんでした。",
+		"文言が変わった": ReceiptMarker + "\nCodex Review: No major issues found.",
+	} {
+		if NoMajorIssues(body) {
+			t.Errorf("%s: NoMajorIssues = true", name)
+		}
+	}
+	for body, want := range map[string]string{
+		"**Reviewed commit:** `abc`": "",
+		"なし":                         "",
+		"**Reviewed commit:** `abcdef1`\n**Reviewed commit:** `abcdef1`": "abcdef1",
+		"**Reviewed commit:** `abcdef1`\n**Reviewed commit:** `1234567`": "",
+		"**Reviewed commit:** `" + sha + "`":                             sha,
+	} {
+		if got := ReviewedCommit(body); got != want {
+			t.Errorf("ReviewedCommit(%q) = %q, want %q", body, got, want)
+		}
+	}
+}
