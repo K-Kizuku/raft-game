@@ -716,13 +716,14 @@ func TestRequestRandom(t *testing.T) { // E-14
 		cfg := tc.cfg
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			a, ha := randomRequestRun(t, cfg, 1)
-			b, hb := randomRequestRun(t, cfg, 1)
+			// シード 4 は、おまかせが経由の手紙も積むようになったあと（#318）に確かめ直したもの。
+			a, ha := randomRequestRun(t, cfg, 4)
+			b, hb := randomRequestRun(t, cfg, 4)
 			if !reflect.DeepEqual(a, b) || ha != hb {
 				t.Errorf("same seed gave different runs: %d vs %d events", len(a), len(b))
 			}
-			if _, hc := randomRequestRun(t, cfg, 2); ha == hc {
-				t.Error("seeds 1 and 2 gave the same TraceHash")
+			if _, hc := randomRequestRun(t, cfg, 5); ha == hc {
+				t.Error("seeds 4 and 5 gave the same TraceHash")
 			}
 
 			created := ofType[RequestCreated](a)

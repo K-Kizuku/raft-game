@@ -105,3 +105,52 @@ func TestComponents(t *testing.T) {
 		t.Fatalf("route not normalized: %+v", r[0])
 	}
 }
+
+func TestNextHop(t *testing.T) {
+	t.Parallel()
+	line := newT(t, baseConfig()) // 1 -3750- 2 -5250- 3
+	// 1-2-4 と 1-3-4 が同じ長さ（10）。5-4 は 1 区間でも 1-5-4 より遠い。6 はどこともつながらない。
+	cfg := baseConfig()
+	cfg.Islands = []uint64{4, 2, 6, 1, 3, 5}
+	cfg.Routes = []RouteConfig{
+		{A: 1, B: 3, TravelMs: 4},
+		{A: 3, B: 4, TravelMs: 6},
+		{A: 1, B: 2, TravelMs: 5},
+		{A: 2, B: 4, TravelMs: 5},
+		{A: 1, B: 5, TravelMs: 1},
+		{A: 5, B: 4, TravelMs: 20},
+	}
+	grid := newT(t, cfg)
+	if err := grid.Block([][2]uint64{{1, 2}}, 1<<40); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		tr       *Transport
+		from, to uint64
+		want     uint64
+		ok       bool
+	}{
+		{"line 1→3 via 2", line, 1, 3, 2, true},
+		{"line 3→1 via 2", line, 3, 1, 2, true},
+		{"line 1→2 direct", line, 1, 2, 2, true},
+		{"line 2→3 direct", line, 2, 3, 3, true},
+		{"same island", line, 2, 2, 0, false},
+		{"unknown to", line, 1, 9, 0, false},
+		{"unknown from", line, 9, 1, 0, false},
+		{"tie picks the smaller id (blocked route counts)", grid, 1, 4, 2, true},
+		{"4→1 tie", grid, 4, 1, 2, true},
+		{"shorter time beats fewer hops", grid, 5, 4, 1, true},
+		{"unreachable", grid, 1, 6, 0, false},
+		{"from isolated", grid, 6, 1, 0, false},
+	}
+	if !grid.HasRoute(2, 1) || !grid.HasRoute(1, 2) || grid.HasRoute(1, 4) || grid.HasRoute(1, 1) || grid.HasRoute(1, 9) {
+		t.Error("HasRoute wrong")
+	}
+	for _, tt := range tests {
+		got, ok := tt.tr.NextHop(tt.from, tt.to)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("%s: NextHop(%d, %d) = %d, %v; want %d, %v", tt.name, tt.from, tt.to, got, ok, tt.want, tt.ok)
+		}
+	}
+}

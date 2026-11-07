@@ -10,6 +10,7 @@ import {
   ferryTabs,
   islandColor,
   islandName,
+  viaIsland,
 } from "./ferryView.ts";
 import type { FerryBlocker, FerryDetail } from "./ferryView.ts";
 import { FERRY_ISLAND_COLORS, makeFerrySnapshot, portLetter, withFerry1 } from "./testing/world.ts";
@@ -308,6 +309,88 @@ describe("autoloadBlocker・departBlocker", () => {
     const detail = make();
     expect(autoloadBlocker(detail, to)).toBe(wantAutoload);
     expect(departBlocker(detail, to)).toBe(wantDepart);
+  });
+});
+
+describe("経由の手紙（#318）", () => {
+  function route(a: number, b: number, travelMs: number): Snapshot["stage"]["routes"][number] {
+    return { id: `${String(a)}-${String(b)}`, a, b, travelMs, provenance: "derived" };
+  }
+  function withRoutes(
+    routes: Snapshot["stage"]["routes"],
+    overrides: Partial<Snapshot> = {},
+  ): World {
+    const base = makeFerrySnapshot(overrides);
+    return worldOf({
+      ...base,
+      stage: { ...base.stage, routes },
+      routesState: routes.map((r) => ({ id: r.id, blockedUntil: null })),
+    });
+  }
+
+  it("FV-7 viaIsland: 隣でない島へは最短の経路の次の島。隣・同じ島・経路なしは null", () => {
+    const line = withRoutes([route(1, 2, 3750), route(2, 3, 5250)]);
+    expect(viaIsland(line, 1, 3)).toBe(2);
+    expect(viaIsland(line, 3, 1)).toBe(2);
+    expect(viaIsland(line, 1, 2)).toBeNull();
+    expect(viaIsland(line, 2, 2)).toBeNull();
+    expect(viaIsland(line, 1, 9)).toBeNull();
+    // 三角形: 直接の航路があれば経由にしない（遠回りの方が速くても）。
+    const triangle = withRoutes([route(1, 2, 1), route(2, 3, 1), route(1, 3, 100)]);
+    expect(viaIsland(triangle, 1, 3)).toBeNull();
+  });
+
+  it("FV-7 viaIsland: 所要時間で決め、同じなら次の島の ID の小さい方（サーバーの NextHop と同じ）", () => {
+    // 1-2-4 と 1-3-4 が同じ長さ（10）。1-5-4 は区間が同じでも遠い（21）。
+    const islands = makeFerrySnapshot().stage.islands;
+    const extra = [4, 5].map((id) => ({ ...islands[0], id, name: `${String(id)}の島` }));
+    const world = withRoutes(
+      [
+        route(1, 3, 4),
+        route(3, 4, 6),
+        route(1, 2, 5),
+        route(2, 4, 5),
+        route(1, 5, 1),
+        route(4, 5, 20),
+      ],
+      {
+        stage: {
+          ...makeFerrySnapshot().stage,
+          islands: [...islands, ...extra],
+        } as Snapshot["stage"],
+      },
+    );
+    expect(viaIsland(world, 1, 4)).toBe(2);
+    expect(viaIsland(world, 5, 3)).toBe(1);
+  });
+
+  it("FV-8 港の隣でない島宛ての山に案内、積み荷の経由の手紙に viaName", () => {
+    const world = withRoutes([route(1, 2, 3750), route(2, 3, 5250)], {
+      ferries: makeFerrySnapshot().ferries.map((f) =>
+        f.id === "f1" ? { ...f, cargo: [30, 31] } : f,
+      ),
+      letters: [
+        ...makeFerrySnapshot().letters,
+        portLetter(30, "append", 1, 3, { loc: { type: "ferry", ferryId: "f1" } }),
+        portLetter(31, "heartbeat", 1, 2, { loc: { type: "ferry", ferryId: "f1" } }),
+      ],
+    });
+    const detail = detailOf(world, "f1");
+    expect(detail.viaHints).toEqual([{ to: 3, toName: "三の島", via: 2, viaName: "二の島" }]);
+    expect(detail.cargo.map((s) => (s.kind === "letter" ? s.viaName : s.kind))).toEqual([
+      "二の島",
+      null,
+      "empty",
+      "empty",
+    ]);
+    // 航行中の f2（2→3）の、3 宛ての手紙は経由でない。
+    const f2 = detailOf(world, "f2");
+    expect(f2.viaHints).toEqual([]);
+    expect(f2.cargo[0]?.kind === "letter" && f2.cargo[0].viaName).toBeNull();
+  });
+
+  it("FV-8 三角形の航路では案内を出さない", () => {
+    expect(detailOf(worldOf(), "f1").viaHints).toEqual([]);
   });
 });
 

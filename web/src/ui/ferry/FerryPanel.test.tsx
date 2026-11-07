@@ -14,6 +14,7 @@ import type { GameCommandSender } from "../commands/GameCommands.tsx";
 import { setShowRaftTerms } from "../terms/preference.ts";
 import { CARGO_DROP_ID } from "./dnd.ts";
 import { FerryPanel } from "./FerryPanel.tsx";
+import { pressIsland } from "./islandPress.ts";
 import { ferryLetter, makeFerrySnapshot, portLetter, withFerry1 } from "./testing/world.ts";
 
 // jsdom にドラッグの座標の計算は無いので、DndContext の onDragEnd だけを捕まえる（元の DndContext を使う）。
@@ -688,6 +689,128 @@ describe("FerryPanel", () => {
     renderPanel(okSender());
     const btn = button("お元気ですか？（→ 島 9）を積む");
     expect(btn.querySelector('[data-part="border"]')?.getAttribute("stroke")).toBe("#9CA3AF");
+  });
+});
+
+// 一直線の航路（1-2-3。1-3 は無い）。Stage 1 の直島–豊島–小豆島と同じ形（#318）。
+function lineSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
+  const base = makeFerrySnapshot(overrides);
+  return {
+    ...base,
+    stage: { ...base.stage, routes: base.stage.routes.filter((r) => r.id !== "1-3") },
+    routesState: base.routesState.filter((r) => r.id !== "1-3"),
+  };
+}
+
+function currentDestination(): string | null | undefined {
+  return document.querySelector(".ferry-panel__destination-current")?.textContent;
+}
+
+describe("行き先の選び方と経由の手紙（#318）", () => {
+  it("FP-15 行き先を大きく出す: 未選択なら選び方、選ぶと「行き先: 二の島」", () => {
+    load(lineSnapshot());
+    renderPanel(okSender());
+    expect(currentDestination()).toBe(
+      "行き先: 未選択 下のボタンか、マップで隣の島を押して選びます",
+    );
+    expect(screen.getAllByRole("radio").map((r) => r.closest("label")?.textContent)).toEqual([
+      " 二の島",
+    ]);
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    expect(currentDestination()).toBe("行き先: 二の島");
+  });
+
+  it("FP-16 隣でない島宛ての手紙があると、経由の案内を出し、行き先が経由の島なら山に「行き先経由」", () => {
+    load(lineSnapshot());
+    renderPanel(okSender());
+    const hints = document.querySelector(".ferry-panel__via-hints");
+    expect(hints?.textContent).toBe("三の島あての手紙は二の島を経由して運びます。まず二の島へ");
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    const pile3 = document.querySelector<HTMLElement>('.ferry-panel__pile[data-to="3"]');
+    expect(pile3?.querySelector(".ferry-panel__pile-to")?.textContent).toBe("→ 三の島行き先経由");
+    const pile2 = document.querySelector<HTMLElement>('.ferry-panel__pile[data-to="2"]');
+    expect(pile2?.querySelector(".ferry-panel__pile-to")?.textContent).toBe("→ 二の島行き先宛て");
+  });
+
+  it("FP-16 すべての宛先が隣なら経由の案内を出さない", () => {
+    load();
+    renderPanel(okSender());
+    expect(document.querySelector(".ferry-panel__via-hints")).toBeNull();
+  });
+
+  it("FP-17 マップで隣の島を押すと行き先になる。隣でない島・航行中は何もしない", () => {
+    load(lineSnapshot());
+    renderPanel(okSender());
+    act(() => {
+      pressIsland(3);
+    });
+    expect(currentDestination()).toContain("未選択");
+    act(() => {
+      pressIsland(2);
+    });
+    expect(currentDestination()).toBe("行き先: 二の島");
+    expect((screen.getByRole("radio", { name: "二の島" }) as HTMLInputElement).checked).toBe(true);
+    expect(autoloadButton().getAttribute("aria-disabled")).toBeNull();
+
+    // 航行中の船を選んでいるときは何もしない（例外も出ない）。
+    act(() => {
+      gameStore.getState().selectFerry("f2");
+    });
+    act(() => {
+      pressIsland(2);
+    });
+    expect(document.querySelector(".ferry-panel__destination-current")).toBeNull();
+  });
+
+  it("FP-18 積み荷の経由の手紙に「経由」の札（停泊中・航行中）", () => {
+    const base = lineSnapshot();
+    load(
+      withFerry1(
+        { cargo: [30, 31] },
+        {
+          stage: base.stage,
+          routesState: base.routesState,
+          letters: [
+            ferryLetter(30, "append", 1, 3, "f1"),
+            ferryLetter(31, "heartbeat", 1, 2, "f1"),
+          ],
+        },
+      ),
+    );
+    renderPanel(okSender());
+    const buttons = within(cargoList()).getAllByRole("button");
+    expect(buttons[0]?.getAttribute("aria-label")).toBe(
+      "この内容を記録して！（二の島経由 → 三の島）を降ろす",
+    );
+    expect(buttons[0]?.querySelector(".ferry-panel__letter-to")?.textContent).toBe(
+      "二の島経由 → 三の島",
+    );
+    expect(buttons[0]?.querySelector(".ferry-panel__via")?.textContent).toBe("二の島経由");
+    expect(buttons[1]?.getAttribute("aria-label")).toBe("お元気ですか？（→ 二の島）を降ろす");
+    expect(buttons[1]?.querySelector(".ferry-panel__via")).toBeNull();
+  });
+
+  it("FP-18 航行中: 向かっている島が宛先でない手紙は、向かっている島の経由", () => {
+    const base = lineSnapshot();
+    load(
+      withFerry1(
+        { state: "sailing", from: 1, to: 2, departAt: 28000, arriveAt: 31750, cargo: [30, 31] },
+        {
+          stage: base.stage,
+          routesState: base.routesState,
+          letters: [
+            ferryLetter(30, "append", 1, 3, "f1"),
+            ferryLetter(31, "heartbeat", 1, 2, "f1"),
+          ],
+        },
+      ),
+    );
+    renderPanel(okSender());
+    const letters = cargoList().querySelectorAll(".ferry-panel__cargo-letter");
+    expect(letters[0]?.querySelector(".ferry-panel__letter-to")?.textContent).toBe(
+      "二の島経由 → 三の島",
+    );
+    expect(letters[1]?.querySelector(".ferry-panel__letter-to")?.textContent).toBe("→ 二の島");
   });
 });
 
