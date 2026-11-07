@@ -60,7 +60,7 @@ export function EngineerPanel(): ReactElement {
       <button
         ref={toggleRef}
         type="button"
-        className="engineer-toggle"
+        className="btn btn-paper engineer-toggle"
         aria-expanded={open}
         aria-controls={PANEL_ID}
         aria-keyshortcuts="E"
@@ -74,7 +74,7 @@ export function EngineerPanel(): ReactElement {
         <aside id={PANEL_ID} aria-label="エンジニアパネル" className="engineer-panel">
           <div className="engineer-header">
             <h2>エンジニアモード</h2>
-            <button type="button" onClick={close}>
+            <button type="button" className="btn btn-quiet" onClick={close}>
               閉じる
             </button>
           </div>

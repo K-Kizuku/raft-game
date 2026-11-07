@@ -7,6 +7,9 @@
 // 変わった文字だけを更新する。Graphics を描き直すのは、鍵（形・色・選択の状態など）が変わったとき
 // （updateRoute・updateIsland・updatePile・updateFerry の選択の輪・名札と積み荷の文字の幅）と、
 // 画面の大きさが変わったとき（drawSea）だけ。
+//
+// 構図（T-426）: 島・手紙の山・船は、MAP_STYLE の px で描いた表示物を scene.markScale（描画領域の大きさに
+// 合わせた絵の拡大率）で拡大する。文字は拡大してもぼやけないよう、拡大の上限の分だけ高い解像度で作る。
 import { Application, Container, Graphics, Text } from "pixi.js";
 
 import { formatDuration } from "../../app/format.ts";
@@ -18,6 +21,7 @@ import { buildMapScene } from "../model/scene.ts";
 import type { FerrySprite, IslandNode, LetterPile, MapScene, RouteLine } from "../model/scene.ts";
 import { MAP_STYLE } from "../model/style.ts";
 import { smoothSimTime } from "../model/time.ts";
+import { MAP_VIEW } from "../model/viewport.ts";
 import type { Point, Size } from "../model/viewport.ts";
 import { cloudOutline } from "../model/art/cloud.ts";
 import { dotPositions, insetSegment } from "../model/art/dots.ts";
@@ -39,6 +43,18 @@ const A = MAP_ART_STYLE;
 // 島の絵は当たり判定の円（islandRadius + islandHitSlop）の中に収める。浅瀬の輪がその円いっぱい。
 const ISLAND_OUTER = S.islandRadius + S.islandHitSlop;
 
+// 文字の解像度。絵の拡大率の上限まで拡大しても、画面の画素より粗くならないようにする。
+function textResolution(): number {
+  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio;
+  return (Number.isFinite(dpr) && dpr > 0 ? dpr : 1) * MAP_VIEW.maxMarkScale;
+}
+
+// 絵の拡大率（buildMapScene はいつも入れる。無ければ 1）。
+function markScaleOf(scene: MapScene): number {
+  const k = scene.markScale ?? 1;
+  return Number.isFinite(k) && k > 0 ? k : 1;
+}
+
 // 毎フレームの動きの入力（実時間と、動きを減らす設定）。
 type Motion = Readonly<{ now: number; reduced: boolean }>;
 
@@ -54,6 +70,7 @@ function label(options: LabelOptions): Text {
   const halo = options.halo ?? false;
   const text = new Text({
     text: "",
+    resolution: textResolution(),
     style: {
       fontFamily: options.font === "number" ? D.numberFontFamily : D.fontFamily,
       fontSize: options.size,
@@ -219,42 +236,44 @@ function cloudShape(g: Graphics, dy: number): Graphics {
   return g.poly(CLOUD_OUTLINE.map((p) => ({ x: p.x, y: p.y - A.cloudLift + dy })));
 }
 
-function updateRoute(view: RouteView, r: RouteLine): void {
-  const key = `${r.a.x},${r.a.y},${r.b.x},${r.b.y},${r.storm ?? ""}`;
+// k は絵の拡大率（線の太さ・点の大きさと間隔・島の絵の分だけ縮める長さ・雲に掛ける）。
+function updateRoute(view: RouteView, r: RouteLine, k: number): void {
+  const key = `${r.a.x},${r.a.y},${r.b.x},${r.b.y},${r.storm ?? ""},${k}`;
   if (view.key === key) return;
   view.key = key;
   const { line, cloud } = view;
   line.clear();
   if (r.storm === "blocked") {
     // 通れない航路: 長い破線と ✕ の印（色だけでなく形で区別する。NFR-10）。
-    const seg = insetSegment(r.a, r.b, ISLAND_OUTER);
+    const seg = insetSegment(r.a, r.b, ISLAND_OUTER * k);
     if (seg !== null) {
-      for (const [p, q] of dashSegments(seg[0], seg[1], A.blockedDash, A.blockedGap)) {
+      for (const [p, q] of dashSegments(seg[0], seg[1], A.blockedDash * k, A.blockedGap * k)) {
         line.moveTo(p.x, p.y).lineTo(q.x, q.y);
       }
-      line.stroke({ width: A.blockedWidth, color: S.colors.routeBlocked, cap: "round" });
+      line.stroke({ width: A.blockedWidth * k, color: S.colors.routeBlocked, cap: "round" });
     }
-    const c = A.crossSize;
+    const c = A.crossSize * k;
     line
       .moveTo(r.mid.x - c, r.mid.y - c)
       .lineTo(r.mid.x + c, r.mid.y + c)
       .moveTo(r.mid.x + c, r.mid.y - c)
       .lineTo(r.mid.x - c, r.mid.y + c);
-    line.stroke({ width: A.crossWidth + A.crossHalo, color: S.colors.halo, cap: "round" });
+    line.stroke({ width: (A.crossWidth + A.crossHalo) * k, color: S.colors.halo, cap: "round" });
     line
       .moveTo(r.mid.x - c, r.mid.y - c)
       .lineTo(r.mid.x + c, r.mid.y + c)
       .moveTo(r.mid.x + c, r.mid.y - c)
       .lineTo(r.mid.x - c, r.mid.y + c);
-    line.stroke({ width: A.crossWidth, color: S.colors.routeBlocked, cap: "round" });
+    line.stroke({ width: A.crossWidth * k, color: S.colors.routeBlocked, cap: "round" });
   } else {
     // 海図風の点線（丸い点を等間隔）。
-    for (const p of dotPositions(r.a, r.b, A.dotSpacing, ISLAND_OUTER)) {
-      line.circle(p.x, p.y, A.dotRadius);
+    for (const p of dotPositions(r.a, r.b, A.dotSpacing * k, ISLAND_OUTER * k)) {
+      line.circle(p.x, p.y, A.dotRadius * k);
     }
     line.fill({ color: S.colors.route });
   }
   view.storm.position.set(r.mid.x, r.mid.y);
+  view.storm.scale.set(k);
   cloud.clear();
   if (r.storm === "blocked") {
     // 暗い雲（下に濃い雲を重ねる）と、雲から航路へ降る雨。
@@ -384,8 +403,9 @@ function drawNameTag(view: IslandView): void {
     .stroke({ width: A.nameTagStrokeWidth, color: S.colors.nameTagStroke });
 }
 
-function updateIsland(view: IslandView, island: IslandNode): void {
+function updateIsland(view: IslandView, island: IslandNode, k: number): void {
   view.root.position.set(island.at.x, island.at.y);
+  view.root.scale.set(k);
   const key = `${island.id}|${island.color}|${island.selected}|${island.candidate}`;
   if (view.key !== key) {
     view.key = key;
@@ -412,6 +432,7 @@ function createPile(layers: Layers): PileView {
   count.position.set(D.envelopeWidth / 2, D.envelopeHeight / 2);
   const star = new Text({
     text: "★",
+    resolution: textResolution(),
     style: {
       fontFamily: D.fontFamily,
       fontSize: D.badgeFontSize,
@@ -427,8 +448,9 @@ function createPile(layers: Layers): PileView {
   return { root, envelope, count, star, key: "" };
 }
 
-function updatePile(view: PileView, pile: LetterPile): void {
+function updatePile(view: PileView, pile: LetterPile, k: number): void {
   view.root.position.set(pile.at.x, pile.at.y);
+  view.root.scale.set(k);
   const layers = pile.count >= D.envelopeLayers ? D.envelopeLayers : Math.max(1, pile.count);
   const key = `${pile.color}|${layers}`;
   if (view.key !== key) {
@@ -556,8 +578,9 @@ function layoutCargo(view: FerryView): void {
   view.cargo.x = left + A.cargoIconWidth + A.cargoIconGap;
 }
 
-function updateFerry(view: FerryView, ferry: FerrySprite, motion: Motion): void {
+function updateFerry(view: FerryView, ferry: FerrySprite, motion: Motion, k: number): void {
   view.root.position.set(ferry.at.x, ferry.at.y);
+  view.root.scale.set(k);
   if (view.selected !== ferry.selected) {
     view.selected = ferry.selected;
     view.ring.clear();
@@ -624,6 +647,19 @@ function syncViews<K, V, T>(
       views.delete(key);
     }
   }
+}
+
+// 当たり判定（hitTest）の半径は MAP_STYLE の px なので、絵の拡大率 k で拡大した絵に合わせるため、
+// 島と船の位置とクリックの位置を k で割って判定する（距離が 1/k になり、半径を k 倍したのと同じ）。
+function hitScene(scene: MapScene): MapScene {
+  const k = markScaleOf(scene);
+  if (k === 1) return scene;
+  const shrink = (p: Point): Point => ({ x: p.x / k, y: p.y / k });
+  return {
+    ...scene,
+    islands: scene.islands.map((i) => ({ ...i, at: shrink(i.at) })),
+    ferries: scene.ferries.map((f) => ({ ...f, at: shrink(f.at) })),
+  };
 }
 
 export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHandle> {
@@ -695,13 +731,14 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     shown = smoothSimTime(shown, estimateSimTime(world.clock, now));
     const scene = buildMapScene(world, selection, shown, size);
     lastScene = scene;
+    const k = markScaleOf(scene);
     syncViews(
       routeViews,
       scene.routes,
       (r) => r.id,
       () => createRoute(layers),
       (v, r) => {
-        updateRoute(v, r);
+        updateRoute(v, r, k);
         animateRoute(v, motion);
       },
       destroyRoute,
@@ -711,7 +748,9 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       scene.islands,
       (i) => i.id,
       () => createIsland(layers),
-      updateIsland,
+      (v, i) => {
+        updateIsland(v, i, k);
+      },
       (v) => v.root.destroy({ children: true }),
     );
     syncViews(
@@ -719,7 +758,9 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       scene.piles,
       (p) => `${p.islandId}:${p.to}`,
       () => createPile(layers),
-      updatePile,
+      (v, p) => {
+        updatePile(v, p, k);
+      },
       (v) => v.root.destroy({ children: true }),
     );
     syncViews(
@@ -727,7 +768,9 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       scene.ferries,
       (f) => f.id,
       (id) => createFerry(layers, id),
-      (v, f) => updateFerry(v, f, motion),
+      (v, f) => {
+        updateFerry(v, f, motion, k);
+      },
       (v) => v.root.destroy({ children: true }),
     );
     effects.update(world, scene, now, shown);
@@ -738,9 +781,9 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     const rect = app.canvas.getBoundingClientRect();
     const sx = rect.width > 0 ? app.screen.width / rect.width : 1;
     const sy = rect.height > 0 ? app.screen.height / rect.height : 1;
-    const hit = hitTest(lastScene, {
-      x: (event.clientX - rect.left) * sx,
-      y: (event.clientY - rect.top) * sy,
+    const hit = hitTest(hitScene(lastScene), {
+      x: ((event.clientX - rect.left) * sx) / markScaleOf(lastScene),
+      y: ((event.clientY - rect.top) * sy) / markScaleOf(lastScene),
     });
     if (hit === null) return;
     const state = deps.store.getState();
@@ -750,6 +793,16 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
 
   app.ticker.add(tick);
   app.canvas.addEventListener("pointerdown", onPointerDown);
+  // resizeTo は window の resize しか見ないので、マップの領域だけが変わったとき（パネルの中身が増えて
+  // マップの行が縮んだときなど）も、次のフレームで canvas の大きさを合わせる（T-426）。
+  // 大きさが変わると、次の tick で構図（buildMapScene の layoutMap）と海が作り直される。
+  const resizeObserver =
+    typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => {
+          app.queueResize();
+        });
+  resizeObserver?.observe(host);
 
   let destroyed = false;
   return {
@@ -757,6 +810,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       if (destroyed) return;
       destroyed = true;
       app.canvas.removeEventListener("pointerdown", onPointerDown);
+      resizeObserver?.disconnect();
       app.ticker.remove(tick);
       motionQuery?.removeEventListener?.("change", onMotionChange);
       routeViews.clear();

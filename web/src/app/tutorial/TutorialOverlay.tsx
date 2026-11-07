@@ -281,7 +281,7 @@ export function TutorialOverlay({ stageId }: { stageId: string }): ReactElement 
             <button type="button" className="btn btn-primary" onClick={onPrimary}>
               {step.advance === "click" ? "次へ" : "わかった"}
             </button>
-            <button type="button" className="btn" onClick={onFinish}>
+            <button type="button" className="btn btn-quiet" onClick={onFinish}>
               チュートリアルを終える
             </button>
           </div>
@@ -305,7 +305,7 @@ export function TutorialOverlay({ stageId }: { stageId: string }): ReactElement 
             <button type="button" className="btn btn-primary" onClick={onExpand}>
               開く
             </button>
-            <button type="button" className="btn" onClick={onFinish}>
+            <button type="button" className="btn btn-quiet" onClick={onFinish}>
               チュートリアルを終える
             </button>
           </div>
