@@ -359,6 +359,7 @@ raft-game/
 │   │   ├── cluster/             # RawNode のラッパーと Ready ループ
 │   │   ├── ferry/               # 手紙・港・フェリー・航路
 │   │   ├── ledger/              # 台帳の状態機械
+│   │   ├── bot/                 # ボット船長（random・greedy。simcli とテストが使う）
 │   │   ├── game/                # 依頼・スコア・イベント
 │   │   ├── stage/               # ステージと島データの読み込み
 │   │   ├── protocol/            # WS の電文の型（tygo で TS を生成）
