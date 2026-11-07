@@ -159,6 +159,12 @@ type Session struct {
 	Seed     uint64 `json:"seed"`
 	Demo     bool   `json:"demo"`
 	Restored bool   `json:"restored"`
+	// StageHash はステージ定義のハッシュ（stage.Stage.Hash。"sha256:…"）。DO が保存して入力ログの stageHash に入れる。
+	// Go は常に送る（JSON は omitempty にしない）。yaml のタグは tygo に TS の型で省略可能（?）と書かせるためだけのもので、
+	// protocol を YAML にすることはない。既存の web の Session の例（web/src/net・state・protocol のテスト）を壊さないため（T-302）。
+	StageHash string `json:"stageHash" yaml:"stageHash,omitempty"`
+	// Build はコンテナのビルドの識別子（/healthz の build と同じ）。DO が保存して入力ログの build に入れる。
+	Build string `json:"build" yaml:"build,omitempty"`
 }
 
 // StageView は Snapshot の stage（§5.1）。
