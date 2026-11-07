@@ -1,0 +1,60 @@
+/* デモ操作のキーの一覧（T-411・ゲームデザイン §7.6）。発表者のための小さな一覧で、マウスでは押さない。
+   エンジニアパネルの切り替え（右下）・お知らせ（マップの右上）と重ならないよう、左下の隅に重ねる。
+   背景は #111827（不透明度 0.92）、文字は白と #E5E7EB（コントラスト比 4.5:1 以上。NFR-10）。 */
+.demo-keys {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  box-sizing: border-box;
+  max-width: calc(100vw - 2rem);
+  padding: 0.4rem 0.6rem;
+  color: #ffffff;
+  background: rgb(17 24 39 / 0.92);
+  border: 1px solid #374151;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+
+.demo-keys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: #e5e7eb;
+}
+
+.demo-keys-list[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+.demo-keys kbd {
+  display: inline-block;
+  min-width: 1.2em;
+  padding: 0 0.3rem;
+  color: #ffffff;
+  background: #1f2937;
+  border: 1px solid #6b7280;
+  border-radius: 3px;
+  font: inherit;
+  font-weight: bold;
+  text-align: center;
+}
+
+.demo-keys-fast {
+  margin: 0.3rem 0 0;
+  color: #fde68a;
+  font-weight: bold;
+}
+
+.demo-keys-status {
+  margin: 0.3rem 0 0;
+  color: #fde68a;
+}
+
+.demo-keys-status:empty {
+  display: none;
+}
