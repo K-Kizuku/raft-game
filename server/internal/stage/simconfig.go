@@ -13,6 +13,7 @@ import (
 // st は変えない。返す値は st とスライスを共有しない（呼び出し側が書き換えてもよい）。
 // sim.Config で表せない値（raft.checkQuorum・raft.preVote が false）は *Error を返す。
 // イベント・スコアなど、sim.Config にまだ欄がない値は使わない（後のタスクが足す）。
+// demo.storm は DemoStorm に入れる（demo.endOnAllCriticalSecured と flavor は使わない）。
 // 依頼の重みは islands[].WeightPermille（データ仕様 §4.1 で計算済み）を使い、populationExponent は使わない。
 func SimConfig(st *Stage) (sim.Config, error) {
 	if st == nil {
@@ -79,6 +80,7 @@ func SimConfig(st *Stage) (sim.Config, error) {
 		Resources:     resources,
 		Requests:      requestConfig(st),
 		Score:         scoreConfig(st),
+		DemoStorm:     demoStorm(st),
 	}, nil
 }
 
