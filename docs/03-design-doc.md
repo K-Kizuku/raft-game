@@ -675,13 +675,16 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 
 ### 10.3 統計の定義
 
-| 指標 | 定義 |
+| 指標（`round.result` の `stats`） | 定義 |
 |---|---|
-| Leader の交代回数 | 開会式のあとに、新しい Term で Leader が誕生した回数 |
-| Commit Latency | 依頼が Leader に `Propose` されてから「共和国で確定」になるまでのゲーム内時間 |
-| 平均 Commit Latency | 確定した依頼の Commit Latency の平均 |
-| 最長の音信不通 | 各島について「手紙が 1 通も配達されなかった最長の時間」の最大値 |
-| 配った手紙の数 | 配達した手紙の数（種類別にも集計） |
+| 配った手紙の数（`lettersDelivered`） | `letter.delivered` の数を、その手紙の `letter.created` の `label` ごとに数える（`accepted` に関係ない。依頼書は `request`）。知らない `label` は `other`。0 の区分は出さない |
+| Leader の交代回数（`leaderChanges`） | 航行中に出た `node.leader_elected` の数。開会式の分（開会式のフェーズの間に出る）を数えない |
+| Commit Latency | 依頼ごとに、その依頼の最初の `ledger.applied`（`result` が `duplicate` でないもの。どの島でもよい。依頼が「共和国で確定」になった時刻）の時刻 − 役場がその依頼を最初に `Propose` した時刻。再送で 2 回 `Propose` しても、起点は最初の `Propose` |
+| 平均 Commit Latency（`avgCommitLatencyMs`） | 起点と終点の両方がある依頼（予約失敗を含む）の Commit Latency の平均を、整数の割り算（切り捨て）で。無ければ 0。`Propose` したが確定しない依頼は入れない |
+| 最長の音信不通（`longestSilenceMs`） | 島ごとに、航行の始め（0）・その島での各 `letter.delivered`・今の時刻（終わった後はラウンドの長さ）を順に並べた間隔の最大。全島の最大 |
+| 各島の最終ログ（`finalLogs`） | 各ノードのログ（index 1 から）の Term を `[term, 最初の index, 最後の index]` の帯にしたものと、ノードの `lastIndex`・`commit`。ノードの ID の順 |
+
+材料はイベント列（トレース）から決まる。イベントに無いのは Commit Latency の起点（役場が `Propose` した時刻）だけ。`Engine.TechStats()`・`Engine.StoryFacts()`（「今日の出来事」の材料。[ゲームデザイン §7.5](./04-game-design.md)）はどのフェーズでも呼べ、状態を変えない（イベント・トレースのハッシュ・入力ログ・`Result()` も変えない）。
 
 ---
 
