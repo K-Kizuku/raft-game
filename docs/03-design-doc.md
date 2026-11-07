@@ -156,17 +156,18 @@ func (e *Engine) TraceHash() [32]byte    // §10.2
 
 // 今の状態（再接続時などに送る全体の状態のうち Engine が持つ分）。状態を変えない。T-301 が protocol.Snapshot に変換する。
 func (e *Engine) Snapshot() Snapshot
-// 次に「プレイヤーに見せたい出来事」が起きる時刻。今は船の到着だけ（台本の出来事は T-204、依頼の発生は T-202 が足す）。
+// 次に「プレイヤーに見せたい出来事」が起きる時刻。船の到着と依頼の発生（台本の出来事は T-204 が足す）。
 func (e *Engine) NextNotableAt() (SimTime, bool)
 ```
 
 - `Phase` の `Intro` は `cmd.game.start` を待つ間（ステージ紹介）。この間の `RunUntil` は時刻を進めない（開会式はゲーム内時間を使わないため）
 - 開会式は `New` の中で計算し（決定的な計算なので結果は同じ）、そのイベント（`phase.changed`・`node.*`）は `cmd.game.start` を適用したときに出す。Leader が決まらないような設定の誤りは、`New` のエラーになる
 - `stage`（T-201）と `protocol`（T-301）ができるまでは、`sim` の中で定義した型（`Config`・`Command`・`Ack`・`DomainEvent`・`InputEntry`）で受け、返す。`stage.Stage` → `Config` の変換は T-201、`sim` の型 ⇔ `protocol` の型の変換は T-301 で作る
-- `Snapshot` の `letters` は港と船の上の手紙だけ（ID の昇順）。`nodes` は最後に出した `node.state` の値。`lastSeq` 以下のイベントを当てはめた状態と一致する
+- `Config` の `Requests`（`game.RequestConfig`）は依頼の設定（ステージ定義の `requests.*`）。ゼロ値は依頼なしで、そのときは依頼のイベントも乱数の消費もない（§8）
+- `Snapshot` の `letters` は港と船の上の手紙だけ（ID の昇順）。`requests` は発生済みの依頼（ID の順。最後に出した `request.*` の値。`Intro` では空）。`nodes` は最後に出した `node.state` の値。`lastSeq` 以下のイベントを当てはめた状態と一致する
 - `letter.stale` は、ノードの Term が上がったとき、そのノードが送信元で港と船にある Raft の手紙のうち、新しく古くなったものを ID の昇順に 1 回だけ出す。各ノードの出力の処理の中で、役割の変化の後・手紙の前に出す
 - `cmd.ferry.autoload` は `Apply` のコマンドで、ゲームデザイン §3.4 の順に空きを埋める。入力ログには `{ferryId, to}` だけが入る（リプレイでも同じ手紙が選ばれる）
-- `NextNotableAt` は `FerryReady` を含めない。30 秒の上限と一時停止はセッションループ（§12.4）が持つ
+- `NextNotableAt` は、航行中の船の到着（`DurationMs` 以下）と、まだ発生していない最初の依頼の時刻のうち小さい方。`FerryReady` を含めない。30 秒の上限と一時停止はセッションループ（§12.4）が持つ
 - 後のタスクで次を足す: `NodeDetail(id)`（エンジニアモード用）は T-407、`Result()`（終了後のみ）は T-203、`Replay`（入力ログを最初から適用し直して同じ状態のエンジンを作る）は T-304
 - Engine の誤り（`Process`・`PostRaft`・`Arrive`・`AdvanceTo`・`Push` のエラー、コードに対応しない `ferry` のエラー、台帳の結果の型の違い、テストモードの不変条件の違反）は panic する。正しく使えば起きない。セッションループ（T-303）が panic を回復し、そのセッションを `error`（`fatal`）で閉じる
 
@@ -482,16 +483,32 @@ func (l *Ledger) Apply(index uint64, data []byte) Result
 
 ## 8. 依頼の処理（アプリケーション層、`internal/game`）
 
+依頼の処理は 2 つのパッケージに分けます（T-202）。
+
+- `internal/game`: 状態を持たない純粋な型と関数だけ。役場の判断（`Decide`）、状態の判定（`Track.Status`）、ラウンドの依頼の計画（`PlanRequests`）。I/O・時刻・乱数の生成を持たず、乱数は `*rand.Rand` を引数で受けます
+- `internal/sim`（`request.go`）: Engine の中で状態を持つ部分。依頼の帳簿・発生・`route`・再送・転送・適用の観察・状態の更新とイベント。提案（`propose`）・スケジューラ・港・ノードを Engine が持つためです
+
+依存の向きは `stage` → `sim` → `game` → `ledger` で、逆向きはありません。`game` は `sim`・`cluster`・`ferry`・`stage`・`go.etcd.io/raft/v3` を import しません。
+
+### 8.0 依頼の発生
+
+ラウンドのすべての依頼は、`New` の中で `game.PlanRequests` が発生の前に決めます（台本とランダム。ランダムは [データ仕様 §4.2](./07-data-spec.md) の式と引く順序で、乱数は `Sub(seed, "requests")` の 1 本だけ）。発生の後には乱数を使いません。
+
+- 台本の依頼（書いた順）の後ろにランダムな依頼（引いた順）を並べ、発生の時刻で安定に並べ替えます。同じ時刻なら台本が先です
+- 並べた順に 1 から番号を振り、ID を `<stageId>-<連番4桁>` にします（ID の順 = 発生の順）
+- 期限は、重要な資源（`resources[].critical`）なら `createdAt + deadlineMs.critical`、そうでなければ `createdAt + deadlineMs.normal` です
+- `cmd.game.start` で、依頼の順に `RequestSpawn`（§4.2）を積みます。ラウンドの終わり（`durationMs`）ちょうどの依頼も、`GameTimer` より先に発生します
+
 ### 8.1 島ごとの「役場」
 
-各島には、住民の依頼を代表の島へ届ける「役場」があります（ゲーム側のロジックで、Raft の外にあります）。
+各島には、住民の依頼を代表の島へ届ける「役場」があります（ゲーム側のロジックで、Raft の外にあります）。役場が読むのは、そのノードの `Status()` の役割（`Role`）と知っている Leader（`Lead`）だけで、Leader や Commit を決めません。
 
 ```text
 route(req, island):
     node = island のノード
     if node.role == Leader:
         err = node.rn.Propose(command(req))
-        if err == nil:            req.status = 審議中（初回のみ）
+        if err == nil:            req.status = 審議中
         if err == ErrProposalDropped: 次の RaftTick で route をやり直す
     else if node.lead != 0 (Leader を知っている):
         依頼書を作る（From = island, To = node.lead）→ island の港へ（規則 R6）
@@ -500,11 +517,26 @@ route(req, island):
         req.status = 送付待ち（代表が分からない）→ 次の RaftTick で route をやり直す
 ```
 
-- **依頼の発生時**: 依頼元の島で `route(req, origin)`
-- **依頼書が島 X に届いたとき**: `route(req, X)`。X が Leader でなければ、X が知っている Leader へさらに転送する（X の港に新しい依頼書を作る）
-- **再送**: 依頼元の島で、最後に送ってから `retryMs`（25 秒）経っても依頼元の台帳に適用されていなければ、`route(req, origin)` をやり直す。同じ `reqId` なので、二重に適用されても台帳が `duplicate` として無視する
+役場の判断（`game.Decide`）は次の表のとおりです。
 
-> Leader が提案したあと Commit される前に交代すると、そのエントリは新しい Leader によって上書きされ、消えることがあります。この場合、依頼は再送によって救われます。これも Raft の実際の振る舞いとして、エンジニアモードで観察できます。
+| 役割 | 知っている Leader（`Lead`） | 判断 |
+|---|---|---|
+| Leader | （どれでも） | `Propose` する。`ErrProposalDropped`（Leader の移譲中など）なら待つ |
+| Leader でない | `0`（PreCandidate・Candidate・CheckQuorum で退いた直後など） | 待つ |
+| Leader でない | 自分（ふつうは起きない） | 待つ |
+| Leader でない | そのほか | `Lead` へ依頼書を書く |
+
+- **依頼の発生時**: 依頼元の島で `route(req, origin)`
+- **依頼書が島 X に届いたとき**: `route(req, X)`。X が Leader でなければ、X が知っている Leader へさらに転送する（X の港に新しい依頼書を作る）。今の依頼書でない（古い）依頼書が届いても同じです
+- **待ち**: 待つときは、依頼書を作らず、再送のタイマーも積みません。(依頼, 島) の組を 1 つだけ覚え、RaftTick の処理の最後（全ノードの `Tick()` の後）に、覚えた順に `route` をやり直します
+- **再送**: 依頼元の島で、最後に送ってから `retryMs`（25 秒）経っても依頼元の台帳に適用されていなければ、`route(req, origin)` をやり直す。同じ `reqId` なので、二重に適用されても台帳が `duplicate` として無視する
+  - 「送る」は、**依頼元の島での** `Propose` の成功と依頼書の作成だけです。転送した島の送り出しでは、タイマーを積み直しません。待ちが解けて送ったときに積みます
+  - 再送の条件は「依頼元の台帳に適用されていない」だけです。共和国で確定（`committed`）していても再送します
+  - 再送で同じ港に同じ依頼の依頼書ができると、規則 R6 で古い方が `letter.dropped{superseded}` になります
+- **`hops`**: 転送された回数です。依頼元が書く依頼書（発生・再送）は 0、島 X が転送する依頼書は「届いた依頼書の `hops` + 1」です
+- 依頼元の台帳に適用された依頼は、配達・再送・待ちのやり直しのどれでも何もしません
+
+> Leader が提案したあと Commit される前に交代すると、そのエントリは新しい Leader によって上書きされ、消えることがあります。この場合、依頼は再送によって救われます。役場はエントリが消えたことを判定しません。これも Raft の実際の振る舞いとして、エンジニアモードで観察できます。
 
 ### 8.2 依頼の状態の判定
 
@@ -519,6 +551,24 @@ route(req, island):
 | 共和国で確定 | いずれかのノードの台帳に、その `reqId` の最初のエントリが適用された（＝ Commit された） |
 | 確定 / 予約失敗 | 依頼元のノードの台帳に適用され、結果が `ok` / `rejected` |
 | 期限切れ | 期限を過ぎても「確定 / 予約失敗」になっていない（フラグとして重ねて表示。あとから確定もできる） |
+
+判定の材料（`game.Track`）は、最後の `route` の結果（まだ・待ち・依頼書・提案）、今の依頼書が船の上にあるか、いずれかの台帳に適用されたか、依頼元の台帳の結果です。Engine は台帳への適用（`ledger.applied`。`duplicate` は見ない）と手紙の場所を観察するだけです。判定は次の表の上の行ほど優先します（`Track.Status`）。
+
+| 条件 | 状態 |
+|---|---|
+| 依頼元の結果が `ok` | `succeeded`（確定） |
+| 依頼元の結果がそのほか | `rejected`（予約失敗） |
+| いずれかの台帳に適用された | `committed`（共和国で確定） |
+| 最後の `route` が提案 | `proposed`（審議中） |
+| 最後の `route` が依頼書で、今の依頼書が船の上 | `in_transit`（輸送中） |
+| 最後の `route` が依頼書（港）か待ち | `waiting`（送付待ち） |
+| まだ `route` していない | `received`（受付） |
+
+- 「今の依頼書」は、その依頼について最後に作った依頼書です。船の上の古い依頼書と港の新しい依頼書が両方あるときも、今の依頼書の場所で `waiting`・`in_transit` を決めます
+- 一度 `committed` になった依頼は、再送や転送の結果が変わっても前に戻りません。`succeeded`・`rejected` は最後の状態です。「審議中 → 送付待ち」は、再送で依頼書を書いたときに起きます
+- 状態の変化は、ステップ（成功した `Apply`・スケジューラのイベント 1 つ）の後処理で、依頼の ID の順に `request.updated` にまとめて出します（同じステップの中の変化は 1 回）。依頼元より先にほかの島で適用され、同じステップで依頼元でも適用されたときは、`committed` を出さずに最後の状態だけを出します
+- 受付は `request.created`（`status: "received"`）でだけ見えます。発生の直後に同じステップで `route` するので、同じ時刻に `request.updated`（審議中・送付待ちなど）が続きます
+- 期限切れのフラグ（`expired`）の判定は T-203 です。今は常に `false` です
 
 スコアは「確定」になった時点で入ります（[ADR-0015](./adr/0015-request-success-judged-at-origin-apply.md)）。
 

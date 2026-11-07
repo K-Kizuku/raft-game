@@ -10,6 +10,7 @@ import (
 
 	"github.com/K-Kizuku/raft-game/server/internal/cluster"
 	"github.com/K-Kizuku/raft-game/server/internal/ferry"
+	"github.com/K-Kizuku/raft-game/server/internal/game"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 )
 
@@ -34,6 +35,7 @@ type Config struct {
 	PortCap       int                  // transport.portCap
 	PerLinkAppCap int                  // transport.perLinkAppCap
 	Resources     []ledger.ResourceDef // 台帳の資源（各ノードに同じ定義で 1 つずつ作る）
+	Requests      game.RequestConfig   // 依頼（requests.*）。ゼロ値は依頼なし
 }
 
 // Options はゲームの結果に影響しない動作の切り替え。
@@ -53,10 +55,12 @@ const (
 
 // スケジューラのイベントの種類。
 const (
-	kindRaftTick    EventKind = iota + 1 // ClassRaftTick。Data なし
-	kindFerryArrive                      // ClassFerryArrive。Data は ferry.FerryID
-	kindFerryReady                       // ClassFerryReady。Data は ferry.FerryID
-	kindRoundEnd                         // ClassGameTimer。Data なし
+	kindRaftTick     EventKind = iota + 1 // ClassRaftTick。Data なし
+	kindFerryArrive                       // ClassFerryArrive。Data は ferry.FerryID
+	kindFerryReady                        // ClassFerryReady。Data は ferry.FerryID
+	kindRoundEnd                          // ClassGameTimer。Data なし
+	kindRequestSpawn                      // ClassRequestSpawn。Data は int（帳簿の添字）
+	kindRequestRetry                      // ClassRequestRetry。Data は retryTimer
 )
 
 // nodeView は node.state に出す値（最後に出した値と比べる）。
@@ -81,6 +85,7 @@ type Engine struct {
 	nodes   []*cluster.Node  // 添字 = ID - 1
 	ledgers []*ledger.Ledger // 添字 = ID - 1
 	tr      *ferry.Transport
+	reqs    requestBook // 依頼の帳簿（request.go）
 
 	phase   Phase
 	opening cluster.OpeningResult
@@ -164,6 +169,12 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		return nil, fmt.Errorf("sim: %w", err)
 	}
 	e.tr = tr
+	e.cfg.Requests = cfg.Requests.Clone()
+	plan, err := game.PlanRequests(e.cfg.Requests, cfg.Islands, int64(cfg.DurationMs), e.cfg.Resources, Sub(seed, StreamRequests))
+	if err != nil {
+		return nil, fmt.Errorf("sim: requests: %w", err)
+	}
+	e.reqs = newRequestBook(plan, e.cfg.Requests.RetryMs)
 	res, err := cluster.Opening(e.nodes, cfg.InitialLeader)
 	if err != nil {
 		return nil, fmt.Errorf("sim: %w", err)
@@ -219,6 +230,7 @@ func (e *Engine) start() {
 	e.emit(PhaseChanged{Phase: PhaseSailing})
 	e.push(e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
 	e.push(e.cfg.DurationMs, ClassGameTimer, kindRoundEnd, nil)
+	e.scheduleRequests()
 }
 
 // applyFerry は cmd.ferry.* を適用し、成功したらイベントを出す。失敗したら何も変えずに ferry のエラーを返す。
@@ -341,6 +353,7 @@ func (e *Engine) handleEvent(ev Event) {
 			n.Tick()
 		}
 		e.push(e.Now()+e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
+		e.retryWaits()
 	case kindFerryArrive:
 		e.arrive(ev.Data.(ferry.FerryID))
 	case kindFerryReady:
@@ -349,6 +362,10 @@ func (e *Engine) handleEvent(ev Event) {
 	case kindRoundEnd:
 		e.phase = PhaseEnded
 		e.emit(PhaseChanged{Phase: PhaseEnded})
+	case kindRequestSpawn:
+		e.spawnRequest(ev.Data.(int))
+	case kindRequestRetry:
+		e.retryRequest(ev.Data.(retryTimer))
 	default:
 		panic(fmt.Sprintf("sim: unknown event kind %d", ev.Kind))
 	}
@@ -369,8 +386,9 @@ func (e *Engine) arrive(id ferry.FerryID) {
 			panic(fmt.Sprintf("sim: delivered letter %d not found", lid))
 		}
 		if l.Kind != ferry.LetterRaft {
-			// 依頼書。役場に渡すのは T-202。
+			// 依頼書。届いた島の役場に渡す（request.go）。
 			e.emit(LetterDelivered{LetterID: uint64(lid), IslandID: l.To, Accepted: true})
+			e.deliverRequest(l)
 			continue
 		}
 		node := e.nodes[l.To-1]
@@ -419,6 +437,7 @@ func (e *Engine) afterStep() {
 			LastIndex: v.lastIndex,
 		})
 	}
+	e.refreshRequests()
 	// 配達・破棄した手紙のイベントを作り終えたので、ここで手放す（#103）。
 	e.tr.Reclaim()
 	if e.opt.CheckInvariants {
@@ -450,6 +469,7 @@ func (e *Engine) handleOutput(id uint64, out cluster.Output) {
 	for _, a := range out.Applied {
 		r := ledgerResult(a.Result)
 		e.emit(LedgerApplied{IslandID: id, Index: a.Index, ReqID: r.ReqID, Result: r.Status, Reason: r.Reason})
+		e.observeApplied(id, r)
 	}
 }
 
