@@ -27,7 +27,7 @@ func (s *session) buildSnapshot() protocol.Snapshot {
 	p.Clock.Speed = c.Speed
 	p.Clock.Paused = c.Paused
 	p.Clock.AllowedSpeeds = allowedSpeeds(s.allowed)
-	p.Stage = stageView(s.st)
+	p.Stage = stageView(s.st, s.islands)
 	p.Score = protocol.Score{
 		Total:           0,
 		Successes:       0,
@@ -46,24 +46,33 @@ func allowedSpeeds(permille []int64) []float64 {
 	return out
 }
 
-// stageView は snapshot の stage を作る。stage.Stage が持たない値（municipality・population の asOf・
-// provenance・note・source）は空の文字列（T-302 の対象外）。
-func stageView(st *stage.Stage) protocol.StageView {
+// stageView は snapshot の stage を作る。municipality・population の asOf・provenance・note・source は
+// islands（islands.json の表示用の値。T-201b）から埋める。len(islands) != len(st.Islands) なら空の文字列。
+func stageView(st *stage.Stage, islands []stage.IslandDisplay) protocol.StageView {
 	v := protocol.StageView{
 		Title:     st.Title,
 		Islands:   make([]protocol.Island, len(st.Islands)),
 		Routes:    make([]protocol.Route, len(st.Routes)),
 		Resources: make([]protocol.Resource, len(st.Resources)),
 	}
+	withDisplay := len(islands) == len(st.Islands)
 	for i, is := range st.Islands {
-		v.Islands[i] = protocol.Island{
-			ID:           is.NodeID,
-			Name:         is.Name,
-			Municipality: "",
-			Layout:       protocol.IslandLayout{X: int(is.X), Y: int(is.Y)},
-			Population:   protocol.Population{Value: int(is.Population)},
-			Color:        is.Color,
+		isl := protocol.Island{
+			ID:         is.NodeID,
+			Name:       is.Name,
+			Layout:     protocol.IslandLayout{X: int(is.X), Y: int(is.Y)},
+			Population: protocol.Population{Value: int(is.Population)},
+			Color:      is.Color,
 		}
+		if withDisplay {
+			d := islands[i]
+			isl.Municipality = d.MunicipalityLabel()
+			isl.Population.AsOf = d.Population.AsOf
+			isl.Population.Provenance = protocol.Provenance(d.Population.Provenance)
+			isl.Population.Note = d.Population.Note
+			isl.Population.Source = d.Population.Source
+		}
+		v.Islands[i] = isl
 	}
 	for i, r := range st.Routes {
 		v.Routes[i] = protocol.Route{

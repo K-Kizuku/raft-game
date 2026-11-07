@@ -216,6 +216,7 @@ func (h *singleHost) open(p protocol.InternalInitPayload, restore *protocol.Inte
 	params := srv.sessionParams()
 	params.id = p.SessionID
 	params.st = st
+	params.islands, _ = srv.cat.islands(st.ID)
 	params.seed = p.Seed
 	params.demo = p.Demo
 	params.restored = restore != nil

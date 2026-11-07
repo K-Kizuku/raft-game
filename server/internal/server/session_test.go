@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -229,7 +231,7 @@ func TestBuildSnapshotStage(t *testing.T) {
 		Resources:            []stage.Resource{{ID: "stall:a", Kind: stage.ResourceStall, Label: "屋台", Capacity: 1}},
 		SpeedAllowedPermille: []int64{500, 1000, 2000, 4000},
 	}
-	v := stageView(st)
+	v := stageView(st, nil) // 表示用の値がない（長さが合わない）ときは空の文字列
 	if got := mustJSON(t, v.Routes); got !=
 		`[{"id":"1-3","a":3,"b":1,"travelMs":1000,"provenance":"fact"},{"id":"1-2","a":1,"b":2,"travelMs":2000,"provenance":"creative"}]` {
 		t.Errorf("routes = %s", got)
@@ -269,4 +271,87 @@ func TestBuildSnapshotStage(t *testing.T) {
 		t.Errorf("result = %+v", r)
 	}
 	assertNoNullArrays(t, []byte(mustJSON(t, r)))
+}
+
+// wantSnapshotIsland0 は testdata の alpha の島 1（hama-hoshizuna）の snapshot の値（SV-1）。
+const wantSnapshotIsland0 = `{"id":1,"name":"星砂島","municipality":"星砂町・月影町","layout":{"x":600,"y":200},` +
+	`"population":{"value":19134,"asOf":"令和8年4月1日","provenance":"derived","note":"星砂町 12,345 人と月影町 6,789 人の合計","source":"fixture-2026"},` +
+	`"color":"#E07A5F"}`
+
+// assertSnapshotIslands は、testdata の alpha の snapshot の payload の stage.islands[] が
+// islands.json の表示用の値になっていることを JSON で確かめる（SV-1・SV-3）。
+func assertSnapshotIslands(t *testing.T, payload []byte) {
+	t.Helper()
+	var raw struct {
+		Stage struct {
+			Islands []json.RawMessage `json:"islands"`
+		} `json:"stage"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Stage.Islands) != 3 {
+		t.Fatalf("stage.islands = %s", payload)
+	}
+	var got bytes.Buffer
+	if err := json.Compact(&got, raw.Stage.Islands[0]); err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != wantSnapshotIsland0 {
+		t.Errorf("stage.islands[0] = %s\nwant %s", got.String(), wantSnapshotIsland0)
+	}
+	var is1 struct {
+		Municipality string                     `json:"municipality"`
+		Population   map[string]json.RawMessage `json:"population"`
+	}
+	if err := json.Unmarshal(raw.Stage.Islands[1], &is1); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := is1.Population["note"]; has {
+		t.Errorf("stage.islands[1].population に note がある: %s", raw.Stage.Islands[1])
+	}
+	if is1.Municipality != "月影町" || string(is1.Population["asOf"]) != `"令和8年4月1日"` ||
+		string(is1.Population["provenance"]) != `"fact"` || string(is1.Population["source"]) != `"fixture-2026"` {
+		t.Errorf("stage.islands[1] = %s", raw.Stage.Islands[1])
+	}
+}
+
+// SV-1: Catalog の表示用の値で作ったセッションの snapshot。長さが合わない表示用の値は空の文字列で送る。
+func TestBuildSnapshotIslandDisplay(t *testing.T) {
+	t.Parallel()
+	cat := testCatalog(t)
+	alpha, _ := cat.Lookup("alpha")
+	islands, ok := cat.islands("alpha")
+	if !ok || len(islands) != 3 {
+		t.Fatalf("islands(alpha) = %v, %v", islands, ok)
+	}
+	if _, ok := cat.islands("x"); ok {
+		t.Error("islands(x) found")
+	}
+	// 返すたびに複製する。
+	islands[0].Municipalities[0] = "変更"
+	islands[0].Plan.Texts[0].Text = "変更"
+	again, _ := cat.islands("alpha")
+	if again[0].Municipalities[0] != "星砂町" || again[0].Plan.Texts[0].Text == "変更" {
+		t.Errorf("islands(alpha) shares the values: %+v", again[0])
+	}
+
+	cfg, err := stage.SimConfig(alpha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := sim.New(cfg, 1, sim.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := sessionParams{id: "s_x", st: alpha, islands: again, seed: 1, mode: ModeStandalone, build: "b", engine: e,
+		log: discardLogger(), now: time.Now}
+	s := newSession(t.Context(), p) // run を始めないので、このテストの goroutine が Engine に触れてよい
+	assertSnapshotIslands(t, []byte(mustJSON(t, s.buildSnapshot())))
+
+	v := stageView(alpha, again[:2])
+	if got := mustJSON(t, v.Islands[0].Population); v.Islands[0].Municipality != "" ||
+		got != `{"value":19134,"asOf":"","provenance":"","source":""}` {
+		t.Errorf("islands[0] = %+v %s", v.Islands[0], got)
+	}
 }
