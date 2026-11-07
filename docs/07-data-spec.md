@@ -721,7 +721,7 @@ ferries:
 
 ### 5.6 読み込み（`internal/stage`）
 
-`server/internal/stage` は、ETL が作った `islands.json`（§3.1）とステージ定義（§5.2〜§5.5）を読んで検証し、整数だけで表した `Stage` を返します（T-201）。浮動小数点・実時間・乱数・goroutine を使わず、map の走査で出力やエラーの順序を決めません（`sim` と同じ規則。[DesignDoc §9.2](./03-design-doc.md)）。`sim` などリポジトリのほかのパッケージは import しません。
+`server/internal/stage` は、ETL が作った `islands.json`（§3.1）とステージ定義（§5.2〜§5.5）を読んで検証し、整数だけで表した `Stage` を返します（T-201）。浮動小数点・実時間・乱数・goroutine を使わず、map の走査で出力やエラーの順序を決めません（`sim` と同じ規則。[DesignDoc §9.2](./03-design-doc.md)）。`sim.Config` への変換（`simconfig.go` の `SimConfig`）だけが `sim`・`ferry`・`ledger` を import します。ほかのファイルは、リポジトリのほかのパッケージを import しません。`sim` などは `stage` を import しません。
 
 | 関数 | 役割 |
 |---|---|
@@ -729,6 +729,7 @@ ferries:
 | `Parse(name, data, islands)` | 1 つのステージ定義を読んで検証し（§5.4）、重み（§4.1）・警告・ハッシュを計算する。I/O をしない純粋な関数 |
 | `LoadDir(fsys, islandsPath, stagesDir)` | `io/fs.FS` から `islands.json` とディレクトリの直下の `*.yaml` を読み、ファイルをまたぐ検査（§5.4）をする。ステージはファイルの名前の順。呼び出し側が `os.DirFS` か `embed.FS` を渡す |
 | `Weights(values)` | 整数の最大剰余法で、合計 1000 の千分率の重みを計算する（§4.1） |
+| `SimConfig(st)` | 検証済みの `Stage` から `sim.New` に渡す `sim.Config` を作る。`raft.checkQuorum`・`raft.preVote` が `false` なら誤り（`cluster` は常に `true`。ADR-0007）。`relayCap`（P1）・依頼（T-202 が足す）・イベント・スコアなどは使わない |
 
 エラーは、ファイルごとの `*stage.Error`（ファイル名と、`Path`・説明の一覧）です。`LoadDir` は複数のファイルのエラーを `errors.Join` でまとめて返します。
 
@@ -750,7 +751,7 @@ stageHash = "sha256:" + hex( SHA-256( SHA-256(ステージの YAML のバイト�
 #### 後のタスクで扱うこと
 
 - `go:embed` での取り込みと `make sync-data`（`data/` を `server/internal/stage/embedded/` にコピーする）は、サーバー（T-302）と Dockerfile（T-306）で扱います。`embedded/` は `.gitignore` に入っていて CI では作らないので、`internal/stage` には `//go:embed` を書きません
-- `Stage` から `sim.Config` への変換は、T-106 のマージの後の別のタスクで作ります
+- 依頼の設定の変換は T-202 が `SimConfig` に足します
 
 ---
 
