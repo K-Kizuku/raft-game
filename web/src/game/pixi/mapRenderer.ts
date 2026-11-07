@@ -12,6 +12,7 @@ import { buildMapScene } from "../model/scene.ts";
 import type { FerrySprite, IslandNode, LetterPile, MapScene, RouteLine } from "../model/scene.ts";
 import { MAP_STYLE } from "../model/style.ts";
 import { smoothSimTime } from "../model/time.ts";
+import { createLetterEffectsLayer } from "./letterEffects.ts";
 
 export type MapDeps = Readonly<{ store: GameStore; now: () => number }>; // now は performance.now
 export type MapHandle = Readonly<{ destroy(): void }>;
@@ -317,7 +318,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   host.appendChild(app.canvas);
 
   // 下から sea・routes・storms・islands・piles・ferries・effects。海は背景の色で描く。
-  // effects は空のまま置く（T-410 が手紙の処分のアニメーションに使う）。
+  // effects は手紙の処分・差し替えのアニメーション（T-410、./letterEffects.ts）を描く。
   const layers: Layers = {
     sea: new Container(),
     routes: new Container(),
@@ -336,6 +337,8 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     layers.ferries,
     layers.effects,
   );
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  const effects = createLetterEffectsLayer(layers.effects, { reducedMotion });
 
   const routeViews = new Map<string, RouteView>();
   const islandViews = new Map<number, IslandView>();
@@ -385,6 +388,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       updateFerry,
       (v) => v.root.destroy({ children: true }),
     );
+    effects.update(world, scene, deps.now(), shown);
   };
 
   const onPointerDown = (event: PointerEvent): void => {
@@ -416,6 +420,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       islandViews.clear();
       pileViews.clear();
       ferryViews.clear();
+      effects.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };
