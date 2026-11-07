@@ -1,6 +1,6 @@
 // ゲーム画面のスロット「お知らせ」（T-406・ゲームデザイン §7.3）。サーバーの notice を、
 // 島の郵便局長のセリフとして出す。GameScreen の「お知らせ」の領域（aria-live）の中に描かれるので、
-// ここでは aria-live を足さない。郵便局長の名前と絵がプロトコルに届くまでは「〇〇島の郵便局長」と島の色の丸。
+// ここでは aria-live を足さない。絵が届くまでは（T-414）島の色の丸に頭文字。
 import { useMemo } from "react";
 import type { ReactElement } from "react";
 
@@ -8,7 +8,7 @@ import { useGameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { useShowRaftTerms } from "../terms/preference.ts";
 import { tokens } from "../theme/tokens.ts";
-import { islandName, noticeText } from "./noticeText.ts";
+import { noticeText, speakerName } from "./noticeText.ts";
 import { useSimNow } from "./useSimNow.ts";
 import "./Notifications.css";
 
@@ -64,13 +64,12 @@ function visibleLines(world: World, simNow: number | null, show: boolean): Line[
     if (simNow !== null && !(notice.t > simNow - NOTICE_VISIBLE_MS)) continue;
     const text = noticeText(notice, world, show);
     if (text === null) continue;
-    const name = islandName(world, notice.islandId);
     const island = Object.hasOwn(world.stage.islands, notice.islandId)
       ? world.stage.islands[notice.islandId]
       : undefined;
     lines.push({
       seq: notice.seq,
-      speaker: `${name}の郵便局長`,
+      speaker: speakerName(world, notice.islandId),
       initial: island === undefined ? "?" : (Array.from(island.name)[0] ?? "?"),
       color: island?.color ?? FALLBACK_COLOR,
       text,

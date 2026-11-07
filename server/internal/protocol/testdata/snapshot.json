@@ -9,7 +9,7 @@
     "islands": [
       { "id": 1, "name": "福江島", "municipality": "五島市", "layout": { "x": 620, "y": 180 },
         "population": { "value": 31945, "asOf": "令和8年4月1日", "provenance": "fact", "source": "mlit-ritou-2026" },
-        "color": "#E07A5F" },
+        "color": "#E07A5F", "postmaster": { "name": "あさなぎ局長", "tone": "polite" } },
       { "id": 2, "name": "小豆島", "municipality": "小豆島町・土庄町", "layout": { "x": 300, "y": 420 },
         "population": { "value": 25881, "asOf": "令和8年4月1日", "provenance": "derived", "note": "小豆島町 13,870 人と土庄町 12,011 人の合計", "source": "mlit-ritou-2026" },
         "color": "#3D405B" }

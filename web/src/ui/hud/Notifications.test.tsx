@@ -6,7 +6,7 @@ import type { ServerEvent, Snapshot } from "../../protocol/index.ts";
 import { gameStore } from "../../state/index.ts";
 import { setShowRaftTerms } from "../terms/preference.ts";
 import { Notifications } from "./Notifications.tsx";
-import { ISLAND_COLORS, makeRequest, makeSnapshot } from "./testing/world.ts";
+import { ISLAND_COLORS, island, makeRequest, makeSnapshot } from "./testing/world.ts";
 
 let nowMs = 1000;
 
@@ -142,6 +142,28 @@ describe("Notifications", () => {
     load([notice(1, 28000, 1, "future.key")]);
     const view = render(<Notifications />);
     expect(view.container.innerHTML).toBe("");
+  });
+
+  it("NO-P1 郵便局長のある島は「〇〇島の{名前}」と口調のセリフ、ほかの島は今のまま", () => {
+    const base = makeSnapshot();
+    const islands = base.stage.islands.map((i) =>
+      i.id === 2
+        ? island(i.id, i.name, i.color, i.layout.x, i.layout.y, {
+            name: "テスト局長",
+            tone: "polite",
+          })
+        : i,
+    );
+    load([notice(1, 27000, 1, "island.silent"), notice(2, 28000, 2, "island.silent")], {
+      ...base,
+      stage: { ...base.stage, islands },
+    });
+    render(<Notifications />);
+    expect(items()).toEqual([
+      { speaker: "二の島のテスト局長", text: "「最近、だれからも手紙が来ません…」" },
+      { speaker: "一の島の郵便局長", text: "「最近、だれからも手紙が来ないなあ…」" },
+    ]);
+    expect(document.querySelector(".notices > li .notice-face")?.textContent).toBe("二");
   });
 });
 

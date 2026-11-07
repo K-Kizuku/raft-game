@@ -71,6 +71,9 @@ func stageView(st *stage.Stage, islands []stage.IslandDisplay) protocol.StageVie
 			isl.Population.Note = d.Population.Note
 			isl.Population.Source = d.Population.Source
 		}
+		if pm := is.Postmaster; pm != nil {
+			isl.Postmaster = &protocol.Postmaster{Name: pm.Name, Tone: pm.Tone, Portrait: pm.Portrait}
+		}
 		v.Islands[i] = isl
 	}
 	for i, r := range st.Routes {

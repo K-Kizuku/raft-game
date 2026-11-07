@@ -336,6 +336,7 @@ func (c *checker) stage(r *rawStage) *Stage {
 	}
 
 	c.checkIslands(st, r.Islands)
+	c.checkPostmasters(st, r.Islands)
 	c.checkRoutes(st, r.Routes)
 	c.checkFerries(st, r.Ferries)
 	c.checkRaft(st, r.Raft)

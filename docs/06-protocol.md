@@ -429,7 +429,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
     "islands": [
       { "id": 1, "name": "福江島", "municipality": "五島市", "layout": {"x": 620, "y": 180},
         "population": { "value": 31945, "asOf": "令和8年4月1日", "provenance": "fact", "source": "mlit-ritou-2026" },
-        "color": "#E07A5F" }
+        "color": "#E07A5F", "postmaster": { "name": "あさなぎ局長", "tone": "polite" } }
     ],
     "routes": [ { "id": "1-2", "a": 1, "b": 2, "travelMs": 4000, "provenance": "creative" } ],
     "resources": [ { "id": "firework:a", "kind": "firework", "label": "大花火 A", "critical": true } ]
@@ -449,7 +449,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 }
 ```
 
-`stage.islands[]` の `name`・`municipality`・`population` は `data/islands.json` の値（データ仕様 §3.1）。`municipality` は `municipalities` を `・` でつないだもの（`小豆島町・土庄町`）。`population.note` は自治体が 2 つ以上の島だけ（T-201b）。
+`stage.islands[]` の `name`・`municipality`・`population` は `data/islands.json` の値（データ仕様 §3.1）。`municipality` は `municipalities` を `・` でつないだもの（`小豆島町・土庄町`）。`population.note` は自治体が 2 つ以上の島だけ（T-201b）。`postmaster` は島の郵便局長（ゲームデザイン §7.3、データ仕様 §5.4 の `islands[].postmaster`）で、ステージに書いた島だけに入ります（書いていなければキーを出さない。T-406c）。`name`・`tone`（`casual`・`polite`・`elder`。知らない値はクライアントが `casual` として扱う）と、絵のファイル名 `portrait`（書いたときだけ）を載せます。`provenance`・`source` は載せません。後方互換なフィールドの追加です（§8）。古いクライアントは無視し、新しいクライアントは無ければ「〇〇島の郵便局長」と `casual` の言い回しにします。
 
 `phase` の値: `intro`（`cmd.game.start` の前。ステージ紹介）/ `opening` / `sailing` / `ended`
 

@@ -465,12 +465,19 @@ islands:                        # 並び順が Raft のノード ID（1, 2, 3…
   - ref: kagawa-shodoshima
     layout: { x: 680, y: 260 }  # creative（マップ上の配置）
     color: "#E07A5F"
+    postmaster:                 # 任意。島の郵便局長（ゲームデザイン §7.3。§5.4）
+      name: オリーブ局長
+      tone: casual              # casual・polite・elder
+      provenance: derived       # 名前は計画書の記述にちなむ
+      source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: LOCAL_INDUSTRY_TOURISM, quote: "オリーブ製品" }
   - ref: kagawa-teshima
     layout: { x: 430, y: 300 }
     color: "#3D85C6"
+    postmaster: { name: しおさい局長, tone: polite, provenance: creative }
   - ref: kagawa-naoshima
     layout: { x: 200, y: 330 }
     color: "#81B29A"
+    postmaster: { name: うみかぜ局長, tone: elder, provenance: creative }
 
 routes:
   - a: kagawa-shodoshima
@@ -640,6 +647,12 @@ demo:
 | `islands[].ref` | 文字列 | 必須 | `islands.json` にある。重複なし（2 つ目の添字） |
 | `islands[].layout` | `{x, y}` | 必須 | `x`・`y` は整数で必須 |
 | `islands[].color` | 文字列 | 必須 | `^#[0-9A-Fa-f]{6}$` |
+| `islands[].postmaster` | マッピング | 任意 | 書かなければ、通知の話し手は「〇〇島の郵便局長」で口調は `casual`（T-406c） |
+| `islands[].postmaster.name` | 文字列 | 必須 | 前後の空白を除いて空でない。16 文字（Unicode のコードポイント）以下 |
+| `islands[].postmaster.tone` | 文字列 | 必須 | `casual`・`polite`・`elder` のどれか |
+| `islands[].postmaster.portrait` | 文字列 | 任意 | `^[a-z0-9][a-z0-9-]*\.(png\|webp)$`（`web/public/assets/generated/postmasters/` の下のファイル名。ファイルがあるかは確かめない） |
+| `islands[].postmaster.provenance` | 文字列 | 必須 | `derived` か `creative`（`fact` は「derived か creative にする」のエラー。キャラクターは実在しないため） |
+| `islands[].postmaster.source` | Source | 任意 | `provenance` が `derived` なら必須（共通の型の Source と同じ検査） |
 | `routes` | 列 | 必須 | 航路のグラフが連結（`routes`。島が 1 つでもほかとつながらなければ誤り） |
 | `routes[].a`・`b` | 文字列 | 必須 | `islands` の `ref` にある。`a ≠ b`（`b` のエラー）。順序を問わずに同じ組が 2 つない（2 つ目の `routes[i]`） |
 | `routes[].travelMs` | 整数 | 必須 | 1 以上 |
@@ -697,6 +710,8 @@ demo:
 | `speed.allowed` | 小数の列 | 必須 | 1 個以上（`speed.allowed`）。各要素が 0 より大きい（`speed.allowed[i]`）。狭義の昇順（崩れた要素の `speed.allowed[i]`）。`1` を含む（`speed.allowed`） |
 
 `scoring`・`scoring.target`・`scoring.points`・`satisfaction`・`satisfaction.silencePenalty`・`speed`・`requests.deadlineMs` のマッピング自体も必須です（書いていなければ、そのマッピングの `Path` で 1 件）。`scoring.target`・`scoring.points` のどちらかがなくても、兄弟の欄（`scoring.points`・`ferryCostMsPerPoint` など）の検査は続けます。`satisfaction.silencePenalty` がなくても、`satisfaction.succeeded` 以下の検査は続けます。
+
+`islands[].postmaster`（T-406c）: 口調のキーは `casual`（くだけた話し方）・`polite`（です・ます）・`elder`（年配の話し方。「〜じゃ」「〜のう」）の 3 つで、`internal/stage` の `postmasterTones`・web の `noticeText.ts` の `PostmasterTone` と同じにします（口調ごとのセリフはゲームデザイン §7.3）。名前は「〇〇局長」の形にします（検査では強制しない）。実在の人物・実在のご当地キャラクターの名前は使いません（§7）。検査の順序は、すべての島の `ref`・`layout`・`color` を検査した後に、島の添字の順に `postmaster` を検査します（1 つの島の中は上の表の順）。`postmaster` の誤りは島の参照の誤りとして扱わず、`routes` などの検査を止めません。リポジトリのステージは、すべての島に郵便局長を書き、同じ島はどのステージでも同じ `name`・`tone`・`portrait`・`provenance` にします（`repo_postmaster_test.go`）。
 
 **設計書にない判断（T-203、D-12 の案 A）**: 採点と満足度の数値（配点・係数・増減）は、共通のファイルではなく、ステージごとの YAML の `scoring`・`satisfaction` に書きます。どれも必須で、既定値を持ちません。
 
@@ -837,6 +852,9 @@ etcd-io/raft — Copyright The etcd Authors — Apache License 2.0
 - 画像生成 AI などで作った素材は `web/public/assets/generated/` に置き、`web/public/assets/CREDITS.md` に、使ったサービス・作った日・利用規約の URL を書く
 - 使うサービスの利用規約が、公開のリポジトリでの再配布（Apache-2.0）を認めていることを確かめてから使う
 - 郵便局長の名前と口調は、計画書の観光などの記述（例：小豆島のオリーブ）にちなむ。実在のご当地キャラクターは使わない
+  - 名前・口調・絵のファイル名は、ステージ定義の `islands[].postmaster`（§5.4）に書く。計画書の記述にちなむ名前は `derived`（`source` に抜き出しを書く）、ちなむ記述がない島は海や空の言葉からの創作で `creative`。実在の人物の名前も使わない
+  - 口調のキーは `casual`（くだけた話し方）・`polite`（です・ます）・`elder`（年配の話し方）の 3 つ。方言の口調は、実在の地域の言葉を正しく書けるかを確かめる手段がないため作らない
+  - 絵（`portrait`）は `web/public/assets/generated/postmasters/` に置く（表示は T-414）
 
 ### 7.1 PLATEAU の 3D 都市モデル（確認済み・今回は使わない）
 

@@ -42,9 +42,18 @@ type rawSource struct {
 }
 
 type rawIsland struct {
-	Ref    string     `yaml:"ref"`
-	Layout *rawLayout `yaml:"layout"`
-	Color  string     `yaml:"color"`
+	Ref        string         `yaml:"ref"`
+	Layout     *rawLayout     `yaml:"layout"`
+	Color      string         `yaml:"color"`
+	Postmaster *rawPostmaster `yaml:"postmaster"`
+}
+
+type rawPostmaster struct {
+	Name       string     `yaml:"name"`
+	Tone       string     `yaml:"tone"`
+	Portrait   string     `yaml:"portrait"`
+	Provenance string     `yaml:"provenance"`
+	Source     *rawSource `yaml:"source"`
 }
 
 type rawLayout struct {
