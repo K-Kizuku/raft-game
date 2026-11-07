@@ -13,3 +13,11 @@
 
 # テストなどで作られるもの（残ると git worktree remove が失敗する）
 __pycache__/
+
+# ビルド・依存・ローカルの状態（T-001）
+node_modules/
+dist/
+web/.cloudflare/
+.cloudflare/
+server/internal/stage/embedded/
+coverage/
