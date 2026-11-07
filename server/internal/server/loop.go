@@ -119,12 +119,12 @@ func (s *session) flushTick(now time.Time) {
 // （コマンドの後・pause・speed・skip の後・ラウンドの終わり）。
 func (s *session) flushNow(force bool) { s.flush(force, s.wall.Now()) }
 
-// flush は DrainEvents → 保留 → decideFlush → events か snapshot。
+// flush は DrainEvents → notice の差し込みと seq の振り直し（noticer）→ 保留 → decideFlush → events か snapshot。
 func (s *session) flush(force bool, now time.Time) {
 	if s.broken {
 		return
 	}
-	s.pending = append(s.pending, s.engine.DrainEvents()...)
+	s.pending = append(s.pending, s.notices.expand(s.engine.DrainEvents())...)
 	if n := len(s.pending); n > s.pendingLimit {
 		s.pending = nil
 		s.needSnapshot = true
