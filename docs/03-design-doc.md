@@ -708,6 +708,8 @@ FR-LOG-04（入力ログを読み込むとリプレイできる）は、同じ G
 4. WASM は記録（§13.5 の形式。`bot` は空）・`StageView`・`RoundResult` を返し、web の記録の再生（本番のビルドに入れる）がゲーム画面に流す。一時停止・速度・「次の出来事まで」が使え、船の操作は受け付けない
 5. コンテナ・Durable Object を作らないので、コストガード（ADR-0018）を通さない。初版では `node.detail` とシークを出さない
 
+WASM は `server/cmd/replaywasm` を `scripts/build-replay-wasm.sh`（`make wasm`）でビルドし、`web/public/wasm/` に置く（コミットしない。JS との約束は `server/cmd/replaywasm/doc.go`）。
+
 ---
 
 ## 11. 不変条件の検査（`internal/sim/invariants`）
