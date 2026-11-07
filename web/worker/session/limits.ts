@@ -21,8 +21,18 @@ export const MAX_RESULT_BYTES = 262144; // 保存する internal.result の payl
 // destroy() が失敗したとき、後始末をやり直すアラームの間隔（回数は max_alarms の中に数える）。
 export const DESTROY_RETRY_MS = 30 * 1000;
 
-// T-308b が使う（入力ログの記録と復元）。
+// 入力ログの記録と復元（T-308b・DesignDoc §12.3「入力ログと復元」）。
 export const MAX_CONTAINER_STARTS = 3; // 最初の 1 回＋復元 2 回
 export const MAX_INPUT_LOG_ROWS = 10000;
 export const MAX_INPUT_LOG_BYTES = 524288; // cmd の JSON の合計
 export const CLOCK_PERSIST_INTERVAL_MS = 5000; // last_clock_t を SQLite に書く間隔の下限
+
+export const PING_INTERVAL_MS = 5000; // internal.ping を送る間隔（プロトコル §9）
+export const PING_MAX_MISSED = 3; // 続けて internal.pong がなければ止まったと判断する回数（プロトコル §9）
+export const MAX_PENDING_COMMANDS = 256; // ack を待つコマンドの数
+// ack を待つ上限。過ぎたものは次に覚えるときに捨てる（届かなかった電文で枠が埋まり続けないように）。
+export const PENDING_COMMAND_TTL_MS = 30000;
+export const MAX_CMD_ID_LENGTH = 128; // 覚える cmdId の長さ
+export const MAX_SESSION_TEXT_LENGTH = 128; // 保存する stageHash・build の長さ
+// Go の single の受信の上限（server/internal/server/ws_conn.go の singleReadLimit）。
+export const MAX_RESTORE_MESSAGE_BYTES = 1048576;
