@@ -1,6 +1,7 @@
 package ferry
 
 import (
+	"fmt"
 	"testing"
 
 	pb "go.etcd.io/raft/v3/raftpb"
@@ -138,6 +139,20 @@ func TestCheckInvariantsDetects(t *testing.T) {
 		{"sailing without route", func(tr *Transport, _ []LetterID) {
 			f := &tr.ferries[1]
 			f.State, f.At, f.From, f.To = Sailing, 0, 3, 1
+		}},
+		{"letters order", func(tr *Transport, _ []LetterID) {
+			tr.letters[0], tr.letters[1] = tr.letters[1], tr.letters[0]
+		}},
+		{"id above lastID", func(tr *Transport, _ []LetterID) { tr.lastID-- }},
+		{"reclaimed but listed", func(tr *Transport, c []LetterID) {
+			// 1→2 の MsgApp を足して 1 通目を R4 で破棄させ、Reclaim したあと、その ID を港の一覧に戻す。
+			if _, d, err := tr.PostRaft(0, 1, []*pb.Message{msg(pb.MsgApp, 1, 2, 1), msg(pb.MsgApp, 1, 2, 1), msg(pb.MsgApp, 1, 2, 1)}); err != nil || len(d) != 1 || d[0].Letter != c[0] {
+				panic(fmt.Sprintf("setup: drops %+v, err %v", d, err))
+			}
+			if err := tr.CheckInvariants(); err != nil || tr.Reclaim() != 1 {
+				panic(fmt.Sprintf("setup: %v", err))
+			}
+			tr.ports[1] = append([]LetterID{c[0]}, tr.ports[1]...)
 		}},
 	}
 	for _, tt := range tests {
