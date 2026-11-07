@@ -1,0 +1,171 @@
+// 手紙の処分・差し替えのアニメーション（../animations/letterEffects.ts が決める）を PixiJS の表示物に写す薄い層
+// （T-410 / FR-MAIL-04・DesignDoc §13.3）。マップの effects の層に載せる。ストアに書かない。
+import { Container, Graphics, Text } from "pixi.js";
+
+import type { World } from "../../state/index.ts";
+import { withRaftTerm } from "../../ui/terms/glossary.ts";
+import { termsPreference } from "../../ui/terms/preference.ts";
+import { createExitTracker, effectFrame, planLetterEffects } from "../animations/letterEffects.ts";
+import type { LetterEffect } from "../animations/letterEffects.ts";
+import { LETTER_EFFECT_STYLE } from "../animations/style.ts";
+import type { MapScene } from "../model/scene.ts";
+import { MAP_STYLE } from "../model/style.ts";
+
+export type LetterEffectsLayer = Readonly<{
+  update(world: World, scene: MapScene, now: number, simNow: number): void;
+  destroy(): void;
+}>;
+
+const S = MAP_STYLE;
+const D = MAP_STYLE.draw;
+const E = LETTER_EFFECT_STYLE;
+
+// 封筒 1 通（T-404 の山と同じ形）。依頼書なら ★ を添える。
+function envelope(effect: LetterEffect, faded: boolean): Container {
+  const root = new Container();
+  const g = new Graphics();
+  const w = D.envelopeWidth;
+  const h = D.envelopeHeight;
+  const strokeAlpha = faded ? E.driftStrokeAlpha : 1;
+  g.roundRect(-w / 2, -h / 2, w, h, D.envelopeRadius);
+  g.fill({ color: S.colors.envelope });
+  g.stroke({ width: D.envelopeStrokeWidth, color: effect.color, alpha: strokeAlpha });
+  g.moveTo(-w / 2, -h / 2)
+    .lineTo(0, 0)
+    .lineTo(w / 2, -h / 2);
+  g.stroke({
+    width: D.envelopeStrokeWidth,
+    color: faded ? E.colors.drift : effect.color,
+    alpha: strokeAlpha,
+  });
+  root.addChild(g);
+  if (effect.request) {
+    const star = new Text({
+      text: "★",
+      style: {
+        fontFamily: D.fontFamily,
+        fontSize: D.badgeFontSize,
+        fill: S.colors.star,
+        fontWeight: "bold",
+        stroke: { color: S.colors.halo, width: D.haloWidth },
+      },
+    });
+    star.anchor.set(0.5);
+    star.position.set(-w / 2, -h / 2);
+    root.addChild(star);
+  }
+  return root;
+}
+
+function captionText(): Text {
+  const text = new Text({
+    text: "",
+    style: {
+      fontFamily: D.fontFamily,
+      fontSize: E.captionFontSize,
+      fill: E.colors.caption,
+      fontWeight: "bold",
+      stroke: { color: S.colors.halo, width: D.haloWidth },
+    },
+  });
+  text.anchor.set(0.5);
+  return text;
+}
+
+type EffectView = {
+  root: Container;
+  outgoing: Container;
+  incoming: Container | null;
+  caption: Text | null;
+};
+
+function createView(parent: Container, effect: LetterEffect): EffectView {
+  const root = new Container();
+  const outgoing = envelope(effect, effect.kind === "drift");
+  const incoming = effect.kind === "swap" ? envelope(effect, false) : null;
+  const caption = effect.caption === null ? null : captionText();
+  if (incoming !== null) root.addChild(incoming);
+  root.addChild(outgoing);
+  if (caption !== null) root.addChild(caption);
+  parent.addChild(root);
+  return { root, outgoing, incoming, caption };
+}
+
+export function createLetterEffectsLayer(
+  parent: Container,
+  options: Readonly<{ reducedMotion: boolean }>,
+): LetterEffectsLayer {
+  const { reducedMotion } = options;
+  const tracker = createExitTracker();
+  const views = new Map<string, EffectView>();
+  let active: LetterEffect[] = [];
+  let captionAt: ReadonlyMap<string, number> = new Map();
+  let destroyed = false;
+
+  const drop = (id: string, view: EffectView): void => {
+    view.root.destroy({ children: true });
+    views.delete(id);
+  };
+
+  return {
+    update(world, scene, now, simNow) {
+      if (destroyed) return;
+      const plan = planLetterEffects(active, tracker.take(world.letterExits), {
+        world,
+        now,
+        simNow,
+        reducedMotion,
+        captionAt,
+      });
+      active = plan.effects;
+      captionAt = plan.captionAt;
+
+      const showRaftTerms = termsPreference.getSnapshot().showRaftTerms;
+      const drawn = new Set<string>();
+      for (const effect of active) {
+        const frame = effectFrame(effect, scene, now, reducedMotion);
+        if (frame === null) continue;
+        drawn.add(effect.id);
+        let view = views.get(effect.id);
+        if (view === undefined) {
+          view = createView(parent, effect);
+          views.set(effect.id, view);
+        }
+        view.outgoing.position.set(frame.at.x, frame.at.y);
+        view.outgoing.alpha = frame.alpha;
+        view.outgoing.scale.set(frame.scale);
+        view.outgoing.rotation = frame.rotation;
+        if (view.incoming !== null) {
+          if (frame.incoming === null) {
+            view.incoming.visible = false;
+          } else {
+            view.incoming.visible = true;
+            view.incoming.position.set(frame.incoming.at.x, frame.incoming.at.y);
+            view.incoming.alpha = frame.incoming.alpha;
+            view.incoming.scale.set(frame.incoming.scale);
+          }
+        }
+        if (view.caption !== null) {
+          if (frame.caption === null) {
+            view.caption.visible = false;
+          } else {
+            const text = withRaftTerm(frame.caption.text, effect.reason, showRaftTerms);
+            if (view.caption.text !== text) view.caption.text = text;
+            view.caption.visible = true;
+            view.caption.position.set(frame.caption.at.x, frame.caption.at.y);
+            view.caption.alpha = frame.caption.alpha;
+          }
+        }
+      }
+      for (const [id, view] of views) {
+        if (!drawn.has(id)) drop(id, view);
+      }
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      for (const [id, view] of views) drop(id, view);
+      active = [];
+    },
+  };
+}
