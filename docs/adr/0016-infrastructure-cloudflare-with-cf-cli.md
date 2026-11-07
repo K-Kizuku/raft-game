@@ -1,7 +1,7 @@
 # ADR-0016: インフラは Cloudflare（Workers ＋ Durable Objects ＋ Containers）、構成は Cloudflare CLI（`cf`）だけで管理する
 
 - 状態: Accepted
-- 日付: 2026-11-06 (2026-11-07、T-007 のクラウド実測を追記)
+- 日付: 2026-11-06 (2026-11-07、T-007 のクラウド実測を追記。2026-11-08、予算アラートの例外を追記)
 - 決めた人: プロダクトオーナー（Cloudflare と `cf` の採用、1 ゲーム＝1 コンテナ、マシンの大きさ、ドメイン）、Claude（調査と具体化）
 - 関連: C-03、NFR-06・15、ADR-0009、ADR-0017、ADR-0018、ADR-0019、[アーキテクチャ §5](../02-architecture.md)、[判断の記録 A-02・A-03・A-22、R-01〜R-04・R-07](../09-assumptions-and-open-questions.md)
 - 置き換える ADR: [ADR-0011](./0011-infrastructure-aws-ecs-fargate.md)（AWS ＋ Terraform）
@@ -153,6 +153,10 @@ this.ctx.container.start({
 - **ドメインの設定**: `kizuku-hackathon.work` のゾーンに対する設定（WAF のレート制限、AI クローラーの遮断など。ADR-0018）は、**この 2 つのホスト名だけに効く条件を付けて**作り、同じゾーンのほかのサービスに影響させない。これらの設定も `cf`（`cf zones …` などの API コマンド）で行い、手順をスクリプトにしてリポジトリに置く
 - **デプロイ**: GitHub Actions で `pnpm install` → `cf build` → PR では `cf deploy --prebuilt --dry-run`、`main` への push で `cf deploy --prebuilt --mode production`。デモ用は手動の実行で `--mode demo`。シークレットは GitHub の Secrets から一時ファイルを作り、`--secrets-file` で渡す
 - **費用**: Workers の有料プラン（月 5 USD）が必要。追加料金はコストガード（ADR-0018）で月 30 USD までに抑える
+
+### 例外（ダッシュボードで設定したもの）
+
+- **予算アラート**（ADR-0018 G6）: 2026-11-08、`cf billing spend-policies list` が `[1003] spend policy not found`（404）で失敗し `scripts/cloudflare/budget_alert.py` で作れなかったため、オーナーの判断（D-22 の例外）でダッシュボードで設定した。経緯と確かめ直す手順は [コストの緊急停止 §9](../runbooks/cost-emergency.md)
 
 ## 結果
 
