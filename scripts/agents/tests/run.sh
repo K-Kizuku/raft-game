@@ -680,6 +680,40 @@ run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENT_APP_KEY="$app_dir/missin
 check "ghx: 鍵がなければ gh のログイン（オーナー）で実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
 check "ghx: 鍵がなければ標準エラーに 1 行出す" \
   test "$(wc -l <"$tmp/err" | tr -d ' ')" = 1 -a -n "$(grep 'オーナーのトークンを使う' "$tmp/err" || true)"
+# ---- gh（lib の関数）: lib.sh を読み込むスクリプト（merge-train.sh・autospawn.sh など）の直接の gh も ghx を通る（F7）----
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator \
+  bash -c '. "$1"; gh pr list --head x; gh issue view 9; printf "after=%s\n" "${GH_TOKEN-unset}"' _ "$lt/lib.sh"
+check "gh（lib）: 直接の gh も App のトークンで呼ぶ" \
+  test "$RC:$(grep -v ' api ' "$FAKE_LOG/gh-env.log" | tr '\n' ',')" = "0:$app_tok pr list --head x,$app_tok issue view 9,"
+check "gh（lib）: App の API はトークンなしで呼ぶ（入れ子にならない）" test "$(grep -c '^none api ' "$FAKE_LOG/gh-env.log")" = 2
+check "gh（lib）: 呼び出し側のシェルに GH_TOKEN を残さない" test "$(tail -n 1 "$tmp/out")" = "after=unset"
+check "gh（lib）: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash -c '. "$1"; gh auth token' _ "$lt/lib.sh"
+check "gh（lib）: gh auth はそのまま（App のトークンを入れない）" \
+  test "$RC:$(cat "$tmp/out"):$(cat "$FAKE_LOG/gh-env.log")" = "0:tok-owner:none auth token"
+reset_logs
+rm -rf "$app_cache_dir"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator AGENT_APP_KEY="$app_dir/missing.pem" bash -c '. "$1"; gh issue view 9' _ "$lt/lib.sh"
+check "gh（lib）: 鍵がなければ gh のログイン（オーナー）で実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+check "gh（lib）: 鍵がなければ標準エラーに 1 行出す" \
+  test "$(wc -l <"$tmp/err" | tr -d ' ')" = 1 -a -n "$(grep 'オーナーのトークンを使う' "$tmp/err" || true)"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=human bash -c '. "$1"; gh issue view 9' _ "$lt/lib.sh"
+check "gh（lib）: 役割が human なら gh のログインで実行する" test "$RC:$(cat "$FAKE_LOG/gh-env.log")" = "0:none issue view 9"
+reset_logs
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator FAKE_MERGE_RC=5 bash -c '. "$1"; gh pr "$2" 1' _ "$lt/lib.sh" merge
+check "gh（lib）: gh の終了コードを返す" test "$RC" = 5
+# need gh: gh が関数でも、実行ファイルがなければ止める（PATH には dirname だけを置く）
+mkdir -p "$tmp/nogh"
+ln -sf "$(command -v dirname)" "$tmp/nogh/dirname"
+run_rc env PATH="$tmp/nogh" "$BASH" -c '. "$1"; need gh' _ "$lt/lib.sh"
+check "gh（lib）: need gh は実行ファイルがなければ止める" test "$RC" = 1 -a -n "$(grep 'gh が見つからない' "$tmp/err" || true)"
+run_rc env "${appenv[@]}" AGENT_ROLE=orchestrator bash -c '. "$1"; need gh' _ "$lt/lib.sh"
+check "gh（lib）: need gh は実行ファイルがあれば通る" test "$RC" = 0
 # merge.sh: gate（agentctl）と gh pr view を App のトークンで呼ぶ（gh pr merge は下の merge.sh の節で確かめる）
 cat >"$lt/gatecheck" <<'EOF'
 #!/usr/bin/env bash
@@ -1616,6 +1650,8 @@ chmod +x "$TS/merge.sh" "$TS/review.sh" "$TS/spawn-worker.sh"
 cat >"$fake/bin-train/gh" <<'EOF'
 #!/usr/bin/env bash
 jq -cn --arg cwd "$PWD" '{cwd:$cwd, args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/gh.log"
+# Issue #282: 受け取った GH_TOKEN も記録する
+printf '%s %s\n' "${GH_TOKEN:-none}" "$*" >>"$FAKE_LOG/gh-env.log"
 n="${3:-}"
 case "$1 $2" in
   "pr list")
@@ -2455,6 +2491,57 @@ check "autospawn（親を止める）: プロセスグループに SIGTERM を�
 sleep 0.3
 check "autospawn（親を止める）: autospawn のプロセスグループごと止めても Worker は止まらない" kill -0 "$wp"
 kill "$wp" 2>/dev/null || true
+
+# ---- 見張り（merge-train.sh・autospawn.sh）の直接の gh も App のトークン（#282 のレビュー F7）----
+# キャッシュに有効な App のトークンを置き（App の API は呼ばない）、偽の gh が受け取った GH_TOKEN を見る
+app_watch_env=(AGENT_APP_ID=5659452 "AGENT_APP_KEY=$app_key" AGENT_REPO=o/r)
+# 上で export した GH_TOKEN があるとそのまま使うので、この節では外す（最後に戻す）
+saved_gh_token="${GH_TOKEN:-}"
+unset GH_TOKEN GITHUB_TOKEN
+put_app_cache() {
+  rm -rf "$app_cache_dir"
+  (umask 077 && mkdir -p "$app_cache_dir" && printf '%s\n%s\n' "$(date +%s)" "$app_tok" >"$app_cache")
+}
+put_app_cache
+train_reset
+mkprs "93:agent/issue-193"
+mkgate 93 pass pass pass pass pass pass
+train 1 "${app_watch_env[@]}" FAKE_RATE_REMAINING=4000 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train（App）: 判定してマージする" test "$RC:$(cat "$FAKE_LOG/merge.log")" = "0:93"
+check "train（App）: gh api rate_limit を App のトークンで呼ぶ" grep -q "^$app_tok api rate_limit " "$FAKE_LOG/gh-env.log"
+check "train（App）: gh pr list を App のトークンで呼ぶ" grep -q "^$app_tok pr list " "$FAKE_LOG/gh-env.log"
+check "train（App）: 直接の gh をすべて App のトークンで呼ぶ" test -z "$(grep -v "^$app_tok " "$FAKE_LOG/gh-env.log" || true)"
+check "train（App）: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+# 上限は App のトークンの gh api rate_limit で見る（App の残りが少なければ休む）
+train_reset
+mkprs "93:agent/issue-193"
+mkgate 93 pass pass pass pass pass pass
+train 1 "${app_watch_env[@]}" PATH="$fake/bin-sleep:$fake/bin-train:$PATH" FAKE_RATE_REMAINING=12 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train（App）: 上限は App のトークンの gh api rate_limit で見る" \
+  test ! -s "$FAKE_LOG/merge.log" -a -n "$(grep "^$app_tok api rate_limit " "$FAKE_LOG/gh-env.log" || true)"
+# 鍵がなければ gh のログイン（オーナー）で続け、標準エラーに理由を出す
+rm -rf "$app_cache_dir"
+train_reset
+mkprs "93:agent/issue-193"
+mkgate 93 pass pass pass pass pass pass
+train 1 AGENT_APP_ID=5659452 AGENT_APP_KEY="$app_dir/missing.pem" AGENT_REPO=o/r \
+  FAKE_RATE_REMAINING=4000 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train（鍵がない）: gh のログイン（オーナー）で続ける" \
+  test "$RC:$(cat "$FAKE_LOG/merge.log")" = "0:93" -a -z "$(grep -v '^none ' "$FAKE_LOG/gh-env.log" || true)"
+# （merge-train.sh は gh の標準エラーを 2>/dev/null で捨てるので、理由の 1 行は出ない。出すことは上の gh（lib）・ghx の節で確かめる）
+check "train（鍵がない）: 鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+# autospawn.sh の gh pr list（状態の直し）も App のトークン
+put_app_cache
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[], active:[{number:207, status:"in-progress"}], capacity:0}' >"$TRAIN_DIR/plan.json"
+echo 1207 >"$TRAIN_DIR/headpr-agent-issue-207"
+autospawn "${app_watch_env[@]}" FAKE_PLAN_STOP_AFTER=1
+check "autospawn（App）: gh pr list を App のトークンで呼ぶ" \
+  test "$RC" = 0 -a -n "$(grep "^$app_tok pr list .*agent/issue-207" "$FAKE_LOG/gh-env.log" || true)"
+check "autospawn（App）: 標準出力・標準エラーにトークンと鍵の中身を出さない" no_secret "$tmp/out" "$tmp/err"
+rm -rf "$app_cache_dir"
+export GH_TOKEN="$saved_gh_token"
 
 echo "agents: $((total - failures))/$total ok"
 if [ "$failures" -ne 0 ]; then

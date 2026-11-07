@@ -64,7 +64,7 @@ hooks（`.claude/hooks/*.sh`）と `scripts/` の shell のスクリプトは、
 
 - 役割が AI（`worker`・`orchestrator`・`reviewer`）で、AI 用の GitHub App の鍵が使えれば、App のインストールのトークン（下の「AI 用の GitHub App」）。`merge.sh` のマージと `review.sh` の記録も App で行う（オーナーの判断。2026-11-08）
 - それ以外（役割が `human`、App の設定がない、鍵がない・作れない）は `gh auth token` の値（オーナーのトークン）。App の設定があるのに使えないときは、理由を標準エラーに 1 行出す
-- lib.sh の `agentctl` と `ghx`（`merge.sh`・`review.sh` が直接呼ぶ `gh`）は、呼ぶたびにトークンを作って子にだけ渡す（呼び出し側のシェルに export しない）。1 時間で切れる App のトークンが、長く動く `merge-train.sh` や `review.sh` の待ちの途中で切れないようにするため
+- lib.sh の `agentctl` と `ghx`（lib.sh を読み込むスクリプトが直接呼ぶ `gh`。lib.sh の `gh` 関数が `ghx` に通す）は、呼ぶたびにトークンを作って子にだけ渡す（呼び出し側のシェルに export しない）。1 時間で切れる App のトークンが、長く動く `merge-train.sh` や `review.sh` の待ちの途中で切れないようにするため
 - `gh` がない・未ログインで App も使えなければ何もせず、`agentctl` が「トークンがない」で止まる（先に `gh auth login` する）
 - レビュー記録の作者は App（`kizuku-claude[bot]`）になる。Merge Gate の C5 が数えるように、[.agents/config.json](../../.agents/config.json) の `review.trusted_authors` に `kizuku-claude[bot]` を入れている（オーナーの `K-Kizuku` も残す）
 
@@ -90,7 +90,7 @@ chmod 600 ~/.config/raft-game/agent-app.pem
 - 秘密鍵で JWT（RS256。`iat` は 60 秒前、`exp` は 9 分後）を `openssl` で作り、`gh api -H "Authorization: Bearer <JWT>"` でインストールを探してトークンを作る
 - トークンは `~/.config/raft-game/agent-app-token-<App ID>-<OWNER>_<NAME>` にキャッシュし（`umask 077`）、作ってから 50 分で作り直す
 - [spawn-worker.sh](../../scripts/agents/spawn-worker.sh) は、鍵が使えれば `gh-app.sh` を呼ぶ `gh`（`.agents/bin/gh-app/gh`）を Worker の PATH の先頭に置き、`GH_TOKEN`・`GITHUB_TOKEN` を Worker に渡さない。Worker の `gh` は呼ぶたびに有効なトークン（キャッシュか作り直したもの）を使うので、1 時間を超えて動いても切れない。鍵が使えなければ、理由を出して今までどおり起動する
-- `merge.sh`・`review.sh` は、`agentctl` と `ghx`（lib.sh）で呼ぶたびに App のトークンを渡す。`review.sh` はトークンを export しないので、Reviewer（Claude Code）にもトークンは渡らない
+- `merge.sh`・`review.sh` と、見張り（`merge-train.sh`・`autospawn.sh`）・`spawn-worker.sh`・`status.sh`・`wt.sh` は、`agentctl` と `ghx`（lib.sh。直接の `gh` も lib.sh の `gh` 関数で `ghx` を通る）で呼ぶたびに App のトークンを渡す。オーナーのトークンが上限に達しても、見張りは App の残りで動く（`merge-train.sh` の上限の確かめも App のトークンの `gh api rate_limit`）。見張りは `gh` の標準エラーを捨てるので、App を使えない理由はそこでは出ない（`gh-app.sh` を手で実行して確かめる）。`review.sh` はトークンを export しないので、Reviewer（Claude Code）にもトークンは渡らない
 - `gh-app.sh` は、`GH_TOKEN`・`GITHUB_TOKEN` がすでにあるとき、`gh auth` のとき、役割が AI（`worker`・`orchestrator`・`reviewer`）でないときは、トークンを入れずに本物の `gh` を実行する。App のトークンを作れないときは、理由を標準エラーに 1 行出して、`gh` のログイン（オーナーのトークン）で実行する
 - Worker の `git push` は今までどおり SSH（オーナーの鍵）。HTTPS と App のトークンにそろえるかは、オーナーが決める（#176）
 - 手で App のトークンで `gh` を使うときは `scripts/agents/gh-app.sh <gh の引数…>`（`GH_TOKEN` を外して実行する）

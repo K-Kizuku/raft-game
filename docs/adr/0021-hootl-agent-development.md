@@ -81,7 +81,7 @@
 オーナーの判断（2026-11-08 4:10）: **すべての AI の役割（Orchestrator・Worker・Reviewer）で同じ GitHub App（`kizuku-claude`）を使う。** リポジトリへの push は引き続きオーナーの鍵の SSH。
 
 - AI の役割（`worker`・`orchestrator`・`reviewer`）の `gh`・`agentctl` は、App のインストールのトークン（上限はオーナーと別の 1 時間に 5,000 回）を使う。トークンは `scripts/agents/lib.sh` が秘密鍵から JWT（RS256、`openssl`）を作って得て、`~/.config/raft-game/` にキャッシュし、作ってから 50 分で作り直す
-- Worker は 1 時間を超えて動くことがあるので、`spawn-worker.sh` が `gh` のラッパー（`scripts/agents/gh-app.sh`）を Worker の PATH の先頭に置き、`gh` を呼ぶたびに有効なトークンを入れる。lib.sh の `agentctl` と `ghx` も、呼ぶたびにトークンを子にだけ渡す
+- Worker は 1 時間を超えて動くことがあるので、`spawn-worker.sh` が `gh` のラッパー（`scripts/agents/gh-app.sh`）を Worker の PATH の先頭に置き、`gh` を呼ぶたびに有効なトークンを入れる。lib.sh の `agentctl` と `ghx` も、呼ぶたびにトークンを子にだけ渡す。Orchestrator の役割のスクリプト（`merge-train.sh`・`autospawn.sh`・`spawn-worker.sh` など）が直接呼ぶ `gh` も、lib.sh の `gh` 関数で `ghx` を通る
 - `merge.sh` も App のトークンでマージする。App は Rulesets の bypass に入れないので、必須のチェック（`ci-ok`・`merge-gate`）はそのまま効く
 - `review.sh` も App のトークンで記録を書く。Merge Gate の C5 が数えるように、`trusted_authors` に `kizuku-claude[bot]` を足した（オーナーの `K-Kizuku` は残す）
 - 鍵がない・権限が 600 より広い・トークンを作れない（App が未インストール・時計のずれ）ときは、理由を標準エラーに 1 行出して、オーナーのトークンに戻る

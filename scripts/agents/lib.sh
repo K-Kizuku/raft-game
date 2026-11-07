@@ -27,7 +27,12 @@ info() {
 need() {
   local c
   for c in "$@"; do
-    command -v "$c" >/dev/null 2>&1 || die "$c が見つからない（インストールして PATH に入れる）"
+    # gh は lib.sh の関数（下の gh）でもあるので、実行ファイルがあるかを type -P で確かめる
+    if [ "$(type -t "$c" 2>/dev/null)" = function ]; then
+      type -P "$c" >/dev/null 2>&1 || die "$c が見つからない（インストールして PATH に入れる）"
+    else
+      command -v "$c" >/dev/null 2>&1 || die "$c が見つからない（インストールして PATH に入れる）"
+    fi
   done
 }
 
@@ -313,8 +318,8 @@ gh_token_value() {
       return 0
     fi
   fi
-  command -v gh >/dev/null 2>&1 || return 0
-  t="$(gh auth token 2>/dev/null)" || return 0
+  type -P gh >/dev/null 2>&1 || return 0
+  t="$(command gh auth token 2>/dev/null)" || return 0
   [ -n "$t" ] || return 0
   printf '%s\n' "$t"
 }
@@ -359,7 +364,7 @@ agentctl() {
   fi
 }
 
-# ghx <gh の引数…>: gh を役割のトークンで実行する（#282。merge.sh・review.sh が直接呼ぶ gh に使う）。
+# ghx <gh の引数…>: gh を役割のトークンで実行する（#282。lib.sh を読み込むスクリプトの gh は、下の gh 関数でこれを通る）。
 # GITHUB_TOKEN も GH_TOKEN もなく、App のトークンを使う場面（app_token_wanted）なら、呼ぶたびに App のトークンを
 # GH_TOKEN でその gh にだけ渡す（呼び出し側のシェルには export しない）。作れなければ（理由は app_token が
 # 標準エラーに出す）、そのまま gh を実行する（gh のログイン＝オーナーのトークン）。
@@ -373,6 +378,19 @@ ghx() {
     GH_TOKEN="$t" command gh "$@"
   else
     command gh "$@"
+  fi
+}
+
+# gh <引数…>: lib.sh を読み込むスクリプト（merge-train.sh・autospawn.sh・spawn-worker.sh・status.sh・wt.sh・
+# merge.sh・review.sh）が直接呼ぶ gh を、ghx に通す（#282 のレビュー F7）。Orchestrator の見張りも、呼ぶたびに
+# 有効な App のトークンで gh を呼ぶ（オーナーのトークンの上限に達しても止まらない）。
+# gh auth と、gh-app.sh の中（AGENT_GH_APP_ACTIVE）は、そのまま本物の gh を実行する。
+# 関数なので、bash -c・xargs などの別のプロセスには効かない（その場合は ghx か gh-app.sh を使う）。
+gh() {
+  if [ "${1:-}" = auth ] || [ -n "${AGENT_GH_APP_ACTIVE:-}" ]; then
+    command gh "$@"
+  else
+    ghx "$@"
   fi
 }
 
