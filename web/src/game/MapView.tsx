@@ -5,7 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
 
 import { gameStore, useGameStore } from "../state/index.ts";
+import type { GameState, GameStore } from "../state/index.ts";
 import { engineerModeStore } from "../state/engineerMode.ts";
+import { pressIsland } from "../ui/ferry/islandPress.ts";
 import { RaftTerm } from "../ui/terms/RaftTerm.tsx";
 import { roleMarkOf } from "./model/scene.ts";
 import type { MapHandle } from "./pixi/mapRenderer.ts";
@@ -16,6 +18,31 @@ export function MapView(): ReactElement {
   const hasWorld = useGameStore((s) => s.world !== null);
   if (!hasWorld) return <p>マップ（準備中）</p>;
   return <LoadedMap />;
+}
+
+// mapStoreOf は、マップに渡すストア。島を選ぶ（selectIsland）ときに、押したこと（pressIsland）も知らせる
+// （#318。船を選んでいるときに隣の島を押すと、フェリー操作パネルが行き先にする）。ほかはストアそのまま。
+// 状態が変わらなければ同じオブジェクトを返す（毎フレーム getState() を読むため）。
+function mapStoreOf(store: GameStore): GameStore {
+  let base: GameState | null = null;
+  let wrapped: GameState | null = null;
+  return {
+    ...store,
+    getState: () => {
+      const state = store.getState();
+      if (wrapped === null || state !== base) {
+        base = state;
+        wrapped = {
+          ...state,
+          selectIsland: (islandId) => {
+            state.selectIsland(islandId);
+            if (islandId !== null) pressIsland(islandId);
+          },
+        };
+      }
+      return wrapped;
+    },
+  };
 }
 
 // world があるときだけ載せる。外れたら（reset()）アンマウントされ、PixiJS を壊す。
@@ -31,7 +58,7 @@ function LoadedMap(): ReactElement {
     import("./pixi/mapRenderer.ts")
       .then(({ mountMap }) =>
         mountMap(host, {
-          store: gameStore,
+          store: mapStoreOf(gameStore),
           now: () => performance.now(),
           engineer: () => engineerModeStore.getState().open,
         }),
@@ -85,7 +112,10 @@ function IslandButtons(): ReactElement {
             key={id}
             type="button"
             aria-pressed={selectedId === id}
-            onClick={() => gameStore.getState().selectIsland(id)}
+            onClick={() => {
+              gameStore.getState().selectIsland(id);
+              pressIsland(id);
+            }}
           >
             {island.name}
             {leader && (

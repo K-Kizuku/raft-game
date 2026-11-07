@@ -316,19 +316,77 @@
   font-weight: bold;
 }
 
+/* 選んだ行き先（「行き先: 豊島」）を大きく出す（#318）。fieldset の 1 行を占める。 */
+.ferry-panel__destination-current {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 1.25em;
+  font-weight: bold;
+}
+
+.ferry-panel__destination-current strong {
+  color: var(--ferry-target-text);
+}
+
+.ferry-panel__destination-none {
+  color: var(--color-ink-muted);
+}
+
+.ferry-panel__destination-how {
+  display: block;
+  font-size: 0.7em;
+  font-weight: normal;
+  color: var(--color-ink-muted);
+}
+
+/* 行き先のボタン: 大きな紙の札（#318）。選んだものは深い海の青の枠。 */
 .ferry-panel__destination {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
-  min-height: 44px;
+  min-height: 48px;
+  padding: var(--space-1) var(--space-3);
+  font-size: 1.1em;
+  font-weight: bold;
+  background: var(--color-paper);
+  border: 2px solid var(--ferry-area-line);
+  border-radius: var(--radius-m);
   cursor: pointer;
 }
 
+.ferry-panel__destination:has(input:checked) {
+  border-color: var(--ferry-target-text);
+  background: var(--color-paper-deep);
+}
+
 .ferry-panel__destination input {
-  width: 1.2rem;
-  height: 1.2rem;
+  width: 1.3rem;
+  height: 1.3rem;
   accent-color: var(--color-sea-deep);
+}
+
+/* 経由の案内（「小豆島あての手紙は豊島を経由して運びます。まず豊島へ」）。 */
+.ferry-panel__via-hints {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: 0.9em;
+}
+
+/* 積み荷の「経由」の札（「豊島経由」）。「行き先宛て」の札と同じ色。スロットが狭いので、宛先（「→ 小豆島」）の上の行に置く。 */
+.ferry-panel__via {
+  display: block;
+  width: fit-content;
+  margin: 0 auto 2px;
+  padding: 0 var(--space-1);
+  white-space: nowrap;
+  font-size: 0.85em;
+  font-weight: bold;
+  color: var(--ferry-target-text);
+  background: var(--color-paper-deep);
+  border: 1px solid var(--ferry-target-text);
+  border-radius: var(--radius-s);
 }
 
 /* 嵐で通れない行き先: 嵐の濃い灰の文字に雲の印の札。 */

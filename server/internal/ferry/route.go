@@ -110,3 +110,93 @@ func (t *Transport) Components(now int64) [][]uint64 {
 	}
 	return out
 }
+
+// HasRoute は a と b を直接結ぶ航路があるか（遮断中でも true）を返す。
+func (t *Transport) HasRoute(a, b uint64) bool {
+	_, ok := t.route(a, b)
+	return ok
+}
+
+// NextHop は、航路（遮断中のものを含む）と所要時間（TravelMs）での from から to への最短の経路で、
+// from の次に寄る島を返す（ゲームデザイン §3.4 の経由の手紙）。最短の経路が複数あるときは、次の島の ID の
+// 小さい方。from と to が同じ・どちらかがステージにない・経路がないときは (0, false)。
+func (t *Transport) NextHop(from, to uint64) (uint64, bool) {
+	if from == to {
+		return 0, false
+	}
+	dist, ok := t.distancesTo(to)
+	if !ok {
+		return 0, false
+	}
+	if _, ok := dist[from]; !ok {
+		return 0, false
+	}
+	var next uint64
+	best := int64(-1)
+	for _, r := range t.routes {
+		var n uint64
+		switch from {
+		case r.A:
+			n = r.B
+		case r.B:
+			n = r.A
+		default:
+			continue
+		}
+		d, ok := dist[n]
+		if !ok {
+			continue
+		}
+		c := r.TravelMs + d
+		if best < 0 || c < best || (c == best && n < next) {
+			best, next = c, n
+		}
+	}
+	if best < 0 {
+		return 0, false
+	}
+	return next, true
+}
+
+// distancesTo は、各島から to までの最短の所要時間を返す（Dijkstra 法。遮断中の航路も使う）。
+// 経路のない島は含めない。to がステージになければ (nil, false)。map は引くだけで、走査しない。
+func (t *Transport) distancesTo(to uint64) (map[uint64]int64, bool) {
+	if !slices.Contains(t.islands, to) {
+		return nil, false
+	}
+	dist := map[uint64]int64{to: 0}
+	done := make(map[uint64]bool, len(t.islands))
+	for {
+		// 未確定で最短の島を、島の並び（t.islands）の順に探す（決定的）。
+		var cur uint64
+		found := false
+		for _, id := range t.islands {
+			d, ok := dist[id]
+			if !ok || done[id] {
+				continue
+			}
+			if !found || d < dist[cur] {
+				cur, found = id, true
+			}
+		}
+		if !found {
+			return dist, true
+		}
+		done[cur] = true
+		for _, r := range t.routes {
+			var n uint64
+			switch cur {
+			case r.A:
+				n = r.B
+			case r.B:
+				n = r.A
+			default:
+				continue
+			}
+			nd := dist[cur] + r.TravelMs
+			if d, ok := dist[n]; !ok || nd < d {
+				dist[n] = nd
+			}
+		}
+	}
+}

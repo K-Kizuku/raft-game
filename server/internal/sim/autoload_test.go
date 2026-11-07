@@ -56,27 +56,70 @@ func TestAutoloadPick(t *testing.T) { // AL-1
 			t.Errorf("autoloadRank(letter %d, %s) = %d, want %d", l.ID, letterLabel(l), got, wantRanks[i])
 		}
 	}
+	// line は島 1 にいるときの 1-2-3 の一直線（3 へは 2 を経由）。noRoute はどこへも経路がない。
+	line := func(dest uint64) (uint64, bool) {
+		if dest == 2 || dest == 3 {
+			return 2, true
+		}
+		return 0, false
+	}
+	noRoute := func(uint64) (uint64, bool) { return 0, false }
 	tests := []struct {
-		to   uint64
-		free int
-		want []ferry.LetterID
+		to      uint64
+		nextHop func(uint64) (uint64, bool)
+		free    int
+		want    []ferry.LetterID
 	}{
-		{2, 20, []ferry.LetterID{11, 7, 8, 9, 10, 3, 4, 5, 6, 1, 2, 12}},
-		{2, 3, []ferry.LetterID{11, 7, 8}},
-		{2, 0, []ferry.LetterID{}},
-		{3, 4, []ferry.LetterID{13}},
-		{1, 4, []ferry.LetterID{}},
+		// 13（→3）は 2 を経由するので、同じ順位 3 の 2 宛て（3・4）のあと。
+		{2, line, 20, []ferry.LetterID{11, 7, 8, 9, 10, 3, 4, 13, 5, 6, 1, 2, 12}},
+		{2, line, 8, []ferry.LetterID{11, 7, 8, 9, 10, 3, 4, 13}},
+		{2, line, 3, []ferry.LetterID{11, 7, 8}},
+		{2, line, 0, []ferry.LetterID{}},
+		{2, noRoute, 20, []ferry.LetterID{11, 7, 8, 9, 10, 3, 4, 5, 6, 1, 2, 12}},
+		{3, line, 4, []ferry.LetterID{13}},
+		{1, line, 4, []ferry.LetterID{}},
 	}
 	shuffled := slices.Clone(port)
 	rand.New(rand.NewPCG(1, 2)).Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
 	reversed := slices.Clone(port)
 	slices.Reverse(reversed)
-	for _, tt := range tests {
+	for i, tt := range tests {
 		for _, p := range [][]ferry.Letter{port, shuffled, reversed} {
-			got := autoloadPick(p, tt.to, tt.free)
+			got := autoloadPick(p, tt.to, tt.nextHop, tt.free)
 			if got == nil || !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("autoloadPick(to %d, free %d) = %#v, want %v", tt.to, tt.free, got, tt.want)
+				t.Errorf("#%d autoloadPick(to %d, free %d) = %#v, want %v", i, tt.to, tt.free, got, tt.want)
 			}
+		}
+	}
+}
+
+func TestAutoloadPickVia(t *testing.T) { // AL-9（#318）
+	t.Parallel()
+	// 直島（1）にいて行き先は豊島（2）。小豆島（3）へは豊島を経由する。4 へは経路がない。
+	nextHop := func(dest uint64) (uint64, bool) {
+		if dest == 2 || dest == 3 {
+			return 2, true
+		}
+		return 0, false
+	}
+	app := &pb.Message{Type: pb.MsgApp.Enum()}
+	letter := func(id, to uint64) ferry.Letter {
+		return ferry.Letter{ID: ferry.LetterID(id), Kind: ferry.LetterRaft, From: 1, To: to, Raft: app}
+	}
+	req := ferry.Letter{ID: 5, Kind: ferry.LetterRequest, From: 1, To: 3, Req: &ferry.RequestNote{ReqID: "r-0001"}}
+	tests := []struct {
+		name string
+		port []ferry.Letter
+		want []ferry.LetterID
+	}{
+		{"only via", []ferry.Letter{letter(1, 3), letter(2, 3)}, []ferry.LetterID{1, 2}},
+		{"to before via in the same rank", []ferry.Letter{letter(1, 3), letter(2, 2), letter(3, 3), letter(4, 2)}, []ferry.LetterID{2, 4, 1, 3}},
+		{"request via is still first", []ferry.Letter{letter(1, 2), req}, []ferry.LetterID{5, 1}},
+		{"no route", []ferry.Letter{letter(1, 4), letter(2, 3)}, []ferry.LetterID{2}},
+	}
+	for _, tt := range tests {
+		if got := autoloadPick(tt.port, 2, nextHop, 4); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: autoloadPick = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }
@@ -100,21 +143,22 @@ func autoloadEngine(t *testing.T, cfg Config) *Engine {
 	return e
 }
 
-func TestAutoload(t *testing.T) { // AL-2・AL-8
+func TestAutoload(t *testing.T) { // AL-2・AL-8・AL-9
 	t.Parallel()
 	e := autoloadEngine(t, testConfig())
 	if ack := e.Apply(autoloadCmd(2)); ack != (Ack{OK: true, T: 1000}) {
 		t.Fatalf("autoload = %+v", ack)
 	}
+	// 依頼書 7、2 宛ての MsgApp 1・3、2 を経由して 3 へ行く MsgApp 2（4 は空きがない）。
 	var want []EventData
-	for _, id := range []uint64{7, 1, 3, 5} {
+	for _, id := range []uint64{7, 1, 3, 2} {
 		want = append(want, LetterMoved{LetterID: id, Loc: ferryLoc("f1")})
 	}
 	checkEvents(t, e.DrainEvents(), want)
-	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{7, 1, 3, 5}; !reflect.DeepEqual(got, want) {
+	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{7, 1, 3, 2}; !reflect.DeepEqual(got, want) {
 		t.Errorf("cargo = %v, want %v", got, want)
 	}
-	if got, want := e.tr.Port(1), []ferry.LetterID{2, 4, 6}; !reflect.DeepEqual(got, want) {
+	if got, want := e.tr.Port(1), []ferry.LetterID{4, 5, 6}; !reflect.DeepEqual(got, want) {
 		t.Errorf("port 1 = %v, want %v", got, want)
 	}
 
@@ -130,8 +174,40 @@ func TestAutoload(t *testing.T) { // AL-2・AL-8
 	for _, d := range ofType[LetterDelivered](e.DrainEvents()) {
 		delivered = append(delivered, d.LetterID)
 	}
-	if want := []uint64{7, 1, 3, 5}; !reflect.DeepEqual(delivered, want) {
+	if want := []uint64{7, 1, 3}; !reflect.DeepEqual(delivered, want) {
 		t.Errorf("delivered = %v, want %v", delivered, want)
+	}
+	// AL-9: 経由の手紙 2 は豊島（2）で降ろされず積んだまま。豊島から 3 へ出航すると 3 に配達される。
+	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{2}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cargo at 2 = %v, want %v", got, want)
+	}
+	if l, _ := e.tr.Letter(2); l.Location.Kind != ferry.LocFerry {
+		t.Errorf("letter 2 location = %+v, want on the ferry", l.Location)
+	}
+	e.RunUntil(6250)
+	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 3})
+	e.RunUntil(11500)
+	delivered = delivered[:0]
+	for _, d := range ofType[LetterDelivered](e.DrainEvents()) {
+		delivered = append(delivered, d.LetterID)
+	}
+	if !slices.Contains(delivered, 2) {
+		t.Errorf("delivered at 3 = %v, want letter 2", delivered)
+	}
+	if got := cargoOf(t, e, "f1"); slices.Contains(got, 2) {
+		t.Errorf("cargo at 3 = %v, want without letter 2", got)
+	}
+}
+
+func TestAutoloadDirectRouteNotVia(t *testing.T) { // AL-9（#318）
+	t.Parallel()
+	// 1-3 に直接の航路があれば、1-2-3 の方が速くても、3 宛ての手紙は 2 への船に積まない。
+	cfg := testConfig()
+	cfg.Routes = append(cfg.Routes, ferry.RouteConfig{A: 1, B: 3, TravelMs: 20000})
+	e := autoloadEngine(t, cfg)
+	mustApply(t, e, autoloadCmd(2))
+	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{7, 1, 3, 5}; !reflect.DeepEqual(got, want) {
+		t.Errorf("cargo = %v, want %v", got, want)
 	}
 }
 
@@ -154,7 +230,7 @@ func TestAutoloadKeepsCargo(t *testing.T) { // AL-4
 	e := autoloadEngine(t, testConfig())
 	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{3}})
 	mustApply(t, e, autoloadCmd(2))
-	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{3, 7, 1, 5}; !reflect.DeepEqual(got, want) {
+	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{3, 7, 1, 2}; !reflect.DeepEqual(got, want) {
 		t.Errorf("cargo = %v, want %v", got, want)
 	}
 }
@@ -162,9 +238,12 @@ func TestAutoloadKeepsCargo(t *testing.T) { // AL-4
 func TestAutoloadErrors(t *testing.T) { // AL-5
 	t.Parallel()
 	started := func(t *testing.T) *Engine { return startedEngine(t) }
-	afterHeartbeat := func(t *testing.T, capacity int, load uint64) *Engine {
+	afterHeartbeat := func(t *testing.T, capacity int, load uint64, noRoute23 bool) *Engine {
 		cfg := testConfig()
 		cfg.Ferries[0].Capacity = capacity
+		if noRoute23 { // 3 へ経路がない（3 宛ての手紙は経由でも積めない）
+			cfg.Routes = cfg.Routes[:1]
+		}
 		e := startedEngineWith(t, cfg, Options{CheckInvariants: true})
 		e.RunUntil(1000)
 		mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{load}})
@@ -191,8 +270,9 @@ func TestAutoloadErrors(t *testing.T) { // AL-5
 		{"to 0", started, autoloadCmd(0), CodeNoRoute},
 		{"to 4", started, autoloadCmd(4), CodeNoRoute},
 		{"empty port", started, autoloadCmd(2), CodeLetterNotHere},
-		{"only letters to 3", func(t *testing.T) *Engine { return afterHeartbeat(t, 4, 1) }, autoloadCmd(2), CodeLetterNotHere},
-		{"full", func(t *testing.T) *Engine { return afterHeartbeat(t, 1, 2) }, autoloadCmd(2), CodeCapacityExceeded},
+		{"only letters to 3 without a route", func(t *testing.T) *Engine { return afterHeartbeat(t, 4, 1, true) }, autoloadCmd(2), CodeLetterNotHere},
+		{"full", func(t *testing.T) *Engine { return afterHeartbeat(t, 1, 2, false) }, autoloadCmd(2), CodeCapacityExceeded},
+		{"full with only a letter via 2", func(t *testing.T) *Engine { return afterHeartbeat(t, 1, 1, false) }, autoloadCmd(2), CodeCapacityExceeded},
 		{"ended", func(t *testing.T) *Engine {
 			e := startedEngine(t)
 			e.RunUntil(e.cfg.DurationMs)
@@ -231,11 +311,12 @@ func TestAutoloadBlockedRoute(t *testing.T) { // AL-6
 	t.Parallel()
 	e := startedEngine(t)
 	e.RunUntil(1000)
-	if err := e.tr.Block([][2]uint64{{1, 2}}, 60000); err != nil {
+	// 2 から先（2-3）も止まっていても、2 を経由して 3 へ行く手紙 2 を積める。
+	if err := e.tr.Block([][2]uint64{{1, 2}, {2, 3}}, 60000); err != nil {
 		t.Fatal(err)
 	}
 	mustApply(t, e, autoloadCmd(2))
-	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{1}; !reflect.DeepEqual(got, want) {
+	if got, want := cargoOf(t, e, "f1"), []ferry.LetterID{1, 2}; !reflect.DeepEqual(got, want) {
 		t.Errorf("cargo = %v, want %v", got, want)
 	}
 	if ack := e.Apply(Command{Type: CmdFerryDepart, FerryID: "f1", To: 2}); ack.OK || ack.Code != CodeRouteBlocked {

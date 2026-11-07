@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { Ack, AckCode } from "../../protocol/index.ts";
-import { FERRY_OP_NAMES, blockerText, ferryResultMessage } from "./ferryMessages.ts";
+import {
+  FERRY_OP_NAMES,
+  blockerText,
+  ferryResultMessage,
+  viaHintText,
+  viaLabel,
+} from "./ferryMessages.ts";
 import type { FerryOp } from "./ferryMessages.ts";
 import type { FerryBlocker } from "./ferryView.ts";
 
@@ -11,6 +17,15 @@ function fail(code?: string): Ack {
   // 知らない code も届く（プロトコル §8）ので、型の外の値も試す。
   return { cmdId: "c-1", ok: false, t: 29000, ...(code === undefined ? {} : { code }) } as Ack;
 }
+
+describe("経由の文（#318）", () => {
+  it("案内と札", () => {
+    expect(viaHintText({ toName: "小豆島", viaName: "豊島" })).toBe(
+      "小豆島あての手紙は豊島を経由して運びます。まず豊島へ",
+    );
+    expect(viaLabel("豊島")).toBe("豊島経由");
+  });
+});
 
 describe("FERRY_OP_NAMES", () => {
   it("操作の名前", () => {

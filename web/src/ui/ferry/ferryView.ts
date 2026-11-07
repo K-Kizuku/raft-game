@@ -2,7 +2,7 @@
 // 積み込み・出航の可否はサーバーが決める（ADR-0009）。ここで求める「押せない理由」は、
 // 送っても明らかに失敗するものだけ。満載・行き先宛ての手紙が無い・故障はサーバーの ack で知らせる。
 // 引数を書き換えず、呼ぶたびに新しい配列を返す（React では useMemo の中で呼ぶ）。時刻は引数の simNow。
-import type { Letter } from "../../protocol/index.ts";
+import type { Letter, Route } from "../../protocol/index.ts";
 import { portPiles } from "../../state/index.ts";
 import type { FerryView, UiSelection, World } from "../../state/index.ts";
 
@@ -24,7 +24,14 @@ export type PortGroup = Readonly<{
   letters: readonly Letter[];
 }>;
 export type CargoSlot = Readonly<
-  | { kind: "letter"; letter: Letter; toName: string; toColor: string; unloadable: boolean }
+  | {
+      kind: "letter";
+      letter: Letter;
+      toName: string;
+      toColor: string;
+      unloadable: boolean;
+      viaName: string | null; // 経由して運ぶ手紙なら、経由する島の名前（「豊島経由 → 小豆島」）。直行なら null
+    }
   | { kind: "unknown"; letterId: number } // cargo にあって letters に無い ID
   | { kind: "empty" }
 >;
@@ -34,6 +41,13 @@ export type Destination = Readonly<{
   routeId: string;
   blocked: boolean;
   forecast: boolean;
+}>;
+// 港にある、隣でない島宛ての手紙の案内（「小豆島あての手紙は豊島を経由して運びます。まず豊島へ」）。
+export type ViaHint = Readonly<{
+  to: number;
+  toName: string;
+  via: number; // 経由する隣の島（ゲームデザイン §3.4 の最短の経路で次に寄る島）
+  viaName: string;
 }>;
 export type FerryDetail = Readonly<{
   ferry: FerryView;
@@ -48,6 +62,7 @@ export type FerryDetail = Readonly<{
   port: readonly PortGroup[]; // docked: いる島の港の手紙。sailing: []
   cargo: readonly CargoSlot[];
   destinations: readonly Destination[]; // docked: 航路でつながる島。sailing: []
+  viaHints: readonly ViaHint[]; // docked: 港の手紙の山のうち、隣でない島宛てのもの（山の順）。sailing: []
 }>;
 export type FerryBlocker = "sailing" | "no_destination" | "not_ready" | "route_blocked";
 
@@ -98,6 +113,77 @@ export function ferryTabs(world: World, selection: UiSelection, simNow: number):
   return tabs;
 }
 
+function routesOf(world: World): Route[] {
+  const routes: Route[] = [];
+  for (const routeId of world.stage.routeIds) {
+    const route = Object.hasOwn(world.stage.routes, routeId)
+      ? world.stage.routes[routeId]
+      : undefined;
+    if (route !== undefined) routes.push(route);
+  }
+  return routes;
+}
+
+function otherEnd(route: Route, islandId: number): number | null {
+  if (route.a === islandId) return route.b;
+  if (route.b === islandId) return route.a;
+  return null;
+}
+
+// viaIsland は、from から to へ経由で運ぶときに次に寄る隣の島を返す（ゲームデザイン §3.4。サーバーの
+// おまかせ積み込みと同じ決め方）。最短の経路は航路（嵐で止まっているものを含む）の travelMs の和で決め、
+// 同じ長さなら次の島の ID の小さい方。同じ島・直接の航路がある・経路がないときは null。
+export function viaIsland(world: World, from: number, to: number): number | null {
+  if (from === to) return null;
+  const routes = routesOf(world);
+  if (routes.some((r) => otherEnd(r, from) === to)) return null;
+  // to からの最短の所要時間（Dijkstra 法。島の数が少ないので配列で探す）。
+  const dist = new Map<number, number>([[to, 0]]);
+  const done = new Set<number>();
+  for (;;) {
+    let cur: number | null = null;
+    let curDist = Infinity;
+    for (const [id, d] of dist) {
+      if (!done.has(id) && d < curDist) {
+        cur = id;
+        curDist = d;
+      }
+    }
+    if (cur === null) break;
+    done.add(cur);
+    for (const r of routes) {
+      const n = otherEnd(r, cur);
+      if (n === null) continue;
+      const nd = curDist + r.travelMs;
+      const old = dist.get(n);
+      if (old === undefined || nd < old) dist.set(n, nd);
+    }
+  }
+  let next: number | null = null;
+  let best = Infinity;
+  for (const r of routes) {
+    const n = otherEnd(r, from);
+    if (n === null) continue;
+    const d = dist.get(n);
+    if (d === undefined) continue;
+    const cost = r.travelMs + d;
+    if (cost < best || (cost === best && next !== null && n < next)) {
+      best = cost;
+      next = n;
+    }
+  }
+  return next;
+}
+
+// 積み荷の手紙を経由して運ぶなら、経由する島。停泊中は今いる島からの viaIsland、航行中は宛先が向かっている島で
+// なければ向かっている島。
+function cargoVia(world: World, ferry: FerryView, letter: Letter): number | null {
+  if (ferry.state === "sailing") {
+    return ferry.to !== undefined && letter.to !== ferry.to ? ferry.to : null;
+  }
+  return ferry.islandId === undefined ? null : viaIsland(world, ferry.islandId, letter.to);
+}
+
 function cargoSlots(world: World, ferry: FerryView, islandId: number | null): CargoSlot[] {
   const slots: CargoSlot[] = [];
   for (const id of ferry.cargo) {
@@ -106,12 +192,14 @@ function cargoSlots(world: World, ferry: FerryView, islandId: number | null): Ca
       slots.push({ kind: "unknown", letterId: id });
       continue;
     }
+    const via = cargoVia(world, ferry, letter);
     slots.push({
       kind: "letter",
       letter,
       toName: islandName(world, letter.to),
       toColor: islandColor(world, letter.to),
       unloadable: islandId !== null && letter.from === islandId,
+      viaName: via === null ? null : islandName(world, via),
     });
   }
   const empty = Math.max(0, ferry.capacity - ferry.cargo.length);
@@ -166,9 +254,24 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
       port: [],
       cargo: cargoSlots(world, ferry, null),
       destinations: [],
+      viaHints: [],
     };
   }
   const islandId = ferry.islandId ?? null;
+  const piles = islandId === null ? [] : portPiles(world, islandId);
+  const viaHints: ViaHint[] = [];
+  if (islandId !== null) {
+    for (const pile of piles) {
+      const via = viaIsland(world, islandId, pile.to);
+      if (via === null) continue;
+      viaHints.push({
+        to: pile.to,
+        toName: islandName(world, pile.to),
+        via,
+        viaName: islandName(world, via),
+      });
+    }
+  }
   return {
     ferry,
     name: ferry.name,
@@ -179,17 +282,15 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
     toName: null,
     etaMs: null,
     readyInMs: Math.max(0, ferry.readyAt - simNow),
-    port:
-      islandId === null
-        ? []
-        : portPiles(world, islandId).map((pile) => ({
-            to: pile.to,
-            toName: islandName(world, pile.to),
-            toColor: islandColor(world, pile.to),
-            letters: pile.letters,
-          })),
+    port: piles.map((pile) => ({
+      to: pile.to,
+      toName: islandName(world, pile.to),
+      toColor: islandColor(world, pile.to),
+      letters: pile.letters,
+    })),
     cargo: cargoSlots(world, ferry, islandId),
     destinations: islandId === null ? [] : destinationsFrom(world, islandId, simNow),
+    viaHints,
   };
 }
 

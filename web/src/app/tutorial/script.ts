@@ -68,7 +68,9 @@ export const STAGE1_TUTORIAL: TutorialScript = {
     },
     {
       id: "T3",
-      text: ["行き先に豊島を選んで、出航！"],
+      text: [
+        "行き先に豊島を選んで、出航！ 行き先は、下の「行き先」のボタンか、マップで隣の島を押して選べます。隣でない島あての手紙は、隣の島を経由して運びます（おまかせなら、経由の手紙も一緒に積みます）",
+      ],
       advance: "action",
       optional: false,
       targets: [selector(".ferry-panel__destinations"), selector(".ferry-panel__depart")],

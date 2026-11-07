@@ -5,6 +5,7 @@ import type { Mock } from "vitest";
 
 import { gameStore } from "../state/index.ts";
 import { engineerModeStore } from "../state/engineerMode.ts";
+import { onIslandPress } from "../ui/ferry/islandPress.ts";
 import { setShowRaftTerms } from "../ui/terms/preference.ts";
 import { MapView } from "./MapView.tsx";
 import type { MapHandle } from "./pixi/mapRenderer.ts";
@@ -77,7 +78,9 @@ describe("MapView", () => {
     expect(host).toBeInstanceOf(HTMLElement);
     expect(host?.classList.contains("map-view__canvas")).toBe(true);
     expect(host?.getAttribute("aria-hidden")).toBe("true");
-    expect(deps).toMatchObject({ store: gameStore });
+    // ストアはそのものでなく、島を選ぶと押したことも知らせる包み（MV-7）。読む状態は同じ。
+    expect(deps?.store.getState().world).toBe(gameStore.getState().world);
+    expect(deps?.store.subscribe).toBe(gameStore.subscribe);
     expect(typeof deps?.now).toBe("function");
     expect(screen.queryByText("マップ（準備中）")).toBeNull();
     expect(islandButtons().map((b) => b.textContent)).toEqual([
@@ -183,6 +186,36 @@ describe("MapView", () => {
     expect(h.destroy).toHaveBeenCalledTimes(1);
     expect(screen.getByText("マップ（準備中）")).toBeDefined();
     expect(screen.queryByRole("navigation", { name: "島を選ぶ" })).toBeNull();
+  });
+
+  it("MV-7 島のボタン・マップで島を押すと、選ぶうえに押したことを知らせる（同じ島を押し直しても）", async () => {
+    mountMock.mockResolvedValue(handle());
+    render(<MapView />);
+    load();
+    await waitFor(() => expect(mountMock).toHaveBeenCalledTimes(1));
+    const pressed: number[] = [];
+    const off = onIslandPress((id) => pressed.push(id));
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "二の島" }));
+      fireEvent.click(screen.getByRole("button", { name: "二の島" }));
+      expect(gameStore.getState().selection.islandId).toBe(2);
+
+      const [, deps] = mountMock.mock.calls[0] ?? [];
+      const mapState = deps?.store.getState();
+      act(() => {
+        mapState?.selectIsland(3);
+      });
+      expect(gameStore.getState().selection.islandId).toBe(3);
+      // 状態が変わらなければ同じオブジェクト（毎フレーム読むため）。
+      expect(deps?.store.getState()).toBe(deps?.store.getState());
+      act(() => {
+        deps?.store.getState().selectIsland(3);
+        deps?.store.getState().selectIsland(null);
+      });
+      expect(pressed).toEqual([2, 2, 3, 3]);
+    } finally {
+      off();
+    }
   });
 
   it("MV-M1 mountMap に engineer を渡し、engineerModeStore の値を返す", async () => {

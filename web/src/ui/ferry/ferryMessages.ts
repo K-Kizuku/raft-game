@@ -1,7 +1,17 @@
 // フェリー操作の結果と押せない理由の文（T-405・プロトコル §4.1）。成否はサーバーの ack が決める。
 import type { Ack } from "../../protocol/index.ts";
 import { formatRemaining } from "../hud/format.ts";
-import type { FerryBlocker } from "./ferryView.ts";
+import type { FerryBlocker, ViaHint } from "./ferryView.ts";
+
+// 港の隣でない島宛ての手紙の案内（ゲームデザイン §3.2・§3.4）。
+export function viaHintText(hint: Pick<ViaHint, "toName" | "viaName">): string {
+  return `${hint.toName}あての手紙は${hint.viaName}を経由して運びます。まず${hint.viaName}へ`;
+}
+
+// 積み荷の経由の札（「豊島経由」）。
+export function viaLabel(viaName: string): string {
+  return `${viaName}経由`;
+}
 
 export type FerryOp = "load" | "unload" | "autoload" | "depart";
 

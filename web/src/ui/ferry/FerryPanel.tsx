@@ -29,13 +29,15 @@ import { RaftTerm } from "../terms/RaftTerm.tsx";
 import { CARGO_DROP_ID, PORT_DROP_ID, dragId, dropCommand } from "./dnd.ts";
 import type { LetterDragData } from "./dnd.ts";
 import { FerryList } from "./FerryList.tsx";
-import { blockerText, ferryResultMessage } from "./ferryMessages.ts";
+import { blockerText, ferryResultMessage, viaHintText, viaLabel } from "./ferryMessages.ts";
 import type { FerryOp } from "./ferryMessages.ts";
 import { autoloadBlocker, departBlocker, ferryDetail, ferryTabs } from "./ferryView.ts";
 import type { FerryDetail, FerryTab } from "./ferryView.ts";
+import { onIslandPress } from "./islandPress.ts";
 import "./FerryPanel.css";
 
 const UNLOADABLE_NOTE = "この島で生まれた手紙だけ降ろせます";
+const DESTINATION_HOW_TO = "下のボタンか、マップで隣の島を押して選びます";
 const SCREEN_READER_INSTRUCTIONS =
   "Enter か Space で積み込み・荷降ろしをします。マウスではドラッグでもできます。";
 
@@ -239,6 +241,22 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
       buttons.length > 0 ? buttons[Math.min(intent.index, buttons.length - 1)] : heading;
     target?.focus();
   }, [detail, ferryId]);
+
+  // マップで隣の島を押したら、その島を行き先にする（#318。港にいるときだけ。隣でない島は何もしない）。
+  const detailRef = useRef(detail);
+  useLayoutEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
+  useEffect(
+    () =>
+      onIslandPress((islandId) => {
+        const d = detailRef.current;
+        if (d.state !== "docked" || d.islandId === null) return;
+        if (!d.destinations.some((x) => x.islandId === islandId)) return;
+        setDestination({ ferryId: d.ferry.id, islandId: d.islandId, to: islandId });
+      }),
+    [],
+  );
 
   const setPortList = useCallback((el: HTMLElement | null) => {
     portListRef.current = el;
@@ -467,6 +485,10 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
                           {destinationTo === group.to && (
                             <span className="ferry-panel__pile-target">行き先宛て</span>
                           )}
+                          {destinationTo !== null &&
+                            detail.viaHints.some(
+                              (h) => h.to === group.to && h.via === destinationTo,
+                            ) && <span className="ferry-panel__pile-target">行き先経由</span>}
                         </h4>
                         <ul className="ferry-panel__letters">
                           {group.letters.map((letter) => (
@@ -509,11 +531,12 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
                               slot.toColor,
                               slot.unloadable,
                             )}
+                            viaName={slot.viaName}
                           />
                         ) : (
                           <span className="ferry-panel__cargo-letter">
                             <LetterIcon letter={slot.letter} borderColor={slot.toColor} />
-                            {`→ ${slot.toName}`}
+                            <LetterDestination toName={slot.toName} viaName={slot.viaName} />
                           </span>
                         )}
                       </li>
@@ -547,6 +570,18 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
         <>
           <fieldset className="ferry-panel__destinations">
             <legend>行き先</legend>
+            <p className="ferry-panel__destination-current">
+              {destinationName === null ? (
+                <>
+                  行き先: <span className="ferry-panel__destination-none">未選択</span>{" "}
+                  <span className="ferry-panel__destination-how">{DESTINATION_HOW_TO}</span>
+                </>
+              ) : (
+                <>
+                  行き先: <strong>{destinationName}</strong>
+                </>
+              )}
+            </p>
             {detail.destinations.length === 0 ? (
               <p className="ferry-panel__note">行き先がありません。</p>
             ) : (
@@ -575,6 +610,13 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
                   ) : null}
                 </label>
               ))
+            )}
+            {detail.viaHints.length > 0 && (
+              <ul className="ferry-panel__via-hints">
+                {detail.viaHints.map((hint) => (
+                  <li key={hint.to}>{viaHintText(hint)}</li>
+                ))}
+              </ul>
             )}
           </fieldset>
 
@@ -652,11 +694,29 @@ function DropArea({
   );
 }
 
+// 手紙の宛先（「→ 小豆島」）。経由して運ぶ手紙は、前に「経由」の札を付ける（「豊島経由 → 小豆島」）。
+function LetterDestination({
+  toName,
+  viaName,
+}: {
+  toName: string;
+  viaName: string | null;
+}): ReactElement {
+  if (viaName === null) return <span className="ferry-panel__letter-to">{`→ ${toName}`}</span>;
+  return (
+    <span className="ferry-panel__letter-to">
+      <span className="ferry-panel__via">{viaLabel(viaName)}</span>
+      {` → ${toName}`}
+    </span>
+  );
+}
+
 type LetterButtonProps = Readonly<{
   letter: Letter;
   source: LetterDragData["source"];
   toName: string;
   toColor: string;
+  viaName?: string | null; // 積み荷の経由の手紙なら、経由する島の名前
   disabled: boolean;
   note: string | null; // ボタンを説明する文（aria-describedby）
   noteVisible: boolean;
@@ -670,6 +730,7 @@ function LetterButton({
   source,
   toName,
   toColor,
+  viaName = null,
   disabled,
   note,
   noteVisible,
@@ -699,7 +760,7 @@ function LetterButton({
         {...listeners}
         className={isDragging ? "ferry-panel__letter is-dragging" : "ferry-panel__letter"}
         data-letter-id={letter.id}
-        aria-label={`${name}（→ ${toName}）を${action}`}
+        aria-label={`${name}（${viaName === null ? "" : `${viaLabel(viaName)} `}→ ${toName}）を${action}`}
         aria-disabled={disabled ? "true" : undefined}
         aria-describedby={described === "" ? undefined : described}
         title={title}
@@ -713,7 +774,7 @@ function LetterButton({
         }}
       >
         <LetterIcon letter={letter} borderColor={toColor} />
-        <span className="ferry-panel__letter-to">{`→ ${toName}`}</span>
+        <LetterDestination toName={toName} viaName={viaName} />
       </button>
       {note !== null && (
         <span id={noteId} className={noteVisible ? "ferry-panel__letter-note" : "visually-hidden"}>
