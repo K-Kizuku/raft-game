@@ -40,14 +40,16 @@ func (b *greedyBot) plan(s sim.Snapshot, i int) []sim.Command {
 		}
 	}
 
-	// 3. 運ぶものがある。
+	// 3. 運ぶものがある。経由の手紙を先に load で積み、残りの空きにおまかせ積み込みで直行の手紙を積む
+	// （おまかせ積み込みは空きの数まで積むので、先に呼ぶと経由の手紙の場所がなくなる）。
+	// おまかせ積み込みは直行の手紙を (順位, ID) の昇順に積むので、残りの空き（= len(best.direct)）に積むのは best.direct と同じ。
 	if best.score >= 1 {
 		var cmds []sim.Command
-		if len(best.direct) > 0 {
-			cmds = append(cmds, cmdAutoload(f.ID, best.to))
-		}
 		if len(best.relay) > 0 {
 			cmds = append(cmds, cmdLoad(f.ID, letterIDs(best.relay)))
+		}
+		if len(best.direct) > 0 {
+			cmds = append(cmds, cmdAutoload(f.ID, best.to))
 		}
 		return append(cmds, cmdDepart(f.ID, best.to))
 	}
@@ -91,20 +93,23 @@ func greedyScore(t *topology, at, d uint64, cargo, port []sim.LetterView, free i
 		}
 	}
 
-	// 直行の分と経由の分。
-	var direct, relay []sim.LetterView
+	// 直行の分と経由の分。直行と経由を分けずに（順位, ID）の昇順に並べ、空きの数まで選ぶ。
+	// 直行を先に選ぶと、近い島宛ての手紙で船が埋まり、遠い島宛ての MsgApp が港で溢れて（R4）、
+	// 遠い島の台帳が Commit に追いつけなくなる（T-207b #203）。
+	var cands []sim.LetterView
 	for _, l := range port {
-		switch {
-		case l.To == d:
-			direct = append(direct, l)
-		case t.next(at, l.To) == d:
-			relay = append(relay, l)
+		if l.To == d || t.next(at, l.To) == d {
+			cands = append(cands, l)
 		}
 	}
-	sortByRank(direct)
-	sortByRank(relay)
-	c.direct = direct[:min(free, len(direct))]
-	c.relay = relay[:min(free-len(c.direct), len(relay))]
-	c.score += sumWeights(c.direct) + sumWeights(c.relay)
+	sortByRank(cands)
+	for _, l := range cands[:min(free, len(cands))] {
+		if l.To == d {
+			c.direct = append(c.direct, l)
+		} else {
+			c.relay = append(c.relay, l)
+		}
+		c.score += weight(l)
+	}
 	return c
 }

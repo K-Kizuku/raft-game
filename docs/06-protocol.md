@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.7（プロトコルバージョン `1`） |
+| 版 | v0.8（プロトコルバージョン `1`） |
 | 更新日 | 2026-11-08 |
 | 状態 | レビュー済み |
 | 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) / [ADR-0018](./adr/0018-cost-guard.md) / [ADR-0023](./adr/0023-durable-object-fetch-handler.md) |
@@ -456,6 +456,10 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 - `islandsState` は全島を ID の順に並べる。`satisfaction` は 0〜100、`lastDeliveredAt` は最後にその島宛ての手紙が配達された時刻で、最初は `0`（開会式で全島に配達したものとして数える）
 - `score.target` はステージ定義の `scoring.target.successes`。`criticalSecured` は確定した重要な資源の ID を、資源の定義の順に並べる（空なら `[]`）
+
+`stage.demoStorm` の注記（T-305b）:
+
+- ステージ定義に `demo.storm` があるときだけ入る（なければキーごと省く）。`routeIds` は発表者の操作（`demo.trigger`）で遮断する航路（§1 の形、定義の順）、`flavor` は嵐の紹介の文（§2 の `intro` と同じ形）か `null`。セッションが `demo` かどうかに関係なく入る。画面は、デモのセッションで `routeIds` の航路のどれかが遮断されている間、この文を出典区分とともに出す
 
 `session` の注記（後方互換なフィールドの追加、§8）:
 

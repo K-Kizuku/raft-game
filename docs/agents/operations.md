@@ -346,7 +346,7 @@ git revert --no-edit <squash の SHA>
 ```
 
 - 急ぐときは、オーナーが GitHub の「Revert」で PR を作ってもよい。ただし Merge Gate は C2（`Closes #N` と AC）と C11（変更予定ファイル）を求めるので、Issue を用意する
-- 本番・デモの環境へのデプロイと、その rollback は CI だけが行う（[ADR-0019](../adr/0019-parallel-local-development.md)）。エージェントは直接行わない
+- 本番・デモの環境へのデプロイは CI だけが行い、前の版に戻すのは人が [docs/runbooks/deploy-rollback.md](../runbooks/deploy-rollback.md) の手順で行う。エージェントは直接行わない
 - データの破壊など、revert で元に戻せない変更は、人の判断を求める（下の条件）
 
 ## 人間が介入する条件

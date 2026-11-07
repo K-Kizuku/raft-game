@@ -3,6 +3,7 @@ package stage
 import "github.com/K-Kizuku/raft-game/server/internal/game"
 
 // scoreConfig は st の scoring.*・satisfaction.* から採点の設定を作る（データ仕様 §5.6）。
+// demo.endOnAllCriticalSecured は EndOnStar2 に入れる（データ仕様 §5.6）。
 func scoreConfig(st *Stage) game.ScoreConfig {
 	sc, sa := st.Scoring, st.Satisfaction
 	return game.ScoreConfig{
@@ -22,5 +23,6 @@ func scoreConfig(st *Stage) game.ScoreConfig {
 		SilenceAfterMs:          sa.SilenceAfterMs,
 		SilenceEveryMs:          sa.SilencePenaltyEveryMs,
 		SilenceAmount:           sa.SilencePenaltyAmount,
+		EndOnStar2:              st.Demo != nil && st.Demo.EndOnAllCriticalSecured,
 	}
 }

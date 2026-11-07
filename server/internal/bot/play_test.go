@@ -104,12 +104,12 @@ func TestGreedyFirstMoves(t *testing.T) {
 	if err := b.Act(e); err != nil {
 		t.Fatalf("Act: %v", err)
 	}
-	want := entries(1000, cmdAutoload("f1", 2), cmdLoad("f1", []uint64{h3}), cmdDepart("f1", 2))
+	want := entries(1000, cmdLoad("f1", []uint64{h3}), cmdAutoload("f1", 2), cmdDepart("f1", 2))
 	if got := newInput(before, e.InputLog()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("A-2 input = %+v, want %+v", got, want)
 	}
 	f1 := ferryByID(t, e.Snapshot(), "f1")
-	if f1.State != "sailing" || f1.To != 2 || f1.ArriveAt != 4750 || !reflect.DeepEqual(f1.Cargo, []uint64{h2, h3}) {
+	if f1.State != "sailing" || f1.To != 2 || f1.ArriveAt != 4750 || !reflect.DeepEqual(f1.Cargo, []uint64{h3, h2}) {
 		t.Fatalf("A-2 f1 = %+v", f1)
 	}
 	before = e.InputLog()
@@ -140,16 +140,16 @@ func TestGreedyFirstMoves(t *testing.T) {
 func TestGreedyTwinFerries(t *testing.T) {
 	t.Parallel()
 	e, _, h3 := a2Engine(t, twinConfig())
-	// 取り直さなければ、f2 は f1 と同じ手紙を autoload しようとする（このテストが取り直しを確かめている前提）。
-	if p := greedyPlan(e.Snapshot(), 1); len(p) == 0 || p[0].Type != sim.CmdFerryAutoload {
-		t.Fatalf("f2 plan on the first snapshot = %+v, want autoload first", p)
+	// 取り直さなければ、f2 は f1 と同じ手紙を load しようとする（このテストが取り直しを確かめている前提）。
+	if p := greedyPlan(e.Snapshot(), 1); len(p) == 0 || !reflect.DeepEqual(p[0], cmdLoad("f2", []uint64{h3})) {
+		t.Fatalf("f2 plan on the first snapshot = %+v, want load %d first", p, h3)
 	}
 	b := mustNew(t, "greedy", a2Seed)
 	before := e.InputLog()
 	if err := b.Act(e); err != nil {
 		t.Fatalf("Act: %v", err)
 	}
-	want := entries(1000, cmdAutoload("f1", 2), cmdLoad("f1", []uint64{h3}), cmdDepart("f1", 2))
+	want := entries(1000, cmdLoad("f1", []uint64{h3}), cmdAutoload("f1", 2), cmdDepart("f1", 2))
 	if got := newInput(before, e.InputLog()); !reflect.DeepEqual(got, want) {
 		t.Fatalf("input = %+v, want %+v", got, want)
 	}

@@ -198,6 +198,10 @@ func (s *Server) readCreateBody(r *http.Request) (createSessionBody, bool) {
 	if out.stage, ok = s.cat.Lookup(stageID); !ok {
 		return createSessionBody{}, false
 	}
+	if !s.stageVisible(out.stage) {
+		// 一覧に出ないステージ（デモ操作が無効なときのデモ用のステージ）は受け付けない（Worker と同じ）。
+		return createSessionBody{}, false
+	}
 
 	if raw, has := m["seed"]; has {
 		// 数の字句が 0 以上 2^53 − 1 以下の整数であること（"1"・-1・1.5・1.0・1e3 は不可）。

@@ -169,10 +169,17 @@ type Session struct {
 
 // StageView は Snapshot の stage（§5.1）。
 type StageView struct {
-	Title     string     `json:"title"`
-	Islands   []Island   `json:"islands"`
-	Routes    []Route    `json:"routes"`
-	Resources []Resource `json:"resources"`
+	Title     string         `json:"title"`
+	Islands   []Island       `json:"islands"`
+	Routes    []Route        `json:"routes"`
+	Resources []Resource     `json:"resources"`
+	DemoStorm *DemoStormView `json:"demoStorm,omitempty"` // デモの嵐（ステージ定義の demo.storm）。書いていなければ省く（T-305b）
+}
+
+// DemoStormView はデモの嵐の表示用の値（§5.1）。発表者の操作（demo.trigger）で遮断する航路と、嵐の紹介の文。
+type DemoStormView struct {
+	RouteIDs []string   `json:"routeIds"`                                  // 遮断する航路の ID（§1 の形。定義の順）。nil にしない
+	Flavor   *StageText `json:"flavor" tstype:"StageText | null,required"` // 紹介の文（demo.storm.flavor）。なければ null
 }
 
 // Island はステージの島 1 つ。

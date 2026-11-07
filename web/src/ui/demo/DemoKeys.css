@@ -58,3 +58,41 @@
 .demo-keys-status:empty {
   display: none;
 }
+
+/* デモの嵐の紹介の文（T-305b）。ゲーム画面の上の中央に重ねる帯。地図の操作を妨げないよう、マウスでは押せない。
+   色はデモ操作のキーの一覧と同じ（背景 #111827・文字は白と #E5E7EB）。 */
+.demo-storm-flavor {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  z-index: 20;
+  box-sizing: border-box;
+  max-width: calc(100vw - 2rem);
+  padding: 0.5rem 0.9rem;
+  color: #ffffff;
+  background: rgb(17 24 39 / 0.92);
+  border: 1px solid #374151;
+  border-radius: 6px;
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.demo-storm-flavor-text {
+  margin: 0;
+  color: #fde68a;
+  font-weight: bold;
+}
+
+.demo-storm-flavor-quote {
+  margin: 0.25rem 0 0;
+  color: #e5e7eb;
+  font-size: 0.8rem;
+}
+
+.demo-storm-flavor .provenance-label {
+  display: block;
+  margin-top: 0.25rem;
+  color: #e5e7eb;
+  font-size: 0.7rem;
+}

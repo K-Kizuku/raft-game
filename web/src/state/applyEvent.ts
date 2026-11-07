@@ -81,6 +81,7 @@ export function worldFromSnapshot(snapshot: Snapshot, receivedAt: number): World
       routes: routes.record,
       routeIds: routes.ids,
       resources: snapshot.stage.resources,
+      ...(snapshot.stage.demoStorm !== undefined && { demoStorm: snapshot.stage.demoStorm }),
     },
     islandStates: indexBy<number, IslandState>(snapshot.islandsState, (s) => s.id).record,
     routeStates: indexBy<string, RouteState>(snapshot.routesState, (s) => s.id).record,
