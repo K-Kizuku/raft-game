@@ -7,7 +7,10 @@
 # まとまり（セグメント）ごとに調べる。字句の判定なので、cd してから相対パスで書く・
 # 変数でパスを組み立てる・スクリプトのファイルの中身で書く、などは見分けられない
 # （main は Rulesets が、保護されたパスはレビューが最後の砦になる）。
+# 想定外のエラーでは終了コード 2（拒否）にする（fail-closed。lib.sh の hook_on_exit）。
 set -euo pipefail
+# lib.sh を読む前の失敗も拒否にする（lib.sh を読むと、lib.sh の trap に置き換わる）
+trap 'echo "[guard] 拒否（内部エラー）: lib.sh を読み込めない" >&2; exit 2' EXIT
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh disable=SC1091
@@ -18,7 +21,7 @@ CWD="$(hook_cwd)"
 detect_role "$CWD"
 
 raw="$(hook_field '.tool_input.command')"
-[ -n "$raw" ] || exit 0
+[ -n "$raw" ] || allow
 
 TOP="$(repo_toplevel "$CWD")"
 MAIN_ROOT="$(repo_main_root "$CWD")"
@@ -116,7 +119,7 @@ if [ "${#PROTECTED[@]}" -gt 0 ]; then
   while IFS= read -r target; do
     [ -n "$target" ] || continue
     if protected_hit "$target"; then
-      deny "$PROTECTED_MSG（リダイレクトの先: $target）"
+      deny "${PROTECTED_MSG}（リダイレクトの先: ${target}）"
     fi
   done < <(printf '%s\n' "$norm" | grep -Eo '>>?\|?[[:space:]]*[^[:space:]<>;&|()]+' | sed -E 's/^>>?\|?[[:space:]]*//' || true)
   # インタプリタのコード（python3 -c "open('…','w')" など）は ( や , で区切られてセグメントに分かれるので、
@@ -125,7 +128,7 @@ if [ "${#PROTECTED[@]}" -gt 0 ]; then
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       if protected_hit "$tok"; then
-        deny "$PROTECTED_MSG（インタプリタのコードの中: $tok）"
+        deny "${PROTECTED_MSG}（インタプリタのコードの中: ${tok}）"
       fi
     done < <(printf '%s\n' "$norm" | tr -c 'A-Za-z0-9_./~$*?=:@+%-' '\n')
   fi
@@ -221,7 +224,7 @@ check_push() {
   if [ "$lease" = 1 ]; then
     for d in "${dsts[@]}"; do
       d="${d#refs/heads/}"
-      is_agent_branch "$d" || deny "--force-with-lease の push は agent/issue-* のブランチへだけ許す（宛先: $d）"
+      is_agent_branch "$d" || deny "--force-with-lease の push は agent/issue-* のブランチへだけ許す（宛先: ${d}）"
     done
   fi
   if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
@@ -230,7 +233,7 @@ check_push() {
     [ -n "$issue" ] || deny "担当の Issue（AGENT_ISSUE）が分からないため push できない"
     for d in "${dsts[@]}"; do
       d="${d#refs/heads/}"
-      [ "$d" = "agent/issue-$issue" ] || deny "Worker が push できるのは自分のブランチ agent/issue-$issue だけ（宛先: $d）"
+      [ "$d" = "agent/issue-$issue" ] || deny "Worker が push できるのは自分のブランチ agent/issue-$issue だけ（宛先: ${d}）"
     done
   fi
 }
@@ -321,7 +324,7 @@ check_git() {
     case "$sub" in
       commit | add | rm | mv | reset | rebase | merge | cherry-pick | revert | apply | am | tag | stash | \
         restore | clean | checkout | switch | pull | worktree | update-ref | notes | submodule | init | clone | gc | prune)
-        deny "Reviewer は書き込みにあたる操作をしない（git $sub）"
+        deny "Reviewer は書き込みにあたる操作をしない（git ${sub}）"
         ;;
       config)
         case " $* " in
@@ -335,7 +338,7 @@ check_git() {
           case "$a" in
             -d | -D | -m | -M | -c | -C | -f | --delete | --move | --copy | --force | -u | --set-upstream-to* | \
               --unset-upstream | --edit-description)
-              deny "Reviewer はブランチを変更しない（git branch $a）"
+              deny "Reviewer はブランチを変更しない（git branch ${a}）"
               ;;
             --list | -l | --contains | --no-contains | --merged | --no-merged | --points-at) list=1 ;;
             -*) ;;
@@ -479,13 +482,13 @@ check_rm() {
   for t in "${targets[@]+"${targets[@]}"}"; do
     case "$t" in
       / | '/*' | '~' | '~/' | '~/*' | '$HOME' | '$HOME/' | '$HOME/*' | '${HOME}' | '${HOME}/' | '${HOME}/*' | .. | ../ | '../*')
-        deny "rm -r の対象が危険（$t）"
+        deny "rm -r の対象が危険（${t}）"
         ;;
     esac
     r="$(resolve_target "$t")"
     if [ "$r" = "/" ] || [ "$r" = "$home_p" ] || [ "$r" = "$HOME" ] ||
       { [ -n "$TOP" ] && [ "$r" = "$TOP" ]; } || { [ -n "$MAIN_ROOT" ] && [ "$r" = "$MAIN_ROOT" ]; }; then
-      deny "rm -r の対象が /・ホーム・リポジトリのルートになっている（$t）"
+      deny "rm -r の対象が /・ホーム・リポジトリのルートになっている（${t}）"
     fi
   done
 }
@@ -720,7 +723,7 @@ check_segment() {
     if [ "$pw" = 1 ]; then
       for x in "${w[@]:1}"; do
         if protected_hit "$x"; then
-          deny "$PROTECTED_MSG（$c0b: $x）"
+          deny "${PROTECTED_MSG}（$c0b: ${x}）"
         fi
       done
     fi
@@ -748,11 +751,11 @@ check_segment() {
   # Reviewer: 書き込みにあたる操作
   if [ "$ROLE" = "reviewer" ]; then
     if is_interpreter "$c0b"; then
-      deny "Reviewer はインタプリタ（$c0b）を使わない（任意のコードでファイルを書き換えられる）"
+      deny "Reviewer はインタプリタ（${c0b}）を使わない（任意のコードでファイルを書き換えられる）"
     fi
     case "$c0b" in
       tee | cp | mv | rm | rmdir | touch | mkdir | ln | install | truncate | dd | patch | chmod | chown)
-        deny "Reviewer はファイルを書き換えない（$c0b）"
+        deny "Reviewer はファイルを書き換えない（${c0b}）"
         ;;
       sed | gsed)
         for x in "${w[@]:1}"; do
@@ -777,7 +780,9 @@ check_segment() {
 if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
   # Bash と同じく「\ と改行の組」（行の継続）を丸ごと取り除き、$'...'・$"..." の $ を取り除いてから、
   # 引用符と \ を取り除く（st\<改行>ate・st$'a'te のように語を分けた形も state と読む）。
-  acraw="${raw//$'\\\n'/}"
+  # （bash 3.2 は "${raw//$'…'/}" の $'…' を解釈しないので、いったん変数に入れる）
+  bs_nl=$'\\\n'
+  acraw="${raw//"$bs_nl"/}"
   ansi_c=0
   case "$acraw" in
     *"\$'"*) ansi_c=1 ;;
@@ -792,7 +797,7 @@ if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
     acsub="ANSI-C 引用 \$'...'"
   fi
   if [ -n "$acsub" ]; then
-    deny "Worker・Reviewer は agentctl の書き込み（$acsub）を含むコマンドを使わない（PR へのコメントと Issue の状態の書き込みは Orchestrator が行う。--dry-run でも、コメントや引用符の中の語でも拒否する）"
+    deny "Worker・Reviewer は agentctl の書き込み（${acsub}）を含むコマンドを使わない（PR へのコメントと Issue の状態の書き込みは Orchestrator が行う。--dry-run でも、コメントや引用符の中の語でも拒否する）"
   fi
 fi
 
@@ -801,4 +806,4 @@ while IFS= read -r seg; do
   check_segment "$seg"
 done < <(printf '%s\n' "$norm" | tr ';&|()`' '\n\n\n\n\n\n')
 
-exit 0
+allow

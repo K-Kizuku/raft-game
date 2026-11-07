@@ -3,8 +3,9 @@
 # 一時的な Git リポジトリ（メインの作業ツリーと、リンクした Worktree）で、
 # 役割ごとに拒否（終了コード 2）と許可（0）を確かめる。
 # 実行: bash .claude/hooks/tests/run.sh
-# （`[ … ] && pass || fail …` は pass が失敗しないので if の代わりに使う）
-# shellcheck disable=SC2015
+# （`[ … ] && pass || fail …` は pass が失敗しないので if の代わりに使う。fail-closed のテストで
+# hook に差し込む行の $ は、展開せずにそのまま差し込む）
+# shellcheck disable=SC2015,SC2016
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,15 +51,17 @@ fail() {
 }
 
 # run <hook> <role|-> <cwd> <tool_input の JSON> [tool_name] : 終了コードを出す
+# （run_hooks で hooks のディレクトリを、run_path で hook の PATH を差し替えられる。fail-closed のテストで使う）
 run() {
   local hook="$1" role="$2" cwd="$3" input="$4" tool="${5:-Bash}" json rc
+  local hdir="${run_hooks:-$hooks}" hpath="${run_path:-$PATH}"
   json="$(jq -cn --arg cwd "$cwd" --arg tool "$tool" --argjson ti "$input" \
     '{session_id:"s", cwd:$cwd, hook_event_name:"PreToolUse", tool_name:$tool, tool_input:$ti}')"
   set +e
   if [ "$role" = "-" ]; then
-    (unset AGENT_ROLE; printf '%s' "$json" | bash "$hooks/$hook" >/dev/null 2>"$tmp/stderr")
+    (unset AGENT_ROLE; printf '%s' "$json" | PATH="$hpath" bash "$hdir/$hook" >/dev/null 2>"$tmp/stderr")
   else
-    printf '%s' "$json" | AGENT_ROLE="$role" bash "$hooks/$hook" >/dev/null 2>"$tmp/stderr"
+    printf '%s' "$json" | AGENT_ROLE="$role" PATH="$hpath" bash "$hdir/$hook" >/dev/null 2>"$tmp/stderr"
   fi
   rc=$?
   set -e
@@ -218,11 +221,11 @@ expect_bash 0 worker "$wt" "git add -A && git commit -m 'feat: x (#5)'"
 expect_bash 0 worker "$wt" "gh pr create --title t --body-file b.md"
 # 役割を AGENT_ROLE で指定しなくても、リンクした Worktree の中なら worker
 got="$(run guard-bash.sh - "$wt" "$(bash_input "git push origin agent/issue-6")")"
-[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら worker として扱う（got=$got）"
+[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら worker として扱う（got=${got}）"
 got="$(run guard-bash.sh - "$wt" "$(bash_input "scripts/agents/merge.sh 12")")"
-[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら merge.sh を拒否する（got=$got）"
+[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら merge.sh を拒否する（got=${got}）"
 got="$(run guard-bash.sh - "$repo" "$(bash_input "scripts/agents/merge.sh 12")")"
-[ "$got" = 0 ] && pass || fail "役割が未設定でメインの作業ツリーなら orchestrator（got=$got）"
+[ "$got" = 0 ] && pass || fail "役割が未設定でメインの作業ツリーなら orchestrator（got=${got}）"
 for cmd in \
   "git push origin agent/issue-6" \
   "git push origin HEAD:agent/issue-6" \
@@ -242,7 +245,7 @@ done
 # Worktree issue-6 では Issue 6 のブランチに push できる（AGENT_ISSUE がなければディレクトリ名から）
 expect_bash 0 worker "$wt6" "git push origin agent/issue-6"
 got="$(AGENT_ISSUE=6 run guard-bash.sh worker "$wt" "$(bash_input "git push origin agent/issue-6")")"
-[ "$got" = 0 ] && pass || fail "AGENT_ISSUE=6 なら agent/issue-6 へ push できる（got=$got）"
+[ "$got" = 0 ] && pass || fail "AGENT_ISSUE=6 なら agent/issue-6 へ push できる（got=${got}）"
 
 # Worker: Bash からの保護されたパスへの書き込みは、AGENT_ALLOW_PROTECTED=1 のときだけ
 worker_protected_denied=(
@@ -278,10 +281,10 @@ for cmd in "${worker_protected_denied[@]}"; do
 done
 # 役割が未設定（Worktree の中＝worker）でも同じ
 got="$(run guard-bash.sh - "$wt" "$(bash_input "sed -i 1d .claude/hooks/guard-bash.sh")")"
-[ "$got" = 2 ] && pass || fail "役割が未設定の Worker でも保護されたパスへの sed -i を拒否する（got=$got）"
+[ "$got" = 2 ] && pass || fail "役割が未設定の Worker でも保護されたパスへの sed -i を拒否する（got=${got}）"
 for cmd in "${worker_protected_denied[@]}"; do
   got="$(AGENT_ALLOW_PROTECTED=1 run guard-bash.sh worker "$wt" "$(bash_input "$cmd")")"
-  [ "$got" = 0 ] && pass || fail "AGENT_ALLOW_PROTECTED=1 なら Bash から保護されたパスに書ける（got=$got）: $cmd"
+  [ "$got" = 0 ] && pass || fail "AGENT_ALLOW_PROTECTED=1 なら Bash から保護されたパスに書ける（got=${got}）: $cmd"
 done
 for cmd in \
   "sed -i s/a/b/ server/x.go" \
@@ -437,7 +440,7 @@ for role in worker reviewer; do
 done
 # 役割が未設定（Worktree の中＝worker）でも同じ
 got="$(run guard-bash.sh - "$wt" "$(bash_input "scripts/agents/agentctl.sh comment --pr 12")")"
-[ "$got" = 2 ] && pass || fail "役割が未設定の Worker でも agentctl comment を拒否する（got=$got）"
+[ "$got" = 2 ] && pass || fail "役割が未設定の Worker でも agentctl comment を拒否する（got=${got}）"
 for cmd in "${agentctl_write_cmds[@]}"; do
   expect_bash 0 orchestrator "$repo" "$cmd"
 done
@@ -482,12 +485,12 @@ expect_write 2 worker "$wt" "$wt/.claude/hooks/guard-bash.sh"
 expect_write 2 worker "$wt" "$wt/scripts/agents/merge.sh"
 expect_write 2 worker "$wt" "$wt/.agents/config.json"
 got="$(AGENT_ALLOW_PROTECTED=1 run guard-write.sh worker "$wt" "$(jq -cn --arg p "$wt/scripts/agents/merge.sh" '{file_path:$p}')" Write)"
-[ "$got" = 0 ] && pass || fail "AGENT_ALLOW_PROTECTED=1 なら保護されたパスに書ける（got=$got）"
+[ "$got" = 0 ] && pass || fail "AGENT_ALLOW_PROTECTED=1 なら保護されたパスに書ける（got=${got}）"
 got="$(AGENT_ALLOW_PROTECTED=1 run guard-write.sh worker "$wt" "$(jq -cn --arg p "$wt/.github/workflows/ci.yml" '{file_path:$p}')" Write)"
-[ "$got" = 2 ] && pass || fail "AGENT_ALLOW_PROTECTED=1 でも .github/workflows/ には書けない（got=$got）"
+[ "$got" = 2 ] && pass || fail "AGENT_ALLOW_PROTECTED=1 でも .github/workflows/ には書けない（got=${got}）"
 expect_write 0 worker "$wt" "$wt/.github/workflow-sources/ci.yml"
 got="$(run guard-write.sh worker "$wt" "$(jq -cn --arg p "$wt/x.ipynb" '{notebook_path:$p}')" NotebookEdit)"
-[ "$got" = 0 ] && pass || fail "NotebookEdit の notebook_path を読む（got=$got）"
+[ "$got" = 0 ] && pass || fail "NotebookEdit の notebook_path を読む（got=${got}）"
 expect_write 2 orchestrator "$repo" "$repo/README.md"
 expect_write 2 orchestrator "$repo" "$repo/scripts/agents/merge.sh"
 expect_write 2 orchestrator "$repo" "$tmp/outside.txt"
@@ -498,7 +501,69 @@ expect_write 2 orchestrator "$repo" "$repo/.github/workflows/ci.yml"
 expect_write 0 human "$repo" "$repo/README.md"
 expect_write 0 human "$repo" "$repo/.github/workflows/ci.yml"
 got="$(run guard-write.sh - "$wt" "$(jq -cn --arg p "$repo/README.md" '{file_path:$p}')" Write)"
-[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら worker として Worktree の外を拒否する（got=$got）"
+[ "$got" = 2 ] && pass || fail "役割が未設定で Worktree の中なら worker として Worktree の外を拒否する（got=${got}）"
+
+# guard-write: Orchestrator は、Claude Code のこのプロジェクトのメモリ（$HOME/.claude/projects/<キー>/memory/ の下）
+# にだけ、リポジトリの外で書ける（#107）。<キー> はメインの作業ツリーの絶対パスの / を - に置き換えたもの
+fhome="$tmp/home"
+key="${repo//\//-}"
+proj="$fhome/.claude/projects"
+mem="$proj/$key/memory"
+mkdir -p "$proj"
+# expect_write_home <期待する終了コード> <役割> <cwd> <パス>: HOME を $fhome にして expect_write
+expect_write_home() {
+  local want="$1" role="$2" cwd="$3" path="$4" got
+  got="$(HOME="$fhome" run guard-write.sh "$role" "$cwd" "$(jq -cn --arg p "$path" '{file_path:$p, content:"x"}')" Write)"
+  if [ "$got" = "$want" ]; then pass; else fail "guard-write（メモリ）role=$role want=$want got=${got}: $path"; fi
+}
+# メモリのディレクトリがまだなくても書ける（Claude Code が最初の書き込みで作る）
+expect_write_home 0 orchestrator "$repo" "$mem/MEMORY.md"
+mkdir -p "$mem/sub" "$tmp/outside-dir" "$proj/-other-project/memory" "$proj/${key}-x/memory"
+expect_write_home 0 orchestrator "$repo" "$mem/MEMORY.md"
+expect_write_home 0 orchestrator "$repo" "$mem/xxx.md"
+expect_write_home 0 orchestrator "$repo" "$mem/sub/note.md"
+expect_write_home 0 - "$repo" "$mem/MEMORY.md"
+# 別のキー・memory/ の外・.. を含むパス・メモリの外
+expect_write_home 2 orchestrator "$repo" "$proj/-other-project/memory/MEMORY.md"
+expect_write_home 2 orchestrator "$repo" "$proj/${key}-x/memory/MEMORY.md"
+expect_write_home 2 orchestrator "$repo" "$proj/$key/MEMORY.md"
+expect_write_home 2 orchestrator "$repo" "$proj/$key/x.jsonl"
+expect_write_home 2 orchestrator "$repo" "$mem"
+expect_write_home 2 orchestrator "$repo" "$mem/../MEMORY.md"
+expect_write_home 2 orchestrator "$repo" "$mem/../../-other-project/memory/MEMORY.md"
+expect_write_home 2 orchestrator "$repo" "$mem/sub/../MEMORY.md"
+expect_write_home 2 orchestrator "$repo" "$fhome/.claude/settings.json"
+expect_write_home 2 orchestrator "$repo" "$fhome/.claude/CLAUDE.md"
+expect_write_home 2 orchestrator "$repo" "$fhome/.bashrc"
+expect_write_home 2 orchestrator "$repo" "$tmp/outside.txt"
+# メモリのディレクトリの外を指すシンボリックリンク（ファイル・ディレクトリ・壊れたもの）
+printf 'x\n' >"$tmp/outside.txt"
+ln -s "$tmp/outside.txt" "$mem/link.md"
+ln -s "$tmp/outside-dir" "$mem/linkdir"
+ln -s "$tmp/nowhere.md" "$mem/dangling.md"
+expect_write_home 2 orchestrator "$repo" "$mem/link.md"
+expect_write_home 2 orchestrator "$repo" "$mem/linkdir/x.md"
+expect_write_home 2 orchestrator "$repo" "$mem/dangling.md"
+expect_write_home 2 orchestrator "$repo" "$mem/linkdir/../MEMORY.md"
+# <キー> や memory そのものがメモリの外を指すシンボリックリンク
+fhome2="$tmp/home2"
+mkdir -p "$fhome2/.claude/projects/$key" "$tmp/elsewhere"
+ln -s "$tmp/elsewhere" "$fhome2/.claude/projects/$key/memory"
+got="$(HOME="$fhome2" run guard-write.sh orchestrator "$repo" "$(jq -cn --arg p "$fhome2/.claude/projects/$key/memory/MEMORY.md" '{file_path:$p}')" Write)"
+[ "$got" = 2 ] && pass || fail "memory がシンボリックリンクなら拒否する（got=${got}）"
+# ~/.claude がシンボリックリンク（dotfiles など）でも、その先のこのプロジェクトのメモリには書ける
+fhome3="$tmp/home3"
+mkdir -p "$fhome3" "$tmp/dotfiles-claude/projects/$key/memory"
+ln -s "$tmp/dotfiles-claude" "$fhome3/.claude"
+got="$(HOME="$fhome3" run guard-write.sh orchestrator "$repo" "$(jq -cn --arg p "$fhome3/.claude/projects/$key/memory/MEMORY.md" '{file_path:$p}')" Write)"
+[ "$got" = 0 ] && pass || fail "\$HOME/.claude がシンボリックリンクでもメモリには書ける（got=${got}）"
+# Worker・Reviewer は同じパスでも拒否する（Worker の cwd は Worktree で、メインの作業ツリーは同じ）
+for role in worker reviewer; do
+  expect_write_home 2 "$role" "$wt" "$mem/MEMORY.md"
+  expect_write_home 2 "$role" "$wt" "$mem/xxx.md"
+  expect_write_home 2 "$role" "$repo" "$mem/MEMORY.md"
+done
+expect_write_home 2 - "$wt" "$mem/MEMORY.md"
 
 # ---------------- guard-mcp ----------------
 for tool in mcp__github__merge_pull_request mcp__github__enable_pr_auto_merge \
@@ -514,8 +579,97 @@ set +e
 printf 'not json' | AGENT_ROLE=worker bash "$hooks/guard-bash.sh" >/dev/null 2>&1
 rc=$?
 set -e
-[ "$rc" = 2 ] && pass || fail "入力が JSON でなければ拒否する（rc=$rc）"
+[ "$rc" = 2 ] && pass || fail "入力が JSON でなければ拒否する（rc=${rc}）"
 expect_bash 2 admin "$wt" "go test ./..."
+
+# ---------------- fail-closed（#107） ----------------
+# 想定外のエラー（未定義の変数・失敗したコマンド・exit 1 など）では、許可（0）にも、Claude Code が
+# 拒否と扱わない 1 にもせず、拒否（2）にする。普段は許可（0）になる入力で確かめる。
+internal_msg='[guard] 拒否（内部エラー）'
+# expect_internal <説明> <hook> <role> <cwd> <tool_input の JSON> [tool_name]
+expect_internal() {
+  local desc="$1" got
+  shift
+  got="$(run "$@")"
+  if [ "$got" = 2 ] && grep -qF "$internal_msg" "$tmp/stderr"; then
+    pass
+  else
+    fail "fail-closed: ${desc}（got=${got}）: $(tr '\n' ' ' <"$tmp/stderr")"
+  fi
+}
+# expect_internal_all <説明>: 3 つの hook で expect_internal
+expect_internal_all() {
+  expect_internal "$1 guard-bash" guard-bash.sh worker "$wt" "$(bash_input "git status")"
+  expect_internal "$1 guard-write" guard-write.sh worker "$wt" "$(jq -cn --arg p "$wt/README.md" '{file_path:$p}')" Write
+  expect_internal "$1 guard-mcp" guard-mcp.sh orchestrator "$repo" '{"pullNumber":1}' mcp__github__merge_pull_request
+}
+# 差し替える前は許可になることを確かめておく
+got="$(run guard-bash.sh worker "$wt" "$(bash_input "git status")")"
+[ "$got" = 0 ] && pass || fail "fail-closed: 差し替える前の guard-bash は許可（got=${got}）"
+got="$(run guard-write.sh worker "$wt" "$(jq -cn --arg p "$wt/README.md" '{file_path:$p}')" Write)"
+[ "$got" = 0 ] && pass || fail "fail-closed: 差し替える前の guard-write は許可（got=${got}）"
+expect_mcp 0 orchestrator mcp__github__merge_pull_request
+
+# make_broken <dir> <差し込む行>: hooks をコピーし、guard-*.sh の detect_role "$CWD" の直後に 1 行を差し込む
+make_broken() {
+  local dir="$1" line="$2" f
+  mkdir -p "$dir"
+  cp "$hooks/lib.sh" "$dir/lib.sh"
+  for f in guard-bash.sh guard-write.sh guard-mcp.sh; do
+    awk -v line="$line" '{ print } $0 == "detect_role \"$CWD\"" { print line }' "$hooks/$f" >"$dir/$f"
+    grep -qxF -- "$line" "$dir/$f" || fail "fail-closed: $f に差し込めない: $line"
+  done
+}
+n=0
+for line in \
+  ': "$hook_test_undefined_var"' \
+  'echo "${hook_test_undefined_var}" >/dev/null' \
+  'false' \
+  'hook_test_missing_command_107' \
+  'exit 1' \
+  'exit 3'; do
+  n=$((n + 1))
+  make_broken "$tmp/broken-$n" "$line"
+  run_hooks="$tmp/broken-$n"
+  expect_internal_all "$line"
+  run_hooks=""
+done
+# 関数の中の未定義の変数（lib.sh の hook_field）
+mkdir -p "$tmp/broken-lib"
+cp "$hooks/guard-bash.sh" "$hooks/guard-write.sh" "$hooks/guard-mcp.sh" "$tmp/broken-lib/"
+awk '{ print } $0 == "hook_field() {" { print "  : \"$hook_test_undefined_in_function\"" }' "$hooks/lib.sh" >"$tmp/broken-lib/lib.sh"
+grep -qF 'hook_test_undefined_in_function' "$tmp/broken-lib/lib.sh" || fail "fail-closed: lib.sh に差し込めない"
+run_hooks="$tmp/broken-lib"
+expect_internal_all "lib.sh の関数の中の未定義の変数"
+run_hooks=""
+# lib.sh が読めない
+mkdir -p "$tmp/no-lib"
+cp "$hooks/guard-bash.sh" "$hooks/guard-write.sh" "$hooks/guard-mcp.sh" "$tmp/no-lib/"
+run_hooks="$tmp/no-lib"
+expect_internal_all "lib.sh がない"
+run_hooks=""
+# jq が途中で失敗する（入力の確認の jq -e は通るが、値の取り出しの jq -r が失敗する）
+real_jq="$(command -v jq)"
+mkdir -p "$tmp/badjq"
+cat >"$tmp/badjq/jq" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" -e "*) exec "$real_jq" "\$@" ;;
+esac
+echo "jq: 壊れている" >&2
+exit 5
+EOF
+chmod +x "$tmp/badjq/jq"
+run_path="$tmp/badjq:$PATH"
+expect_internal_all "jq が失敗する"
+run_path=""
+# 正しく拒否するときは、内部エラーではなく本来の理由を出す
+got="$(run guard-bash.sh worker "$wt" "$(bash_input "git push origin main")")"
+if [ "$got" = 2 ] && grep -qF 'main への push は禁止' "$tmp/stderr" && ! grep -qF "$internal_msg" "$tmp/stderr"; then
+  pass
+else
+  fail "fail-closed: 本来の拒否は理由をそのまま出す（got=${got}）"
+fi
 
 echo "hooks: $((total - failures))/$total ok"
 if [ "$failures" -ne 0 ]; then

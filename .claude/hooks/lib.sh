@@ -6,14 +6,40 @@
 #   リンクした Worktree の中（git-dir と git-common-dir が異なる）なら worker、
 #   そうでなければ orchestrator
 # - 拒否するときは deny "理由" → 理由を標準エラーに出して終了コード 2
+# - 許可するときは allow → 終了コード 0。exit 0 で直接終わらない
+# - 想定外のエラー（set -e・set -u での終了など）でも終了コード 2（拒否）にする（fail-closed、#107）。
+#   Claude Code は終了コード 2 だけを拒否として扱い、1 などでは操作を通してしまう。
+#   allow・deny を通らずに終わったら、終了コードによらず拒否にする（bash 3.2 では、set -u などで
+#   終わるときの EXIT の trap の $? が 0 になることがあり、終了コードでは見分けられない）
+# - bash 3.2（macOS の /bin/bash）でも動く書き方にする。変数の直後に ASCII 以外の文字が続くときは
+#   ${var} と書く（bash 3.2 と UTF-8 のロケールでは、$t の直後に「）」があると、そのバイトまで変数名として読まれる。
+#   scripts/tests/test_shell_scripts.py が検査する）
 # shellcheck shell=bash
 
 HOOK_INPUT=""
 ROLE=""
+HOOK_RESULT=""
+
+# hook_on_exit: EXIT の trap。allow（0）・deny（2）で終わったのでなければ、2（拒否）に付け替える。
+hook_on_exit() {
+  local rc=$?
+  case "${HOOK_RESULT}:${rc}" in
+    allow:0 | deny:2) return 0 ;;
+  esac
+  echo "[guard] 拒否（内部エラー）: hook が想定外のエラーで終了した（終了コード ${rc}・${0##*/}）。安全のため拒否する" >&2
+  exit 2
+}
+trap hook_on_exit EXIT
 
 deny() {
   echo "[guard] 拒否（AGENT_ROLE=${ROLE:-?}）: $*" >&2
+  HOOK_RESULT="deny"
   exit 2
+}
+
+allow() {
+  HOOK_RESULT="allow"
+  exit 0
 }
 
 hook_read_input() {
