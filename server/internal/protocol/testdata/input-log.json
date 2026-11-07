@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "build": "git:3f2c1ab",
+  "stageId": "stage2",
+  "stageHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "seed": 20261101,
+  "commands": [
+    {"t": 0,    "cmd": {"type": "cmd.game.start",   "payload": {}}},
+    {"t": 0,    "cmd": {"type": "cmd.ferry.load",   "payload": {"ferryId": "f1", "letterIds": [12, 13]}}},
+    {"t": 600,  "cmd": {"type": "cmd.game.speed",   "payload": {"speed": 2}}},
+    {"t": 1200, "cmd": {"type": "cmd.ferry.depart", "payload": {"ferryId": "f1", "to": 2}}}
+  ]
+}

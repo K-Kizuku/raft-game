@@ -7,7 +7,7 @@
 | 状態 | レビュー済み |
 | 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) / [ADR-0018](./adr/0018-cost-guard.md) / [ADR-0023](./adr/0023-durable-object-fetch-handler.md) |
 
-型の正本は Go の `server/internal/protocol` です。TypeScript の型は `tygo` で `web/src/protocol/` に生成します。この文書と Go のコードが食い違ったら、**コードを直してからこの文書を更新**してください。
+型の正本は Go の `server/internal/protocol` です。TypeScript の型は `tygo` で `web/src/protocol/protocol.gen.ts` に生成します（生成物。直接編集しない）。イベントと電文の判別可能なユニオン型（`ServerEvent`・`ClientMessage`・`ServerMessage`・`InternalMessage`）は手書きの `web/src/protocol/events.ts`・`messages.ts` にあり、画面などからは入口の `web/src/protocol/index.ts` から import します。`sim` の型との変換は `server/internal/protocol/simconv` が行います。生成は `make gen`、生成物に差分がないかの検査は `make gen-check` です。この文書と Go のコードが食い違ったら、**コードを直してからこの文書を更新**してください。
 
 ---
 
@@ -303,7 +303,7 @@ Worker が返すエラー:
 |---|---|---|
 | `snapshot` | `Snapshot`（§5.1） | 接続時・`cmd.sync` の応答・送信キューがあふれたとき |
 | `events` | `{ "clock": Clock, "events": Event[] }` | 100ms ごとにまとめて送る（イベントがなくても 1 秒に 1 回は `clock` のために送る） |
-| `ack` | `{ "cmdId": "c-12", "ok": true, "t": 61200 }` / `{ "cmdId": "c-12", "ok": false, "code": "route_blocked", "message": "…" }` | コマンドの結果。`t` は適用したゲーム内時刻で、Durable Object が入力ログに記録するのに使う |
+| `ack` | `{ "cmdId": "c-12", "ok": true, "t": 61200 }` / `{ "cmdId": "c-12", "ok": false, "t": 61200, "code": "route_blocked", "message": "…" }` | コマンドの結果。`t` は適用したゲーム内時刻で、Durable Object が入力ログに記録するのに使う。失敗のときも `t`（そのときのゲーム内時刻）を入れる（後方互換なフィールドの追加、§8） |
 | `node.detail` | `NodeDetail`（§5.4） | エンジニアモードの購読中、2Hz |
 | `round.result` | `RoundResult`（§5.5） | ラウンド終了時 |
 | `error` | `{ "code": "…", "message": "…", "fatal": true }` | `fatal` なら直後に切断する |
@@ -342,11 +342,13 @@ Worker が返すエラー:
 }
 ```
 
+`phase` の値: `intro`（`cmd.game.start` の前。ステージ紹介）/ `opening` / `sailing` / `ended`
+
 `ferries[]` の注記（後方互換なフィールドの追加、§8）:
 
 - `state` は `docked` / `sailing`
 - `islandId` は `docked` のときの島
-- `from`・`to`・`departAt`・`arriveAt` は `sailing` のときだけ
+- `from`・`to` は `sailing` のときだけ。`departAt`・`arriveAt` は `docked` のとき `0`
 - `readyAt` は、`docked` なら出航できるようになる時刻、`sailing` なら着いてから出航できる時刻（`arriveAt + dockMs`）
 
 ### 5.2 Letter
@@ -398,6 +400,8 @@ Worker が返すエラー:
 ```json
 { "status": "rejected", "reason": "already_reserved" }
 ```
+
+`result` は `null` か文字列です（文字列の中身は T-202 が決める）。
 
 ### 5.4 NodeDetail（エンジニアモード）
 

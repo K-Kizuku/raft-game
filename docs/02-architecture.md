@@ -155,8 +155,9 @@ flowchart TB
 | `internal/ledger` | 共有台帳の状態機械（花火・屋台・予算） | なし（純粋なロジック） |
 | `internal/game` | 依頼・スコア・満足度・イベント台本 | `internal/ledger` |
 | `internal/stage` | ステージ定義（YAML）と島データ（JSON）の読み込み・検証 | なし |
-| `internal/protocol` | WebSocket の電文の型（TS の型を生成する元） | なし |
-| `internal/server` | HTTP / WS・セッションループ・`single` / `standalone` モード | `internal/sim`、`internal/protocol` |
+| `internal/protocol` | WebSocket の電文と公開 API の本文の型（TS の型を生成する元） | なし |
+| `internal/protocol/simconv` | `sim` の型と `protocol` の型の変換 | `internal/sim`、`internal/protocol` |
+| `internal/server` | HTTP / WS・セッションループ・`single` / `standalone` モード | `internal/sim`、`internal/protocol`、`internal/protocol/simconv` |
 
 依存の向きは「`server` → `sim` → (`cluster`, `ferry`, `game`) → (`ledger`, `stage`)」の一方向です。`cluster` と `ferry` はお互いを知りません（`sim` がつなぎます）。
 
@@ -359,10 +360,13 @@ raft-game/
 │   │   ├── cluster/             # RawNode のラッパーと Ready ループ
 │   │   ├── ferry/               # 手紙・港・フェリー・航路
 │   │   ├── ledger/              # 台帳の状態機械
+│   │   ├── bot/                 # ボット船長（random・greedy。simcli とテストが使う）
 │   │   ├── game/                # 依頼・スコア・イベント
 │   │   ├── stage/               # ステージと島データの読み込み
 │   │   ├── protocol/            # WS の電文の型（tygo で TS を生成）
+│   │   │   └── simconv/         # sim の型と protocol の型の変換
 │   │   └── server/              # HTTP / WS / セッションループ
+│   ├── tygo.yaml                # tygo の設定（make gen が使う）
 │   └── third_party/
 │       └── etcd-raft/           # v3.7.0 + 乱数を注入するパッチ（ADR-0005）
 ├── web/                         # Vite + React + TypeScript + Cloudflare（cf）
@@ -379,7 +383,9 @@ raft-game/
 │   │   ├── ui/                  # HUD・パネル類
 │   │   ├── state/               # zustand ストアとイベントの反映（reducer）
 │   │   ├── net/                 # WS クライアント
-│   │   └── protocol/            # 生成された型（直接編集しない。worker/ からも使う）
+│   │   └── protocol/            # プロトコルの型（worker/ からも使う）
+│   │       ├── protocol.gen.ts  # make gen の生成物（直接編集しない）
+│   │       └── index.ts         # 入口（生成物と手書きのユニオン型 events.ts・messages.ts をまとめる）
 │   └── public/
 │       └── assets/              # 素材。generated/ に画像生成 AI の素材、CREDITS.md に出典
 ├── data/
