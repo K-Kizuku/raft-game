@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/config"
+	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/gate"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/github"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/plan"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/snapshot"
@@ -67,7 +68,9 @@ var subUsage = map[string]string{
   （reset-to-ready・resume-worker・set-state・request-review・merge・escalate・fix-labels）。
   ローカルの Worktree（git worktree list の .claude/worktrees/issue-<N>、--input なら worktrees 欄）も見て、
   ブランチも PR もなくても、未コミットの変更か push していないコミットがあれば resume-worker にする。
-  resume-worker には、状態の記録にある最新の session を含める。`,
+  resume-worker には、状態の記録にある最新の session を含める。
+  in-review で HEAD のレビュー記録がなくても、前の SHA のレビューを Merge Gate の C6 と同じ条件で引き継げる
+  （main の取り込みだけ。review.carry_over_on_base_merge）なら request-review を出さない（--input なら pulls[].gate 欄を使う）。`,
 }
 
 type taskOpts struct {
@@ -261,6 +264,10 @@ func runRecover(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	res := plan.Recover(e.snap, e.cfg, e.trusted)
+	if o.input == "" && e.cfg.Review.CarryOverOnBaseMerge && fetchCarryOver(ctx, e, o.repo, res, stderr) {
+		// 前の SHA のレビューを引き継げる PR には request-review を出さない（Merge Gate の C6 と同じ条件）。
+		res = plan.Recover(e.snap, e.cfg, e.trusted)
+	}
 	warn(stderr, "recover", res.Warnings)
 	if *asJSON {
 		if err := writeJSON(stdout, res); err != nil {
@@ -282,6 +289,34 @@ func runRecover(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "#%d [%s] %s%s — %s\n", a.Issue, a.Status, a.Action, extra, a.Reason)
 	}
 	return exitOK
+}
+
+// fetchCarryOver は、request-review の PR ごとに Merge Gate の判定の材料（レビュー記録の引き継ぎの材料を含む）を集め、
+// スナップショットの PR の gate 欄に入れる。1 つでも入れたら true。集められなかった PR は警告を出し、request-review のままにする。
+func fetchCarryOver(ctx context.Context, e *taskEnv, repo string, res *plan.RecoverResult, stderr io.Writer) bool {
+	changed := false
+	for _, a := range res.Actions {
+		if a.Action != plan.ActionRequestReview || a.PR <= 0 {
+			continue
+		}
+		p := e.snap.Pull(a.PR)
+		if p == nil {
+			continue
+		}
+		in, err := e.client.FetchInput(ctx, repo, a.PR)
+		if err != nil {
+			warn(stderr, "recover", []string{fmt.Sprintf("PR #%d のレビューの引き継ぎを確かめられない: %v", a.PR, err)})
+			continue
+		}
+		sha := gate.CarryOverCandidate(e.cfg, in)
+		if sha == "" {
+			continue
+		}
+		e.client.FetchCarryOver(ctx, repo, &in, sha)
+		p.Gate = &in
+		changed = true
+	}
+	return changed
 }
 
 // runWrite は state・claim・attempt の共通部分。build が操作を組み立て、--dry-run なら JSON で出し、そうでなければ送る。

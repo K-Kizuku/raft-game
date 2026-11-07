@@ -258,6 +258,12 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 			if err != nil {
 				return fail("%v", err)
 			}
+			if cfgErr == nil {
+				// レビュー記録の引き継ぎ（C6）の材料。集められなくても判定は続ける（引き継がないだけ）。
+				if sha := gate.CarryOverCandidate(cfg, in); sha != "" {
+					client.FetchCarryOver(ctx, o.repo, &in, sha)
+				}
+			}
 			inputs = append(inputs, in)
 		}
 	}

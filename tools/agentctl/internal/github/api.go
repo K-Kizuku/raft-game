@@ -312,6 +312,70 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 	return in, nil
 }
 
+// FetchCarryOver は、レビュー記録の引き継ぎ（Merge Gate の C6。Issue #120）の判定の材料を集め、in.CarryOver に入れる。
+// sha は引き継ぎの候補（gate.CarryOverCandidate）。集めるのに失敗しても、エラーは返さず in.CarryOver.Error に書く
+// （引き継がないだけで、今までどおり HEAD のレビューを求める）。
+//
+//   - commits: HEAD から GET /git/commits/{sha} で最初の親をたどり、sha に着くか、マージではないコミットに当たるまで
+//   - in_base: マージコミットの 2 番目以降の親ごとに、GET /compare/{base}...{親} の ahead_by が 0（ベースの履歴に含まれる）か
+//   - files: GET /compare/{base}...{sha} の files（ベースとのマージベースから sha までの変更。patch を含む）
+func (c *Client) FetchCarryOver(ctx context.Context, repo string, in *gate.Input, sha string) {
+	co := &gate.CarryOverInput{SHA: sha, Commits: []gate.Commit{}, InBase: map[string]bool{}, Files: []gate.File{}}
+	in.CarryOver = co
+	if err := c.fetchCarryOver(ctx, repo, in.PullRequest.BaseRef, in.PullRequest.HeadSHA, co); err != nil {
+		co.Error = err.Error()
+	}
+}
+
+func (c *Client) fetchCarryOver(ctx context.Context, repo, base, head string, co *gate.CarryOverInput) error {
+	rp := repoPath(repo)
+	type gitCommit struct {
+		SHA     string `json:"sha"`
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	for cur := head; cur != co.SHA; {
+		if len(co.Commits) >= gate.MaxCarryOverCommits {
+			return fmt.Errorf("HEAD から %s までのコミットが %d 個より多い", co.SHA, gate.MaxCarryOverCommits)
+		}
+		var gc gitCommit
+		if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/git/commits/%s", rp, esc(cur)), nil, &gc); err != nil {
+			return err
+		}
+		cm := gate.Commit{SHA: gc.SHA, Parents: []string{}}
+		for _, p := range gc.Parents {
+			cm.Parents = append(cm.Parents, p.SHA)
+		}
+		co.Commits = append(co.Commits, cm)
+		if len(cm.Parents) < 2 {
+			// マージではないコミット（PR の作者の変更）。判定で引き継がないので、これ以上は集めない。
+			return nil
+		}
+		for _, p := range cm.Parents[1:] {
+			if _, ok := co.InBase[p]; ok {
+				continue
+			}
+			var cmp gate.Compare
+			if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/compare/%s...%s?per_page=1", rp, esc(base), esc(p)), nil, &cmp); err != nil {
+				return err
+			}
+			co.InBase[p] = cmp.AheadBy == 0 && (cmp.Status == "behind" || cmp.Status == "identical")
+		}
+		cur = cm.Parents[0]
+	}
+	var cmp struct {
+		Files []gate.File `json:"files"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/compare/%s...%s?per_page=1", rp, esc(base), esc(co.SHA)), nil, &cmp); err != nil {
+		return err
+	}
+	if cmp.Files != nil {
+		co.Files = cmp.Files
+	}
+	return nil
+}
+
 // SetStatus は sha にコミットステータスを付ける。
 func (c *Client) SetStatus(ctx context.Context, repo, sha, state, contextName, description, targetURL string) error {
 	body := map[string]string{"state": state, "context": contextName, "description": description}
