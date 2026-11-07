@@ -90,9 +90,9 @@
 
 /* 出典区分のラベルは数字の下に置く（ラベルそのものの見た目は ProvenanceLabel の CSS）。 */
 .stage-intro .stage-intro-facts dd .provenance-label {
-  display: block;
+  display: table;
+  margin: var(--space-1) auto 0;
   font-family: var(--font-body);
-  font-size: 0.6em;
   font-weight: normal;
   overflow-wrap: anywhere;
 }
