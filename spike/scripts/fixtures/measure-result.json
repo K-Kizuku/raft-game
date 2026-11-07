@@ -1,0 +1,98 @@
+{
+  "startedAt": "2026-11-08T01:02:03.000Z",
+  "finishedAt": "2026-11-08T01:30:00.000Z",
+  "base": "https://raft-game-spike.example.workers.dev",
+  "target": "lite",
+  "instance": "lite",
+  "cfVersion": "1.0.0-beta.28",
+  "options": {
+    "instance": "lite",
+    "only": ["start", "ws", "ping", "bench", "loop", "sql", "plain", "egress", "crash", "cpu", "stop", "alarm", "inactivity"],
+    "runs": 3,
+    "concurrency": 2,
+    "first": 1,
+    "internetControl": true,
+    "idle": 120
+  },
+  "sessions": [1, 2, 3, 4, 5],
+  "items": {
+    "start": {
+      "ok": true,
+      "data": {
+        "runs": [
+          { "session": 1, "status": 200, "cold": true, "startMs": 2400, "polls": 20, "clientMs": 2550.5 },
+          { "session": 2, "status": 200, "cold": false, "startMs": 1200, "polls": 10, "clientMs": 1300.25 },
+          { "session": 3, "status": 200, "cold": false, "startMs": 1500, "polls": 12, "clientMs": 1620 }
+        ],
+        "concurrent": [
+          { "session": 4, "status": 200, "startMs": 1800, "clientMs": 1900 },
+          { "session": 5, "status": 503, "startMs": null, "clientMs": 30000 }
+        ],
+        "info": {
+          "numCPU": 4,
+          "gomaxprocs": 4,
+          "cgroup": { "cpuMax": "6250 100000", "memoryMax": "268435456" },
+          "env": { "MODE": "single", "PORT": "8080" }
+        },
+        "colo": "NRT"
+      }
+    },
+    "ws": {
+      "ok": true,
+      "data": {
+        "rtt1k": { "n": 200, "p50": 12.345, "p95": 20, "p99": 31.5, "max": 40 },
+        "lost1k": 0,
+        "ok16k": 20,
+        "sent16k": 20,
+        "oversizeDropped": true,
+        "burst": { "sent": 500, "received": 500, "inOrder": true },
+        "idle": { "seconds": 120, "ok": true },
+        "relayAfterClose": { "closedBy": "browser" },
+        "serverClose": { "code": 1011 }
+      }
+    },
+    "ping": { "ok": true, "data": { "count": 200, "ok": 200, "p50": 0.8, "p99": 3.25, "max": 5 } },
+    "bench": { "ok": true, "data": { "result": { "wallMs": 1534.2, "virtualMinutesPerSecond": 19.55, "cpuUserMs": 1400 } } },
+    "loop": {
+      "ok": true,
+      "data": {
+        "speeds": [
+          { "speed": "1", "status": 200, "result": { "stepMs": { "p99": 0.5 }, "lateMs": { "p99": 1.2 }, "cpuUtil": 0.02 } },
+          { "speed": "8", "status": 200, "result": { "stepMs": { "p99": 4.75 }, "lateMs": { "p99": 9 }, "cpuUtil": 0.31 } }
+        ]
+      }
+    },
+    "sql": {
+      "ok": true,
+      "data": { "rows100ClientMs": 45.6, "rows1000ClientMs": 210.4, "rowsAfterRestart": 1100, "keptAfterRestart": true }
+    },
+    "plain": { "ok": true, "data": { "plainOk": true, "controlOk": true } },
+    "egress": {
+      "ok": true,
+      "data": {
+        "internet0": { "dns": "lookup example.com: no such host", "tcp": "dial tcp 1.1.1.1:443: connect: network is unreachable", "https": "Get \"https://example.com/\": dial | refused" },
+        "internet1": { "dns": "ok", "tcp": "ok", "https": "ok" }
+      }
+    },
+    "crash": { "ok": true, "data": { "detectMs": 350, "timeout": false, "restartMs": 1900 } },
+    "cpu": {
+      "ok": true,
+      "data": {
+        "worker": [
+          { "iters": 1000000, "status": 200 },
+          { "iters": 100000000, "status": 200 },
+          { "iters": 1000000000, "status": 503, "error": "exceededCpu" }
+        ],
+        "durableObject": [
+          { "iters": 1000000, "status": 200 },
+          { "iters": 1000000000, "status": 200 }
+        ]
+      }
+    },
+    "stop": { "ok": true, "data": { "stopMs": 120, "runningAfter": false } },
+    "alarm": { "ok": true, "data": { "maxRunMs": 60000, "stopped": true, "alarmRecorded": true } },
+    "inactivity": { "ok": true, "data": { "inactivityMs": 30000, "stopped": false } }
+  },
+  "stopFailures": [],
+  "ok": true
+}
