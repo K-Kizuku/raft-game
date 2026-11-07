@@ -1,6 +1,7 @@
 package ferry
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -57,7 +58,8 @@ type Transport struct {
 	routeIdx map[routeKey]int
 	ferries  []Ferry
 	ferryIdx map[FerryID]int
-	letters  []Letter              // 添字 = ID - 1
+	letters  []Letter              // ID の昇順（狭義）。港・船にある手紙と、まだ Reclaim していない配達済み・破棄の手紙
+	lastID   LetterID              // 最後に振った ID（0 = まだない）。Reclaim しても戻さない
 	ports    map[uint64][]LetterID // 島 → その島が送信元の手紙（ID の昇順）
 
 	dockMs        int64
@@ -144,14 +146,25 @@ func New(cfg Config) (*Transport, error) {
 	return t, nil
 }
 
+// index は手紙 id の t.letters での添字を返す。
+func (t *Transport) index(id LetterID) (int, bool) {
+	if id == 0 {
+		return 0, false
+	}
+	return slices.BinarySearchFunc(t.letters, id, func(l Letter, id LetterID) int { return cmp.Compare(l.ID, id) })
+}
+
 func (t *Transport) letter(id LetterID) *Letter {
-	if id == 0 || uint64(id) > uint64(len(t.letters)) {
+	i, ok := t.index(id)
+	if !ok {
 		return nil
 	}
-	return &t.letters[id-1]
+	return &t.letters[i]
 }
 
 // Letter は手紙の値の複製を返す（Req は複製、Raft は同じポインタ）。
+// 配達済み・破棄した手紙も、Reclaim を呼ぶまでは引ける（Location が LocDelivered・LocDropped）。
+// Reclaim で手放した ID・振っていない ID・0 は (Letter{}, false) を返す。
 func (t *Transport) Letter(id LetterID) (Letter, bool) {
 	l := t.letter(id)
 	if l == nil {
@@ -163,6 +176,21 @@ func (t *Transport) Letter(id LetterID) (Letter, bool) {
 		c.Req = &r
 	}
 	return c, true
+}
+
+// Reclaim は、配達済み・破棄した手紙（LocDelivered・LocDropped）をすべて手放し、その数を返す。
+// 手放した手紙は Letter で引けなくなる（Load・Unload では存在しない ID と同じ扱い）。ID は再利用しない。
+// 港・船にある手紙・船・航路・次に振る ID は変えない。
+//
+// 呼び出し側は、配達・破棄の結果から必要な値（Letter、Raft のポインタ）を取り出し、
+// ドメインイベントを作り終えたあとで呼ぶ。呼ばなければ終わった手紙を持ち続ける（メモリは増え続ける）。
+// 呼べば、直後に持つ手紙の数は港・船の上限（V-7）で抑えられる。スライスの容量は縮めない。
+func (t *Transport) Reclaim() int {
+	n := len(t.letters)
+	t.letters = slices.DeleteFunc(t.letters, func(l Letter) bool {
+		return l.Location.Kind == LocDelivered || l.Location.Kind == LocDropped
+	})
+	return n - len(t.letters)
 }
 
 // Port は島の港にある手紙の ID（昇順）の複製を返す。島がなければ nil。
@@ -209,16 +237,26 @@ func (t *Transport) Routes() []Route { return slices.Clone(t.routes) }
 // CheckInvariants は港・船・手紙の不変条件（V-7・I-7）を確かめ、違反を 1 つ見つけたら
 // 説明つきのエラーを返す。
 func (t *Transport) CheckInvariants() error {
-	seen := make([]bool, len(t.letters)) // 港・船の一覧に出てきた手紙
+	// 並びが崩れていると二分探索が当てにならないので、港・船より先に ID の並びを確かめる。
+	for i := range t.letters {
+		id := t.letters[i].ID
+		if id < 1 || id > t.lastID {
+			return fmt.Errorf("ferry: invariant: letter at %d has id %d (last id %d)", i, id, t.lastID)
+		}
+		if i > 0 && t.letters[i-1].ID >= id {
+			return fmt.Errorf("ferry: invariant: letter at %d has id %d, not above %d", i, id, t.letters[i-1].ID)
+		}
+	}
+	seen := make([]bool, len(t.letters)) // 港・船の一覧に出てきた手紙（t.letters の添字）
 	mark := func(id LetterID, where string) error {
-		l := t.letter(id)
-		if l == nil {
+		i, ok := t.index(id)
+		if !ok {
 			return fmt.Errorf("ferry: invariant: %s: unknown letter %d", where, id)
 		}
-		if seen[id-1] {
+		if seen[i] {
 			return fmt.Errorf("ferry: invariant: letter %d listed twice (%s)", id, where)
 		}
-		seen[id-1] = true
+		seen[i] = true
 		return nil
 	}
 	for _, island := range t.islands {
@@ -311,9 +349,6 @@ func (t *Transport) CheckInvariants() error {
 	}
 	for i := range t.letters {
 		l := &t.letters[i]
-		if l.ID != LetterID(i+1) {
-			return fmt.Errorf("ferry: invariant: letter at %d has id %d", i, l.ID)
-		}
 		switch l.Location.Kind {
 		case LocPort, LocFerry:
 			if !seen[i] {
