@@ -4,6 +4,8 @@
 # 参照する公開の契約なので、名前を変えない。
 # server: server/ の Go に gofmt・vet・mod tidy・golangci-lint（forbidigo）・test（T-005 / #13）。
 # web: web/ に lint・typecheck・test（T-005 / #13）。
+# secrets: gitleaks で git の履歴全体にシークレットがないかを検査する（scripts/check-secrets.sh。T-009 / #17）。
+# docs: scripts/check-license.py で LICENSE・NOTICE が同梱の OSS・提供データの出典と合っているかを確かめる（T-009 / #17）。
 name: ci
 
 on:
@@ -31,7 +33,9 @@ jobs:
           persist-credentials: false
       - name: Check relative links in Markdown
         run: python3 scripts/check-docs.py
-      - name: Test check-docs.py
+      - name: Check LICENSE and NOTICE
+        run: python3 scripts/check-license.py
+      - name: Test scripts/ (Python)
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
   shell:
@@ -235,10 +239,30 @@ jobs:
         if: steps.find.outputs.found == 'true'
         run: pnpm -C web test
 
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 履歴全体を検査するので、浅いクローンにしない。
+          fetch-depth: 0
+          persist-credentials: false
+      # gitleaks を server/go.mod の Go でビルドする（scripts/check-secrets.sh）。
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: gitleaks
+        env:
+          GOTOOLCHAIN: auto
+        run: bash scripts/check-secrets.sh
+
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [docs, shell, go-tools, server, web]
+    needs: [docs, shell, go-tools, server, web, secrets]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -249,10 +273,11 @@ jobs:
           RESULT_GO_TOOLS: ${{ needs.go-tools.result }}
           RESULT_SERVER: ${{ needs.server.result }}
           RESULT_WEB: ${{ needs.web.result }}
+          RESULT_SECRETS: ${{ needs.secrets.result }}
         run: |
           set -euo pipefail
           fail=0
-          for pair in "docs=$RESULT_DOCS" "shell=$RESULT_SHELL" "go-tools=$RESULT_GO_TOOLS" "server=$RESULT_SERVER" "web=$RESULT_WEB"; do
+          for pair in "docs=$RESULT_DOCS" "shell=$RESULT_SHELL" "go-tools=$RESULT_GO_TOOLS" "server=$RESULT_SERVER" "web=$RESULT_WEB" "secrets=$RESULT_SECRETS"; do
             echo "$pair"
             if [ "${pair#*=}" != "success" ]; then
               fail=1
