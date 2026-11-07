@@ -42,4 +42,22 @@ describe("HowToScreen", () => {
       "お祭りの準備（花火や屋台の予約）を、島のみんなで確定（Commit）させると得点になります。",
     ]);
   });
+
+  it("HT-K1 「キーボード操作」の見出しと、Space・1〜4・E の説明がある", () => {
+    render(<HowToScreen />);
+    const heading = screen.getByRole("heading", { level: 2, name: "キーボード操作" });
+    const list = heading.nextElementSibling;
+    expect(list?.tagName).toBe("DL");
+    const terms = Array.from(list?.querySelectorAll("dt") ?? []).map((dt) => dt.textContent);
+    const details = Array.from(list?.querySelectorAll("dd") ?? []).map((dd) => dd.textContent);
+    expect(terms).toEqual(["Space", "1〜4", "E"]);
+    expect(details).toEqual([
+      "一時停止・再開（ボタンにフォーカスがあるときは、そのボタンを押します）",
+      "船を選ぶ（フェリー操作パネルの左から順）",
+      "エンジニアモードを開く・閉じる",
+    ]);
+    const keys = Array.from(list?.querySelectorAll("kbd") ?? []).map((kbd) => kbd.textContent);
+    expect(keys).toEqual(["Space", "1", "4", "E"]);
+    expect(screen.queryByText("D")).toBeNull();
+  });
 });

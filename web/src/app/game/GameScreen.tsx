@@ -14,6 +14,7 @@ import { HudBar } from "../../ui/hud/HudBar.tsx";
 import { Notifications } from "../../ui/hud/Notifications.tsx";
 import { IslandPanel } from "../../ui/island/IslandPanel.tsx";
 import { OpeningCeremony } from "../../ui/opening/index.ts";
+import { GameShortcuts } from "../../ui/shortcuts/GameShortcuts.tsx";
 import { Link } from "../router/Link.tsx";
 import { TutorialOverlay } from "../tutorial/TutorialOverlay.tsx";
 import type { RoundContext } from "../types.ts";
@@ -85,6 +86,7 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
           )}
           <EngineerPanel />
           <DemoKeys />
+          <GameShortcuts />
           <OpeningCeremony />
           <TutorialOverlay stageId={round.stage.id} />
         </div>
