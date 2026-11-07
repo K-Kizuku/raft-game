@@ -19,6 +19,10 @@ type CodexFinding struct {
 	Line      int    `json:"line"`
 	Title     string `json:"title"`
 	Body      string `json:"body"`
+	// SHA は指摘の対象の SHA。
+	SHA string `json:"sha"`
+	// Carried は、前の SHA の重大な指摘を、最新の要約の has_unresolved_findings が true なので引き継いだこと。
+	Carried bool `json:"carried,omitempty"`
 }
 
 // ID は agent-review/v1 に変換したときの指摘の ID（C<コメントの ID>）。
@@ -31,8 +35,22 @@ type CodexReview struct {
 	// SHA は code_review.commit_sha（レビューした SHA）。
 	SHA string
 	// Updated は要約のコメントの updated_at（なければ created_at）。
-	Updated  time.Time
+	Updated time.Time
+	// Unresolved は、最新の要約の code_review.has_unresolved_findings。
+	Unresolved bool
+	// Findings は、対象の SHA の指摘と、Unresolved のときに前の SHA から引き継いだ重大な指摘（Carried）。
 	Findings []CodexFinding
+}
+
+// CarriedCount は、前の SHA から引き継いだ指摘の数を返す。
+func (c *CodexReview) CarriedCount() int {
+	n := 0
+	for _, f := range c.Findings {
+		if f.Carried {
+			n++
+		}
+	}
+	return n
 }
 
 // Blocking は、重大な指摘（設定の blocking_severities）を返す。
@@ -49,6 +67,13 @@ func (c *CodexReview) Blocking(cfg *config.Config) []CodexFinding {
 // FindCodexReview は、信頼する Codex の作者（review.codex_bot_authors）の要約のコメントのうち、
 // code_review.status が completed で最も新しいものと、その SHA の行コメントの指摘を返す。なければ nil。
 // 無視したもの（信頼しない作者・壊れた JSON・未完了）は notes に書く。
+//
+// 前の SHA の指摘の扱い（Codex は、後のレビューで前の指摘を行コメントとして出し直すとは限らない）:
+//   - 最新の要約の has_unresolved_findings が false なら、前の SHA の Codex の指摘はすべて resolved とみなす
+//   - true なら、前の SHA の Codex の重大な指摘（P0・P1。バッジがないものを含む）を open のまま引き継ぐ（Carried）。
+//     ただし、その行コメントより後の agent-review/v1 の記録（Codex の GitHub 連携の変換ではないもの）が、
+//     同じ ID（C<コメントの ID>）を最後に resolved にしていれば引き継がない
+//   - 前の SHA の重大でない指摘（P2・P3）は引き継がない
 func FindCodexReview(cfg *config.Config, in Input) (*CodexReview, []string) {
 	var notes []string
 	note := func(format string, a ...any) { notes = append(notes, fmt.Sprintf(format, a...)) }
@@ -75,7 +100,7 @@ func FindCodexReview(cfg *config.Config, in Input) (*CodexReview, []string) {
 		if updated.IsZero() {
 			updated = parseTime(c.CreatedAt)
 		}
-		cand := &CodexReview{Comment: c, SHA: st.CodeReview.CommitSHA, Updated: updated}
+		cand := &CodexReview{Comment: c, SHA: st.CodeReview.CommitSHA, Updated: updated, Unresolved: st.CodeReview.HasUnresolvedFindings}
 		if best == nil || cand.Updated.After(best.Updated) || (cand.Updated.Equal(best.Updated) && cand.Comment.ID > best.Comment.ID) {
 			best = cand
 		}
@@ -84,6 +109,7 @@ func FindCodexReview(cfg *config.Config, in Input) (*CodexReview, []string) {
 		return nil, notes
 	}
 
+	var resolvedLater func(id string, at time.Time) bool
 	for _, rc := range in.ReviewComments {
 		if !codex.IsFinding(rc.Body) {
 			continue
@@ -92,12 +118,15 @@ func FindCodexReview(cfg *config.Config, in Input) (*CodexReview, []string) {
 			note("行コメント %d: 信頼しない作者 %q の Codex の指摘を無視した", rc.ID, rc.Author)
 			continue
 		}
-		if !strings.EqualFold(rc.ReviewedSHA(), best.SHA) {
+		sha := rc.ReviewedSHA()
+		carried := !strings.EqualFold(sha, best.SHA)
+		if carried && !best.Unresolved {
+			// 最新の要約が未解決の指摘なしと言っているので、前の SHA の指摘は resolved とみなす。
 			continue
 		}
 		f := CodexFinding{
 			CommentID: rc.ID, Priority: codex.Priority(rc.Body), Path: rc.Path, Line: rc.Line,
-			Title: codex.Title(rc.Body), Body: rc.Body,
+			Title: codex.Title(rc.Body), Body: rc.Body, SHA: sha, Carried: carried,
 		}
 		sev, ok := codex.Severity(rc.Body)
 		if !ok {
@@ -106,6 +135,18 @@ func FindCodexReview(cfg *config.Config, in Input) (*CodexReview, []string) {
 			note("警告: 行コメント %d: Codex の指摘に重大度のバッジ（P0〜P3）がないので high とみなした", rc.ID)
 		}
 		f.Severity = sev
+		if carried {
+			if !cfg.IsBlocking(sev) {
+				continue
+			}
+			if resolvedLater == nil {
+				resolvedLater = nonCodexResolver(cfg, in)
+			}
+			if resolvedLater(f.ID(), parseTime(rc.CreatedAt)) {
+				note("行コメント %d: 前の SHA %s の Codex の指摘は、後の記録で resolved になっている", rc.ID, short(sha))
+				continue
+			}
+		}
 		if f.Title == "" {
 			f.Title = "（本文なし）"
 		}
@@ -115,6 +156,27 @@ func FindCodexReview(cfg *config.Config, in Input) (*CodexReview, []string) {
 		best.Findings = append(best.Findings, f)
 	}
 	return best, notes
+}
+
+// nonCodexResolver は、id の指摘を、時刻 at より後の agent-review/v1 の記録（Codex の GitHub 連携の変換ではないもの）が
+// 最後に resolved にしたかどうかを返す関数を返す。at が分からない（ゼロ）ときは、すべての記録を「後」とみなす。
+func nonCodexResolver(cfg *config.Config, in Input) func(id string, at time.Time) bool {
+	e := &evaluator{cfg: cfg, in: in}
+	e.collectReviews()
+	return func(id string, at time.Time) bool {
+		status := ""
+		for _, r := range e.records {
+			if isCodexConverted(r.rec) || (!at.IsZero() && !r.created.After(at)) {
+				continue
+			}
+			for _, f := range r.rec.Findings {
+				if f.ID == id {
+					status = f.Status
+				}
+			}
+		}
+		return status == "resolved"
+	}
 }
 
 // LatestRecord は、信頼する作者の正しいレビュー記録（agent-review/v1）のうち、最新のものを返す（なければ nil）。
@@ -137,7 +199,8 @@ const codexDetailMax = 2000
 // Record は、Codex の GitHub 連携のレビューを agent-review/v1 の記録に変換する。
 //
 //   - reviewer は codex、reviewer_version は codex.ReviewerVersion
-//   - findings は行コメントから（id は C<コメントの ID>、status は open）
+//   - findings は行コメントから（id は C<コメントの ID>、status は open）。前の SHA から引き継いだ
+//     Codex の重大な指摘（FindCodexReview を参照）も open で含める
 //   - prev（前回の記録）にあって今回の指摘にない open の指摘は引き継ぐ。Codex の指摘（C<コメントの ID>）と
 //     重大でない指摘は、今回の SHA の Codex のレビューで指摘されなかったものとして resolved にする。
 //     Codex 以外の重大な指摘は、Codex のレビューでは resolved にできないので open のまま（C7 で fail になる）
@@ -163,6 +226,9 @@ func (c *CodexReview) Record(cfg *config.Config, pr int, baseSHA string, prev *r
 		title := f.Title
 		if f.Priority != "" {
 			title = f.Priority + ": " + title
+		}
+		if f.Carried {
+			title += "（" + short(f.SHA) + " の指摘を引き継いだ）"
 		}
 		findings = append(findings, review.Finding{
 			ID: id, Severity: f.Severity, Category: CodexCategory, File: f.Path, Line: f.Line,
@@ -191,8 +257,12 @@ func (c *CodexReview) Record(cfg *config.Config, pr int, baseSHA string, prev *r
 	if blocking > 0 || carried > 0 {
 		verdict = "request_changes"
 	}
+	cc := c.CarriedCount()
 	summary := fmt.Sprintf("Codex（GitHub 連携）が %s をレビューした。指摘 %d 件（うち重大 %d 件）。",
-		short(c.SHA), len(c.Findings), blocking)
+		short(c.SHA), len(c.Findings)-cc, blocking-cc)
+	if cc > 0 {
+		summary += fmt.Sprintf("要約に未解決の指摘があるので、前の SHA の Codex の重大な指摘 %d 件を open のまま引き継いだ。", cc)
+	}
 	if carried > 0 {
 		summary += fmt.Sprintf("前のレビューの重大な指摘 %d 件は open のまま引き継いだ（Codex 以外のレビューで確かめる）。", carried)
 	}

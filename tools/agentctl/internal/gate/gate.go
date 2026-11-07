@@ -522,6 +522,9 @@ func (e *evaluator) c7() {
 			if p == "" {
 				p = "重大度不明"
 			}
+			if f.Carried {
+				p += "・" + short(f.SHA) + " から未解決"
+			}
 			errs = append(errs, fmt.Sprintf("%s（%s・%s）%s:%d %s", f.ID(), p, f.Severity, f.Path, f.Line, f.Title))
 		}
 		if len(errs) > 0 {

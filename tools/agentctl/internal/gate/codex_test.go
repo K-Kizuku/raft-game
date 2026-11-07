@@ -434,3 +434,128 @@ func TestCodexCannotResolvePriorBlocking(t *testing.T) {
 		}
 	})
 }
+
+// codexPR80Unresolved は、codex-pr80.json の古い SHA（aaaa…）の P2 の指摘を priority に変え、
+// 最新の要約（HEAD のレビュー）の has_unresolved_findings を unresolved にした入力を返す。
+// Codex は、HEAD のレビューで前の指摘を行コメントとして出し直していない。
+func codexPR80Unresolved(t *testing.T, priority string, unresolved bool) Input {
+	t.Helper()
+	in := codexInput(t, "codex-pr80.json", false)
+	rc := &in.ReviewComments[0]
+	if rc.ID != 4101 || rc.ReviewedSHA() != firstSHA {
+		t.Fatalf("review_comments[0] = %+v", rc)
+	}
+	rc.Body = strings.Replace(rc.Body, "P2 Badge](https://img.shields.io/badge/P2-yellow", priority+" Badge](https://img.shields.io/badge/"+priority+"-red", 1)
+	if unresolved {
+		for i := range in.Comments {
+			in.Comments[i].Body = strings.Replace(in.Comments[i].Body, `"has_unresolved_findings":false`, `"has_unresolved_findings":true`, 1)
+		}
+	}
+	cr, _ := FindCodexReview(loadConfig(t), in)
+	if cr == nil || cr.SHA != headSHA || cr.Unresolved != unresolved {
+		t.Fatalf("codex = %+v", cr)
+	}
+	return in
+}
+
+func TestCodexOldP1CarriedWhileUnresolved(t *testing.T) {
+	cfg := loadConfig(t)
+	now := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+
+	t.Run("古い SHA の P1 ＋ unresolved=true → fail", func(t *testing.T) {
+		in := codexPR80Unresolved(t, "P1", true)
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Fail {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		mustResult(t, rep, "C6", Pass)
+		r := mustResult(t, rep, "C7", Fail)
+		for _, want := range []string{"C4101", "P1", "aaaaaaa から未解決"} {
+			if !strings.Contains(r.Detail, want) {
+				t.Errorf("C7 の detail に %q がない: %s", want, r.Detail)
+			}
+		}
+		if rep.LatestReview.Verdict != "request_changes" {
+			t.Errorf("latest = %+v", rep.LatestReview)
+		}
+
+		// codex-record の変換でも open のまま引き継ぐ。
+		cr, _ := FindCodexReview(cfg, in)
+		rec := cr.Record(cfg, 12, baseSHA, nil, now)
+		if err := rec.Validate(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Verdict != "request_changes" || len(rec.Findings) != 1 || rec.Findings[0].ID != "C4101" ||
+			rec.Findings[0].Status != "open" || rec.Findings[0].Severity != "high" || !strings.Contains(rec.Summary, "引き継いだ") {
+			t.Errorf("record = %+v", rec)
+		}
+		// 前回の記録に C4101 が open で残っていても、resolved にしない。
+		prev := makeRecord(1, firstSHA, "request_changes", []review.Finding{finding("C4101", "high", "open")})
+		rec = cr.Record(cfg, 12, baseSHA, prev, now)
+		if rec.Verdict != "request_changes" || len(rec.Findings) != 1 || rec.Findings[0].Status != "open" {
+			t.Errorf("record = %+v", rec)
+		}
+		// 変換した記録を載せても、C7 は fail のまま。
+		in.Comments = append(in.Comments, commentOf(t, 8000, "K-Kizuku", rec))
+		mustResult(t, Evaluate(cfg, in), "C7", Fail)
+	})
+
+	t.Run("古い SHA の P1 ＋ unresolved=false → pass", func(t *testing.T) {
+		in := codexPR80Unresolved(t, "P1", false)
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		cr, _ := FindCodexReview(cfg, in)
+		if len(cr.Findings) != 0 {
+			t.Errorf("findings = %+v", cr.Findings)
+		}
+		prev := makeRecord(1, firstSHA, "request_changes", []review.Finding{finding("C4101", "high", "open")})
+		rec := cr.Record(cfg, 12, baseSHA, prev, now)
+		if rec.Verdict != "approve" || len(rec.Findings) != 1 || rec.Findings[0].Status != "resolved" {
+			t.Errorf("record = %+v", rec)
+		}
+	})
+
+	t.Run("古い P1 を agent-review/v1 が resolved → pass", func(t *testing.T) {
+		in := codexPR80Unresolved(t, "P1", true)
+		res := finding("C4101", "high", "resolved")
+		res.Resolution = "PATH の偽のディレクトリを飛ばすようにした"
+		rec := makeRecord(1, headSHA, "approve", []review.Finding{res})
+		rec.CreatedAt = "2026-11-05T10:00:00Z" // 行コメント（09:05）より後、Codex の要約（10:30）より前
+		in.Comments = append(in.Comments, commentOf(t, 8100, "K-Kizuku", rec))
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		if rep.LatestReview == nil || rep.LatestReview.CommentID != 2101 {
+			t.Errorf("latest = %+v（Codex の要約のコメントが最新）", rep.LatestReview)
+		}
+		if !strings.Contains(notes(rep), "4101") {
+			t.Errorf("notes = %v", rep.Notes)
+		}
+
+		// 行コメントより前の記録で resolved にしても、引き継ぐ。
+		rec.CreatedAt = "2026-11-05T09:00:00Z"
+		in.Comments[len(in.Comments)-1] = commentOf(t, 8100, "K-Kizuku", rec)
+		mustResult(t, Evaluate(cfg, in), "C7", Fail)
+
+		// Codex の GitHub 連携の変換した記録では resolved にできない。
+		rec.CreatedAt = "2026-11-05T10:00:00Z"
+		rec.Reviewer, rec.ReviewerVersion = "codex", "chatgpt-codex-connector (GitHub)"
+		in.Comments[len(in.Comments)-1] = commentOf(t, 8100, "K-Kizuku", rec)
+		mustResult(t, Evaluate(cfg, in), "C7", Fail)
+	})
+
+	t.Run("P2 だけ ＋ unresolved=true → pass", func(t *testing.T) {
+		in := codexPR80Unresolved(t, "P2", true)
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		cr, _ := FindCodexReview(cfg, in)
+		if len(cr.Findings) != 0 {
+			t.Errorf("findings = %+v", cr.Findings)
+		}
+	})
+}
