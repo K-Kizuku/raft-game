@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.5（プロトコルバージョン `1`） |
+| 版 | v0.6（プロトコルバージョン `1`） |
 | 更新日 | 2026-11-07 |
 | 状態 | レビュー済み |
 | 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) / [ADR-0018](./adr/0018-cost-guard.md) / [ADR-0023](./adr/0023-durable-object-fetch-handler.md) |
@@ -101,19 +101,39 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
 
 - `seed` を省略すると Worker が決める（0 以上 2^32 未満の整数）。指定するときは 0 以上 `Number.MAX_SAFE_INTEGER`（2^53 − 1）以下の整数（`"1"` のような文字列は不可）
 - `turnstileToken` は Cloudflare Turnstile のウィジェットが返すトークン（文字列、2048 文字まで）。Worker が検証する（コストガード G4。無効にした場合は省略可）
+  - `turnstile.enabled`（`CostGuard` の設定）が有効なら、トークンがない・空・検証に失敗した要求は `403 turnstile_failed`。無効なら、トークンがあっても無視する（siteverify を呼ばない）
+  - Worker は siteverify（`POST https://challenges.cloudflare.com/turnstile/v0/siteverify`、5 秒で打ち切る）の応答の `success` が真偽値の `true` であることだけを確かめる。`hostname`・`action`・`cdata` は確かめない（ホスト名の制限はウィジェットの設定で行う）。シークレット `TURNSTILE_SECRET` がない Worker では、有効なときはすべて `403`
+  - トークンは 1 回しか使えず、発行から 300 秒で切れる（Cloudflare の仕様）。`403 turnstile_failed` のあと、画面はウィジェットをやり直す
 - `demo: true` は `demo` モードでデプロイした Worker（`DEMO_CONTROLS=1`）のときだけ受け付ける。それ以外の Worker に `demo: true` を送ると `400`（黙って `false` にしない）。省略すると `false`
 - 本文は `Content-Type: application/json`（`; charset=utf-8` などの引数は可）の UTF-8 の JSON オブジェクトで、4096 バイトまで。`stageId`・`seed`・`demo`・`turnstileToken` 以外のキーがあれば `400`。`stageId` は `GET /api/stages` の `id` のどれか
 - 検査の順序は `Origin`（必須）→ レート制限 → 本文 → Turnstile → 費用の予約（`CostGuard`）。どこかで止まったら、それより後は行わない
+- レート制限（コストガード G4）は IP ごと（IPv6 は先頭の 64 ビットごと。IPv4 射影の IPv6 は IPv4 として数える）に 1 分 10 回。`CF-Connecting-IP` がない・読めない要求は、全部で 1 つの枠を共有する。本文を読む前に数える（`429` のとき本文を読まない）
+  - 回数は Workers の Rate Limiting の束縛 `SESSION_RATE_LIMIT`（`simple: { limit: 10, period: 60 }`）で、デプロイのときに決まる。Cloudflare の拠点ごとに数える近似の値で、厳密な上限ではない（[ADR-0024](./adr/0024-worker-rate-limit-binding.md)。ゾーンの WAF と合わせて使う）
+  - `rateLimit.enabled`（`CostGuard` の設定）が無効なら数えない。有効で束縛がない・壊れているときは、すべて `429`
+- `turnstile.enabled`・`rateLimit.enabled`・`gameTime.maxMinutes` は `CostGuard` の設定を読む。読めない（`GUARDS` が不正・`CostGuard` がない）ときは、Turnstile とレート制限を有効、`maxMinutes` を 60 として扱う
 - Worker は Durable Object を作り、コンテナの起動を始めてから応答する（ステージ紹介の間に起動を終える）。Durable Object の作成に失敗したら、予約を取り消して `500 internal_error`
 - 受付の部品（レート制限・Turnstile・署名・`CostGuard`・`GameSession`）がそろっていない Worker は、`503 sessions_disabled` を返す
 
 レスポンス `201`:
 
 ```json
-{ "sessionId": "s_<ランダム 128bit>.<HMAC 署名>", "token": "base64url(128bit)", "wsPath": "/ws/sessions/s_…" }
+{ "sessionId": "s_<base64url(21 バイト)>.<base64url(32 バイト)>", "token": "<base64url(16 バイト)>", "wsPath": "/ws/sessions/s_…" }
 ```
 
-- `sessionId` には Worker の秘密鍵（`SESSION_SIGNING_KEY`）による署名が付く。Worker は WS の接続時に署名を確かめ、合わなければ Durable Object を呼ばずに `404` を返す（コストガード G3）
+- `sessionId` には Worker の秘密鍵（`SESSION_SIGNING_KEY`）による署名が付く。Worker は WS の接続時に署名を確かめ、合わなければ Durable Object を呼ばずに `404` を返す（コストガード G3）。署名の確認を外す設定はない
+- `sessionId` の形式（74 文字。`=` の埋め草のない base64url、RFC 4648 §5）:
+
+  ```text
+  sessionId = "s_" + base64url(payload) + "." + base64url(signature)
+  payload   = 版（1 バイト、0x01） ‖ 乱数（16 バイト = 128 bit） ‖ 期限（4 バイト、UNIX 秒の符号なし整数・ビッグエンディアン）
+  signature = HMAC-SHA256(SESSION_SIGNING_KEY, UTF-8("raft-game.session.v1\n" + ホスト名 + "\n" + base64url(payload)))
+  ```
+
+  - ホスト名は要求の URL の `host`（小文字。ポートがあれば含む）。別のホスト名（一般公開とデモ用など）で発行した `sessionId` は通らない
+  - 有効期限は発行 + `gameTime.maxMinutes` + 5 分（5 分は切断されてからの保持時間）。期限は `sessionId` の中にあるので、発行の後に `maxMinutes` を変えても、発行済みの期限は変わらない。期限ちょうどからは期限切れ
+  - 復号は厳密に行う（`+`・`/`・`=`・末尾の余りのビットが 0 でないものは不正）。署名は定数時間で比べる
+  - `SESSION_SIGNING_KEY` は 32〜256 文字の表示できる ASCII（`0x21`〜`0x7E`。例: `openssl rand -hex 32`）。合わない（未設定・空白や改行を含むなど）Worker は、`POST /api/sessions` を `503 sessions_disabled`、`/ws/sessions/{id}` を `404` にする
+- `token` は乱数 16 バイトの base64url（22 文字、`^[A-Za-z0-9_-]{22}$`）。Worker と Durable Object はトークンそのものを保存せず、SHA-256 の 16 進の小文字（64 文字）を Durable Object に渡す。Durable Object は接続の `?token=` をこの形式で確かめてからハッシュし、定数時間で比べる
 
 エラー:
 
@@ -134,6 +154,7 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
 WebSocket にアップグレードします。Worker が `Origin` を許可リストで検査し、Durable Object がトークンを検証します。同じセッションに 2 本目の接続が来たら、古い接続を閉じます（再接続のため）。
 
 - `{id}` は `[A-Za-z0-9._-]` の 1〜256 文字（`sessionId` の `s_<base64url>.<base64url>` はこの範囲に収まる）。パーセントエンコードした文字は含められない
+- Worker は署名・期限・ホスト名を、暗号の計算と時計だけで確かめる（Durable Object・`CostGuard`・ネットワークを使わない）。期限を過ぎた・別のホストで発行した `sessionId` も `404`
 - Worker はアップグレードの応答（`101`）を包み直さずにそのまま返し、WebSocket の電文を読まない。`token` は Worker では検査せず、Durable Object に渡す
 
 Worker が返すエラー:
@@ -141,7 +162,7 @@ Worker が返すエラー:
 | HTTP | `code` | いつ |
 |---|---|---|
 | 403 | `forbidden_origin` | `Origin` がない・許可リストにない |
-| 404 | `not_found` | `{id}` の文字の範囲が不正・署名の検証に失敗・接続の部品がない（区別しない。Durable Object を呼ばない） |
+| 404 | `not_found` | `{id}` の文字の範囲が不正・形式が違う・署名の検証に失敗・期限を過ぎた・別のホストで発行した・接続の部品がない（区別しない。Durable Object を呼ばない） |
 | 405 | `method_not_allowed` | `GET` 以外 |
 | 426 | `upgrade_required` | `Upgrade: websocket` がない（大文字・小文字は区別しない） |
 
@@ -204,6 +225,8 @@ Worker が返すエラー:
 - 未知のキー・型や範囲の違い・`reason` がない・変える項目が 1 つもない・`Content-Type` が違う・4096 バイトを超える・壊れた JSON は `400 bad_request` です
 - 記録の `change` は、変えた項目をドット区切りのキーにした平らな形（`{"budget.enabled": false, "acceptGames": true}`。金額は USD のまま）です
 - 変更は次の要求からすぐに効きます。記録（いつ・誰が・何を・理由）は `CostGuard` に残ります（新しい 1000 件まで）
+  - ただし、Worker の入り口が使う `turnstile.enabled`・`rateLimit.enabled`・`gameTime.maxMinutes` は、Worker が isolate ごとに 5 秒だけ使い回すので、最大 5 秒遅れて効きます（予算と `acceptGames` は使い回さず、すぐに効く）
+  - `rateLimit.perIpPerMinute` の上書きは、表示と記録だけです。Worker の回数は Rate Limiting の束縛 `SESSION_RATE_LIMIT` の `limit`（デプロイのときの値）で決まり、再デプロイするまで変わりません
 
 エラー:
 
