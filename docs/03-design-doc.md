@@ -310,6 +310,8 @@ type Node struct {
 
 `cluster` は `ledger` を import せず、`StateMachine` 越しに台帳を使います。`sim` が `*ledger.Ledger` を `StateMachine` に合わせる薄い包みを作って `NodeConfig.StateMachine` に渡します。台帳はノードごとに 1 つずつ持ちます（Raft の「状態機械の複製」そのもの）。V-2・V-3 の検査は、全ノードの台帳を比べて行います。
 
+読み取り用の口として、`Status()` のほかに `Log() ([]LogEntry, error)` を持ちます。ストレージにあるエントリ（index 1 から LastIndex まで）の複製を返し、Raft の状態とストレージを変えません。不変条件の検査（§11）と、エンジニアモード（T-407）が使います。
+
 ---
 
 ## 6. Ferry Transport（`internal/ferry`）
@@ -623,6 +625,18 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 | I-5 | 各ノードの Term・Commit・Applied は減らない | 単調性 |
 | I-6 | 台帳の不変条件（§7.3） | V-3 |
 | I-7 | 港・船・中継倉庫の手紙の数が上限以下 | V-7 |
+
+検査のしかた（T-107）:
+
+- **呼ぶ時点**: 1 ステップ（成功した `Apply`・スケジューラのイベント 1 つ）の後処理の最後、`Reclaim` の後。全ノードの `Process` が済み、未処理の Ready がない
+- **読むもの**: 各ノードの `Status`・`Log`（§5.6）、各台帳の `AppliedIndex`・`Snapshot`・`CheckInvariants`、`Transport.CheckInvariants`、まだ取り出していないドメインイベント。どれも読むだけで、状態を変える呼び出しをしない。前回の検査で観測した値（Term ごとの Leader・各ノードの Term・Commit・Applied・見たイベントの Seq）だけを覚えておく
+- **I-1**: 前回の検査より後に出た `node.leader_elected` と、今の `Status` で Leader のノードの両方で観測する（1 ステップの中で Leader になってすぐ退いたノードも見逃さない）
+- **I-2**: 2 つのログが初めて違った index より後に、Term の等しい index があれば違反。Index・Term・Type・Data を比べ、空のエントリと構成変更のエントリも対象にする
+- **I-4**: 「Commit された時点で」より強い条件として、毎回 Commit 済みのすべての index を検査する（Commit 済みのエントリはどのログからも消えないので、正しい Raft では常に成り立つ）
+- **I-5**: 補助の条件として「Applied ≤ Commit」も検査する
+- **I-6**: 各台帳の `CheckInvariants` と「台帳の `AppliedIndex` ≤ ノードの Applied」を検査し、`AppliedIndex` が等しい台帳どうしの `Snapshot` を比べる（`AppliedIndex` はデータのあるエントリだけで進むので、ノードの Applied より小さいことがある）
+- **I-7**: `Transport.CheckInvariants`（港の上限・同じ宛先の `MsgApp` の上限・合流・積載量）。依頼書の数の上限は T-202、中継倉庫の上限は P1 で足す
+- **違反したとき**: 最初の 1 つで `panic("sim: invariant violated at t=<Now>: I-<n>: <説明>")` を出す（島の ID は 1 から）
 
 ---
 
