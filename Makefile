@@ -143,3 +143,11 @@ clean-docker: ## この作業ツリーの Docker のコンテナとイメージ�
 
 demo-local: ## デモの保険（ノート PC で起動する）（T-504）
 	@echo "demo-local: デモの保険（ノート PC で起動する）。未実装（T-504）"
+
+.PHONY: check-secrets check-license
+
+check-secrets: ## gitleaks で git の履歴にシークレットがないかを検査する（CI の secrets ジョブ。T-009）
+	@bash scripts/check-secrets.sh
+
+check-license: ## LICENSE・NOTICE が同梱の OSS・提供データの出典と合っているかを確かめる（CI の docs ジョブ。T-009）
+	@python3 scripts/check-license.py
