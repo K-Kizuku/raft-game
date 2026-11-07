@@ -105,7 +105,8 @@ flowchart LR
 | T-305 | デモ操作（`DEMO_CONTROLS`：嵐・8 倍速・次の出来事まで） | FR-EVT-07 | 1h |
 | T-306 | Dockerfile（マルチステージ、distroless、`--platform=linux/amd64`。`/healthz` を持つ） | ADR-0016 | 1h |
 | T-307 | Worker（`web/worker/index.ts`）: `/api/*` の処理、`Origin` の検査、Durable Object への振り分け | DesignDoc §12.2 | 2h |
-| T-308 | Durable Object `GameSession`: `ctx.container.start()`（`durable_object` 方式）と準備完了の確認、`destroy()`、トークンの検証、WS の中継、入力ログの保存、`internal.*` の破棄、復元、アラーム（回数の上限つき） | DesignDoc §12.3, ADR-0017 | 5h |
+| T-308 | Durable Object `GameSession`（起動・中継・終わり・アラーム）: `ctx.container.start()`（`durable_object` 方式）と準備完了の確認、トークンの検証、WS の中継、`internal.*` の破棄、ラウンドの終わりでの `destroy()` と精算、アラーム（回数の上限つき）。SQLite の表と「復元の約束」もここで決める | DesignDoc §12.3, ADR-0018 | 4h |
+| T-308b | Durable Object `GameSession`（入力ログの記録と復元）: `ack` の `t` と `(t, cmd)` の追記、`stageHash`・`build`・`clock.t` の保存、`internal.restore`、`internal.ping` による死活監視、コンテナの起動し直し（回数の上限つき） | DesignDoc §12.3, ADR-0017 | 2〜3h |
 | T-309 | **コストガード（1）**: Durable Object `CostGuard`（費用の予約・精算・上限、設定の上書き、切り替えの記録）と管理用 API（`/api/admin/guards`、`ADMIN_TOKEN`、G3 は変更不可） | ADR-0018, FR-COST-01・06・07 | 4h |
 | T-310 | **コストガード（2）**: sessionId の HMAC 署名と検証（G3）、Turnstile の検証、IP ごとのレート制限（G4）、30 分の上限（G2） | ADR-0018, FR-COST-02〜04 | 3h |
 
