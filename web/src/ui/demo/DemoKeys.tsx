@@ -9,6 +9,7 @@ import type { Ack } from "../../protocol/index.ts";
 import { gameStore, useGameStore } from "../../state/index.ts";
 import { useGameCommand } from "../commands/GameCommands.tsx";
 import type { GameCommandSender } from "../commands/GameCommands.tsx";
+import { DemoStormFlavor } from "./DemoStormFlavor.tsx";
 import { demoActionOf, fastSpeed } from "./demoKeys.ts";
 import type { DemoAction } from "./demoKeys.ts";
 import "./DemoKeys.css";
@@ -16,7 +17,12 @@ import "./DemoKeys.css";
 export function DemoKeys(): ReactElement | null {
   const demo = useGameStore((s) => s.world !== null && s.world.session.demo);
   if (!demo) return null;
-  return <DemoKeysActive />;
+  return (
+    <>
+      <DemoKeysActive />
+      <DemoStormFlavor />
+    </>
+  );
 }
 
 // 失敗の文に入れる〈操作〉の言い方。

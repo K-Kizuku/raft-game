@@ -647,6 +647,14 @@ export interface StageView {
   islands: Island[];
   routes: Route[];
   resources: Resource[];
+  demoStorm?: DemoStormView; // デモの嵐（ステージ定義の demo.storm）。書いていなければ省く（T-305b）
+}
+/**
+ * DemoStormView はデモの嵐の表示用の値（§5.1）。発表者の操作（demo.trigger）で遮断する航路と、嵐の紹介の文。
+ */
+export interface DemoStormView {
+  routeIds: string[]; // 遮断する航路の ID（§1 の形。定義の順）。nil にしない
+  flavor: StageText | null; // 紹介の文（demo.storm.flavor）。なければ null
 }
 /**
  * Island はステージの島 1 つ。

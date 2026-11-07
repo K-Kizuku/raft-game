@@ -21,7 +21,7 @@ func Summary(st *stage.Stage) protocol.StageSummary {
 		Islands:    len(st.Islands),
 		Ferries:    len(st.Ferries),
 		DurationMs: st.DurationMs,
-		Intro:      text(st.Intro),
+		Intro:      Text(st.Intro),
 		Learning:   []string{},
 		Demo:       st.Demo != nil,
 	}
@@ -40,20 +40,6 @@ func Summaries(sts []*stage.Stage) []protocol.StageSummary {
 	out := make([]protocol.StageSummary, 0, len(sts))
 	for _, st := range sts {
 		out = append(out, Summary(st))
-	}
-	return out
-}
-
-// text は出典区分つきの文章を変換する。文字列は加工しない。
-func text(t stage.Text) protocol.StageText {
-	out := protocol.StageText{Text: t.Text, Provenance: protocol.Provenance(t.Provenance)}
-	if t.Source != nil {
-		src := &protocol.TextSource{Dataset: t.Source.Dataset, Region: t.Source.Region, Field: t.Source.Field}
-		if t.Source.Quote != "" {
-			quote := t.Source.Quote
-			src.Quote = &quote
-		}
-		out.Source = src
 	}
 	return out
 }

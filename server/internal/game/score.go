@@ -9,7 +9,7 @@ import (
 // （stage の検査の上限 maxSatisfaction と同じ）。下限は 0。
 const SatisfactionMax = 100
 
-// ScoreConfig は採点・満足度・クリア判定の設定（ステージ定義の scoring.*・satisfaction.*）。既定値を持たない。
+// ScoreConfig は採点・満足度・クリア判定の設定（ステージ定義の scoring.*・satisfaction.*・demo.endOnAllCriticalSecured）。既定値を持たない。
 // ゼロ値は「採点しない」（Enabled が false。sim はスコアと満足度のイベントを出さない）。
 type ScoreConfig struct {
 	PointsNormal            int64 // 通常の依頼が期限内に確定
@@ -28,6 +28,7 @@ type ScoreConfig struct {
 	SilenceAfterMs          int64 // 音信不通とみなすまでの時間
 	SilenceEveryMs          int64 // 音信不通の減点の間隔
 	SilenceAmount           int64 // 音信不通の 1 回の減点
+	EndOnStar2              bool  // ★2 の条件を満たした時点でラウンドを終える（ステージ定義の demo.endOnAllCriticalSecured。T-305b）
 }
 
 // ErrInvalidScoreConfig は ScoreConfig の誤り。Validate のエラーはこれを包む。
@@ -139,4 +140,10 @@ func Stars(c ScoreConfig, successes int64, allCriticalSecured bool, total int64)
 	default:
 		return 3
 	}
+}
+
+// ReachedStar2 は ★2 の条件（確定数が TargetSuccesses 以上で、重要な資源がすべて確定）を満たすかを返す。
+// Stars(c, successes, allCriticalSecured, total) >= 2 と同じ（total によらない）。
+func ReachedStar2(c ScoreConfig, successes int64, allCriticalSecured bool) bool {
+	return successes >= c.TargetSuccesses && allCriticalSecured
 }
