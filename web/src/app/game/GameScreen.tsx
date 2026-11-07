@@ -10,6 +10,7 @@ import { FerryPanel } from "../../ui/ferry/FerryPanel.tsx";
 import { HudBar } from "../../ui/hud/HudBar.tsx";
 import { Notifications } from "../../ui/hud/Notifications.tsx";
 import { IslandPanel } from "../../ui/island/IslandPanel.tsx";
+import { OpeningCeremony } from "../../ui/opening/index.ts";
 import { TutorialOverlay } from "../tutorial/TutorialOverlay.tsx";
 import type { RoundContext } from "../types.ts";
 import "./GameScreen.css";
@@ -50,6 +51,7 @@ export function GameScreen({ round, onRoundEnd }: GameScreenProps): ReactElement
       )}
       <EngineerPanel />
       <DemoKeys />
+      <OpeningCeremony />
       <TutorialOverlay stageId={round.stage.id} />
     </div>
   );
