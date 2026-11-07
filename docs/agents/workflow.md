@@ -325,7 +325,7 @@ go -C tools/agentctl run . review render "$PWD/review.json"
 | C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビューで、引き継げない | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す）・最新の要約の `has_unresolved_findings` が `true` で、前の SHA の Codex の P0・P1 が Codex 以外の後の記録で `resolved` になっていない（最新のレビューが重大な指摘なしのときを除く。「Codex の GitHub 連携」の「前の SHA の Codex の指摘」の「重大な指摘なし」）・Codex のレビューが最新でも、Codex の GitHub 連携の変換ではない最新の記録で、それまでの重大な指摘（Codex の指摘。信頼する作者の行コメントに対応する `C<コメントの ID>` を除く）が `resolved` になっていない |
 | C8 | レビュー役が `codex` か、正しいフォールバック（Codex の GitHub 連携は `codex`） | 記録がない | `reviewer` が認めない値・`allow_fallback` が false なのに `claude-fallback`・`fallback_reason` が `fallback_reasons` にない |
 | C9 | コンフリクトがない | `mergeable` が未計算 | `mergeable=false`・`mergeable_state=dirty` |
-| C10 | ベースより遅れていない | — | 比較の結果がない・`main` より遅れている（`behind_by > 0`） |
+| C10 | ベースより遅れていない（設定 `merge.require_up_to_date` が `false` なら、遅れていてもよい） | — | 比較の結果がない・`behind_by` が不正・`main` より遅れている（`behind_by > 0`。`merge.require_up_to_date` が `true` か設定がないときだけ） |
 | C11 | 変更ファイルが Issue の範囲に収まる（名前を変えたファイルは前の名前も見る） | — | Issue がない・変更ファイルの一覧が不完全・「変更予定ファイル」がない・glob が不正（末尾の `/` など）・変更予定ファイルの外か変更禁止範囲のファイルがある |
 | C12 | 保護されたパス（`protected_paths`）の変更が確認済みで、ガードを弱めない | 保護されたパスの変更があり、記録がない | 最新の記録の `protected_paths_ack` が `reviewed: true`・`weakens_guards: false` ではない・最新が Codex の GitHub 連携のレビュー（確認をしない） |
 
@@ -333,6 +333,10 @@ go -C tools/agentctl run . review render "$PWD/review.json"
 - Codex の GitHub 連携のレビュー（`codex_bot_authors` の要約のコメントで `code_review.status == "completed"`）も、レビュー記録の 1 つとして数える。`agent-review/v1` の最新の記録の `created_at` と、Codex の要約のコメントの `updated_at` のうち新しい方を「最新」とする。Codex が最新なら、その SHA が HEAD と一致すれば C6 は pass（古ければ C6・C7 は pending）、その SHA の行コメントに P0・P1 があれば C7 が fail。Codex のレビューでは前の指摘を `resolved` にできないので、Codex が最新でも（最新の記録が Codex の GitHub 連携の変換でも）、それより前の `agent-review/v1` の記録の重大な指摘が、Codex の GitHub 連携の変換ではない最新の記録で `resolved` になっていなければ C7 が fail
 - Merge Gate のワークフロー（[merge-gate.yml](../../.github/workflow-sources/merge-gate.yml)）は、PR の変更・コメント・CI の完了のたびに判定し、PR の HEAD にコミットステータス `merge-gate` を付け、Merge Gate のコメントを更新する。`--set-status` と `--comment` はこのワークフローだけが使う
 - `merge.sh` はマージの直前にもう一度 `agentctl gate` を実行し、pass のときだけ、判定した SHA を `--match-head-commit` に指定して squash merge する
+- C10 の厳しさは、設定 `.agents/config.json` の `merge.require_up_to_date`（真偽値）で決める（Issue #239）。`true`、または設定がない（古い `config.json`）ときは、今までどおり `main` より遅れていれば fail。`false` なら、遅れていても C10 は pass にし、遅れているコミット数を詳細に書く（「main より N コミット遅れている（merge.require_up_to_date=false のため許す）」）。リポジトリの設定は `false`（2026-11-08 のオーナーの判断。GitHub の Rulesets の「ブランチがベースに追いついていること」も外した）
+  - `false` でも、C9（コンフリクトがない）と C4（PR の HEAD の `ci-ok` が成功）は今までどおり求める。ベースとの比較の結果がない（API の失敗）・`behind_by` が不正なときは、設定によらず C10 は fail（安全側）
+  - 考え方: 1 本マージするたびに残りのすべての PR が `main` の取り込み・CI のやり直し・再レビューを待つと、全体が遅くなる。`false` では、PR どうしの組み合わせの不具合（それぞれの PR の CI は通るが、両方が入った `main` で壊れる）をマージの前には見つけない。マージ後の `main` の CI で見つけ、壊れたらすぐに原因の PR を戻す（revert する）
+  - `merge.sh` は Merge Gate の判定だけに従い、遅れを理由に別に止めない
 
 ローカルでの判定（GitHub の状態で、またはスナップショットで）:
 
@@ -363,7 +367,7 @@ C10 があるので、PR を 1 つマージすると、ほかの開いた PR は
 
 ### マージは 1 つずつ
 
-並列に開いた PR は、1 つずつマージする。1 つマージしたら、ほかの PR は C10 が fail（遅れ）になるので、次のようにする。
+並列に開いた PR は、1 つずつマージする。`merge.require_up_to_date` が `false`（今のリポジトリの設定）なら、遅れただけでは C10 は fail にならないので、`main` を取り込まずに次の PR をマージしてよい（コンフリクトが出た PR だけ、下の [Conflict の解消の手順](#conflict-の解消の手順) に進む）。`true` なら、1 つマージしたら、ほかの PR は C10 が fail（遅れ）になるので、次のようにする。
 
 1. 遅れた PR のブランチに `main` を**マージで**取り込む（`git merge origin/main`、または GitHub の「Update branch」のマージ）。rebase すると S が HEAD の祖先でなくなり、引き継げない
 2. 新しい HEAD で CI（C4）と Merge Gate が動くのを待つ。上の条件を満たせば、C6 はレビューをやり直さずに pass する。Orchestrator は `review.sh` を呼ばない（`agentctl recover` も `request-review` を出さない）

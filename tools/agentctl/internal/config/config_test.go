@@ -48,6 +48,43 @@ func TestCarryOverOnBaseMerge(t *testing.T) {
 	}
 }
 
+// merge.require_up_to_date（Issue #239）は、リポジトリの設定では false、書かなければ true。
+func TestRequireUpToDate(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RequireUpToDate() {
+		t.Error("リポジトリの設定の merge.require_up_to_date が false ではない")
+	}
+	for name, f := range map[string]func(m map[string]any){
+		"merge がない":              func(m map[string]any) { delete(m, "merge") },
+		"merge が null":           func(m map[string]any) { m["merge"] = nil },
+		"require_up_to_date がない": func(m map[string]any) { m["merge"] = map[string]any{} },
+		"require_up_to_date が true": func(m map[string]any) {
+			m["merge"] = map[string]any{"require_up_to_date": true}
+		},
+	} {
+		c, err := Parse(mutate(t, f))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !c.RequireUpToDate() {
+			t.Errorf("%s: true ではない", name)
+		}
+	}
+	if _, err := Parse(mutate(t, func(m map[string]any) { m["merge"] = map[string]any{"unknown": true} })); err == nil {
+		t.Error("merge の未知のキーを受け付けた")
+	}
+	if _, err := Parse(mutate(t, func(m map[string]any) { m["merge"] = map[string]any{"require_up_to_date": "no"} })); err == nil {
+		t.Error("require_up_to_date の真偽値でない値を受け付けた")
+	}
+	var nilCfg *Config
+	if !nilCfg.RequireUpToDate() {
+		t.Error("nil の設定が true ではない")
+	}
+}
+
 // mutate はリポジトリの設定を map として書き換え、JSON にする。
 func mutate(t *testing.T, f func(m map[string]any)) []byte {
 	t.Helper()
