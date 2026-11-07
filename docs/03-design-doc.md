@@ -643,6 +643,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
   "stageHash": "sha256:…",
   "seed": 20261101,
   "commands": [
+    {"t": 0,    "cmd": {"type": "cmd.game.start",   "payload": {}}},
     {"t": 0,    "cmd": {"type": "cmd.ferry.load",   "payload": {"ferryId": "f1", "letterIds": [12, 13]}}},
     {"t": 1200, "cmd": {"type": "cmd.ferry.depart", "payload": {"ferryId": "f1", "to": 2}}}
   ]
@@ -650,7 +651,11 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 ```
 
 - `t` はコマンドを適用したゲーム内時刻
+- Engine は成功したコマンドをすべて記録するので、最初のコマンドは `cmd.game.start` です（`Engine.InputLog()`）
 - 一時停止・速度変更のコマンドも記録しますが、エンジンの結果には影響しません（記録はするがリプレイ時には無視してよい）
+- `cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` はリプレイで無視します。そのほかの未知の `type`・未知のキーは誤りです
+- `payload` の形はプロトコル（[06-protocol.md §4](./06-protocol.md)）のとおりで、キーは `type`・`payload` の順です（`cmd.game.start` は `{}`、`cmd.ferry.load`・`cmd.ferry.unload` は `ferryId`・`letterIds`、`cmd.ferry.depart`・`cmd.ferry.autoload` は `ferryId`・`to`）
+- T-301（`protocol`）ができるまで、JSON との変換は `server/cmd/simcli`（`inputlog.go`）が持ちます。`simcli` は 1 行目にヘッダーと `"commands":[`、続けてコマンドを 1 件 1 行、最後の行に `]}` と書きます（件数が 0 なら 1 行）。読み込みは厳密で、必須のキー（`format`・`stageId`・`stageHash`・`seed`・`commands`、`payload` の各キー）がない・`t` が 0 以上の整数でない・JSON の後ろに余分なデータがあるときは、場所（例: `commands[3].cmd.payload.to`）を書いて誤りにします。`build` は読みますが使いません
 - **保存先**: 入力ログは Durable Object の SQLite に保存します。コンテナはコマンドを適用したら `ack` に適用時刻 `t` を入れて返し、Durable Object が `(t, cmd)` を追記します（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）
 - **復元**: コンテナが止まったら、Durable Object が新しいコンテナに入力ログを渡し、`Replay` で同じ状態に戻します
 - **リプレイ** = 同じステージ・シードで `Engine` を作り、各コマンドの `t` まで `RunUntil` してから `Apply` することの繰り返し
@@ -1207,7 +1212,63 @@ function withClock(world: World, clock: Clock, receivedAt: number): World;
 
 ### 13.5 サーバーなしでの開発
 
-`simcli` でボットに 1 ラウンド遊ばせ、送られるはずのイベント列をファイルに書き出せます（`simcli record --stage stage1 --seed 1 --bot greedy > web/src/fixtures/stage1.json`）。フロントエンドはこれを再生するモックの WS クライアントで、サーバーなしで開発できます。
+`simcli` でボットに 1 ラウンド遊ばせ、送られるはずのイベント列をファイルに書き出せます（`go -C server run ./cmd/simcli record --data ../data --stage stage1 --bot greedy --seed 1 > web/src/fixtures/stage1.json`）。フロントエンドはこれを再生するモックの WS クライアントで、サーバーなしで開発できます。
+
+`simcli`（`server/cmd/simcli`、T-108）は、サーバーなしで `sim.Engine` を動かすコマンドです。`server/` のモジュールの中にあるので、リポジトリの根からは `go -C server run ./cmd/simcli …` で動かします（`--data` は `server/` からの相対パス）。Engine はステージ定義から `stage.SimConfig`（T-202）で作り、ボットは `bot.New`・`bot.Play`（T-109）で動かします。
+
+```
+simcli run    --data DIR --stage ID [--bot NAME] --seeds LIST [--invariants=BOOL] [--determinism] [--inputs-dir DIR]
+simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH]
+simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR]
+simcli help
+```
+
+| サブコマンド | すること |
+|---|---|
+| `run` | ボットに、指定したシードの数だけラウンドを遊ばせ、書いた順に 1 シード 1 行の結果を出す。1 つのシードが失敗しても残りを回す。最後に `simcli run: <stageId> bot=<bot> seeds=<数> ok=<数> failed=<数>` を標準エラーに出す |
+| `replay` | 入力ログ（§10.1）を最初から適用し直し、結果の行を 1 行出す。全部適用したあと航行中なら、ラウンドの終わりまで進める（`run` と同じハッシュになる）。`cmd.game.start` がなければ `intro` のまま |
+| `record` | ボットに 1 ラウンド遊ばせ、記録（下の形式）を標準出力に書く。失敗したら何も書かない |
+
+| フラグ | サブコマンド | 意味 |
+|---|---|---|
+| `--data DIR` | すべて（必須） | `DIR/islands.json` と `DIR/stages/*.yaml` を `stage.LoadDir` で読む |
+| `--stage ID` | `run`・`record`（必須） | ステージの `id` |
+| `--bot NAME` | `run`・`record` | ボットの名前（`bot.Names()`）。既定は `greedy` |
+| `--seeds LIST` | `run`（必須） | `,` で区切った `N` か `A..B`（両端を含む）。10 進の `uint64`。書いた順に回す。空の要素・`A > B`・重複・100,000 個を超えるのは誤り |
+| `--seed N` | `record`（必須） | シード 1 つ（10 進の `uint64`） |
+| `--input FILE` | `replay`（必須） | 入力ログのファイル。`-` なら標準入力 |
+| `--invariants=BOOL` | すべて | テストモード（`sim.Options.CheckInvariants`、§11）。既定は `true`。結果は変わらない |
+| `--determinism` | `run` | 各シードを 2 回回し、トレースのハッシュと入力ログが一致することを確かめる（V-6） |
+| `--expect HASH` | `replay` | `traceHash` が `HASH`（`sha256:` + 64 桁の 16 進の小文字）と違えば失敗 |
+| `--inputs-dir DIR` | `run`・`record` | 入力ログを `DIR/<stageId>-<bot>-<seed>.json` に書く（失敗したシードも書く） |
+
+終了コードは `0`（成功）・`1`（実行の失敗: ステージの読み込みの誤り・ステージがない・Engine を作れない・シードの失敗（panic・不変条件の違反・ラウンドが終わらない・決定性の不一致）・入力ログの誤り・再生の不一致・`--expect` の不一致・書き込みの失敗）・`2`（使い方の誤り: サブコマンドがない・未知のサブコマンドやフラグ・必須のフラグがない・余分な引数・`--seeds`・`--seed`・`--expect` の形式の誤り・未知のボット）です。エラーは `simcli` で始まる行で標準エラーに出し、panic のスタックトレースも標準エラーに出します。
+
+`run`・`replay` の結果の行は JSON Lines で、キーは次の順です。実時間は出さないので、同じ引数なら標準出力は同じバイト列になります。
+
+```json
+{"seed":7,"ok":true,"phase":"ended","t":180000,"events":5321,"commands":88,"traceHash":"sha256:4f1c…"}
+```
+
+- `phase`・`t` は最後の `Phase()`・`Now()`、`events` は `New` から出たイベントの数、`commands` は入力ログの件数、`traceHash` は §10.2 のハッシュ
+- 失敗のときだけ `error`（1 行）を付ける。Engine を作れなかったときは `seed`・`ok`・`error` だけ
+
+記録の形式（`format: 1`）は、全体で 1 つの JSON の値です。
+
+```
+{"format":1,"kind":"simcli.record","build":"git:3f2c1ab","stageId":"stage1","stageHash":"sha256:…","seed":1,"bot":"greedy","durationMs":180000,"eventCount":5321,"traceHash":"sha256:…",
+"snapshot":{"phase":"intro","t":0,"endsAt":180000,"ferries":[…],"routesState":[…],"letters":[],"nodes":[…],"lastSeq":0},
+"events":[
+{"seq":1,"t":0,"type":"phase.changed","phase":"opening"},
+…
+{"seq":5321,"t":180000,"type":"phase.changed","phase":"ended"}
+]}
+```
+
+- 1 行目はヘッダー（キーはこの順）。`kind` は `"simcli.record"` に固定（ほかの JSON と取り違えないため）
+- 2 行目の `snapshot` は、ボットを動かす前（`New` の直後）の `sim.Snapshot`（T-106b）。プロトコル §5.1 の `snapshot` のうち Engine が持つ分で、完全な形は T-301 の後に決まる
+- `events` は `New` からの全イベントを 1 件 1 行（プロトコル §6 の 1 要素。最後以外は末尾に `,`）。各行の末尾の `,` を除いて改行を付けて連結した SHA-256 が `traceHash`（§10.2）で、同じステージ・シード・ボットの `run` の `traceHash` とも一致する
+- 記録はイベントの平らな列です。エンベロープ（[06-protocol.md §3](./06-protocol.md)）と `events` のまとめ方（100ms ごと・`clock`）は、記録を再生するモック（T-402）が決めます
 
 ### 13.6 画面の遷移と URL
 
