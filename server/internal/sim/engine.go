@@ -75,6 +75,7 @@ type nodeView struct {
 type Engine struct {
 	cfg Config
 	opt Options
+	inv *invariantState // テストモードの検査が覚えておく値（invariants.go）。テストモードでなければ nil
 
 	sched   Scheduler
 	nodes   []*cluster.Node  // 添字 = ID - 1
