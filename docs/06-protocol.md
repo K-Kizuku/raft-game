@@ -408,6 +408,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 }
 ```
 
+`stage.islands[]` の `name`・`municipality`・`population` は `data/islands.json` の値（データ仕様 §3.1）。`municipality` は `municipalities` を `・` でつないだもの（`小豆島町・土庄町`）。`population.note` は自治体が 2 つ以上の島だけ（T-201b）。
+
 `phase` の値: `intro`（`cmd.game.start` の前。ステージ紹介）/ `opening` / `sailing` / `ended`
 
 `ferries[]` の注記（後方互換なフィールドの追加、§8）:
