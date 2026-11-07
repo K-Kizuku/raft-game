@@ -689,6 +689,16 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 
 材料はイベント列（トレース）から決まる。イベントに無いのは Commit Latency の起点（役場が `Propose` した時刻）だけ。`Engine.TechStats()`・`Engine.StoryFacts()`（「今日の出来事」の材料。[ゲームデザイン §7.5](./04-game-design.md)）はどのフェーズでも呼べ、状態を変えない（イベント・トレースのハッシュ・入力ログ・`Result()` も変えない）。
 
+### 10.4 ブラウザでのリプレイ
+
+FR-LOG-04（入力ログを読み込むとリプレイできる）は、同じ Go のコード（`sim`・`stage`）を WebAssembly にしてブラウザで再シミュレーションし、出てきた記録を web の記録の再生で流す（[ADR-0028](./adr/0028-browser-replay.md)。状態は Proposed。比べた 3 案・計測の数字・子 Issue の案は ADR）。ライブのゲームはサーバーで実行するまま（ADR-0009）。
+
+1. 利用者が入力ログ（§10.1。FR-LOG-03 でダウンロードしたもの）をリプレイの画面で選ぶ（R2 の共有では URL から取得する）
+2. ブラウザが WASM と `wasm_exec.js` を静的ファイルとして読む（リプレイの画面を開いたときだけ。brotli で約 2.0 MB）
+3. WASM の中で、入力ログを `simcli` と同じ規則で厳密に読み、埋め込んだステージ定義（`-tags embeddata`）で `sim.Replay` する。`stageHash` が違えば再生を断る
+4. WASM は記録（§13.5 の形式。`bot` は空）・`StageView`・`RoundResult` を返し、web の記録の再生（本番のビルドに入れる）がゲーム画面に流す。一時停止・速度・「次の出来事まで」が使え、船の操作は受け付けない
+5. コンテナ・Durable Object を作らないので、コストガード（ADR-0018）を通さない。初版では `node.detail` とシークを出さない
+
 ---
 
 ## 11. 不変条件の検査（`internal/sim/invariants`）
@@ -1637,6 +1647,7 @@ T-703 で決めた、ステージの解放とその保存です（[FR-GAME-08](.
 | Raft の設定 | PreVote と CheckQuorum を有効 | 無効 | [0007](./adr/0007-enable-prevote-and-checkquorum.md) |
 | 提案の転送 | アプリ層の依頼書 | Raft 標準の転送（`MsgProp`） | [0008](./adr/0008-application-level-request-forwarding.md) |
 | 実行場所 | サーバーで実行し WS で配信 | Go を WASM にしてブラウザで実行 | [0009](./adr/0009-server-authoritative-simulation-over-websocket.md) |
+| ブラウザでのリプレイ（Proposed） | `sim` を WASM にしてブラウザで再シミュレーションし、記録の再生で流す | サーバー（コンテナ）で再生、あらかじめ作った記録を流す | [0028](./adr/0028-browser-replay.md) |
 | フロントエンド | React + PixiJS | Phaser、Canvas 直書き | [0010](./adr/0010-frontend-react-pixijs.md) |
 | インフラ | Cloudflare（Workers ＋ Durable Objects ＋ Containers）、`cf` で管理 | AWS（ECS Fargate）、Wrangler、Terraform | [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md)（[0011](./adr/0011-infrastructure-aws-ecs-fargate.md) を置き換え） |
 | 永続化 | 入力ログを Durable Object に保存、リプレイの共有は R2 | 保存しない | [0017](./adr/0017-persist-input-log-in-durable-object.md)（[0012](./adr/0012-no-persistence-in-mvp.md) を置き換え） |
