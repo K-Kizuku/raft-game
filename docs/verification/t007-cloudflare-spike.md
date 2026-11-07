@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: #134 / PR #138 のマージを確認。環境準備は完了。最新の #15 とマージ後の spike/ を読み、H-1 の依存のインストール・check.sh をユーザーに案内する段階。
+- 状態: H-1 完了。main の更新・依存のインストール・check.sh が成功。次は M-12 の cf dev によるローカル動作確認。実デプロイ・クラウドでの測定は未実施。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -16,7 +16,9 @@
 
 | 手順 | 状態 | 確認できたこと / 残り |
 |---|---|---|
-| H-1 準備 | 途中 | 環境準備と #134 / PR #138 のマージを確認。手元の main 更新・依存のインストール・check.sh の実行結果待ち |
+| H-1 準備 | 完了 | main d862bb78cbfea3fe0e476605b3b6d4996153f818、pnpm install --frozen-lockfile と check.sh が成功。shellcheck は未導入のため省略 |
+| M-12 ローカル動作確認 | 未実施 | DEV_SLOT を確保して local-smoke.sh を実行する |
+| M-2・M-3 手元の基準値 | 未実施 | ローカル動作確認後、Go の bench raft / bench loop で測る |
 | H-2 トークンの準備 | 未実施 | 測定コードが main に入ってから実施する |
 | H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
 | H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
@@ -113,7 +115,7 @@ pnpm -C web exec cf auth whoami
 |---|---|---|
 | Workers の有料プラン | `cf accounts subscriptions get` の結果で Workers の契約を確認。権限不足や不明な結果なら、ダッシュボードの Workers の契約表示で補足する | 初回の一覧にはなかったが、その後ユーザーが Workers Paid を有効化したと報告 |
 | workers.dev のサブドメイン | 対象アカウントの Workers & Pages に表示される `<サブドメイン>.workers.dev` を読む | kizuku.workers.dev (ユーザー報告) |
-| linux/amd64 のビルド環境 | `docker buildx inspect` の Platforms を確認。実際のスパイクのイメージのビルド・実行は #134 の check.sh で確認する | Platforms にはないが、alpine:3.22 を linux/amd64 で実行して x86_64 が返った。スパイクのビルドは未確認 |
+| linux/amd64 のビルド環境 | `docker buildx inspect` の Platforms を確認。実際のスパイクのイメージのビルド・実行は #134 の check.sh で確認する | alpine の実行に続き、check.sh でスパイクのイメージのビルドと linux/amd64 を確認 |
 | ローカルの Go | `go version`。#134 の仕様の go.mod は `go 1.26`。測定用のローカル実行に使えるツールチェーンか確認する | 既定は go1.25.5。コマンド単位で指定した go1.26.9 の取得・起動に成功 |
 | トークン生成用の OpenSSL | `openssl version`。この段階ではシークレットを生成しない | OpenSSL 3.4.0 の起動を確認 |
 | ユーザーの手元のコミット | `git rev-parse HEAD`。GitHub で確認した main の SHA と区別して記録する | 31d8b909d620c35c252e2108aa753eab0fa5d8a1 |
@@ -288,6 +290,69 @@ Go は手元で取得済みの 1.26.9 を環境変数で渡す。Dockerfile の 
 - **測定の成功フラグ**: egress は応答を取得できれば ok: true を返すため、result.ok だけで外部通信の遮断を判断しない。DNS・TCP・HTTPS の各結果と internet0AllFailed を読む。同様に各項目の実測値を読んで設計判断する。
 - **未確定の基準**: #15 の提案 (復元 5 秒) と現行 NFR-03 (復元 3 秒) の差は残っている。両方との比較を記録し、提案値を承認済みとして扱わない。
 - **測定データ**: .cloudflare/ は無視される場所なので、結果の JSON と表を共有してもらい、必要な実測値をこの記録と最終 ADR に残す。
+
+## 2026-11-07: check.sh に成功、H-1 完了
+
+ユーザーが前節で案内したコマンドを実行した。共有されたプロンプトの開始時刻は 15:47:47 JST、Vitest の開始は 15:48:25。
+
+### 確認できた結果
+
+| 項目 | 結果 |
+|---|---|
+| AGENT_ROLE | ユーザーが human を設定 |
+| git switch / pull | main のまま。origin/main と同期済み |
+| 手元の HEAD | d862bb78cbfea3fe0e476605b3b6d4996153f818 |
+| pnpm install --frozen-lockfile | 全 3 workspace projects。lockfile の更新なし、成功 |
+| 型検査 | tsc -b、cf workers types、tsc -p tsconfig.workerd.json が成功 |
+| TypeScript テスト | 6 ファイル、137 件すべて成功 |
+| Go | 整形検査・vet・test -race が成功。container と loadmodel の両パッケージが ok |
+| Docker | daemon の確認が成功 |
+| cf build | 成功。Docker のビルド表示は 5.7 秒、主要レイヤーはキャッシュ済み |
+| ビルド結果の構成検査 | check-config が ok: true |
+| イメージのプラットフォーム | linux/amd64 |
+| cf deploy --prebuilt --dry-run | 成功。実デプロイは行っていない |
+| shellcheck | 未導入のためスクリプトの仕様どおり省略。実行済みとは扱わない |
+| check.sh の最終行 | check: すべて成功 |
+
+Vitest の内訳: check-config 17、lib 33、relay 8、stores 1、router 61、session 17。
+
+生成されたイメージは `cloudflare-build/b8366d8bfb35/raft-game-spike-server-server:c537d571e688`。ビルド表示のイメージ ID は `sha256:03d889b3fe26b5bd2ebaa766ab30caf01eaf5bfb76c49fefb17edf3d8fd107a7`。大きさはこの出力にはないため未記録。
+
+cf build は workspace の作業ディレクトリ直下に lock file がない旨の警告を出したが、ルートでの frozen-lockfile インストール・ビルド・構成検査・dry-run は成功している。この警告だけを理由に設定を変更しない。
+
+### dry-run の記録
+
+```text
+Total Upload: 27.32 KiB / gzip: 8.83 KiB
+env.SESSIONS (SpikeSession, defined in raft-game-spike)    Durable Object
+env.PLAIN (PlainStore, defined in raft-game-spike)         Durable Object
+env.CONTROL (ControlStore, defined in raft-game-spike)     Durable Object
+env.SPIKE_MAX_SESSIONS ("30")                             Environment Variable
+
+The following containers are available:
+- SpikeSession (durable_object)
+
+--dry-run: exiting now.
+```
+
+H-1 の完了として記録する。シークレットの作成・実デプロイ・Cloudflare 上での動作確認は、まだ行っていない。
+
+### 次の手順: M-12 のローカル動作確認
+
+ユーザーの実行した SHA の `scripts/dev-slot.sh` と `scripts/dev-env.sh` を読み、acquire がこの作業ツリー用の番号を返し、既存の枠があればそれを再利用することを確認した。親の fish の PID を記録して枠を確保する。
+
+リポジトリのルートで実行する:
+
+```fish
+set -gx DEV_SLOT (bash scripts/dev-slot.sh acquire --pid $fish_pid)
+and env GOTOOLCHAIN=go1.26.9 SPIKE_CPU_MS=50 bash spike/scripts/local-smoke.sh
+```
+
+この段階では cf dev での起動・WS の往復と超過の破棄・SQLite・PlainStore/ControlStore・停止を確認する。egress・crash・cpu はスクリプト上は記録用の項目なので、その失敗と必須項目の失敗を分けて読む。
+
+結果は `spike/.cloudflare/local-smoke.json`。まず終了までのコンソール出力を受け取り、必要に応じて JSON の内容も確認する。終了時の cf dev の停止と Docker の残存一覧も記録する。DEV_SLOT の番号とスパイクが使うポートは実行出力から確認する。
+
+このコマンドは次に案内したもので、まだ実行結果は受け取っていない。枠の解放や、残ったコンテナ・イメージの削除は使用状況を確認してから行う。
 
 ## 測定前に確定・確認する事項
 
