@@ -11,7 +11,11 @@
 #                    省略: まず Codex、使えないとき（4 つの理由）だけ Claude Code
 #   --via V          github（既定）: Codex の GitHub 連携。PR に `@codex review` と書き、対象の SHA の
 #                    codex-review-state が completed になるまで待つ（既定 900 秒、AGENT_CODEX_GITHUB_TIMEOUT。
-#                    確認の間隔は AGENT_CODEX_GITHUB_POLL 秒、既定 30）。終わったら agentctl pr codex-record で
+#                    最初の AGENT_CODEX_GITHUB_FIRST_WAIT 秒（既定 60）は読まずに待ち、その後は
+#                    AGENT_CODEX_GITHUB_POLL 秒（既定 30）ごとに読み直す）。待っている間に GitHub の API の上限
+#                    （403・429 のレート制限）に達したら、gh api rate_limit の reset の時刻（読めなければ
+#                    AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT 秒、既定 60）まで待って続け、失敗として数えない。
+#                    上限が戻るのが待ちの全体の上限より後なら、タイムアウトとして扱う。終わったら agentctl pr codex-record で
 #                    agent-review/v1 に変換する。タイムアウト・連携の不調（agentctl のエラーが retry_limit 回続く）の
 #                    ときだけ service_unavailable として、下の local の経路にフォールバックする。
 #                    依頼する前の要約のコメントの updated_at を覚え、それより後に更新された completed だけを待つ。
@@ -156,9 +160,13 @@ agent_config="$(config_file)"
 # ---- Codex の GitHub 連携（--via github）----
 github_timeout="${AGENT_CODEX_GITHUB_TIMEOUT:-900}"
 github_poll="${AGENT_CODEX_GITHUB_POLL:-30}"
-case "$github_timeout$github_poll" in
-  *[!0-9]*) die "AGENT_CODEX_GITHUB_TIMEOUT・AGENT_CODEX_GITHUB_POLL は 0 以上の整数（秒）" ;;
-esac
+github_first_wait="${AGENT_CODEX_GITHUB_FIRST_WAIT:-60}"
+github_rate_wait="${AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT:-60}"
+for v in "$github_timeout" "$github_poll" "$github_first_wait" "$github_rate_wait"; do
+  case "$v" in
+    '' | *[!0-9]*) die "AGENT_CODEX_GITHUB_TIMEOUT・AGENT_CODEX_GITHUB_POLL・AGENT_CODEX_GITHUB_FIRST_WAIT・AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT は 0 以上の整数（秒）" ;;
+  esac
+done
 
 # github_unavailable <メッセージ>: 連携の不調として service_unavailable にする。
 github_unavailable() {
@@ -178,8 +186,41 @@ codex_state_baseline() {
     | max // empty' "$1" 2>/dev/null || true
 }
 
+# is_rate_limited <標準エラーのファイル>: agentctl のエラーが GitHub の API の上限（403・429 のレート制限）か。
+# agentctl は上限のエラーに「（レート制限）」を付ける。GitHub の応答の文（API rate limit exceeded・
+# secondary rate limit）にも一致させる。
+is_rate_limited() {
+  grep -Eiq 'レート制限|rate[ _-]?limit' "$1" 2>/dev/null
+}
+
+# rate_limit_wait: API の上限が戻るまでの秒数を出す。gh api rate_limit（上限の回数に数えない）の
+# core の remaining が 0 なら reset（UNIX 時刻）まで（1 秒の余裕を足す）。読めない・remaining が 0 でない
+# （二次的な上限など、reset が当てにならない）ときは AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT 秒（既定 60）。
+rate_limit_wait() {
+  local rl remaining reset w
+  if command -v gh >/dev/null 2>&1 &&
+    rl="$(gh api rate_limit --jq '"\(.resources.core.remaining) \(.resources.core.reset)"' 2>/dev/null)"; then
+    remaining="${rl%% *}"
+    reset="${rl#* }"
+    case "$remaining:$reset" in
+      0:[0-9]*)
+        case "$reset" in
+          *[!0-9]*) ;;
+          *)
+            w=$((reset - $(date +%s) + 1))
+            [ "$w" -ge 0 ] || w=0
+            printf '%s\n' "$w"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  fi
+  printf '%s\n' "$github_rate_wait"
+}
+
 run_github() {
-  local sha rc start errors=0 args after
+  local sha rc start errors=0 args after w left
   # 依頼する前の要約のコメントの updated_at を覚え、それより新しい completed だけを待つ
   # （同じ SHA の前のレビューの completed を、今回のレビューの結果と取り違えない）。
   agentctl pr view --repo "$repo" --pr "$pr" >"$tmp/pr-view.json" 2>"$tmp/github.log" ||
@@ -198,6 +239,11 @@ run_github() {
   [ -z "$after" ] || args+=(--after "$after")
   [ -z "$previous_file" ] || args+=(--previous "$previous_file")
   start="$(date +%s)"
+  # Codex のレビューはすぐには終わらないので、最初の AGENT_CODEX_GITHUB_FIRST_WAIT 秒は読まずに待つ
+  # （待ちの全体の上限を超えない）。その後は AGENT_CODEX_GITHUB_POLL 秒ごとに読み直す。
+  w="$github_first_wait"
+  [ "$w" -le "$github_timeout" ] || w="$github_timeout"
+  [ "$w" -eq 0 ] || sleep "$w"
   while :; do
     set +e
     agentctl "${args[@]}" >"$tmp/codex-github.json" 2>"$tmp/github.log"
@@ -216,6 +262,18 @@ run_github() {
         ;;
       2) errors=0 ;;
       *)
+        # API の上限: 戻る時刻まで待って続ける（失敗として数えない）。待ちの全体の上限を超えるなら、
+        # 待たずにタイムアウトと同じ理由で終わる。
+        if is_rate_limited "$tmp/github.log"; then
+          w="$(rate_limit_wait)"
+          left=$((start + github_timeout - $(date +%s)))
+          if [ "$left" -le 0 ] || [ "$w" -gt "$left" ]; then
+            github_unavailable "GitHub の API の上限が戻るまで ${w} 秒かかり、$sha のレビューが ${github_timeout} 秒で終わらない（AGENT_CODEX_GITHUB_TIMEOUT）" || return 1
+          fi
+          info "GitHub の API の上限に達した。${w} 秒待ってから読み直す（失敗として数えない）: $(tail -n 1 "$tmp/github.log" | tr '\n' ' ')"
+          [ "$w" -eq 0 ] || sleep "$w"
+          continue
+        fi
         errors=$((errors + 1))
         info "Codex の GitHub 連携の結果を読めない（終了コード ${rc}、$errors/$retry_limit 回目）: $(tail -n 3 "$tmp/github.log" | tr '\n' ' ')"
         [ "$errors" -lt "$retry_limit" ] || github_unavailable "agentctl pr codex-record が $retry_limit 回続けて失敗した" || return 1
