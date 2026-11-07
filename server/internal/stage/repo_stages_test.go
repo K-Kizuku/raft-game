@@ -147,7 +147,7 @@ var wantStages = []wantStage{
 			sr(160000, 2, stall, stMn),
 			sr(180000, 3, stall, stMn),
 		},
-		rateMilliPerMin: 500, targetSuccesses: 5, targetScore3: 1400,
+		rateMilliPerMin: 500, targetSuccesses: 2, targetScore3: 1400, // 目標は novice で決める（T-501g #332）
 	},
 	{
 		id: "demo-izu", title: "嵐の離島共和国（デモ・伊豆版）", durationMs: 120000, unlock: "", tutorial: "",
