@@ -1,0 +1,691 @@
+// @vitest-environment jsdom
+import type * as DndKit from "@dnd-kit/core";
+import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { createElement } from "react";
+import type { ReactElement } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { Ack, ServerEvent, Snapshot } from "../../protocol/index.ts";
+import { gameStore } from "../../state/index.ts";
+import { GameCommandProvider } from "../commands/GameCommands.tsx";
+import type { GameCommandSender } from "../commands/GameCommands.tsx";
+import { setShowRaftTerms } from "../terms/preference.ts";
+import { CARGO_DROP_ID } from "./dnd.ts";
+import { FerryPanel } from "./FerryPanel.tsx";
+import { ferryLetter, makeFerrySnapshot, portLetter, withFerry1 } from "./testing/world.ts";
+
+// jsdom にドラッグの座標の計算は無いので、DndContext の onDragEnd だけを捕まえる（元の DndContext を使う）。
+const dnd = vi.hoisted(() => ({
+  onDragEnd: null as ((event: DragEndEvent) => void) | null,
+  accessibility: undefined as DndContextProps["accessibility"],
+}));
+vi.mock("@dnd-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof DndKit>();
+  function DndContext(props: DndContextProps): ReactElement {
+    dnd.onDragEnd = props.onDragEnd ?? null;
+    dnd.accessibility = props.accessibility;
+    return createElement(actual.DndContext, props);
+  }
+  return { ...actual, DndContext };
+});
+
+const OK: Ack = { cmdId: "c-1", ok: true, t: 29000 };
+
+let nowMs = 1000;
+let seq = 0;
+
+beforeEach(() => {
+  gameStore.getState().reset();
+  nowMs = 1000;
+  seq = 0;
+  dnd.onDragEnd = null;
+  dnd.accessibility = undefined;
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+  vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+});
+
+afterEach(() => {
+  cleanup();
+  gameStore.getState().reset();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  setShowRaftTerms(false);
+});
+
+function load(snapshot: Snapshot = makeFerrySnapshot(), ferryId: string | null = "f1"): void {
+  act(() => {
+    gameStore.getState().applySnapshot(snapshot, performance.now());
+    gameStore.getState().selectFerry(ferryId);
+  });
+}
+
+type EventBody = ServerEvent extends infer E
+  ? E extends ServerEvent
+    ? Omit<E, "seq">
+    : never
+  : never;
+
+function events(...bodies: EventBody[]): void {
+  const list = bodies.map((body) => ({ ...body, seq: ++seq }) as ServerEvent);
+  act(() => {
+    gameStore
+      .getState()
+      .applyEvents({ t: 29000, speed: 1, paused: false, endsAt: 180000 }, list, performance.now());
+  });
+}
+
+function moved(
+  letterId: number,
+  loc: { type: "ferry"; ferryId: string } | { type: "port"; islandId: number },
+): EventBody {
+  return { type: "letter.moved", t: 29000, letterId, loc };
+}
+
+function okSender(): ReturnType<typeof vi.fn<GameCommandSender>> {
+  return vi.fn<GameCommandSender>(() => Promise.resolve(OK));
+}
+
+function renderPanel(send: GameCommandSender | null): ReturnType<typeof render> {
+  return render(
+    <GameCommandProvider send={send}>
+      <FerryPanel />
+    </GameCommandProvider>,
+  );
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+function button(name: string | RegExp): HTMLElement {
+  return screen.getByRole("button", { name });
+}
+
+function autoloadButton(): HTMLElement {
+  const el = document.querySelector<HTMLElement>(".ferry-panel__autoload");
+  if (el === null) throw new Error("おまかせのボタンが無い");
+  return el;
+}
+
+function departButton(): HTMLElement {
+  const el = document.querySelector<HTMLElement>(".ferry-panel__depart");
+  if (el === null) throw new Error("出航のボタンが無い");
+  return el;
+}
+
+function cargoList(): HTMLElement {
+  const el = document.querySelector<HTMLElement>(".ferry-panel__cargo");
+  if (el === null) throw new Error("積み荷が無い");
+  return el;
+}
+
+function portArea(): HTMLElement {
+  const el = document.querySelector<HTMLElement>(".ferry-panel__port");
+  if (el === null) throw new Error("港が無い");
+  return el;
+}
+
+function statusText(): string | null | undefined {
+  return document.querySelector(".ferry-panel__status")?.textContent;
+}
+
+// 文字が複数の要素に分かれていても、textContent が一致する一番内側の要素を探す。
+function byText(text: string): HTMLElement[] {
+  return screen.queryAllByText(
+    (_content, el) =>
+      el !== null &&
+      el.textContent === text &&
+      ![...el.children].some((child) => child.textContent === text),
+  );
+}
+
+function describedText(el: HTMLElement): string {
+  const ids = (el.getAttribute("aria-describedby") ?? "").split(" ").filter((id) => id !== "");
+  return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+}
+
+const HEARTBEAT_LOAD = "お元気ですか？（→ 二の島）を積む";
+const APPEND_LOAD = "この内容を記録して！（→ 三の島）を積む";
+const REQUEST_LOAD = "住民の依頼書（→ 三の島）を積む";
+
+// f1 に手紙を積んだ Snapshot（letters は差し替え、f1 は島 1 に停泊）。
+function loadedSnapshot(cargo: { id: number; from: number; to: number }[]): Snapshot {
+  const base = makeFerrySnapshot();
+  const onBoard = cargo.map((c) => ferryLetter(c.id, "heartbeat", c.from, c.to, "f1"));
+  return withFerry1(
+    { cargo: cargo.map((c) => c.id) },
+    { letters: [...base.letters.filter((l) => !cargo.some((c) => c.id === l.id)), ...onBoard] },
+  );
+}
+
+describe("FerryPanel", () => {
+  it("FP-1 world が null なら「フェリー操作（準備中）」、reset で戻る", () => {
+    render(<FerryPanel />);
+    expect(screen.getByText("フェリー操作（準備中）")).toBeDefined();
+    load(makeFerrySnapshot(), null);
+    expect(screen.queryByText("フェリー操作（準備中）")).toBeNull();
+    act(() => {
+      gameStore.getState().reset();
+    });
+    expect(screen.getByText("フェリー操作（準備中）")).toBeDefined();
+  });
+
+  it("FP-2 船の一覧と選択", () => {
+    load(makeFerrySnapshot(), null);
+    render(<FerryPanel />);
+    const group = screen.getByRole("group", { name: "船を選ぶ" });
+    const tabs = within(group).getAllByRole("button");
+    expect(tabs.map((t) => t.querySelector(".ferry-panel__tab-name")?.textContent)).toEqual([
+      "⛴ ごとう丸",
+      "⛴ しまかぜ",
+    ]);
+    expect(byText("⚓ 一の島 停泊中")).toHaveLength(1);
+    expect(byText("→ 三の島 あと 0:02")).toHaveLength(1);
+    expect(screen.getByText("積み荷 0/4")).toBeDefined();
+    expect(screen.getByText("積み荷 1/4")).toBeDefined();
+    expect(screen.getByText("船を選ぶと、積み込みと出航の操作がここに出ます。")).toBeDefined();
+    expect(tabs[0]?.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(button(/ごとう丸/));
+    expect(gameStore.getState().selection.ferryId).toBe("f1");
+    expect(button(/ごとう丸/).getAttribute("aria-pressed")).toBe("true");
+    expect(button(/しまかぜ/).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("ごとう丸 ⚓ 一の島 停泊中");
+  });
+
+  it("FP-2 船が 0 隻・故障中", () => {
+    load(makeFerrySnapshot({ ferries: [] }), null);
+    const { unmount } = render(<FerryPanel />);
+    expect(screen.getByText("船がありません。")).toBeDefined();
+    unmount();
+    load(makeFerrySnapshot(), "f1");
+    events({ type: "ferry.broken", t: 29000, ferryId: "f1", until: 60000 });
+    render(<FerryPanel />);
+    expect(within(button(/ごとう丸/)).getByText("故障中")).toBeDefined();
+  });
+
+  it("FP-3 港の手紙を押して積む: 表示はイベントで変わる", async () => {
+    load();
+    const send = okSender();
+    renderPanel(send);
+    expect(within(cargoList()).getAllByText("空き")).toHaveLength(4);
+
+    fireEvent.click(button(HEARTBEAT_LOAD));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("cmd.ferry.load", { ferryId: "f1", letterIds: [2] });
+    await flush();
+
+    // 押しただけでは港のまま（反映待ち）。
+    const waiting = within(portArea()).getByRole("button", { name: HEARTBEAT_LOAD });
+    expect(waiting.getAttribute("aria-disabled")).toBe("true");
+    expect(within(portArea()).getByText("反映待ち")).toBeDefined();
+    expect(statusText()).toBe("手紙を積みました。");
+    fireEvent.click(waiting);
+    expect(send).toHaveBeenCalledTimes(1);
+    // ほかの手紙は押せる。
+    expect(button(APPEND_LOAD).getAttribute("aria-disabled")).toBeNull();
+
+    events(moved(2, { type: "ferry", ferryId: "f1" }));
+    expect(within(portArea()).queryByRole("button", { name: HEARTBEAT_LOAD })).toBeNull();
+    const slots = within(cargoList()).getAllByRole("listitem");
+    expect(
+      within(slots[0] ?? document.body)
+        .getByRole("button")
+        .getAttribute("aria-label"),
+    ).toBe("お元気ですか？（→ 二の島）を降ろす");
+    expect(screen.getByRole("heading", { level: 3, name: "積み荷 1/4" })).toBeDefined();
+    expect(within(cargoList()).getAllByText("空き")).toHaveLength(3);
+    expect(screen.queryByText("反映待ち")).toBeNull();
+  });
+
+  it("FP-4 積み荷を押して降ろす・違う島で生まれた手紙は降ろせない", async () => {
+    load(
+      loadedSnapshot([
+        { id: 30, from: 1, to: 3 },
+        { id: 40, from: 2, to: 3 },
+      ]),
+    );
+    const send = okSender();
+    renderPanel(send);
+
+    const foreign = within(cargoList()).getAllByRole("button")[1];
+    if (foreign === undefined) throw new Error("積み荷の 2 つ目が無い");
+    expect(foreign.getAttribute("aria-disabled")).toBe("true");
+    expect(foreign.getAttribute("title")).toBe("この島で生まれた手紙だけ降ろせます");
+    expect(describedText(foreign)).toContain("この島で生まれた手紙だけ降ろせます");
+    fireEvent.click(foreign);
+    expect(send).not.toHaveBeenCalled();
+
+    const own = within(cargoList()).getAllByRole("button")[0];
+    if (own === undefined) throw new Error("積み荷の 1 つ目が無い");
+    expect(own.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(own);
+    expect(send).toHaveBeenCalledWith("cmd.ferry.unload", { ferryId: "f1", letterIds: [30] });
+    await flush();
+    expect(statusText()).toBe("手紙を港に戻しました。");
+    events(moved(30, { type: "port", islandId: 1 }));
+    expect(
+      within(portArea()).getByRole("button", { name: "お元気ですか？（→ 三の島）を積む" }),
+    ).toBeDefined();
+    expect(screen.getByRole("heading", { level: 3, name: "積み荷 1/4" })).toBeDefined();
+  });
+
+  it("FP-5 行き先を選んでおまかせと出航", async () => {
+    load();
+    const send = okSender();
+    renderPanel(send);
+    expect(autoloadButton().getAttribute("aria-disabled")).toBe("true");
+    expect(departButton().getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getAllByText("行き先を選んでください。")).toHaveLength(2);
+    expect(describedText(departButton())).toBe("行き先を選んでください。");
+    fireEvent.click(autoloadButton());
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("radio").every((r) => !(r as HTMLInputElement).checked)).toBe(true);
+
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    expect((screen.getByRole("radio", { name: "二の島" }) as HTMLInputElement).checked).toBe(true);
+    expect(autoloadButton().getAttribute("aria-disabled")).toBeNull();
+    expect(departButton().getAttribute("aria-disabled")).toBeNull();
+    expect(screen.queryByText("行き先を選んでください。")).toBeNull();
+    const pile2 = document.querySelector<HTMLElement>('.ferry-panel__pile[data-to="2"]');
+    const pile3 = document.querySelector<HTMLElement>('.ferry-panel__pile[data-to="3"]');
+    expect(pile2?.querySelector(".ferry-panel__pile-to")?.textContent).toBe("→ 二の島行き先宛て");
+    expect(within(pile2 ?? document.body).getByText("行き先宛て")).toBeDefined();
+    expect(within(pile3 ?? document.body).queryByText("行き先宛て")).toBeNull();
+
+    fireEvent.click(autoloadButton());
+    expect(send).toHaveBeenLastCalledWith("cmd.ferry.autoload", { ferryId: "f1", to: 2 });
+    await flush();
+    expect(statusText()).toBe("おまかせで積みました。");
+
+    fireEvent.click(departButton());
+    expect(send).toHaveBeenLastCalledWith("cmd.ferry.depart", { ferryId: "f1", to: 2 });
+    await flush();
+    expect(statusText()).toBe("二の島へ出航しました。");
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("FP-6 停泊の時間が終わるまで出航は押せない", () => {
+    load(withFerry1({ readyAt: 30500 }));
+    renderPanel(okSender());
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    expect(departButton().getAttribute("aria-disabled")).toBe("true");
+    expect(describedText(departButton())).toBe("出航まで あと 0:02");
+    expect(autoloadButton().getAttribute("aria-disabled")).toBeNull();
+    expect(document.querySelector(".ferry-panel__ready")?.textContent).toBe("出航まで あと 0:02");
+
+    nowMs += 1600;
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(departButton().getAttribute("aria-disabled")).toBeNull();
+    expect(document.querySelector(".ferry-panel__ready")).toBeNull();
+  });
+
+  it("FP-6 一時停止中は残りが減らず、押せないまま", () => {
+    const base = withFerry1({ readyAt: 30500 });
+    load({ ...base, clock: { ...base.clock, paused: true } });
+    renderPanel(okSender());
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    nowMs += 5000;
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(departButton().getAttribute("aria-disabled")).toBe("true");
+    expect(describedText(departButton())).toBe("出航まで あと 0:02");
+  });
+
+  it("FP-7 嵐の航路: 選べておまかせはできるが、出航は押せない", () => {
+    load(
+      makeFerrySnapshot({
+        routesState: [
+          { id: "1-2", blockedUntil: 40000 },
+          { id: "1-3", blockedUntil: null },
+          { id: "2-3", blockedUntil: null },
+        ],
+      }),
+    );
+    const send = okSender();
+    renderPanel(send);
+    const radio = screen.getByRole("radio", { name: "二の島 嵐で通れません" });
+    expect(radio.closest("label")?.textContent).toContain("⛈ 嵐で通れません");
+    fireEvent.click(radio);
+    expect(autoloadButton().getAttribute("aria-disabled")).toBeNull();
+    expect(departButton().getAttribute("aria-disabled")).toBe("true");
+    expect(describedText(departButton())).toBe("嵐で航路が通れません。");
+    fireEvent.click(departButton());
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.click(autoloadButton());
+    expect(send).toHaveBeenCalledWith("cmd.ferry.autoload", { ferryId: "f1", to: 2 });
+  });
+
+  it("FP-7 嵐の予報は「☁ 嵐の予報」", () => {
+    load();
+    events({ type: "forecast", t: 29000, event: "storm", at: 35000, routeIds: ["1-3"] });
+    renderPanel(okSender());
+    expect(screen.getByRole("radio", { name: "三の島 嵐の予報" })).toBeDefined();
+  });
+
+  it("FP-8 航行中の船は操作できない", () => {
+    load(makeFerrySnapshot(), "f2");
+    renderPanel(okSender());
+    expect(byText("→ 三の島 あと 0:02")).toHaveLength(2);
+    expect(
+      screen.getByText("航行中は操作できません。着いたら積み込みと出航ができます。"),
+    ).toBeDefined();
+    expect(within(cargoList()).getByText("→ 三の島")).toBeDefined();
+    expect(within(cargoList()).queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(document.querySelector(".ferry-panel__autoload")).toBeNull();
+    expect(document.querySelector(".ferry-panel__depart")).toBeNull();
+    expect(document.querySelector(".ferry-panel__port")).toBeNull();
+    expect(document.querySelector(".ferry-panel__destinations")).toBeNull();
+  });
+
+  it("FP-9 Provider の外では押せない", () => {
+    load();
+    render(<FerryPanel />);
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    for (const el of [button(HEARTBEAT_LOAD), autoloadButton(), departButton()]) {
+      expect(el.getAttribute("aria-disabled")).toBe("true");
+      expect(el.hasAttribute("disabled")).toBe(false);
+      fireEvent.click(el);
+    }
+    expect(statusText()).toBe("");
+  });
+
+  it.each<[Snapshot["phase"], string]>([
+    ["intro", "航行の時間になると操作できます。"],
+    ["opening", "航行の時間になると操作できます。"],
+    ["ended", "ラウンドは終わりました。"],
+  ])("FP-9 phase %s では押せず「%s」", (phase, text) => {
+    load(makeFerrySnapshot({ phase }));
+    const send = okSender();
+    renderPanel(send);
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    expect(screen.getAllByText(text)).toHaveLength(1);
+    for (const el of [button(HEARTBEAT_LOAD), autoloadButton(), departButton()]) {
+      expect(el.getAttribute("aria-disabled")).toBe("true");
+      expect(describedText(el)).toContain(text);
+      fireEvent.click(el);
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("FP-9 送っている間はほかの操作も押せず、フォーカスが残る", () => {
+    load();
+    const send = vi.fn<GameCommandSender>(() => new Promise<Ack>(() => {}));
+    renderPanel(send);
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    const first = button(HEARTBEAT_LOAD);
+    first.focus();
+    fireEvent.click(first);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(first);
+    for (const el of [
+      button(HEARTBEAT_LOAD),
+      button(APPEND_LOAD),
+      autoloadButton(),
+      departButton(),
+    ]) {
+      expect(el.getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(el);
+    }
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(first);
+  });
+
+  type FailRow = [string, "load" | "autoload" | "depart", () => Promise<Ack>, string];
+  it.each<FailRow>([
+    [
+      "積む・capacity_exceeded",
+      "load",
+      () => Promise.resolve({ ...OK, ok: false, code: "capacity_exceeded" }),
+      "積み荷がいっぱいです。",
+    ],
+    [
+      "積む・letter_not_here",
+      "load",
+      () => Promise.resolve({ ...OK, ok: false, code: "letter_not_here" }),
+      "その手紙はもう港にありません。",
+    ],
+    [
+      "おまかせ・letter_not_here",
+      "autoload",
+      () => Promise.resolve({ ...OK, ok: false, code: "letter_not_here" }),
+      "港に二の島宛ての手紙がありません。",
+    ],
+    [
+      "出航・route_blocked",
+      "depart",
+      () => Promise.resolve({ ...OK, ok: false, code: "route_blocked" }),
+      "嵐で二の島への航路が通れません。",
+    ],
+    [
+      "出航・ferry_not_ready",
+      "depart",
+      () => Promise.resolve({ ...OK, ok: false, code: "ferry_not_ready" }),
+      "停泊の時間がまだ終わっていません。少し待ってください。",
+    ],
+    [
+      "積む・reject",
+      "load",
+      () => Promise.reject(new Error("closed")),
+      "サーバーにつながっていないため、積み込みできませんでした。",
+    ],
+  ])("FP-10 %s の文", async (_name, op, result, text) => {
+    load();
+    const send = vi.fn<GameCommandSender>(result);
+    renderPanel(send);
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    const target =
+      op === "load"
+        ? button(HEARTBEAT_LOAD)
+        : op === "autoload"
+          ? autoloadButton()
+          : departButton();
+    fireEvent.click(target);
+    await flush();
+    expect(statusText()).toBe(text);
+    // 失敗の後は反映待ちにならず、もう一度押せる。
+    expect(target.getAttribute("aria-disabled")).toBeNull();
+    expect(screen.queryByText("反映待ち")).toBeNull();
+    fireEvent.click(target);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("FP-10 送っている間にアンマウントしても警告・例外が出ない", async () => {
+    load();
+    const error = vi.spyOn(console, "error");
+    let resolve: (ack: Ack) => void = () => {};
+    const send = vi.fn<GameCommandSender>(
+      () =>
+        new Promise<Ack>((r) => {
+          resolve = r;
+        }),
+    );
+    const { unmount } = renderPanel(send);
+    fireEvent.click(button(HEARTBEAT_LOAD));
+    unmount();
+    resolve(OK);
+    await flush();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("FP-10 選んだ船が変わったら結果の文を消す", async () => {
+    load();
+    renderPanel(okSender());
+    fireEvent.click(button(HEARTBEAT_LOAD));
+    await flush();
+    expect(statusText()).toBe("手紙を積みました。");
+    fireEvent.click(button(/しまかぜ/));
+    expect(statusText()).toBe("");
+    fireEvent.click(button(/ごとう丸/));
+    expect(statusText()).toBe("");
+  });
+
+  it("FP-11 出航・到着したら行き先は選び直し", () => {
+    load();
+    renderPanel(okSender());
+    fireEvent.click(screen.getByRole("radio", { name: "二の島" }));
+    expect(departButton().getAttribute("aria-disabled")).toBeNull();
+    events(
+      {
+        type: "ferry.departed",
+        t: 29000,
+        ferryId: "f1",
+        from: 1,
+        to: 2,
+        departAt: 29000,
+        arriveAt: 35000,
+      },
+      { type: "ferry.arrived", t: 35000, ferryId: "f1", islandId: 2, readyAt: 29000 },
+    );
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.labels?.[0]?.textContent?.trim())).toEqual(["一の島", "三の島"]);
+    expect(radios.every((r) => !r.checked)).toBe(true);
+    expect(autoloadButton().getAttribute("aria-disabled")).toBe("true");
+    expect(departButton().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("FP-11 別の船を選んで戻ると行き先は選び直し", () => {
+    load();
+    renderPanel(okSender());
+    fireEvent.click(screen.getByRole("radio", { name: "三の島" }));
+    fireEvent.click(button(/しまかぜ/));
+    fireEvent.click(button(/ごとう丸/));
+    expect((screen.getByRole("radio", { name: "三の島" }) as HTMLInputElement).checked).toBe(false);
+    expect(departButton().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("FP-12 積んだ手紙が消えたら、同じ位置・1 つ前・見出しにフォーカスを移す", async () => {
+    load();
+    renderPanel(okSender());
+
+    const append = button(APPEND_LOAD);
+    append.focus();
+    fireEvent.click(append);
+    await flush();
+    events(moved(5, { type: "ferry", ferryId: "f1" }));
+    expect(document.activeElement).toBe(button(REQUEST_LOAD));
+
+    fireEvent.click(button(REQUEST_LOAD));
+    await flush();
+    events(moved(9, { type: "ferry", ferryId: "f1" }));
+    expect(document.activeElement).toBe(button(HEARTBEAT_LOAD));
+
+    fireEvent.click(button(HEARTBEAT_LOAD));
+    await flush();
+    events(moved(2, { type: "ferry", ferryId: "f1" }));
+    const heading = screen.getByRole("heading", { level: 3, name: "一の島の港の手紙" });
+    expect(document.activeElement).toBe(heading);
+    expect(screen.getByText("港に手紙はありません。")).toBeDefined();
+  });
+
+  it("FP-12 積み荷から降ろした手紙が消えたら、積み荷の同じ位置に移す", async () => {
+    load(
+      loadedSnapshot([
+        { id: 30, from: 1, to: 3 },
+        { id: 31, from: 1, to: 2 },
+      ]),
+    );
+    renderPanel(okSender());
+    const first = within(cargoList()).getAllByRole("button")[0];
+    first?.focus();
+    if (first === undefined) throw new Error("積み荷が無い");
+    fireEvent.click(first);
+    await flush();
+    events(moved(30, { type: "port", islandId: 1 }));
+    expect(document.activeElement?.getAttribute("data-letter-id")).toBe("31");
+  });
+
+  it("FP-12 フォーカスがパネルの外にあれば動かさない", async () => {
+    load();
+    render(
+      <>
+        <button type="button">外</button>
+        <GameCommandProvider send={okSender()}>
+          <FerryPanel />
+        </GameCommandProvider>
+      </>,
+    );
+    const outside = screen.getByRole("button", { name: "外" });
+    outside.focus();
+    fireEvent.click(button(APPEND_LOAD));
+    await flush();
+    events(moved(5, { type: "ferry", ferryId: "f1" }));
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it("FP-13 ドラッグ＆ドロップで積む・外に落としたら何もしない", async () => {
+    load();
+    const send = okSender();
+    renderPanel(send);
+    expect(dnd.onDragEnd).not.toBeNull();
+    for (const el of within(portArea()).getAllByRole("button")) {
+      expect(el.hasAttribute("aria-roledescription")).toBe(false);
+    }
+
+    act(() => {
+      dnd.onDragEnd?.({
+        active: { id: "letter:port:2", data: { current: { letterId: 2, source: "port" } } },
+        over: null,
+      } as unknown as DragEndEvent);
+    });
+    expect(send).not.toHaveBeenCalled();
+
+    act(() => {
+      dnd.onDragEnd?.({
+        active: { id: "letter:port:2", data: { current: { letterId: 2, source: "port" } } },
+        over: { id: CARGO_DROP_ID },
+      } as unknown as DragEndEvent);
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("cmd.ferry.load", { ferryId: "f1", letterIds: [2] });
+    await flush();
+    expect(statusText()).toBe("手紙を積みました。");
+  });
+
+  it("FP-13 支援技術への日本語の案内", () => {
+    load();
+    renderPanel(okSender());
+    const a11y = dnd.accessibility;
+    expect(a11y?.screenReaderInstructions?.draggable).toBe(
+      "Enter か Space で積み込み・荷降ろしをします。マウスではドラッグでもできます。",
+    );
+    const active = {
+      id: "letter:port:2",
+      data: { current: { letterId: 2, source: "port" } },
+    } as unknown as DragEndEvent["active"];
+    const over = (id: string): DragEndEvent["over"] => ({ id }) as unknown as DragEndEvent["over"];
+    const ann = a11y?.announcements;
+    expect(ann?.onDragStart({ active })).toBe("お元気ですか？を持ち上げました。");
+    expect(ann?.onDragOver({ active, over: over(CARGO_DROP_ID) })).toBe("積み荷の上です。");
+    expect(ann?.onDragOver({ active, over: over("ferry-port") })).toBe("港の上です。");
+    expect(ann?.onDragOver({ active, over: null })).toBeUndefined();
+    expect(ann?.onDragEnd({ active, over: null })).toBe("お元気ですか？を置きました。");
+    expect(ann?.onDragCancel({ active, over: null })).toBe(
+      "お元気ですか？のドラッグをやめました。",
+    );
+  });
+
+  it("FP-14 用語の併記", () => {
+    setShowRaftTerms(true);
+    load();
+    renderPanel(okSender());
+    expect(button("お元気ですか？（MsgHeartbeat）（→ 二の島）を積む")).toBeDefined();
+    const heading = screen.getByRole("heading", { level: 3, name: /港の/ });
+    expect(heading.textContent).toContain("手紙（Message）");
+  });
+
+  it("手紙のボタンには portLetter の宛先の色の縁が付く", () => {
+    load(makeFerrySnapshot({ letters: [portLetter(2, "heartbeat", 1, 9)] }));
+    renderPanel(okSender());
+    const btn = button("お元気ですか？（→ 島 9）を積む");
+    expect(btn.querySelector('[data-part="border"]')?.getAttribute("stroke")).toBe("#9CA3AF");
+  });
+});
