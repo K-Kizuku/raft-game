@@ -358,6 +358,11 @@ cp -R "$src_root/.claude/agents" "$repo/.claude/agents"
 cp "$src_root/.claude/settings.json" "$repo/.claude/settings.json"
 cp -R "$src_root/.claude/hooks" "$repo/.claude/hooks"
 rm -rf "$repo/.claude/hooks/tests"
+# settings.json は hooks を（bash を通さず）直接実行するので、実行のビットがないと拒否が効かない
+for g in guard-bash.sh guard-write.sh guard-mcp.sh; do
+  check "hooks: .claude/hooks/$g に実行のビットがある（Git でも 100755）" \
+    test -x "$src_root/.claude/hooks/$g" -a "$(git -C "$src_root" ls-files -s ".claude/hooks/$g" | awk '{ print $1 }')" = 100755
+done
 printf 'a\n' >"$repo/a.txt"
 (
   cd "$repo"
@@ -1187,6 +1192,633 @@ FAKE_PR_LIST="$tmp/prs2.json" run_rc env AGENT_ROLE=orchestrator bash "$A/wt.sh"
 check "wt cleanup --issue 10: 閉じた PR・変更なし → 消す" test "$RC" = 0 -a ! -d "$repo/.claude/worktrees/issue-10" -a -d "$repo/.claude/worktrees/issue-9"
 check "wt cleanup: gh pr list --head <branch> --state all で PR を調べる" \
   log_has gh '.args[0:4] == ["pr","list","--head","agent/issue-10"] and (.args | index("all")) != null'
+
+# ================= merge-train.sh・autospawn.sh（#154）=================
+# 別のリポジトリ（origin は上と同じ bare）に、merge-train.sh・autospawn.sh・lib.sh と、偽の merge.sh・
+# review.sh・spawn-worker.sh を置く。gh と agentctl は、$TRAIN_DIR のファイルで答える偽物を PATH の先頭に置く。
+# 周の間隔は 0 にし、AGENT_TRAIN_CYCLES で周の数を決める（実時間を待たない）。
+TRAIN_DIR="$tmp/train-fake"
+export TRAIN_DIR
+# （origin の clone にする。マージの後の git pull --ff-only を確かめるため。scripts/agents は別の場所に置く）
+trepo="$tmp/trainrepo"
+git clone --quiet "$tmp/origin.git" "$trepo"
+TS="$trepo/.train-scripts/scripts/agents"
+mkdir -p "$TS" "$fake/bin-train" "$TRAIN_DIR"
+printf '.train-scripts/\n.agents/run/\n.agents/logs/\n' >>"$trepo/.git/info/exclude"
+cp "$A/merge-train.sh" "$A/autospawn.sh" "$A/lib.sh" "$TS/"
+export TRAIN_ROOT="$trepo"
+
+cat >"$TS/merge.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_LOG/merge.log"
+# merge-sets-merged があれば、終了コードに関わらず PR をマージ済みにする（不具合 4）
+[ ! -f "$TRAIN_DIR/merge-sets-merged" ] || echo MERGED >"$TRAIN_DIR/state-$1"
+exit "$(cat "$TRAIN_DIR/merge-rc" 2>/dev/null || echo 0)"
+EOF
+cat >"$TS/review.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_LOG/review.log"
+sleep "${FAKE_REVIEW_SLEEP:-0}"
+EOF
+cat >"$TS/spawn-worker.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_LOG/spawn.log"
+exit "$(cat "$TRAIN_DIR/spawn-rc-$1" 2>/dev/null || echo 0)"
+EOF
+chmod +x "$TS/merge.sh" "$TS/review.sh" "$TS/spawn-worker.sh"
+
+cat >"$fake/bin-train/gh" <<'EOF'
+#!/usr/bin/env bash
+jq -cn --arg cwd "$PWD" '{cwd:$cwd, args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/gh.log"
+n="${3:-}"
+case "$1 $2" in
+  "pr list") cat "$TRAIN_DIR/prs.json" 2>/dev/null || echo '[]' ;;
+  "pr view")
+    st="$(cat "$TRAIN_DIR/state-$n" 2>/dev/null || echo OPEN)"
+    case " $* " in
+      *" -q "*) printf '%s\n' "$st"; exit 0 ;;
+    esac
+    bf="$TRAIN_DIR/body-$n.md"
+    [ -f "$bf" ] || bf=/dev/null
+    ck="$(cat "$TRAIN_DIR/checks-$n.json" 2>/dev/null || echo '[{"name":"ci-ok","bucket":"pass"}]')"
+    jq -n --argjson n "$n" --arg st "$st" --arg h "$(cat "$TRAIN_DIR/head-$n" 2>/dev/null || echo "h$n")" \
+      --argjson c "$(cat "$TRAIN_DIR/comments-$n" 2>/dev/null || echo 0)" --rawfile b "$bf" --argjson ck "$ck" \
+      '{number:$n, state:$st, headRefOid:$h, updatedAt:"2026-11-07T00:00:00Z", comments:[range($c) | {body:"c"}],
+        statusCheckRollup:[$ck[] | {name, conclusion:.bucket}], body:$b}'
+    ;;
+  "pr checks")
+    cat "$TRAIN_DIR/checks-$n.json" 2>/dev/null || echo '[{"name":"ci-ok","bucket":"pass"}]'
+    exit "$(cat "$TRAIN_DIR/checks-rc-$n" 2>/dev/null || echo 0)"
+    ;;
+  "api -X")
+    # gh api -X PUT repos/<repo>/pulls/<n>/update-branch
+    n="${4%/update-branch}"
+    n="${n##*/}"
+    # 失敗の出力は update-msg-<n>（なければ gh が HTTP 422 のコンフリクトで出す形）
+    if [ -f "$TRAIN_DIR/update-rc-$n" ]; then
+      if [ -f "$TRAIN_DIR/update-msg-$n" ]; then
+        cat "$TRAIN_DIR/update-msg-$n" >&2
+      else
+        echo '{"message":"merge conflict between base and head","status":"422"}'
+        echo 'gh: merge conflict between base and head (HTTP 422)' >&2
+      fi
+      exit "$(cat "$TRAIN_DIR/update-rc-$n")"
+    fi
+    ;;
+  "issue view")
+    # gh issue view <n> --json updatedAt -q .updatedAt（判定の目印。issue-rc-<n> があれば失敗する）
+    case " $* " in
+      *" updatedAt "*)
+        [ ! -f "$TRAIN_DIR/issue-rc-$n" ] || exit "$(cat "$TRAIN_DIR/issue-rc-$n")"
+        cat "$TRAIN_DIR/issue-updated-$n" 2>/dev/null || echo "2026-11-07T00:00:00Z"
+        exit 0
+        ;;
+    esac
+    # gh issue view <n> --json labels -q '.labels[].name'
+    [ ! -f "$TRAIN_DIR/labels-rc-$n" ] || exit "$(cat "$TRAIN_DIR/labels-rc-$n")"
+    cat "$TRAIN_DIR/labels-$n" 2>/dev/null || true
+    ;;
+  "pr edit")
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "--body-file" ] && cp "$a" "$FAKE_LOG/edit-$n.md"
+      prev="$a"
+    done
+    ;;
+  "api rate_limit")
+    [ -n "${FAKE_RATE_RESET:-}" ] || { echo "HTTP 500" >&2; exit 1; }
+    printf '%s %s\n' "${FAKE_RATE_REMAINING:-0}" "$FAKE_RATE_RESET"
+    ;;
+esac
+EOF
+cat >"$fake/bin-train/agentctl" <<'EOF'
+#!/usr/bin/env bash
+jq -cn --arg cwd "$PWD" '{cwd:$cwd, args:$ARGS.positional}' --args -- "$@" >>"$FAKE_LOG/agentctl.log"
+case "$1" in
+  gate)
+    n="$5"
+    [ ! -f "$TRAIN_DIR/gate-$n.json" ] || cat "$TRAIN_DIR/gate-$n.json"
+    if [ -f "$TRAIN_DIR/gate-rc-$n" ]; then exit "$(cat "$TRAIN_DIR/gate-rc-$n")"; fi
+    case "$(jq -r '.verdict // ""' "$TRAIN_DIR/gate-$n.json" 2>/dev/null)" in
+      pass) exit 0 ;; fail) exit 1 ;; pending) exit 2 ;; *) exit 3 ;;
+    esac
+    ;;
+  state)
+    # state-rc-<Issue>-<状態> があれば、その終了コードで失敗する
+    exit "$(cat "$TRAIN_DIR/state-rc-$2-$3" 2>/dev/null || echo 0)"
+    ;;
+  plan)
+    # FAKE_PLAN_STOP_AFTER 回目の plan で止めのファイルを作る
+    cat "$TRAIN_DIR/plan.json"
+    k="$(jq -s '[.[] | select(.args[0] == "plan")] | length' "$FAKE_LOG/agentctl.log")"
+    [ "$k" -lt "${FAKE_PLAN_STOP_AFTER:-999999}" ] || : >"$TRAIN_ROOT/.agents/run/autospawn.stop"
+    ;;
+esac
+EOF
+chmod +x "$fake/bin-train/gh" "$fake/bin-train/agentctl"
+
+train_reset() {
+  reset_logs
+  rm -rf "$TRAIN_DIR" "$trepo/.agents/run" "$trepo/.agents/logs"
+  mkdir -p "$TRAIN_DIR"
+  : >"$FAKE_LOG/merge.log"
+  : >"$FAKE_LOG/review.log"
+  : >"$FAKE_LOG/spawn.log"
+}
+# mkgate <PR> <verdict> <C2> <C6> <C7> <C9> <C10> [closed] [C12] [head]: 偽の gate の結果を置く
+mkgate() {
+  jq -n --argjson pr "$1" --arg v "$2" --arg c2 "$3" --arg c6 "$4" --arg c7 "$5" --arg c9 "$6" --arg c10 "$7" \
+    --argjson closed "${8:-false}" --arg c12 "${9:-pass}" --arg h "${10:-h$1}" \
+    '{verdict:$v, repo:"K-Kizuku/raft-game", pr:$pr, head_sha:$h, closed:$closed,
+    results:[{id:"C1",status:"pass"},{id:"C2",status:$c2},{id:"C4",status:"pass"},{id:"C6",status:$c6},
+      {id:"C7",status:$c7},{id:"C9",status:$c9},{id:"C10",status:$c10},{id:"C12",status:$c12}]}' >"$TRAIN_DIR/gate-$1.json"
+}
+mkprs() { # mkprs <PR:ブランチ>…
+  local a out="[]"
+  for a in "$@"; do
+    out="$(jq -c --argjson n "${a%%:*}" --arg b "${a#*:}" '. + [{number:$n, headRefName:$b}]' <<<"$out")"
+  done
+  printf '%s\n' "$out" >"$TRAIN_DIR/prs.json"
+}
+train() { # train <周の数> [<環境変数>…] -- [<merge-train.sh の引数>…]
+  local c="$1" e=()
+  shift
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+    e+=("$1")
+    shift
+  done
+  [ "$#" -eq 0 ] || shift
+  (cd "$trepo" && run_rc env PATH="$fake/bin-train:$PATH" AGENT_ROLE=orchestrator AGENT_TRAIN_INTERVAL=0 \
+    AGENT_TRAIN_CYCLES="$c" ${e[@]+"${e[@]}"} bash "$TS/merge-train.sh" "$@" && printf '%s\n' "$RC" >"$tmp/rc")
+  RC="$(cat "$tmp/rc")"
+}
+count_lines() { grep -c . "$1" 2>/dev/null || true; }
+gate_calls() { jq -s --arg n "$1" '[.[] | select(.args[0] == "gate" and .args[4] == $n)] | length' "$FAKE_LOG/agentctl.log"; }
+gh_calls() { jq -s --arg a "$1" --arg n "$2" '[.[] | select((.args[0:2] | join(" ")) == $a and .args[2] == $n)] | length' "$FAKE_LOG/gh.log"; }
+update_calls() {
+  jq -s --arg p "repos/K-Kizuku/raft-game/pulls/$1/update-branch" \
+    '[.[] | select(.args == ["api","-X","PUT",$p])] | length' "$FAKE_LOG/gh.log"
+}
+# wait_reviews: 起動した偽の review.sh が終わるまで待つ（最大 10 秒）
+wait_reviews() {
+  local f p i
+  for f in "$trepo/.agents/run/train"/review-*.pid; do
+    [ -f "$f" ] || continue
+    p="$(cat "$f")"
+    i=0
+    while kill -0 "$p" 2>/dev/null && [ "$i" -lt 100 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+  done
+}
+
+# ---- 役割 ----
+train_reset
+mkprs "21:agent/issue-121"
+mkgate 21 pass pass pass pass pass pass
+(cd "$trepo" && run_rc env PATH="$fake/bin-train:$PATH" AGENT_ROLE=worker AGENT_TRAIN_CYCLES=1 bash "$TS/merge-train.sh" &&
+  printf '%s\n' "$RC" >"$tmp/rc")
+check "train: Worker の役割では拒否する" test "$(cat "$tmp/rc")" = 1 -a ! -s "$FAKE_LOG/merge.log" -a ! -s "$FAKE_LOG/gh.log"
+train 1 -- 21
+check "train: PR:Issue の形でない引数は拒否する" test "$RC" = 1 -a ! -s "$FAKE_LOG/merge.log"
+check "train --help" bash "$TS/merge-train.sh" --help
+
+# ---- pass の PR が 2 つ → 前の 1 つだけを 1 周でマージする（PR 番号の小さい順・agent/issue-* だけ）----
+train_reset
+mkprs "22:agent/issue-122" "23:feature/x" "21:agent/issue-121"
+mkgate 21 pass pass pass pass pass pass
+mkgate 22 pass pass pass pass pass pass
+mkgate 23 pass pass pass pass pass pass
+train 1
+check "train: 成功する（1 周）" test "$RC" = 0
+check "train: pass の PR が 2 つなら、前の 1 つ（#21）だけをマージする" test "$(cat "$FAKE_LOG/merge.log")" = "21"
+check "train: agent/issue-* でない PR は判定しない" test "$(gate_calls 23)" = 0
+check "train: gh pr list で開いた PR を見つける" log_has gh '.args[0:2] == ["pr","list"] and (.args | index("open")) != null'
+check "train: 見つけた PR の Issue を in-review にする" \
+  log_has agentctl '.args == ["state","121","in-review","--repo","K-Kizuku/raft-game","--pr","21"]'
+check "train: 見つけた PR の Issue を in-review にする（2 つ目）" log_has agentctl '.args[0:3] == ["state","122","in-review"]'
+check "train: Merge Gate を --repo --pr --json で判定する" log_has agentctl '.args == ["gate","--repo","K-Kizuku/raft-game","--pr","22","--json"]'
+check "train: pass の残りの PR には何もしない" test "$(update_calls 22):$(gh_calls "pr edit" 22)" = "0:0" -a ! -s "$FAKE_LOG/review.log"
+# 2 周目: マージした PR は列から外し、Issue を in-review にするのは一度だけ
+train_reset
+mkprs "21:agent/issue-121" "22:agent/issue-122"
+mkgate 21 pass pass pass pass pass pass
+mkgate 22 pass pass pass pass pass pass
+train 2
+check "train: 2 周で 1 つずつマージする" test "$(tr '\n' ' ' <"$FAKE_LOG/merge.log")" = "21 22 "
+check "train: in-review にするのは一度だけ" \
+  test "$(jq -s '[.[] | select(.args[0:3] == ["state","121","in-review"])] | length' "$FAKE_LOG/agentctl.log")" = 1
+check "train: マージの前に Issue を ready-to-merge にする" \
+  log_has agentctl '.args == ["state","121","ready-to-merge","--repo","K-Kizuku/raft-game"]'
+# 起動し直しても、in-review にした印（.agents/run/train/inreview-<PR>）があればもう一度はしない
+reset_logs
+: >"$FAKE_LOG/merge.log"
+mkprs "24:agent/issue-124"
+mkgate 24 pending pass pending pending pass fail
+train 1
+train 1
+check "train: 起動し直しても in-review にするのは一度だけ" \
+  test "$(jq -s '[.[] | select(.args[0:3] == ["state","124","in-review"])] | length' "$FAKE_LOG/agentctl.log")" = 1
+# in-review への遷移が（一時的に）失敗したら印を作らず、次の周で試す。成功したら印を作る
+inreview_calls() { jq -s --arg n "$1" '[.[] | select(.args[0:3] == ["state",$n,"in-review"])] | length' "$FAKE_LOG/agentctl.log"; }
+train_reset
+mkprs "26:agent/issue-126"
+mkgate 26 pending pass pending pending pass fail
+echo 3 >"$TRAIN_DIR/state-rc-126-in-review"
+printf '%s\n' "status:in-progress" "area:agents" >"$TRAIN_DIR/labels-126"
+train 2
+check "train: in-review への遷移が失敗し、まだ in-progress なら印を作らない" test ! -e "$trepo/.agents/run/train/inreview-26"
+check "train: in-review への遷移が失敗したら次の周で試す" test "$(inreview_calls 126)" = 2
+check "train: in-review にできないことを出す" grep -q "Issue #126: in-review にできない（次の周で試す）" "$tmp/err"
+rm -f "$TRAIN_DIR/state-rc-126-in-review"
+train 2
+check "train: in-review への遷移に成功したら印を作る" test -e "$trepo/.agents/run/train/inreview-26"
+check "train: 遷移に成功したあとは in-review にしない" test "$(inreview_calls 126)" = 3
+# 状態を読めないときも印を作らない
+train_reset
+mkprs "27:agent/issue-127"
+mkgate 27 pending pass pending pending pass fail
+echo 4 >"$TRAIN_DIR/state-rc-127-in-review"
+echo 1 >"$TRAIN_DIR/labels-rc-127"
+train 1
+check "train: in-review にできず状態も読めなければ印を作らない" test ! -e "$trepo/.agents/run/train/inreview-27"
+# すでに in-review 以降の状態なら（遷移は拒否されるが）印を作り、もう試さない
+for st in in-review changes-requested ci-pending ready-to-merge merged; do
+  train_reset
+  mkprs "28:agent/issue-128"
+  mkgate 28 pending pass pending pending pass fail
+  echo 4 >"$TRAIN_DIR/state-rc-128-in-review"
+  printf '%s\n' "area:agents" "status:$st" >"$TRAIN_DIR/labels-128"
+  train 2
+  check "train: すでに ${st} なら印を作る" test -e "$trepo/.agents/run/train/inreview-28"
+  check "train: すでに ${st} なら in-review を一度だけ試す" test "$(inreview_calls 128)" = 1
+done
+# マージしたら、メインの作業ツリーで git pull --ff-only を実行する（失敗したら pull しない）
+train_reset
+git -C "$repo" switch --quiet main
+git -C "$repo" commit --quiet --allow-empty -m "設定を変えたつもり"
+git -C "$repo" push --quiet origin main
+before="$(git -C "$trepo" rev-parse HEAD)"
+mkprs "25:agent/issue-125"
+mkgate 25 pass pass pass pass pass pass
+echo 1 >"$TRAIN_DIR/merge-rc"
+train 1
+check "train: merge.sh が失敗したら git pull しない" test "$(git -C "$trepo" rev-parse HEAD)" = "$before"
+rm -f "$TRAIN_DIR/merge-rc"
+train 1
+check "train: マージしたらメインの作業ツリーで git pull --ff-only を実行する" \
+  test "$(git -C "$trepo" rev-parse HEAD)" = "$(git -C "$repo" rev-parse main)"
+check "train: 最新にしたことを出す" grep -q "メインの作業ツリーを最新にした" "$tmp/err"
+# skip のファイル
+train_reset
+mkprs "21:agent/issue-121" "22:agent/issue-122"
+mkgate 21 pass pass pass pass pass pass
+mkgate 22 pass pass pass pass pass pass
+mkdir -p "$trepo/.agents/run/train"
+printf '21\n' >"$trepo/.agents/run/train/skip"
+train 1
+check "train: skip に書いた PR は飛ばす" test "$(cat "$FAKE_LOG/merge.log"):$(gate_calls 21)" = "22:0"
+# 開いた PR がない
+train_reset
+mkprs
+train 1
+check "train: 開いた PR がなければ何もしない" test "$RC" = 0 -a ! -s "$FAKE_LOG/merge.log" -a "$(jq -s '[.[] | select(.args[0] == "gate")] | length' "$FAKE_LOG/agentctl.log")" = 0
+check "train: 開いた PR がないことを出す" grep -q "開いた PR がない" "$tmp/err"
+
+# ---- C10 が fail → update-branch ----
+train_reset
+mkprs "31:agent/issue-131"
+mkgate 31 fail pass pending pending pass fail
+train 1
+check "train: C10 が fail なら main の取り込み（update-branch）を依頼する" test "$(update_calls 31)" = 1
+check "train: update-branch の周はレビューを依頼しない" test ! -s "$FAKE_LOG/review.log"
+# update-branch が失敗（コンフリクト）→ 止まった。目印が変わらなければ繰り返さない
+train_reset
+mkprs "32:agent/issue-132"
+mkgate 32 fail pass pending pending pass fail
+echo 1 >"$TRAIN_DIR/update-rc-32"
+train 2
+check "train: update-branch が失敗したら止まった（理由を出す）" grep -q "PR #32: 止まった.*コンフリクト" "$tmp/err"
+check "train: 止まった PR は、目印が変わるまで update-branch を繰り返さない" test "$(update_calls 32)" = 1
+check "train: 止まっても終わらない" test "$RC" = 0
+# 止まった PR の HEAD が変わったら（修正）、また進める
+rm -f "$TRAIN_DIR/update-rc-32"
+echo h32b >"$TRAIN_DIR/head-32"
+train 1
+check "train: 止まった PR の HEAD が変わったら判定し直して進める" test "$(update_calls 32)" = 2 -a "$(gate_calls 32)" = 2
+# update-branch の一時的な失敗（通信・HTTP 5xx・API の上限）は止まった扱いにせず、次の周で試す
+for msg in "gh: Bad Gateway (HTTP 502)" "gh: API rate limit exceeded for user ID 1. (HTTP 403)" \
+  "error connecting to api.github.com" "gh: Validation Failed (HTTP 422)"; do
+  train_reset
+  mkprs "36:agent/issue-136"
+  mkgate 36 fail pass pending pending pass fail
+  echo 1 >"$TRAIN_DIR/update-rc-36"
+  printf '%s\n' "$msg" >"$TRAIN_DIR/update-msg-36"
+  train 2
+  check "train: update-branch の一時的な失敗（${msg}）は止まった扱いにしない" \
+    test "$(grep -c "PR #36: 止まった" "$tmp/err" || true)" = 0 -a ! -e "$trepo/.agents/run/train/stopped-36"
+  check "train: update-branch の一時的な失敗（${msg}）は次の周で試す" test "$(update_calls 36)" = 2
+  check "train: update-branch の一時的な失敗（${msg}）を出す" grep -q "PR #36: update-branch に失敗した（次の周で試す）" "$tmp/err"
+done
+# 一時的な失敗のあと、成功すれば取り込みを依頼したことになる
+rm -f "$TRAIN_DIR/update-rc-36"
+train 1
+check "train: update-branch の一時的な失敗のあとに成功すれば依頼する" grep -q "PR #36: main の取り込みを依頼した" "$tmp/err"
+
+# ---- C9・C6・C7 → 止まった ----
+for c in "33:C9:fail pass pending pending fail pass" "34:C6:fail pass fail pass pass pass" "35:C7:fail pass pass fail pass pass"; do
+  n="${c%%:*}"
+  rest="${c#*:}"
+  id="${rest%%:*}"
+  train_reset
+  mkprs "$n:agent/issue-1$n"
+  # shellcheck disable=SC2086 # 空白で区切った C2 C6 C7 C9 C10 を渡す
+  mkgate "$n" ${rest#*:}
+  train 1
+  check "train: ${id} が fail なら止まった" grep -q "PR #$n: 止まった.*${id}" "$tmp/err"
+  check "train: ${id} が fail ならレビューを依頼しない・update-branch しない" \
+    test ! -s "$FAKE_LOG/review.log" -a "$(update_calls "$n")" = 0
+done
+
+# ---- C6 が pending → review.sh を 1 回だけ（PID のファイルで判定）・判定の使い回し ----
+train_reset
+mkprs "41:agent/issue-141"
+mkgate 41 pending fail pending pending pass pass
+train 2 FAKE_REVIEW_SLEEP=2
+wait_reviews
+check "train: C6 が pending なら review.sh を 1 回だけ呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "41"
+check "train: review.sh の PID のファイルを残す" test -s "$trepo/.agents/run/train/review-41.pid"
+check "train: 目印が同じなら前の判定を使う（gate は 1 回）" test "$(gate_calls 41)" = 1
+check "train: C6 が pending の PR はマージしない" test ! -s "$FAKE_LOG/merge.log"
+# review.sh が終わっていれば起動し直す
+train 1
+wait_reviews
+check "train: review.sh が終わっていれば起動し直す" test "$(count_lines "$FAKE_LOG/review.log")" = 2
+# C10 が fail なら review.sh より update-branch
+train_reset
+mkprs "42:agent/issue-142"
+mkgate 42 pending pass pending pending pass fail
+train 1
+check "train: C6 が pending でも C10 が fail ならレビューを依頼しない" test ! -s "$FAKE_LOG/review.log"
+# main の HEAD が変わったら判定し直す
+train_reset
+mkprs "43:agent/issue-143"
+mkgate 43 pending pass pass pass pass pass
+train 1
+git -C "$repo" switch --quiet main
+git -C "$repo" commit --quiet --allow-empty -m "main を進める"
+git -C "$repo" push --quiet origin main
+train 1
+check "train: main の HEAD が変わったら判定し直す" test "$(gate_calls 43)" = 2
+# 一時的な pending（C9 の mergeable の未計算）は、目印が同じでも 2 周ごとに判定し直す
+train_reset
+mkprs "44:agent/issue-144"
+mkgate 44 pending pass pass pass pending pass
+train 2
+check "train: C9 が pending の判定は 2 周まで使う" test "$(gate_calls 44)" = 1
+train 1
+check "train: C9 が pending の判定を 2 周使ったら、目印が同じでも判定し直す" test "$(gate_calls 44)" = 2
+check "train: 判定し直す理由を出す" grep -q "PR #44: 一時的な pending（C9）の判定を 2 周使ったので、判定し直す" "$tmp/err"
+# 判定し直して mergeable が計算済み（pass）になれば、その結果でマージする
+mkgate 44 pass pass pass pass pass pass
+train 2
+check "train: 判定し直した結果が pass ならマージする" test "$(cat "$FAKE_LOG/merge.log")" = "44" -a "$(gate_calls 44)" = 3
+# C9 が pending でない pending（C6 など、目印に表れる）は目印が変わるまで使い続ける
+train_reset
+mkprs "45:agent/issue-145"
+mkgate 45 pending pass pass pending pass pass
+train 3
+check "train: C9 が pending でなければ、目印が同じ間は前の判定を使い続ける" test "$(gate_calls 45)" = 1
+
+# ---- C2 だけが fail で ci-ok が pass → CI の AC だけを [x] にする（不具合 1: ほかのチェックの失敗で gh pr checks が 1）----
+train_reset
+mkprs "51:agent/issue-151"
+mkgate 51 fail fail pass pass pass pass
+printf '%s\n' "Closes #151" "" "## Acceptance Criteria" "- [x] AC-1: 一つ目" \
+  "- [ ] AC-2: CI（\`ci-ok\`）が通る（CI の結果待ち）" "- [ ] AC-3: なにか" "  - 補足: CI（\`ci-ok\`）が通る" >"$TRAIN_DIR/body-51.md"
+printf '%s\n' '[{"name":"ci-ok","bucket":"pass"},{"name":"merge-gate","bucket":"fail"}]' >"$TRAIN_DIR/checks-51.json"
+echo 1 >"$TRAIN_DIR/checks-rc-51"
+train 1
+check "train: C2 が fail で ci-ok が pass なら gh pr edit --body-file を呼ぶ（gh pr checks が 1 でも）" test -f "$FAKE_LOG/edit-51.md"
+check "train: CI の AC の行だけを [x] にし、末尾の（…結果待ち）を外す" \
+  test "$(cat "$FAKE_LOG/edit-51.md" 2>/dev/null)" = "$(printf '%s\n' "Closes #151" "" "## Acceptance Criteria" "- [x] AC-1: 一つ目" \
+    "- [x] AC-2: CI（\`ci-ok\`）が通る" "- [ ] AC-3: なにか" "  - 補足: CI（\`ci-ok\`）が通る")"
+check "train: C6 が pass ならレビューを依頼しない" test ! -s "$FAKE_LOG/review.log"
+# ci-ok が pass でなければ本文を変えない
+train_reset
+mkprs "52:agent/issue-152"
+mkgate 52 fail fail pass pass pass pass
+printf '%s\n' "- [ ] AC-1: CI（\`ci-ok\`）が通る" >"$TRAIN_DIR/body-52.md"
+printf '%s\n' '[{"name":"ci-ok","bucket":"pending"}]' >"$TRAIN_DIR/checks-52.json"
+echo 8 >"$TRAIN_DIR/checks-rc-52"
+train 1
+check "train: ci-ok が pass でなければ本文を変えない" test "$(gh_calls "pr edit" 52)" = 0
+# CI の AC の行がない（すでにチェック済み）なら gh pr edit を呼ばない
+train_reset
+mkprs "53:agent/issue-153"
+mkgate 53 fail fail pass pass pass pass
+printf '%s\n' "- [x] AC-1: CI（\`ci-ok\`）が通る" "- [ ] AC-2: ほか" >"$TRAIN_DIR/body-53.md"
+train 1
+check "train: 変える行がなければ gh pr edit を呼ばない" test "$(gh_calls "pr edit" 53)" = 0
+
+# ---- 不具合 2: gate が空の結果を返したら、その周はその PR に何もしない ----
+for rc in 3 0 2; do
+  train_reset
+  mkprs "61:agent/issue-161"
+  : >"$TRAIN_DIR/gate-61.json"
+  echo "$rc" >"$TRAIN_DIR/gate-rc-61"
+  train 1
+  wait_reviews
+  check "train（不具合 2）: gate が空（終了コード ${rc}）ならレビューを依頼しない" test ! -s "$FAKE_LOG/review.log"
+  check "train（不具合 2）: gate が空（終了コード ${rc}）なら update-branch・edit・マージをしない" \
+    test "$(update_calls 61):$(gh_calls "pr edit" 61)" = "0:0" -a ! -s "$FAKE_LOG/merge.log"
+  check "train（不具合 2）: 判定できないことを出す" grep -q "PR #61: Merge Gate を判定できない" "$tmp/err"
+done
+train_reset
+mkprs "62:agent/issue-162"
+echo '{"verdict":"pending","results":[]}' >"$TRAIN_DIR/gate-62.json"
+train 1
+check "train（不具合 2）: results が空の判定も使わない" test ! -s "$FAKE_LOG/review.log"
+# 判定できなかった結果は使い回さない（次の周で判定し直す）
+train_reset
+mkprs "63:agent/issue-163"
+: >"$TRAIN_DIR/gate-63.json"
+echo 3 >"$TRAIN_DIR/gate-rc-63"
+train 1
+rm -f "$TRAIN_DIR/gate-rc-63"
+mkgate 63 pass pass pass pass pass pass
+train 1
+check "train（不具合 2）: 判定できなかった周の後は判定し直す" test "$(gate_calls 63):$(cat "$FAKE_LOG/merge.log")" = "2:63"
+
+# ---- 不具合 3: コメントの数が変わったら判定し直す ----
+train_reset
+mkprs "71:agent/issue-171"
+mkgate 71 pending pass pending pending pass pass
+train 1
+wait_reviews
+mkgate 71 pass pass pass pass pass pass
+train 1
+wait_reviews
+check "train（不具合 3）: 目印が同じなら gate を呼ばない" test "$(gate_calls 71)" = 1 -a ! -s "$FAKE_LOG/merge.log"
+echo 1 >"$TRAIN_DIR/comments-71"
+train 1
+check "train（不具合 3）: approve の記録のコメントが付いたら（コメントの数が変わったら）判定し直す" test "$(gate_calls 71)" = 2
+check "train（不具合 3）: 判定し直した結果でマージする" test "$(cat "$FAKE_LOG/merge.log")" = "71"
+
+# ---- Issue の更新時刻が変わったら判定し直す（Issue の側だけで AC・変更予定ファイルを直したとき）----
+train_reset
+mkprs "72:agent/issue-172"
+mkgate 72 fail fail pass pass pass pass
+train 2
+check "train: 目印（Issue の更新時刻を含む）が同じなら gate を呼ばない" test "$(gate_calls 72)" = 1
+check "train: Issue の更新時刻を gh issue view --json updatedAt で読む" \
+  log_has gh '.args == ["issue","view","172","--repo","K-Kizuku/raft-game","--json","updatedAt","-q",".updatedAt"]'
+mkgate 72 pass pass pass pass pass pass
+echo "2026-11-07T01:00:00Z" >"$TRAIN_DIR/issue-updated-172"
+train 1
+check "train: Issue の更新時刻が変わったら、PR と main が同じでも判定し直す" test "$(gate_calls 72)" = 2
+check "train: Issue を直して判定し直した結果でマージする" test "$(cat "$FAKE_LOG/merge.log")" = "72"
+# Issue を読めなければ、その周はその PR に何もしない
+train_reset
+mkprs "73:agent/issue-173"
+mkgate 73 pass pass pass pass pass pass
+echo 1 >"$TRAIN_DIR/issue-rc-173"
+train 1
+check "train: Issue を読めなければ判定しない・マージしない" test "$(gate_calls 73)" = 0 -a ! -s "$FAKE_LOG/merge.log"
+check "train: Issue を読めないことを出す" grep -q "PR #73: Issue #173 を読めない（次の周で試す）" "$tmp/err"
+
+# ---- C6 が pass で C12 が fail（保護されたパスの確認の記録が足りない）→ HEAD ごとに 1 回だけ review.sh ----
+train_reset
+mkprs "74:agent/issue-174"
+mkgate 74 fail pass pass pass pass pass false fail
+train 1
+wait_reviews
+check "train: C6 が pass で C12 が fail なら review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "74"
+check "train: C12 でレビューを依頼したことを出す" grep -q "PR #74: 保護されたパスの確認の記録が足りない（C12）" "$tmp/err"
+# 同じ HEAD でレビューのあとも C12 が fail（記録が付いても通らない）なら、もう依頼せずに止まった
+echo 1 >"$TRAIN_DIR/comments-74"
+train 2
+wait_reviews
+check "train: 同じ HEAD で C12 のレビューを 2 回は依頼しない" test "$(count_lines "$FAKE_LOG/review.log")" = 1
+check "train: レビューのあとも C12 が fail なら止まった" grep -q "PR #74: 止まった.*C12" "$tmp/err"
+check "train: C12 で止まった PR は、目印が同じ間は止まったまま" grep -q "PR #74: 止まったまま" "$tmp/err"
+# HEAD が変わったら（修正）、また 1 回だけ依頼する
+echo h74b >"$TRAIN_DIR/head-74"
+mkgate 74 fail pass pass pass pass pass false fail h74b
+train 1
+wait_reviews
+check "train: HEAD が変わったら C12 のレビューをもう一度依頼する" test "$(count_lines "$FAKE_LOG/review.log")" = 2
+# review.sh が動いている間は、止まった扱いにせず 2 つ目も起動しない
+train_reset
+mkprs "75:agent/issue-175"
+mkgate 75 fail pass pass pass pass pass false fail
+train 2 FAKE_REVIEW_SLEEP=2
+check "train: C12 のレビューが動いている間は止まった扱いにしない" test "$(grep -c "PR #75: 止まった" "$tmp/err" || true)" = 0
+wait_reviews
+check "train: C12 のレビューが動いている間は 2 つ目を起動しない" test "$(count_lines "$FAKE_LOG/review.log")" = 1
+# C12 が fail でも C10 が fail なら update-branch を先にする
+train_reset
+mkprs "76:agent/issue-176"
+mkgate 76 fail pass pass pass pass fail false fail
+train 1
+check "train: C12 が fail でも C10 が fail ならレビューを依頼しない" test ! -s "$FAKE_LOG/review.log" -a "$(update_calls 76)" = 1
+
+# ---- 不具合 4: merge.sh がマージの後の処理で 0 以外を返しても、マージ済みなら列から外す ----
+train_reset
+mkgate 81 pass pass pass pass pass pass
+echo 1 >"$TRAIN_DIR/merge-rc"
+: >"$TRAIN_DIR/merge-sets-merged"
+train 2 -- 81:181
+check "train（不具合 4）: マージ済みの PR を列から外す（merge.sh は 1 回）" test "$(cat "$FAKE_LOG/merge.log")" = "81"
+check "train（不具合 4）: 外した後は判定しない" test "$(gate_calls 81)" = 1
+check "train（不具合 4）: 引数の PR:Issue を使い、gh pr list を呼ばない" \
+  test -z "$(jq -c 'select(.args[0:2] == ["pr","list"])' "$FAKE_LOG/gh.log")"
+check "train: 引数の Issue を in-review にする" log_has agentctl '.args[0:3] == ["state","181","in-review"]'
+# マージされていなければ次の周で試す
+train_reset
+mkgate 82 pass pass pass pass pass pass
+echo 1 >"$TRAIN_DIR/merge-rc"
+train 2 -- 82:182
+check "train: merge.sh が失敗し、PR が開いたままなら次の周で試す" test "$(count_lines "$FAKE_LOG/merge.log")" = 2
+# gate が closed を返したら列から外す
+train_reset
+mkgate 83 fail pass pass pass pass pass true
+train 2 -- 83:183
+check "train: 閉じた PR（gate の closed）は列から外す" test "$(gate_calls 83)" = 1 -a ! -s "$FAKE_LOG/merge.log"
+
+# ---- API の上限: 残りが 300 未満なら戻る時刻まで休む ----
+train_reset
+mkprs "91:agent/issue-191"
+mkgate 91 pass pass pass pass pass pass
+train 1 PATH="$fake/bin-sleep:$fake/bin-train:$PATH" FAKE_RATE_REMAINING=12 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train: API の残りが 300 未満なら、その周は判定しない" test ! -s "$FAKE_LOG/merge.log" -a "$(gate_calls 91)" = 0
+check "train: 戻る時刻まで休む" \
+  test "$(head -n 1 "$FAKE_LOG/sleep.log" 2>/dev/null || echo 0)" -ge 110 -a "$(head -n 1 "$FAKE_LOG/sleep.log" 2>/dev/null || echo 999)" -le 122
+train_reset
+mkprs "91:agent/issue-191"
+mkgate 91 pass pass pass pass pass pass
+train 1 FAKE_RATE_REMAINING=4000 FAKE_RATE_RESET="$(($(date +%s) + 120))"
+check "train: API の残りが十分なら判定する" test "$(cat "$FAKE_LOG/merge.log")" = "91"
+# gh が失敗しても止まらない
+train_reset
+mkprs "92:agent/issue-192"
+mkgate 92 pass pass pass pass pass pass
+printf 'not json\n' >"$TRAIN_DIR/prs.json"
+train 2
+check "train: 開いた PR を読めなくても止まらない" test "$RC" = 0 -a ! -s "$FAKE_LOG/merge.log"
+
+# ---- autospawn.sh ----
+autospawn() { # autospawn [<環境変数>…]
+  (cd "$trepo" && run_rc env PATH="$fake/bin-train:$PATH" AGENT_ROLE=orchestrator AGENT_AUTOSPAWN_INTERVAL=0 \
+    "$@" bash "$TS/autospawn.sh" && printf '%s\n' "$RC" >"$tmp/rc")
+  RC="$(cat "$tmp/rc")"
+}
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[{number:201},{number:202},{number:203}], deferred:[{number:204}], active:[], capacity:2}' >"$TRAIN_DIR/plan.json"
+autospawn FAKE_PLAN_STOP_AFTER=1
+check "autospawn: 成功する" test "$RC" = 0
+check "autospawn: ready が 3 つで capacity が 2 なら 2 つだけ起動する" \
+  test "$(tr '\n' ',' <"$FAKE_LOG/spawn.log")" = "201 --background,202 --background,"
+check "autospawn: agentctl plan --repo --json を見る" log_has agentctl '.args == ["plan","--repo","K-Kizuku/raft-game","--json"]'
+check "autospawn: 止めのファイルで終わり、そのファイルを消す" test ! -e "$trepo/.agents/run/autospawn.stop"
+check "autospawn: deferred は起動しない" bash -c '! grep -q "^204" "$1"' _ "$FAKE_LOG/spawn.log"
+# 拒否された Issue（終了コード 4）は飛ばし、枠を使わない
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[{number:201},{number:202},{number:203}], capacity:2}' >"$TRAIN_DIR/plan.json"
+echo 4 >"$TRAIN_DIR/spawn-rc-201"
+autospawn FAKE_PLAN_STOP_AFTER=1
+check "autospawn: 拒否された Issue は飛ばして、次の Issue を起動する" \
+  test "$(tr '\n' ',' <"$FAKE_LOG/spawn.log")" = "201 --background,202 --background,203 --background,"
+check "autospawn: 拒否の理由を出す" grep -q "Issue #201 は起動できない（終了コード 4）" "$tmp/err"
+# 始めるときに古い止めのファイルを消す。止めのファイルは次の周で効く（2 回目の plan で作る → 2 周で終わる）
+train_reset
+mkdir -p "$trepo/.agents/run"
+: >"$trepo/.agents/run/autospawn.stop"
+jq -n '{ready:[], conflicts:[{number:205, reasons:["#201 と docs/x.md が重なる"]}],
+  deferred:[{number:204, reasons:["実装中の #202 と重なる"]}], capacity:2}' >"$TRAIN_DIR/plan.json"
+autospawn FAKE_PLAN_STOP_AFTER=2
+check "autospawn: 始めるときに古い止めのファイルを消し、止めのファイルの次の周で終わる" \
+  test "$RC:$(jq -s '[.[] | select(.args[0] == "plan")] | length' "$FAKE_LOG/agentctl.log")" = "0:2"
+check "autospawn: conflicts・deferred の Issue と理由をログに出す" \
+  grep -q "#204: 実装中の #202 と重なる" "$tmp/err"
+check "autospawn: conflicts の理由も出す" grep -q "#205: #201 と docs/x.md が重なる" "$tmp/err"
+check "autospawn: 理由は前の周と変わったときだけ出す" test "$(grep -c "選ばなかった Issue" "$tmp/err")" = 1
+# capacity が 0 なら起動しない
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[{number:201}], capacity:0}' >"$TRAIN_DIR/plan.json"
+autospawn FAKE_PLAN_STOP_AFTER=1
+check "autospawn: capacity が 0 なら起動しない" test "$RC" = 0 -a ! -s "$FAKE_LOG/spawn.log"
+# 役割
+train_reset
+mkdir -p "$trepo/.agents/run"
+jq -n '{ready:[{number:201}], capacity:1}' >"$TRAIN_DIR/plan.json"
+autospawn AGENT_ROLE=worker FAKE_PLAN_STOP_AFTER=1
+check "autospawn: Worker の役割では拒否する" test "$RC" = 1 -a ! -s "$FAKE_LOG/spawn.log"
+check "autospawn --help" bash "$TS/autospawn.sh" --help
 
 echo "agents: $((total - failures))/$total ok"
 if [ "$failures" -ne 0 ]; then
