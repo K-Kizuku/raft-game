@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/K-Kizuku/raft-game/server/internal/replaykit"
 )
 
 // テスト用のデータ（testdata/）。tiny.yaml の durationMs と合わせる。
@@ -78,21 +80,21 @@ func runWithInputs(t *testing.T, botName, seeds string) (string, []seedResult) {
 }
 
 // baseInputLog は random・シード 1 の入力ログ（run --inputs-dir で書いたもの）と、run の結果の行を返す。
-func baseInputLog(t *testing.T) (inputLog, seedResult) {
+func baseInputLog(t *testing.T) (replaykit.InputLog, seedResult) {
 	t.Helper()
 	dir, lines := runWithInputs(t, "random", "1")
 	return readLogFile(t, inputLogPath(dir, testStage, "random", 1)), lines[0]
 }
 
-// readLogFile は入力ログのファイルを decodeInputLog で読む。
-func readLogFile(t *testing.T, path string) inputLog {
+// readLogFile は入力ログのファイルを replaykit.DecodeInputLog で読む。
+func readLogFile(t *testing.T, path string) replaykit.InputLog {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	l, err := decodeInputLog(f)
+	l, err := replaykit.DecodeInputLog(f)
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
@@ -100,9 +102,9 @@ func readLogFile(t *testing.T, path string) inputLog {
 }
 
 // writeLogFile は l を t.TempDir() のファイルに書き、パスを返す。
-func writeLogFile(t *testing.T, l inputLog) string {
+func writeLogFile(t *testing.T, l replaykit.InputLog) string {
 	t.Helper()
-	data, err := encodeInputLog(l)
+	data, err := replaykit.EncodeInputLog(l)
 	if err != nil {
 		t.Fatal(err)
 	}

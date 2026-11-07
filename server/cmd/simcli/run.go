@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/K-Kizuku/raft-game/server/internal/replaykit"
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
@@ -76,8 +77,8 @@ func runSeed(st *stage.Stage, seed uint64, botName string, invariants, determini
 		}
 	}
 	if inputsDir != "" {
-		l := inputLog{
-			Format:    inputLogFormat,
+		l := replaykit.InputLog{
+			Format:    replaykit.InputLogFormat,
 			Build:     build,
 			StageID:   st.ID,
 			StageHash: st.Hash,

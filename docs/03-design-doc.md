@@ -1306,6 +1306,8 @@ simcli help
 - `replay --trace` も同じ形式で書き、`bot` は空文字列（ボットではなく入力ログから作ったことを表す）。入力ログのセッションのコマンド（一時停止・速度・次の出来事まで）は除かれるので、ライブのセッションのイベント列とは、`notice` などセッションが足すイベントの分だけ違う
 - 記録はイベントの平らな列です。エンベロープ（[06-protocol.md §3](./06-protocol.md)）と `events` のまとめ方（100ms ごと・`clock`）は、記録を再生するモック（T-402）が決めます
 
+入力ログの読み書きと記録の組み立ては `server/internal/replaykit` にあり、`simcli`・サーバー・ブラウザでのリプレイ（§10.4・ADR-0028）が共有する。
+
 ### 13.6 画面の遷移と URL
 
 T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.md §7.1](./04-game-design.md) に従います。ルートは `web/src/app/router/routes.ts`（純粋な関数 `parsePath`・`formatRoute`）、出し分けと転送は `web/src/app/App.tsx`、選んだステージと遊んでいるラウンドは `web/src/app/flow.ts`（純粋な reducer）が持ちます。
