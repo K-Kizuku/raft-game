@@ -71,8 +71,11 @@ func TestParseAlpha(t *testing.T) {
 			Random: Random{RateMilliPerMin: 500, SlotMs: 10000, PopulationExponentPermille: 500,
 				Kinds: []RandomKind{{Kind: RequestStallReserve, Resource: "stall:main", Weight: 1}}},
 		},
-		Scoring:              Scoring{TargetSuccesses: 2, TargetScore3: 500},
-		Satisfaction:         Satisfaction{Initial: 60, SilenceAfterMs: 30000, SilencePenaltyEveryMs: 10000, SilencePenaltyAmount: 2},
+		Scoring: Scoring{TargetSuccesses: 2, TargetScore3: 500,
+			PointsNormal: 100, PointsCritical: 300, PointsLate: 30, PointsRejected: 0, PointsExpiredPenalty: 50,
+			FerryCostMsPerPoint: 2000, FairnessPerSatisfaction: 5},
+		Satisfaction: Satisfaction{Initial: 60, SilenceAfterMs: 30000, SilencePenaltyEveryMs: 10000, SilencePenaltyAmount: 2,
+			Succeeded: 10, RejectedPenalty: 3, ExpiredPenalty: 10},
 		SpeedAllowedPermille: []int64{500, 1000, 2000, 4000},
 	}
 	if !reflect.DeepEqual(st, want) {
@@ -128,6 +131,17 @@ func TestParseBeta(t *testing.T) {
 	}
 	if st.Warnings != nil {
 		t.Errorf("Warnings = %v", st.Warnings)
+	}
+	wantScoring := Scoring{TargetSuccesses: 3, TargetScore3: 800,
+		PointsNormal: 80, PointsCritical: 250, PointsLate: 20, PointsRejected: 1, PointsExpiredPenalty: 40,
+		FerryCostMsPerPoint: 1500, FairnessPerSatisfaction: 4}
+	if st.Scoring != wantScoring {
+		t.Errorf("Scoring = %+v, want %+v", st.Scoring, wantScoring)
+	}
+	wantSat := Satisfaction{Initial: 50, SilenceAfterMs: 25000, SilencePenaltyEveryMs: 5000, SilencePenaltyAmount: 1,
+		Succeeded: 8, RejectedPenalty: 2, ExpiredPenalty: 9}
+	if st.Satisfaction != wantSat {
+		t.Errorf("Satisfaction = %+v, want %+v", st.Satisfaction, wantSat)
 	}
 }
 
@@ -289,7 +303,7 @@ func TestParseValidation(t *testing.T) {
 		{"demo durationMs=0", "beta", []edit{{"    routes: [[shiomi-ooishi, hama-hoshizuna]]\n    durationMs: 20000", "    routes: [[shiomi-ooishi, hama-hoshizuna]]\n    durationMs: 0"}}, "demo.storm.durationMs"},
 		{"demo flavor", "beta", []edit{{"      provenance: creative\n\nscoring", "      provenance: nope\n\nscoring"}}, "demo.storm.flavor.provenance"},
 		// 得点・満足度・速度
-		{"scoringなし", "alpha", []edit{{"scoring:\n  target: { successes: 2, score3: 500 }\n", ""}}, "scoring"},
+		{"scoringなし", "alpha", []edit{{"scoring:\n  target: { successes: 2, score3: 500 }\n  points: { normal: 100, critical: 300, late: 30, rejected: 0, expiredPenalty: 50 }\n  ferryCostMsPerPoint: 2000\n  fairnessPerSatisfaction: 5\n", ""}}, "scoring"},
 		{"successes=0", "alpha", []edit{{"successes: 2", "successes: 0"}}, "scoring.target.successes"},
 		{"score3なし", "alpha", []edit{{", score3: 500", ""}}, "scoring.target.score3"},
 		{"initial=101", "alpha", []edit{{"initial: 60", "initial: 101"}}, "satisfaction.initial"},
@@ -297,7 +311,7 @@ func TestParseValidation(t *testing.T) {
 		{"everyMs=0", "alpha", []edit{{"everyMs: 10000", "everyMs: 0"}}, "satisfaction.silencePenalty.everyMs"},
 		{"amountなし", "alpha", []edit{{", amount: 2", ""}}, "satisfaction.silencePenalty.amount"},
 		{"silencePenaltyなし", "alpha", []edit{{"  silencePenalty: { everyMs: 10000, amount: 2 }\n", ""}}, "satisfaction.silencePenalty"},
-		{"satisfactionなし", "alpha", []edit{{"satisfaction:\n  initial: 60\n  silenceAfterMs: 30000\n  silencePenalty: { everyMs: 10000, amount: 2 }\n", ""}}, "satisfaction"},
+		{"satisfactionなし", "alpha", []edit{{"satisfaction:\n  initial: 60\n  silenceAfterMs: 30000\n  silencePenalty: { everyMs: 10000, amount: 2 }\n  succeeded: 10\n  rejectedPenalty: 3\n  expiredPenalty: 10\n", ""}}, "satisfaction"},
 		{"allowed空", "alpha", []edit{{"allowed: [0.5, 1, 2, 4]", "allowed: []"}}, "speed.allowed"},
 		{"allowed降順", "alpha", []edit{{"allowed: [0.5, 1, 2, 4]", "allowed: [1, 0.5]"}}, "speed.allowed[1]"},
 		{"allowed同値", "alpha", []edit{{"allowed: [0.5, 1, 2, 4]", "allowed: [1, 1]"}}, "speed.allowed[1]"},

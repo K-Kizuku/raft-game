@@ -37,6 +37,7 @@ type Config struct {
 	PerLinkAppCap int                  // transport.perLinkAppCap
 	Resources     []ledger.ResourceDef // 台帳の資源（各ノードに同じ定義で 1 つずつ作る）
 	Requests      game.RequestConfig   // 依頼（requests.*）。ゼロ値は依頼なし
+	Score         game.ScoreConfig     // スコア・満足度・クリア判定（scoring.*・satisfaction.*）。ゼロ値は採点しない
 }
 
 // Options はゲームの結果に影響しない動作の切り替え。
@@ -88,6 +89,7 @@ type Engine struct {
 	tr      *ferry.Transport
 	storms  stormBook   // 嵐の帳簿（storm.go）
 	reqs    requestBook // 依頼の帳簿（request.go）
+	score   scoreBook   // 採点の帳簿（score.go）
 
 	phase   Phase
 	opening cluster.OpeningResult
@@ -180,6 +182,9 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		return nil, fmt.Errorf("sim: requests: %w", err)
 	}
 	e.reqs = newRequestBook(plan, e.cfg.Requests.RetryMs)
+	if err := e.initScore(); err != nil {
+		return nil, err
+	}
 	res, err := cluster.Opening(e.nodes, cfg.InitialLeader)
 	if err != nil {
 		return nil, fmt.Errorf("sim: %w", err)
@@ -237,6 +242,7 @@ func (e *Engine) start() {
 	e.push(e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
 	e.push(e.cfg.DurationMs, ClassGameTimer, kindRoundEnd, nil)
 	e.scheduleRequests()
+	e.startScore()
 }
 
 // applyFerry は cmd.ferry.* を適用し、成功したらイベントを出す。失敗したら何も変えずに ferry のエラーを返す。
@@ -277,6 +283,7 @@ func (e *Engine) applyFerry(cmd Command) error {
 		})
 		// DurationMs より後でも積む（ラウンドが先に終わるので処理されない）。
 		e.push(SimTime(arriveAt), ClassFerryArrive, kindFerryArrive, id)
+		e.chargeVoyage(SimTime(arriveAt) - e.Now())
 	case CmdFerryAutoload:
 		return e.autoload(id, cmd.To)
 	}
@@ -367,7 +374,10 @@ func (e *Engine) handleEvent(ev Event) {
 	case kindFerryReady:
 		// 何もしない（プロトコル §6 に該当のイベントがない）。NextNotableAt の対象ではない（ドキュメントの出来事の一覧にないため）。
 		// ボット（T-109）などが ReadyAt を使う。
+	case kindRequestDeadline, kindSilenceCheck:
+		e.handleScoreTimer(ev)
 	case kindRoundEnd:
+		e.finishScore()
 		e.phase = PhaseEnded
 		e.emit(PhaseChanged{Phase: PhaseEnded})
 	case kindRequestSpawn:
@@ -388,6 +398,7 @@ func (e *Engine) arrive(id ferry.FerryID) {
 	f, _ := e.tr.Ferry(id)
 	e.emit(FerryArrived{FerryID: string(id), IslandID: f.At, ReadyAt: SimTime(f.ReadyAt)})
 	e.push(SimTime(f.ReadyAt), ClassFerryReady, kindFerryReady, id)
+	e.noteDelivered(f.At, len(delivered))
 	for _, lid := range delivered {
 		l, ok := e.tr.Letter(lid)
 		if !ok {
@@ -446,6 +457,7 @@ func (e *Engine) afterStep() {
 		})
 	}
 	e.refreshRequests()
+	e.refreshScore()
 	// 配達・破棄した手紙のイベントを作り終えたので、ここで手放す（#103）。
 	e.tr.Reclaim()
 	if e.opt.CheckInvariants {

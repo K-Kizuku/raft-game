@@ -51,6 +51,12 @@ func alphaSimConfig() sim.Config {
 			{ID: "stall:main", Kind: "stall", Capacity: 2},
 		},
 		Requests: alphaRequests(),
+		Score: game.ScoreConfig{
+			PointsNormal: 100, PointsCritical: 300, PointsLate: 30, PointsRejected: 0, ExpiredPenalty: 50,
+			FerryCostMsPerPoint: 2000, FairnessPerSatisfaction: 5, TargetSuccesses: 2, TargetScore3: 500,
+			SatInitial: 60, SatSucceeded: 10, SatRejectedPenalty: 3, SatExpiredPenalty: 10,
+			SilenceAfterMs: 30000, SilenceEveryMs: 10000, SilenceAmount: 2,
+		},
 	}
 }
 
