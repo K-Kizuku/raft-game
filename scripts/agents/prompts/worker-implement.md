@@ -9,7 +9,7 @@
 5. コミットする。メッセージは日本語で `<種類>: <要約> (#{{ISSUE}})`
 6. `git push -u origin {{BRANCH}}`
 7. `gh pr create` で PR を作る。本文は `.github/pull_request_template.md` の形式で、先頭に `Closes #{{ISSUE}}`。Acceptance Criteria は下の「AC の転記」に従う
-8. 下の「必須のチェックを待つ」に従って CI の結果を待ち、CI に関わる AC をチェックする
+8. 下の「CI（`ci-ok`）を待つ」に従って CI の結果を待ち、CI に関わる AC をチェックする
 9. 終わる前に、下の「最後の確認」をする
 
 ## AC の転記
@@ -18,15 +18,32 @@
 - 補足の行（`  - …`）はチェックボックスにしない（`  - [x] …`・`  - [ ] …` にしない）。チェックボックスにすると AC の件数が Issue より多くなり、Merge Gate の C2 が fail にする。補足を足すときも `  - …` の行で書く
 - Issue の AC が 0 件なら、PR の本文の「## Orchestrator への報告」にそのことを書く
 
-## 必須のチェックを待つ
+## CI（`ci-ok`）を待つ
+
+CI に関わる AC をチェックするかどうかは、**チェック `ci-ok` だけ**の結果で決める。
 
 1. PR の番号を `gh pr view --json number -q .number` で取る
-2. 始めた時刻を `date +%s` で記録し、`gh pr checks <PR> --watch --required --interval 30 --fail-fast` で必須のチェックの結果を待つ（Bash のツールの `timeout` は 600000 にする。途中で切れたら、同じコマンドをもう一度実行して待ち続ける）
-   - PR を作った直後で「チェックがない」と言われたら、少し待ってからもう一度実行する
-   - 待つのは始めた時刻から 20 分まで（`timeout` コマンドがない環境もあるので、実行の前後で `date +%s` を比べる）
-3. 成功したら、CI に関わる AC（「CI（`ci-ok`）が通る」など）を `[x]` にした本文を、`mktemp` で作ったファイル（Worktree の外。コミットしない）に書き、`gh pr edit <PR> --body-file <ファイル>` で本文を更新する
-4. 失敗したら、`gh pr checks <PR>` で失敗したチェックを確かめ、原因を直してコミットし、自分のブランチ `{{BRANCH}}` に push して、2. からもう一度待つ（同じ原因で 3 回まで）
-5. 20 分を超えた、または同じ原因で 3 回直しても通らないときは、CI に関わる AC を `[ ]` のまま残し、PR の本文の「## Orchestrator への報告」に、上限に達したことと、失敗した（終わらない）チェックの名前を書いて終わる
+2. PR を作ったあと、始めた時刻を `date +%s` で記録し、`gh pr checks <PR> --json name,bucket -q '.[] | select(.name == "ci-ok") | .bucket'` で `ci-ok` の `bucket` を読む。`pending` の間は 30 秒ごとに読み直す（上限 20 分）
+   - `ci-ok` がまだ現れない（何も出ない・「チェックがない」と言われる。PR を作った直後でチェックがまだない）ときも、30 秒ごとに読み直して待つ
+   - push した直後は、前のコミットの結果が見えることがあるので、30 秒待ってから読み始める
+   - 必須のステータス `merge-gate` は待たない・見ない。`merge-gate` は CI の AC が未チェックだと C2 で failure になり、レビューの前は pending のままなので、待つと循環する（Merge Gate の判定はそのまま。Orchestrator が見る）
+   - `--watch`・`--required`・`--fail-fast` は使わない（`merge-gate` を含むため）
+   - `timeout` コマンドがない環境もあるので、上限は `date +%s` で比べる。1 回の Bash の呼び出しで待つときは、ツールの `timeout` を 600000 にし、切れたら、記録した始めた時刻のまま読み直しを続ける。例:
+
+     ```bash
+     pr=<PR>; start=<始めた時刻>
+     while :; do
+       b=$(gh pr checks "$pr" --json name,bucket -q '.[] | select(.name == "ci-ok") | .bucket' 2>/dev/null)
+       case "$b" in pending|"") ;; *) break ;; esac
+       [ $(( $(date +%s) - start )) -ge 1200 ] && break
+       sleep 30
+     done
+     echo "ci-ok: ${b:-（まだない）}"
+     ```
+
+3. `pass` なら、CI に関わる AC（「CI（`ci-ok`）が通る」など）を `[x]` にした本文を、`mktemp` で作ったファイル（Worktree の外。コミットしない）に書き、`gh pr edit <PR> --body-file <ファイル>` で本文を更新する
+4. `fail` なら、`gh pr checks <PR>` で失敗したチェックを確かめ、原因を直してコミットし、自分のブランチ `{{BRANCH}}` に push して、2. からもう一度待つ（同じ原因で 3 回まで）。`cancel`・`skipping` も失敗として扱う
+5. 20 分を超えた（`ci-ok` が `pending` のまま・現れない）、または同じ原因で 3 回直しても通らないときは、CI に関わる AC を `[ ]` のまま残し、PR の本文の「## Orchestrator への報告」に、上限に達したことと、失敗した（終わらない）チェックの名前を書いて終わる
 
 ## 最後の確認
 

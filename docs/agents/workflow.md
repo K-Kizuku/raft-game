@@ -43,7 +43,9 @@ Issue は Worker にとって**タスクの唯一の正本**で、Merge Gate と
 
 - Worker は、Issue の `## Acceptance Criteria` の `- [ ] AC-n: …` の行を、PR の本文に**一字一句そのまま**（同じ番号・同じ件数で）写し、満たしたものを `[x]` にする
 - AC の下の補足の行（`  - …`）は、PR でもチェックボックスにしない（`  - [x] …` にしない）。チェックボックスにすると C2 が数える AC の件数が Issue より多くなる。Issue を書くときも、補足はチェックボックスでない `  - …` の行で書く
-- CI の成否は Merge Gate の C4 が確かめる。AC に CI（「CI（`ci-ok`）が通る」など）を書くときは、Worker が PR を作った（fix・conflict では push した）あと、`gh pr checks <PR> --watch --required` で必須のチェックを待ってからチェックする（上限 20 分。上限を超えたら `[ ]` のまま「## Orchestrator への報告」に書く）
+- CI の成否は Merge Gate の C4 が確かめる。AC に CI（「CI（`ci-ok`）が通る」など）を書くときは、Worker が PR を作った（fix・conflict では push した）あと、**チェック `ci-ok` だけ**の結果を待ってからチェックする。`gh pr checks <PR> --json name,bucket` で `name` が `ci-ok` の `bucket` を読み、`pending` の間（`ci-ok` がまだ現れない間も）は 30 秒ごとに読み直す（上限 20 分）。`pass` なら AC を `[x]` にし、`fail` なら原因を直して push する（同じ原因で 3 回まで）。上限を超えたら `[ ]` のまま「## Orchestrator への報告」に書く
+  - 必須のステータス `merge-gate` は待たない・見ない。`merge-gate` は CI の AC が未チェックだと C2 で failure になり、レビューの前は pending のままなので、待つと循環する。そのため `gh pr checks` の `--watch`・`--required`・`--fail-fast` は使わない（Merge Gate の判定は変えない）
+  - fix・conflict のモードでも同じ。push したあと、再レビューの記録は待たない（Orchestrator がレビューを依頼する）
 - Worker は、web の依存（`web/node_modules`）がなければ最初に `pnpm install --frozen-lockfile` を実行する（web を触らない Issue でも `make test` に要る）
 - Worker は終わる前に、`gh issue view` と `gh pr view` の AC の行を比べ、件数・文が一致し、すべて `[x]` であることを確かめる
 
