@@ -268,20 +268,27 @@ islands:
 
 ### 3.3 計画書から使う記述（`data/curated/` に抜き出すもの）
 
-| ステージ | 記述（計画書の項目） | 使い道 | 出典区分 |
-|---|---|---|---|
-| 1 | 小豆島地域の `MARITIME_TRANSPORT`：「豊島~小豊島~土庄(8km・25分貸客船1便/日)」「高松~直島~豊島(22.6km・35分3~4便/日)」 | 航路と航行時間（§4.3） | `derived` |
-| 1 | 小豆島地域の `NATURAL_CLIMATE_FEATURES`：「温暖、小雨の典型的な瀬戸内式気候」 | 嵐のない穏やかな海のチュートリアルの紹介文 | `fact` |
-| 2 | 長崎県（離島振興対策実施地域）の `NATURAL_CLIMATE_FEATURES`：「台風等の自然災害の影響を受けやすい」 | 嵐のイベントの題材 | `fact` |
-| 2 | 長崎県（離島振興対策実施地域）の `LOCAL_INDUSTRY_TOURISM`：「世界遺産登録された『長崎と天草地方の潜伏キリシタン関連遺産』」 | 島の紹介文 | `fact` |
-| 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「令和2(2020)年利島17%、御蔵島・青ヶ島41%」（定期貨客船の欠航） | 欠航のイベントの確率（§4.4） | `derived` |
-| 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター … が運航」 | 島どうしのつながり（どの島とどの島に航路を引くか）（§4.5） | `derived` |
-| 3 | 伊豆諸島地域の `PORTS`：「… あおがしま丸、橘丸、フェリーあぜりあ、… 新さるびあ丸、セブンアイランド結、… くろしお丸が就航」 | 船の名前（「計画書に記載された船名を使用しており、運航会社とは関係ありません」と注記する） | `fact` |
-| 3 | 伊豆諸島地域の `DISASTER_LAND_CONSERVATION`：「平成25年台風26号による大島町の被害」 | 嵐のイベントの題材 | `fact` |
+引用は実データの文字のまま（`~`・`(` `)`・`%`・`-` は半角）です。ステージ定義の `source.quote` には、この `quote` をそのまま書きます（§5.4・T-201）。
+
+| ステージ | `id`（`data/curated/` のファイル） | 項目（`region` の `field`） | 引用（`quote`） | 使い道 | 出典区分 |
+|---|---|---|---|---|---|
+| 1 | `setouchi-climate`（`setouchi.yaml`） | 小豆島地域の `NATURAL_CLIMATE_FEATURES` | `温暖、小雨の典型的な瀬戸内式気候` | 嵐のない穏やかな海のチュートリアルの紹介文 | `fact` |
+| 1 | `setouchi-teshima-tonosho-minutes`（`setouchi.yaml`） | 小豆島地域の `MARITIME_TRANSPORT` | `豊島~小豊島~土庄(8km・25分` | 小豆島–豊島の航行時間（§4.3）。`value: 25`・`unit: 分` | `derived` |
+| 1 | `setouchi-takamatsu-naoshima-teshima-minutes`（`setouchi.yaml`） | 小豆島地域の `MARITIME_TRANSPORT` | `高松~直島~豊島(22.6km・35分` | 豊島–直島の航行時間（§4.3）。`value: 35`・`unit: 分` | `derived` |
+| 1 | `setouchi-olive`（`setouchi.yaml`） | 小豆島地域の `LOCAL_INDUSTRY_TOURISM` | `オリーブ製品` | 小豆島の郵便局長の名前の由来（ゲームデザイン §7.3） | `fact` |
+| 2 | `nagasaki-typhoon`（`nagasaki.yaml`） | 長崎県（離島振興対策実施地域）の `NATURAL_CLIMATE_FEATURES` | `台風等の自然災害の影響を受けやすい` | 嵐のイベントの題材 | `fact` |
+| 2 | `nagasaki-world-heritage`（`nagasaki.yaml`） | 長崎県（離島振興対策実施地域）の `LOCAL_INDUSTRY_TOURISM` | `世界遺産登録された「長崎と天草地方の潜伏キリシタン関連遺産」` | 島の紹介文 | `fact` |
+| 3 | `izu-cancellation-2020`（`izu.yaml`） | 伊豆諸島地域の `MARITIME_TRANSPORT` | `令和2(2020)年利島17%、御蔵島・青ヶ島41%` | 欠航のイベントの確率（§4.4）。定期貨客船の欠航率 | `derived` |
+| 3 | `izu-helicommuter`（`izu.yaml`） | 伊豆諸島地域の `MARITIME_TRANSPORT` | `青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航` | 島どうしのつながり（どの島とどの島に航路を引くか）（§4.5） | `derived` |
+| 3 | `izu-ship-names`（`izu.yaml`） | 伊豆諸島地域の `PORTS` | `平成26(2014)年にあおがしま丸、橘丸、フェリーあぜりあ、令和2(2020)年に新さるびあ丸、セブンアイランド結、令和4(2022)年にくろしお丸が就航` | 船の名前（「計画書に記載された船名を使用しており、運航会社とは関係ありません」と注記する） | `fact` |
+| 3 | `izu-typhoon-2013`（`izu.yaml`） | 伊豆諸島地域の `DISASTER_LAND_CONSERVATION` | `平成25年台風26号による大島町の被害` | 嵐のイベントの題材 | `fact` |
+| 3・4 | `izu-hachijo-fruit-lemon`（`izu.yaml`） | 伊豆諸島地域の `LOCAL_INDUSTRY_TOURISM` | `八丈フルーツレモン` | 八丈島の郵便局長の名前の由来（ゲームデザイン §7.3） | `fact` |
 
 ### 3.4 抜き出しの形式 `data/curated/*.yaml`
 
 §3.3 の記述は、`data/curated/*.yaml` に出典（地域・項目・引用）付きで書きます（中身は T-206）。ETL は `data/curated/` の直下の `*.yaml` をファイル名の昇順で読み（サブディレクトリは見ない）、検証して `islands.json` の `excerpts` に出します。`*.yml` があればエラーにします（読み落としを防ぐため）。それ以外のファイル（`.gitkeep` など）は無視します。
+
+ファイルは地域（`region`）ごとに 1 つに分け、ファイル名の語幹を `id` の先頭に付けます（`setouchi.yaml`〔小豆島地域〕→ `setouchi-…`、`nagasaki.yaml`〔離島振興対策実施地域〕→ `nagasaki-…`、`izu.yaml`〔伊豆諸島地域〕→ `izu-…`）。
 
 ```yaml
 format: 1
@@ -388,7 +395,7 @@ rng("events").IntN(1000) < 欠航の確率 なら durationMs（10 秒）の間�
 
 ### 4.5 計画書の記述から島どうしのつながりを決める（Stage 3）
 
-伊豆諸島の計画書にある「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター（ヘリコプターによる乗客の定期輸送）が運航」という記述を、島どうしの航路の組み合わせに使います。
+伊豆諸島の計画書にある「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航」という記述を、島どうしの航路の組み合わせに使います。
 
 | 航路 | 根拠 | `travelMs`（ゲーム上の設定） |
 |---|---|---|
