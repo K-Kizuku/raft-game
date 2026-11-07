@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 を実施済み。H-5 の対象デプロイの CPU 上限は 50 ms。反復負荷試験を除く集計で SpikeSession fetch の CPU p99 112 ms / 最大 116 ms を取得した。Worker は今回の集計に現れず、次は全体と経路別の内訳を確認する。後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 を実施済み。H-5 では Worker の CPU p99/最大 3 ms、DO fetch の p99 112 ms / 最大 116 ms を取得し、WS と ping の内訳を確認。現在の対象デプロイは 50 ms。次は暫定候補 500 ms をスパイクにデプロイして s-25 で CPU/WS を再測定する。後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -22,7 +22,7 @@
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
-| H-5 limits.cpuMs の判断 | 途中 | 50 ms を確認済み。SpikeSession fetch は n=113 / CPU p99=112 ms / 最大=116 ms。Worker が未集計のため、全体と経路別の内訳を確認してから値を決める |
+| H-5 limits.cpuMs の判断 | 途中 | 50 ms で Worker p99/最大 3 ms、DO fetch p99 112 ms/最大 116 ms。暫定候補 500 ms で CPU/WS を再測定する手順を案内。再デプロイと再測定の結果は未受領 |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -1077,6 +1077,80 @@ for (const [name, keys, extra] of cases) {
 ```
 
 JavaScript の構文を確認した。pnpm の引数は配列で渡し、シェルへの文字列の再解釈を行わない。API の結果は未受領。H-5 の値の判断と H-6 以降は継続中。
+
+## 2026-11-07: CPU の全体集計と経路別の内訳を受領
+
+プロンプト表示は 17:21:59。overview / request-path / do-path の 3 クエリがすべて status=COMPLETED。フィルターと計算は、前回保存した normal-cpu-query.json から再利用した。
+
+### overview: Worker の CPU 時間も取得
+
+| executionModel | eventType | 件数 n | CPU p99 (ms) | CPU 最大 (ms) |
+|---|---|---|---|---|
+| stateless | fetch | 73 | 3 | 3 |
+| durableObject | fetch | 115 | 112 | 116 |
+| durableObject | alarm | 10 | 1 | 1 |
+
+entrypoint をグループ化から外すと stateless の fetch が現れた。前回の結果に Worker がなかったことを、Worker の CPU 0 ms とは解釈しない。今回も cpuTimeMs が存在するログの条件付き集計であり、すべての実行を数えたものとは限らない。
+
+### do-path: 高い値は WS と HTTP の反復
+
+| entrypoint | eventType | event.path | 件数 n | CPU p99 (ms) | CPU 最大 (ms) |
+|---|---|---|---|---|---|
+| SpikeSession | fetch | /ws | 2 | 116 | 116 |
+| SpikeSession | fetch | /ping | 2 | 64 | 64 |
+| SpikeSession | fetch | /sql | 4 | 25 | 25 |
+| SpikeSession | fetch | /start | 49 | 10 | 10 |
+| SpikeSession | fetch | /crash | 2 | 5 | 5 |
+| SpikeSession | fetch | /status | 12 | 3 | 3 |
+| SpikeSession | fetch | /stop | 39 | 2 | 2 |
+| SpikeSession | fetch | /egress | 1 | 1 | 1 |
+| PlainStore | fetch | /plain | 2 | 1 | 1 |
+| SpikeSession | fetch | /bench/raft | 2 | 1 | 1 |
+
+10 グループの n の合計は 115 で、overview の durableObject / fetch と一致する。出力は先頭 20 グループの制限に達していない。
+
+request-path は 0 グループで、CPU の値は取れなかった。キー一覧で request.path が存在しても、cpuTimeMs を持つログに同じ項目があるとは限らない。今回は overview と DO の event.path の結果を使用する。
+
+### CPU 上限の次の検証候補: 500 ms
+
+- Worker は p99/最大 3 ms。DO fetch の p99 は 112 ms、最大 116 ms。
+- /ws の数値は 2 件の fetch ログの集計であり、WS 1 電文ごとの CPU p99 ではない。[DO の CPU 制限](https://developers.cloudflare.com/durable-objects/platform/limits/) は、受信する HTTP 要求や WS メッセージで CPU の予算が更新されると説明している。116 ms と設定 50 ms の比較だけで、電文ごとの制限違反や、500 ms が必要な最小値だとは結論しない。
+- /ping は 1 要求内で HTTP 往復を 200 回行う測定。/sql も 100 行/1,000 行をまとめて追加する測定であり、本番の 1 コマンドと同じ負荷ではない。
+- H-5 の「通常要求の p99 の数倍」を満たす保守的な候補として、共有の limits.cpuMs を 500 ms で検証する。取得した DO fetch p99 の約 4.46 倍、最大値の約 4.31 倍。
+- これは本番向けの暫定候補。スパイクの WS と反復 CPU 試験で再確認し、本体の負荷に対する最終調整は T-605 で行う。
+- 現在のデプロイ済みの値は引き続き 50 ms。以下の再デプロイはまだ実行結果を受け取っていない。
+
+### 次の手順: スパイクだけを再デプロイして CPU / WS を再測定
+
+#15 の H-5 の範囲で、ユーザーが実行する。2 回目のデプロイなので --containers-rollout immediate を指定する。最新バージョンのメタデータから cpu_ms=500 を確認し、一致した場合だけ測定に進む。
+
+```fish
+env SPIKE_CPU_MS=500 pnpm -C spike exec cf build
+and time pnpm -C spike exec cf deploy --prebuilt \
+  --secrets-file spike.secrets.json --containers-rollout immediate
+and curl -fsS --max-time 30 https://raft-game-spike.kizuku.workers.dev/spike/healthz
+and pnpm -C spike exec cf workers versions get latest --worker-id raft-game-spike \
+  > spike/.cloudflare/cpu500-version.json
+and node -e '
+const x = JSON.parse(require("node:fs").readFileSync("spike/.cloudflare/cpu500-version.json", "utf8"));
+console.log(JSON.stringify({id: x.id, limits: x.limits}, null, 2));
+if (x.limits?.cpu_ms !== 500) process.exit(1);
+'
+and set -gx SPIKE_TOKEN (node -p 'JSON.parse(require("node:fs").readFileSync("spike/spike.secrets.json","utf8")).SPIKE_TOKEN')
+and node spike/scripts/measure.ts \
+  --base https://raft-game-spike.kizuku.workers.dev \
+  --instance lite --only cpu,ws --runs 1 --first 25 \
+  --out spike/.cloudflare/cpu500-ws-lite.json
+printf 'H-5 exit status: %s\n' $status
+```
+
+- measure.ts の SessionPool と planSessions を確認した。--only cpu,ws は規定順で ws→cpu を実行し、未使用の s-25 だけを使う。WS で起動は 1 回、CPU はコンテナを起動しない。SPIKE_MAX_SESSIONS=30 の範囲内。
+- WS は前と同じ 1 KiB・16 KiB・超過の破棄・500 件の順序・120 秒無通信・両方向の切断を確認する。
+- CPU の 1e9 などが意図的に上限で止まる場合がある。HTTP の結果を残し、WS の正常な中継が維持されることと分けて判断する。
+- 対象は raft-game-spike のみ。新しい秘密値は生成せず、既存のシークレットファイルを使う。表示するメタデータは version id と limits だけ。
+- Node のメタデータ検査の構文を確認した。デプロイ・API への問い合わせ・測定そのものは AI から実行していない。
+
+再測定後に使った全番号の停止、クラウド資源の削除、ローカルの後片付け、翌日の費用確認へ進む。H-7 / H-8 / 最終 PR は継続中。
 
 ## 測定前に確定・確認する事項
 
