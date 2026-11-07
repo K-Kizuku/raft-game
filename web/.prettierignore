@@ -2,3 +2,4 @@ dist/
 .cloudflare/
 coverage/
 node_modules/
+src/protocol/*.gen.ts

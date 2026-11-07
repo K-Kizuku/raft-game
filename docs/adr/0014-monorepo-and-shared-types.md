@@ -37,6 +37,8 @@
 
 ディレクトリ構成は [アーキテクチャ §6](../02-architecture.md) のとおり。
 
+2026-11-07 の追記（T-301）: `tygo` は v0.2.21（MIT License）を使い、`Makefile` の `TYGO_VERSION` で版を固定して `go -C server run github.com/gzuidhof/tygo@<版>` で実行する。`server/go.mod` には入れない（`tygo` の依存を `server` のモジュールの依存の解決に混ぜないため）。設定は `server/tygo.yaml` で、`enum_style: union`（TS の `enum` を使わず、定数と `typeof` のユニオン型にする。`erasableSyntaxOnly` のため）。`sim` の型は `protocol` の型に置き換えず、`server/internal/protocol/simconv` で変換し、両者の JSON が一致することをテストで確かめる。CI での差分の検査は `make gen-check` で行う（ワークフローへの取り込みは人の作業）。
+
 ## 結果
 
 - 良いこと: 型のずれが CI で検出される。1 つの PR でサーバーとクライアントを同時に変えられる
