@@ -527,7 +527,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 ## 6. イベント（`events.events[]`）
 
-すべてのイベントは `{ "seq": 1203, "t": 61200, "type": "…", ... }` の形です（`seq` はイベントの連番で、エンベロープの `seq` とは別）。このイベント列がそのままトレースになります（[DesignDoc §10.2](./03-design-doc.md)）。
+すべてのイベントは `{ "seq": 1203, "t": 61200, "type": "…", ... }` の形です（`seq` はイベントの連番で、エンベロープの `seq` とは別）。`notice` を除いたイベントの列がトレースになります（[DesignDoc §10.2](./03-design-doc.md)）。`notice` は Go のサーバーのセッションがほかのイベントから作り、きっかけのイベントの直後に入れます。`seq` は `notice` を含めて振り直すので、トレースの `seq` より、それまでに入れた `notice` の数だけ大きくなります（`snapshot` の `lastSeq` も同じ番号）。
 
 | type | フィールド | 発生するとき |
 |---|---|---|
@@ -550,7 +550,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `ledger.applied` | `islandId`, `index`, `reqId`, `result`（`ok` / `rejected` / `duplicate`）, `reason`（`rejected` のときだけ） | 台帳への適用（エンジニアモード・トレース用） |
 | `island.updated` | `id`, `satisfaction`, `lastDeliveredAt` | 満足度か最後の配達の時刻の変化（同じステップ内の変化はまとめる） |
 | `score.updated` | `total`, `successes`, `criticalSecured` | スコアの変化（同じステップ内の変化はまとめる）。`criticalSecured` は資源の定義の順。ラウンドの終わりの公平ボーナスは `phase.changed{ended}` の前に出す |
-| `notice` | `islandId`, `key`, `params` | 島のキャラクターの通知。文言はクライアントが `key` から組み立てる |
+| `notice` | `islandId`, `key`, `params` | 島のキャラクターの通知。文言はクライアントが `key` から組み立てる。セッションが作る（きっかけは[ゲームデザイン §7.3](./04-game-design.md)） |
 
 `node.stepped_down.reason` はゲーム側の推定です（`etcd-io/raft` は理由を外部に出さないため、直前に受け取ったメッセージの Term などから判定します）。
 

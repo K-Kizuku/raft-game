@@ -87,6 +87,7 @@ type session struct {
 	highWater     int               // eventsHighWater（テストで変える）
 	bucket        tokenBucket       // コマンドのレート制限
 	stepHook      func()            // テスト用。ステップの最初に呼ぶ
+	notices       *noticer          // 通知（notice）と seq の振り直し。run の goroutine だけが触れる
 
 	inbox  chan inbound
 	attach chan attachReq
@@ -138,6 +139,10 @@ func newSession(parent context.Context, p sessionParams) *session {
 	s.allowed = allowedSpeedsPermille(p.st, p.demo)
 	s.pendingLimit = pendingEventLimit
 	s.highWater = eventsHighWater
+	s.notices = newNoticer(p.st)
+	if p.engine != nil {
+		s.notices.resync(p.engine.Snapshot())
+	}
 	if p.paused {
 		s.pause.hold() // 復元したセッションは止めておく
 	}
@@ -436,7 +441,10 @@ func (s *session) sendSnapshot() {
 	s.engine.DrainEvents()
 	s.pending = nil
 	s.needSnapshot = false
-	s.send(protocol.MessageTypeSnapshot, s.buildSnapshot())
+	p := s.buildSnapshot()
+	s.notices.resync(s.engine.Snapshot())
+	p.LastSeq = s.notices.wireSeq(p.LastSeq)
+	s.send(protocol.MessageTypeSnapshot, p)
 	s.snapshotSent = true
 	s.lastEventsAt = s.wall.Now()
 	if s.resultFor != nil && s.resultFor == s.conn {
