@@ -332,12 +332,71 @@ flowchart LR
 | Durable Object | `GameSession`（1 ゲームに 1 つ、SQLite）と `CostGuard`（全体で 1 つ。デモ用の Worker からも参照する） | 操作の記録（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）と費用の上限（[ADR-0018](./adr/0018-cost-guard.md)） |
 | Container | `schedulingPolicy: "durable-object"`、イメージは `images.server`（Dockerfile から `linux/amd64` でビルド）。大きさは `start()` で指定し、一般公開は `lite`、デモ用は `standard-1` | 推奨の方式。`default` 方式は非推奨 |
 | モード | `production`（一般公開）と `demo`（デモ操作を有効にした別の Worker） | デモ操作を一般の環境で使えないようにする |
-| デプロイ | GitHub Actions：`cf build` → PR は `cf deploy --prebuilt --dry-run`、`main` は `cf deploy --prebuilt --mode production`、手動の実行で `--mode demo` | 公式の手順に沿う。プレビュー環境は使わない |
+| デプロイ | GitHub Actions（`.github/workflows/deploy.yml`）: `make sync-data` → `cf build --mode` → 検査 → PR は両方のモードで `cf deploy --prebuilt --dry-run`、`main` への push は `production` にデプロイ、手動の実行で `demo`（または `production` の再デプロイ）。シークレットは GitHub の Secrets から一時ファイルを作り `--secrets-file` で渡す（§5.2） | 公式の手順に沿う。プレビュー環境は使わない |
 | ログ | `observability.logs` を有効にし、ダッシュボードで見る | `cf` はリアルタイムのログ表示に未対応（ベータ版） |
 
 ### 5.1 AWS に戻す場合
 
 [ADR-0011](./adr/0011-infrastructure-aws-ecs-fargate.md)（置き換え済み）の構成です。Go サーバーを `standalone` モードで ECS Fargate に置き、CloudFront と S3 で画面を配信します。差し替えるのは Worker と Durable Object の部分（`web/worker/`）と CI です。操作の記録の保存先を別に用意する必要があります。
+
+### 5.2 デプロイの流れ（`deploy.yml`）
+
+ワークフロー `deploy`（T-603）がビルド・検査・デプロイを行います。正本は [`.github/workflow-sources/deploy.yml`](../.github/workflow-sources/deploy.yml) で、人が `scripts/github/install-workflows.sh` で `.github/workflows/` に取り込みます（AI は `.github/workflows/` を変更できない）。`ci`（チェック `ci-ok`）とは別のワークフローで、必須のチェックではありません。
+
+| 契機 | ジョブ | すること |
+|---|---|---|
+| PR（`main` 向け。フォークを含む） | `dry-run`（`production`・`demo` の matrix） | `make sync-data` → `cf build --mode` → `check-build-output.ts` → `cf deploy --prebuilt --dry-run`。Secrets を参照しない（dry-run は認証が要らない） |
+| `main` への push | `deploy`（`production`） | 下の 1〜12 |
+| 手動の実行（`workflow_dispatch`。`main` だけ） | `deploy`（入力 `mode`。既定は `demo`、`production` も選べる） | 下の 1〜12 |
+
+ジョブ `deploy` の手順（この順序。`scripts/tests/test_deploy_workflow.py` が確かめる）:
+
+| # | 手順 | 説明 |
+|---|---|---|
+| 1 | checkout・Node・pnpm | `persist-credentials: false`。キャッシュを使わない（PR と `main` でキャッシュを共有しない） |
+| 2 | 一般公開の確認（`demo` のときだけ） | `wait-healthz.ts` で `https://raft.kizuku-hackathon.work/api/healthz` が 200 か。違えば何もビルド・アップロードせずに止まる（`demo` の `COST_GUARD` が Worker `raft-game` の `CostGuard` を参照するため、`production` を先にデプロイする） |
+| 3 | `make sync-data` | `server/Dockerfile` のビルドに要る（T-306） |
+| 4 | `BUILD_ID` | `git:<commit の SHA の先頭 7 桁>` |
+| 5 | `cf build --mode <モード>` | GitHub の Variables の `TURNSTILE_SITE_KEY` を `VITE_TURNSTILE_SITE_KEY` で渡す。空なら止まる（空のままでは `POST /api/sessions` が必ず `403 turnstile_failed` になる） |
+| 6 | `check-build-output.ts --mode <モード>` | ビルドの出力がモードの決まりに合うか（T-601） |
+| 7 | `cf deploy --prebuilt --dry-run --mode <モード>` | 反映せずに検査する |
+| 8 | シークレットのファイル | `deploy-secrets.ts` が `$RUNNER_TEMP` に JSON を権限 0600 で作る。値を Worker と同じ規則で検査し、合わなければファイルを作らずに止まる。値を出力しない |
+| 9 | `cf deploy --prebuilt --mode <モード> --secrets-file <ファイル>` | `--message` に `BUILD_ID` と実行の番号を入れる（T-604 で版を見分ける） |
+| 10 | シークレットのファイルを消す | 成否にかかわらず（`if: always()`） |
+| 11 | `/api/healthz` の確認 | `wait-healthz.ts` が 200 と `build` が手順 4 の値になるまで最大 10 分待つ |
+| 12 | ジョブの要約 | モード・`BUILD_ID`・commit・URL（シークレットを書かない） |
+
+同じジョブの中でビルドとデプロイを行います（`cf build` が作るイメージはランナーのローカルの Docker にあり、ジョブをまたいで渡せないため）。`concurrency` はモードごとで、実行中のデプロイを途中で止めません。
+
+Secrets（リポジトリの Secrets。値はここに書かない）:
+
+| Secret | 使うモード | 中身 |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN`・`CLOUDFLARE_ACCOUNT_ID` | 両方 | `cf deploy` の認証（手順 9 だけに渡す） |
+| `SESSION_SIGNING_KEY` | `production` | sessionId の署名の鍵（32〜256 文字） |
+| `DEMO_SESSION_SIGNING_KEY` | `demo` | 同上。一般公開と別の値（同じなら手順 8 で止まる） |
+| `ADMIN_TOKEN` | `production` | 管理用 API のトークン（32〜256 文字） |
+| `TURNSTILE_SECRET` | 両方 | Turnstile のシークレットキー |
+
+`SESSION_SIGNING_KEY`・`DEMO_SESSION_SIGNING_KEY`・`ADMIN_TOKEN`・`TURNSTILE_SECRET` は手順 8 の環境変数だけに置きます。ほかに GitHub の Variables の `TURNSTILE_SITE_KEY`（公開の値）を使います。
+
+設計書にない判断（T-603）:
+
+- **`paths` の絞り込み**: `pull_request`・`push` は `web/**`・`server/**`・`data/**`・`package.json`・`pnpm-lock.yaml`・`pnpm-workspace.yaml`・`Makefile`・`.github/workflows/deploy.yml`・`.github/workflow-sources/deploy.yml` の変更だけで動きます。ドキュメントだけの変更ではデプロイしません（同じ Worker の版を作り直さないため）。`.github/workflows/deploy.yml` を含むので、人が取り込みの PR をマージした時点で最初の `production` のデプロイが走ります
+- **`DEMO_SESSION_SIGNING_KEY` の名前**: GitHub の Environments の Secrets は、環境の Secret を登録し忘れるとリポジトリの Secret に黙って戻り、一般公開と同じ鍵になり得ます。そこで別の名前にし、Secrets はリポジトリに置きます。`environment:` はデプロイの履歴と URL のためだけに使います
+- **`--containers-rollout` を付けない**: `cf` の既定に任せます（一般公開で遊んでいるゲームのコンテナを一度に入れ替えないため）。`--provision` は既定（有効）のままで、R2 のバケットを初回に作ります
+- **手動の実行で `production` も選べる**: シークレットを変えたときなどに、一般公開を再デプロイするため
+- **デプロイの後の `/api/healthz` の確認**: Worker が直接返し、Durable Object もコンテナも起こさない確認だけを行います
+
+失敗したときの見方（どの手順で止まったか）:
+
+- 手順 2: 一般公開が動いていない。`production` を先にデプロイする
+- 手順 5〜7: ビルド・設定の誤り。何もアップロードしていない
+- 手順 8: Secrets が未設定・規則に合わない・末尾に改行・デモと一般公開で同じ。誤りの文は変数名と規則だけで、値は出ない。何もアップロードしていない
+- 手順 9: `cf deploy` の失敗（権限・R2・確認を求められた、など）。同じ commit で「Re-run jobs」すればやり直せる
+- 手順 11: 証明書の発行待ち・DNS の衝突・Worker の起動の失敗・WAF での遮断など。最初のデプロイでは証明書の発行に時間がかかることがある
+
+境界: このワークフローは失敗しても自動では前の版に戻しません。前の版に戻す手順と `cf` の版を上げる手順は T-604、本番でのスモークテスト（WS で 1 ラウンド遊ぶ・コンテナの起動時間・トークンなしで 403 など）は T-605 で行います。
 
 ---
 
