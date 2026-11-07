@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.6（プロトコルバージョン `1`） |
-| 更新日 | 2026-11-07 |
+| 版 | v0.7（プロトコルバージョン `1`） |
+| 更新日 | 2026-11-08 |
 | 状態 | レビュー済み |
 | 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) / [ADR-0018](./adr/0018-cost-guard.md) / [ADR-0023](./adr/0023-durable-object-fetch-handler.md) |
 
@@ -93,11 +93,43 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
       "islands": 3,
       "ferries": 1,
       "durationMs": 180000,
-      "unlock": null
+      "unlock": null,
+      "intro": {
+        "text": "温暖で雨の少ない瀬戸内の海。…",
+        "provenance": "derived",
+        "source": {
+          "dataset": "mlit-ritou-2026",
+          "region": "小豆島地域",
+          "field": "NATURAL_CLIMATE_FEATURES",
+          "quote": "温暖、小雨の典型的な瀬戸内式気候"
+        }
+      },
+      "learning": ["log_replication", "commit", "quorum", "prevote"],
+      "demo": false
     }
   ]
 }
 ```
+
+- 各欄は Go の `protocol.StageSummary`（キーの順序もこのとおり）。`islands`・`ferries` は島と船の数、`unlock` は先に遊ぶステージの `id`（最初から遊べるなら `null`）
+- `intro` はステージ定義の `intro`（[データ仕様 §5.2](./07-data-spec.md)）。`text` は加工しない文章、`provenance` は[データ仕様 §1](./07-data-spec.md) の出典区分（`fact`・`derived`・`creative`）。`source` は出典（`dataset`・`region`・`field`・`quote`）で、書いていなければ `null`。`quote` は引用がなければ `null`（どちらもキーを省かない）
+- `learning` は学べることのキー（[データ仕様 §5.4](./07-data-spec.md)）。書いていなければ `[]`（`null` にしない）
+- `demo` はデモ用のステージ（ステージ定義に `demo` がある）。`true` のステージだけ、`POST /api/sessions` で `demo: true` を送ってよい
+- 一覧は、ビルドのときに `server/cmd/stagecatalog` が `data/`（`data/stages/*.yaml` と `data/islands.json`）から作り、Worker に同梱した `web/worker/routes/stage-catalog.gen.json`（生成物。コミットする）。Worker は一覧のためにコンテナも Durable Object も起こさない（[ADR-0018](./adr/0018-cost-guard.md)）。Worker は読み込みのときに生成物の形を厳密に確かめ、壊れていれば起動に失敗する
+  - `data/stages/`・`data/islands.json`・`protocol.StageSummary` を変えたら、リポジトリのルートで作り直す。古ければ `go -C server test ./...` が失敗する
+
+    ```bash
+    go -C server run ./cmd/stagecatalog --data ../data --out ../web/worker/routes/stage-catalog.gen.json   # --check で古さだけを確かめる
+    ```
+
+- モードによる絞り込み: `DEMO_CONTROLS` が `"1"` の Worker だけが `demo: true` のステージを返す（`"1"` 以外・未設定は一般公開と同じ扱い）
+
+  | モード | `DEMO_CONTROLS` | `demo: true` のステージ |
+  |---|---|---|
+  | `production` | `"0"` | 返さない |
+  | `demo`・`development` | `"1"` | 返す |
+
+- 順序はステージ定義のファイル名の順（例: `demo-goto`・`demo-izu`・`stage1`・`stage2`）。絞っても順序を保つ（一般公開は `stage1`・`stage2`）
 
 ### `POST /api/sessions`
 
@@ -113,7 +145,7 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
   - Worker は siteverify（`POST https://challenges.cloudflare.com/turnstile/v0/siteverify`、5 秒で打ち切る）の応答の `success` が真偽値の `true` であることだけを確かめる。`hostname`・`action`・`cdata` は確かめない（ホスト名の制限はウィジェットの設定で行う）。シークレット `TURNSTILE_SECRET` がない Worker では、有効なときはすべて `403`
   - トークンは 1 回しか使えず、発行から 300 秒で切れる（Cloudflare の仕様）。`403 turnstile_failed` のあと、画面はウィジェットをやり直す
 - `demo: true` は `demo` モードでデプロイした Worker（`DEMO_CONTROLS=1`）のときだけ受け付ける。それ以外の Worker に `demo: true` を送ると `400`（黙って `false` にしない）。省略すると `false`
-- 本文は `Content-Type: application/json`（`; charset=utf-8` などの引数は可）の UTF-8 の JSON オブジェクトで、4096 バイトまで。`stageId`・`seed`・`demo`・`turnstileToken` 以外のキーがあれば `400`。`stageId` は `GET /api/stages` の `id` のどれか
+- 本文は `Content-Type: application/json`（`; charset=utf-8` などの引数は可）の UTF-8 の JSON オブジェクトで、4096 バイトまで。`stageId`・`seed`・`demo`・`turnstileToken` 以外のキーがあれば `400`。`stageId` は、その Worker の `GET /api/stages` が返す `id` のどれか（一般公開の Worker にデモ用のステージを送ると `400`）
 - 検査の順序は `Origin`（必須）→ レート制限 → 本文 → Turnstile → 費用の予約（`CostGuard`）。どこかで止まったら、それより後は行わない
 - レート制限（コストガード G4）は IP ごと（IPv6 は先頭の 64 ビットごと。IPv4 射影の IPv6 は IPv4 として数える）に 1 分 10 回。`CF-Connecting-IP` がない・読めない要求は、全部で 1 つの枠を共有する。本文を読む前に数える（`429` のとき本文を読まない）
   - 回数は Workers の Rate Limiting の束縛 `SESSION_RATE_LIMIT`（`simple: { limit: 10, period: 60 }`）で、デプロイのときに決まる。Cloudflare の拠点ごとに数える近似の値で、厳密な上限ではない（[ADR-0024](./adr/0024-worker-rate-limit-binding.md)。ゾーンの WAF と合わせて使う）

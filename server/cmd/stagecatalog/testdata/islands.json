@@ -1,0 +1,257 @@
+{
+  "format": 1,
+  "generatedAt": "2026-11-07",
+  "sources": {
+    "fixture-2026": {
+      "title": "架空の離島のデータ（テスト用）",
+      "publisher": "架空の提供者",
+      "license": "架空の利用規約",
+      "termsUrl": "https://example.com/terms",
+      "publishedAt": "2026-10-31"
+    }
+  },
+  "islands": [
+    {
+      "id": "hama-hoshizuna",
+      "name": "星砂島",
+      "prefecture": "波間県",
+      "designatedArea": "星砂諸島",
+      "municipalities": [
+        "星砂町",
+        "月影町"
+      ],
+      "population": {
+        "value": 19134,
+        "asOf": "令和8年4月1日",
+        "provenance": "derived",
+        "note": "星砂町 12,345 人と月影町 6,789 人の合計",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 30.3,
+        "asOf": "令和8年4月1日",
+        "provenance": "derived",
+        "note": "星砂町 10.1 km²と月影町 20.2 km²の合計",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 138.33,
+      "plan": {
+        "region": "星砂地域",
+        "climate": {
+          "text": "温暖で、雨の少ない架空の気候である。\n冬は北風が強い。",
+          "provenance": "fact",
+          "source": "fixture-2026",
+          "field": "NATURAL_CLIMATE_FEATURES"
+        },
+        "maritime": {
+          "text": "星砂~月影~灯台(9km・30分 架空船2便/日)\n月影~星砂(3km・10分 架空船5便/日)",
+          "provenance": "fact",
+          "source": "fixture-2026",
+          "field": "MARITIME_TRANSPORT"
+        }
+      }
+    },
+    {
+      "id": "hama-tsukikage",
+      "name": "月影島",
+      "prefecture": "波間県",
+      "designatedArea": "星砂諸島",
+      "municipalities": [
+        "月影町"
+      ],
+      "population": {
+        "value": 768,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 14.5,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 27.71,
+      "plan": {
+        "region": "星砂地域",
+        "climate": {
+          "text": "温暖で、雨の少ない架空の気候である。",
+          "provenance": "fact",
+          "source": "fixture-2026",
+          "field": "NATURAL_CLIMATE_FEATURES"
+        }
+      }
+    },
+    {
+      "id": "hama-todai",
+      "name": "灯台島",
+      "prefecture": "波間県",
+      "designatedArea": "灯台島",
+      "municipalities": [
+        "灯台村"
+      ],
+      "population": {
+        "value": 169,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 2,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 13,
+      "plan": {
+        "region": "灯台地域",
+        "disaster": {
+          "text": "架空の台風で灯台が壊れた。",
+          "provenance": "fact",
+          "source": "fixture-2026",
+          "field": "DISASTER_LAND_CONSERVATION"
+        }
+      }
+    },
+    {
+      "id": "shiomi-koishi",
+      "name": "小石島",
+      "prefecture": "潮見県",
+      "designatedArea": "小石島",
+      "municipalities": [
+        "小石町"
+      ],
+      "population": {
+        "value": 2,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 0.5,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 1.41
+    },
+    {
+      "id": "shiomi-ooishi",
+      "name": "大石島",
+      "prefecture": "潮見県",
+      "designatedArea": "大石島",
+      "municipalities": [
+        "大石町"
+      ],
+      "population": {
+        "value": 5000,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 40.25,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 70.71
+    },
+    {
+      "id": "shiomi-nami",
+      "name": "波島",
+      "prefecture": "潮見県",
+      "designatedArea": "波島",
+      "municipalities": [
+        "波村"
+      ],
+      "population": {
+        "value": 300,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 3.1,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 17.32
+    },
+    {
+      "id": "kaze-hayate",
+      "name": "疾風島",
+      "prefecture": "風見県",
+      "designatedArea": "疾風島",
+      "municipalities": [
+        "疾風町"
+      ],
+      "population": {
+        "value": 1000,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 8,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 31.62
+    },
+    {
+      "id": "kaze-nagi",
+      "name": "凪島",
+      "prefecture": "風見県",
+      "designatedArea": "凪島",
+      "municipalities": [
+        "凪村"
+      ],
+      "population": {
+        "value": 0,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "areaKm2": {
+        "value": 1.2,
+        "asOf": "令和8年4月1日",
+        "provenance": "fact",
+        "source": "fixture-2026"
+      },
+      "populationSqrt": 0
+    }
+  ],
+  "excerpts": [
+    {
+      "id": "hoshizuna-climate",
+      "region": "星砂地域",
+      "field": "NATURAL_CLIMATE_FEATURES",
+      "quote": "温暖で、雨の少ない架空の気候",
+      "provenance": "fact",
+      "source": "fixture-2026"
+    },
+    {
+      "id": "todai-storm",
+      "region": "灯台地域",
+      "field": "DISASTER_LAND_CONSERVATION",
+      "quote": "架空の台風で灯台が壊れた",
+      "provenance": "fact",
+      "note": "架空の注記",
+      "source": "fixture-2026"
+    },
+    {
+      "id": "tsukikage-hoshizuna-minutes",
+      "region": "星砂地域",
+      "field": "MARITIME_TRANSPORT",
+      "quote": "月影~星砂(3km・10分",
+      "provenance": "derived",
+      "value": 10,
+      "unit": "分",
+      "note": "架空の航路の所要時間",
+      "source": "fixture-2026"
+    }
+  ]
+}

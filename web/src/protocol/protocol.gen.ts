@@ -402,6 +402,26 @@ export interface StageSummary {
   ferries: number /* int */;
   durationMs: number /* int64 */;
   unlock: string | null;
+  intro: StageText; // ステージの紹介文（データ仕様 §5.2 の intro）
+  learning: string[]; // 学べることのキー（データ仕様 §5.4）。なければ []（null にしない）
+  demo: boolean; // デモ用のステージ（定義に demo がある）。POST /api/sessions で demo: true を送る
+}
+/**
+ * StageText は出典区分つきの文章（データ仕様 §1・§5.4 の Text）。
+ */
+export interface StageText {
+  text: string;
+  provenance: Provenance;
+  source: TextSource | null;
+}
+/**
+ * TextSource は文章の出典（データ仕様 §5.4 の Source）。
+ */
+export interface TextSource {
+  dataset: string; // islands.json の sources のキー
+  region: string;
+  field: string;
+  quote: string | null; // 引用がなければ null
 }
 /**
  * CreateSessionRequest は POST /api/sessions の本文。
