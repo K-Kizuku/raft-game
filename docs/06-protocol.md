@@ -551,7 +551,10 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 `finalLogs[].terms` は `[term, 最初の index, 最後の index]` の配列で、ログを Term ごとの帯として描くのに使います。
 
-- `score`・`stars`・`stats.succeeded`・`stats.rejected`・`stats.expired` は T-203 が作ります。ほかの `stats`（`lettersDelivered`・`leaderChanges`・`avgCommitLatencyMs`・`longestSilenceMs`・`finalLogs`）と `story` は T-208 が足します
+- `score`・`stars`・`stats.succeeded`・`stats.rejected`・`stats.expired` は T-203 が作ります。ほかの `stats`（`lettersDelivered`・`leaderChanges`・`avgCommitLatencyMs`・`longestSilenceMs`・`finalLogs`）と `story` は T-208 が作ります
+- `lettersDelivered`・`finalLogs`・`finalLogs[].terms`・`story`・`story[].concepts` は、空でも `{}`・`[]` で送り、`null` にしない
+- `lettersDelivered` は 0 の区分を含めない
+- `story` は `t` の昇順で、文はサーバーが組み立てた日本語（クライアントは組み立てない）。文の型は [ゲームデザイン §7.5](./04-game-design.md)、統計の定義は [DesignDoc §10.3](./03-design-doc.md)
 - `breakdown.expired`・`breakdown.ferryCost` は 0 以下（負の数）で、`requests + expired + ferryCost + fairness` が `total` と等しくなります
 - `stats.succeeded` は期限を過ぎてから確定したものを含みます。`stats.expired` は期限切れのフラグが立った依頼の数で、その後に確定・予約失敗したものも含みます
 
