@@ -207,7 +207,7 @@ Worker が返すエラー:
 | `cmd.game.skip` | `{ "until": "next_notable" }` | デモ用。次の船の到着・台本の出来事・依頼の発生まで進めて一時停止する（最大 30 秒先まで） | P0 |
 | `cmd.ferry.load` | `{ "ferryId": "f1", "letterIds": [12, 13] }` | 港の手紙を積む。全部積めない場合は全体を拒否する | P0 |
 | `cmd.ferry.unload` | `{ "ferryId": "f1", "letterIds": [12] }` | 積んだ手紙をいまいる港へ戻す（P1 で中継倉庫へ預けるのにも使う） | P0 |
-| `cmd.ferry.autoload` | `{ "ferryId": "f1", "to": 2 }` | おまかせ積み込み | P0 |
+| `cmd.ferry.autoload` | `{ "ferryId": "f1", "to": 2 }` | おまかせ積み込み。港の手紙のうち `to` 宛てのものを、ゲームデザイン §3.4 の順に空きの数だけ積む。`to` への直接の航路がなければ `no_route`、積む手紙がなければ `letter_not_here`、満載なら `capacity_exceeded` | P0 |
 | `cmd.ferry.depart` | `{ "ferryId": "f1", "to": 2 }` | 出航 | P0 |
 | `cmd.relay.load` | `{ "ferryId": "f1", "letterIds": [20] }` | 中継倉庫の手紙を積む | P1 |
 | `cmd.sync` | `{}` | スナップショットを要求する | P0 |
@@ -266,7 +266,8 @@ Worker が返すエラー:
   },
   "ferries": [
     { "id": "f1", "name": "ごとう丸", "capacity": 4, "state": "sailing", "from": 1, "to": 2,
-      "departAt": 58000, "arriveAt": 67000, "readyAt": 68500, "cargo": [31, 32] }
+      "departAt": 58000, "arriveAt": 67000, "readyAt": 68500, "cargo": [31, 32] },
+    { "id": "f2", "name": "…", "capacity": 4, "state": "docked", "islandId": 3, "readyAt": 61500, "cargo": [] }
   ],
   "routesState": [ { "id": "1-2", "blockedUntil": null } ],
   "letters": [ /* 港と船の上にある Letter（§5.2）。P1 では中継倉庫も。配達済み・破棄は含めない */ ],
@@ -277,6 +278,13 @@ Worker が返すエラー:
   "lastSeq": 41
 }
 ```
+
+`ferries[]` の注記（後方互換なフィールドの追加、§8）:
+
+- `state` は `docked` / `sailing`
+- `islandId` は `docked` のときの島
+- `from`・`to`・`departAt`・`arriveAt` は `sailing` のときだけ
+- `readyAt` は、`docked` なら出航できるようになる時刻、`sailing` なら着いてから出航できる時刻（`arriveAt + dockMs`）
 
 ### 5.2 Letter
 
