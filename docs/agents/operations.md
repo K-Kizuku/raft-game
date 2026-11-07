@@ -18,7 +18,7 @@ AI の認証には `workflow` 権限がなく、Rulesets とシークレット�
 | 4 | Codex CLI を入れ、`codex login` する | ChatGPT のアカウントでログインする。API キーは使わない（[ADR-0021](../adr/0021-hootl-agent-development.md)） |
 | 5 | `gh auth login` | エージェントとオーナーが同じ認証情報を使う（`workflow` 権限は付けない） |
 | 6 | Claude Code を入れる | `claude` コマンド。Orchestrator はメインの作業ツリーで起動する |
-| 7 | AI 用の GitHub App を作り、秘密鍵を置く（#176・#282） | Worker と Orchestrator の `gh`・`agentctl` が使う。API の上限をオーナーのトークンと分ける。手順は下の「[AI 用の GitHub App](#ai-用の-github-app)」。しなくても動く（オーナーのトークンを使う） |
+| 7 | AI 用の GitHub App を作り、秘密鍵を置く（#176・#282） | AI の役割（Orchestrator・Worker・Reviewer）の `gh`・`agentctl` が使う。API の上限をオーナーのトークンと分ける。手順は下の「[AI 用の GitHub App](#ai-用の-github-app)」。しなくても動く（オーナーのトークンを使う） |
 
 2・3 は `gh` を使うので、`gh` に未ログインなら 5 を先に行う。2 と 3 は、先に `--dry-run` で内容を確かめる。
 
@@ -62,19 +62,19 @@ hooks（`.claude/hooks/*.sh`）と `scripts/` の shell のスクリプトは、
 
 `agentctl` は `GITHUB_TOKEN` か `GH_TOKEN` からトークンを読む。どちらもないときは、[agentctl.sh](../../scripts/agents/agentctl.sh) と [lib.sh](../../scripts/agents/lib.sh) の `agentctl` がトークンを作って `GH_TOKEN` で渡す（#107・#282）。トークンは標準出力・ログに出さない。
 
-- 役割が `worker`・`orchestrator` で、AI 用の GitHub App の鍵が使えれば、App のインストールのトークン（下の「AI 用の GitHub App」）
-- それ以外（役割が `reviewer`・`human`、App の設定がない、鍵がない・作れない）は `gh auth token` の値（オーナーのトークン）。App の設定があるのに使えないときは、理由を標準エラーに 1 行出す
-- `merge.sh` と `review.sh` は、役割にかかわらずオーナーのトークンを使う（マージとレビュー記録の作者を変えない。Merge Gate の C5 の `trusted_authors`）
-- lib.sh の `agentctl` は、呼ぶたびにトークンを作って子にだけ渡す（呼び出し側のシェルに export しない）。1 時間で切れる App のトークンが、長く動く `merge-train.sh` などに残らないようにするため。そのシェルから起動する `merge.sh`・`review.sh` にも渡らない
+- 役割が AI（`worker`・`orchestrator`・`reviewer`）で、AI 用の GitHub App の鍵が使えれば、App のインストールのトークン（下の「AI 用の GitHub App」）。`merge.sh` のマージと `review.sh` の記録も App で行う（オーナーの判断。2026-11-08）
+- それ以外（役割が `human`、App の設定がない、鍵がない・作れない）は `gh auth token` の値（オーナーのトークン）。App の設定があるのに使えないときは、理由を標準エラーに 1 行出す
+- lib.sh の `agentctl` と `ghx`（`merge.sh`・`review.sh` が直接呼ぶ `gh`）は、呼ぶたびにトークンを作って子にだけ渡す（呼び出し側のシェルに export しない）。1 時間で切れる App のトークンが、長く動く `merge-train.sh` や `review.sh` の待ちの途中で切れないようにするため
 - `gh` がない・未ログインで App も使えなければ何もせず、`agentctl` が「トークンがない」で止まる（先に `gh auth login` する）
+- レビュー記録の作者は App（`kizuku-claude[bot]`）になる。Merge Gate の C5 が数えるように、[.agents/config.json](../../.agents/config.json) の `review.trusted_authors` に `kizuku-claude[bot]` を入れている（オーナーの `K-Kizuku` も残す）
 
 ### AI 用の GitHub App
 
-Worker と Orchestrator の GitHub の操作（CI の結果の待ち・PR の作成と更新・`agentctl`）は、AI 用の GitHub App のインストールのトークンで行う（#282。[ADR-0021](../adr/0021-hootl-agent-development.md)）。インストールのトークンの上限は 1 時間に 5,000 回で、オーナーのトークンと別に数える。
+AI の役割（Orchestrator・Worker・Reviewer）の GitHub の操作（CI の結果の待ち・PR の作成と更新・`agentctl`・`merge.sh` のマージ・`review.sh` の記録）は、すべて同じ AI 用の GitHub App（`kizuku-claude`）のインストールのトークンで行う（#282。[ADR-0021](../adr/0021-hootl-agent-development.md)）。インストールのトークンの上限は 1 時間に 5,000 回で、オーナーのトークンと別に数える。App は Rulesets の bypass に入れない（必須のチェックはそのまま効く）。
 
 オーナーが 1 回だけ行う（2026-11-08 に済み。App ID は `5659452`）。
 
-1. GitHub の Settings → Developer settings → GitHub Apps で App を作る。Webhook は使わない。リポジトリの権限は、Worker と Orchestrator の操作に要るもの（Contents・Metadata・Checks・Commit statuses・Actions は Read、Issues・Pull requests は Read and write）にする。`workflow`（Workflows）・Administration・Secrets は付けない
+1. GitHub の Settings → Developer settings → GitHub Apps で App を作る。Webhook は使わない。リポジトリの権限は、AI の操作に要るもの（Metadata・Checks・Commit statuses・Actions は Read、Contents・Issues・Pull requests は Read and write。Contents の書き込みは `merge.sh` の squash merge とブランチの削除に要る）にする。`workflow`（Workflows）・Administration・Secrets は付けない
 2. `K-Kizuku/raft-game` だけにインストールする
 3. 秘密鍵（PEM）を作ってダウンロードし、リポジトリの外の `~/.config/raft-game/agent-app.pem` に置いて `chmod 600` にする（権限が 600 より広いと使わない）。秘密鍵はコミットしない
 4. App ID を [.agents/config.json](../../.agents/config.json) の `github_app.app_id` に、鍵のパスを `github_app.key_path` に書く（`~/` はホームディレクトリ）。環境変数 `AGENT_APP_ID`・`AGENT_APP_KEY` で上書きできる
@@ -90,13 +90,14 @@ chmod 600 ~/.config/raft-game/agent-app.pem
 - 秘密鍵で JWT（RS256。`iat` は 60 秒前、`exp` は 9 分後）を `openssl` で作り、`gh api -H "Authorization: Bearer <JWT>"` でインストールを探してトークンを作る
 - トークンは `~/.config/raft-game/agent-app-token-<App ID>-<OWNER>_<NAME>` にキャッシュし（`umask 077`）、作ってから 50 分で作り直す
 - [spawn-worker.sh](../../scripts/agents/spawn-worker.sh) は、鍵が使えれば `gh-app.sh` を呼ぶ `gh`（`.agents/bin/gh-app/gh`）を Worker の PATH の先頭に置き、`GH_TOKEN`・`GITHUB_TOKEN` を Worker に渡さない。Worker の `gh` は呼ぶたびに有効なトークン（キャッシュか作り直したもの）を使うので、1 時間を超えて動いても切れない。鍵が使えなければ、理由を出して今までどおり起動する
-- `gh-app.sh` は、`GH_TOKEN`・`GITHUB_TOKEN` がすでにあるとき、`gh auth` のとき、役割が `worker`・`orchestrator` でないときは、トークンを入れずに本物の `gh` を実行する。App のトークンを作れないときは、理由を標準エラーに 1 行出して、`gh` のログイン（オーナーのトークン）で実行する
+- `merge.sh`・`review.sh` は、`agentctl` と `ghx`（lib.sh）で呼ぶたびに App のトークンを渡す。`review.sh` はトークンを export しないので、Reviewer（Claude Code）にもトークンは渡らない
+- `gh-app.sh` は、`GH_TOKEN`・`GITHUB_TOKEN` がすでにあるとき、`gh auth` のとき、役割が AI（`worker`・`orchestrator`・`reviewer`）でないときは、トークンを入れずに本物の `gh` を実行する。App のトークンを作れないときは、理由を標準エラーに 1 行出して、`gh` のログイン（オーナーのトークン）で実行する
 - Worker の `git push` は今までどおり SSH（オーナーの鍵）。HTTPS と App のトークンにそろえるかは、オーナーが決める（#176）
 - 手で App のトークンで `gh` を使うときは `scripts/agents/gh-app.sh <gh の引数…>`（`GH_TOKEN` を外して実行する）
 
 ### GitHub の API の上限
 
-GitHub の REST API は、認証済みで 1 時間に 5,000 回まで。オーナーの `gh` のトークンを Orchestrator・Worker・見張りのスクリプト・レビューで共有するので、並行して動かすとすぐに達する（2026-11-07 に 30 分で 2 回達した。#135）。Worker の `gh`・`agentctl` と、Orchestrator のスクリプトの `agentctl` は、AI 用の GitHub App のトークン（上の「AI 用の GitHub App」。#282）に分けた。オーナーのトークンを使うのは、レビュー・マージ・人の操作、App を使えないとき、`merge-train.sh`・`autospawn.sh`・`wt.sh` が直接呼ぶ `gh`（gh のログインを使う）になる。上限に達している間は、`agentctl gate`・`review.sh`・Worker の `gh` が 403 で失敗する。残りの回数と戻る時刻（`reset`、UNIX 時刻）は `gh api rate_limit --jq .resources.core` で見られる（この呼び出しは回数に数えない）。
+GitHub の REST API は、認証済みで 1 時間に 5,000 回まで。オーナーの `gh` のトークンを Orchestrator・Worker・見張りのスクリプト・レビューで共有するので、並行して動かすとすぐに達する（2026-11-07 に 30 分で 2 回達した。#135）。Worker の `gh`・`agentctl`、Orchestrator のスクリプトの `agentctl`、`merge.sh`・`review.sh` は、AI 用の GitHub App のトークン（上の「AI 用の GitHub App」。#282）に分けた。オーナーのトークンを使うのは、人の操作、App を使えないとき、`merge-train.sh`・`autospawn.sh`・`wt.sh` が直接呼ぶ `gh`（gh のログインを使う）になる。上限に達している間は、`agentctl gate`・`review.sh`・Worker の `gh` が 403 で失敗する。残りの回数と戻る時刻（`reset`、UNIX 時刻）は `gh api rate_limit --jq .resources.core` で見られる（この呼び出しは回数に数えない）。
 
 呼び出しの多い所の 1 つが、[review.sh](../../scripts/agents/review.sh) の Codex の GitHub 連携（`--via github`）の結果の待ち。`@codex review` を依頼したあと、次の間隔で PR のコメントを読み直す。間隔は環境変数で変えられる（秒、0 以上の整数）。
 

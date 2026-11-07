@@ -11,7 +11,7 @@
     "allow_fallback": true,
     "fallback_reasons": ["auth_error", "rate_limited", "service_unavailable", "not_installed"],
     "blocking_severities": ["critical", "high"],
-    "trusted_authors": ["K-Kizuku"],
+    "trusted_authors": ["K-Kizuku", "kizuku-claude[bot]"],
     "codex_bot_authors": ["chatgpt-codex-connector[bot]"],
     "carry_over_on_base_merge": true,
     "max_rounds": 2

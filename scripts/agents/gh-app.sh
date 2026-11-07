@@ -9,7 +9,7 @@
 # - App のトークンを使えない（App の設定がない・鍵がない・権限が広い・作れない）ときは、理由を標準エラーに
 #   1 行出して（設定がないときは出さずに）、本物の gh をそのまま実行する（gh のログイン＝オーナーのトークン）
 # - そのまま実行する場合: GITHUB_TOKEN か GH_TOKEN がすでにある、gh auth のサブコマンド、
-#   役割が worker・orchestrator でない、このラッパーの中から呼ばれた（AGENT_GH_APP_ACTIVE）
+#   役割が AI（worker・orchestrator・reviewer）でない、このラッパーの中から呼ばれた（AGENT_GH_APP_ACTIVE）
 # - 本物の gh: AGENT_GH_REAL、なければ PATH の gh（AGENT_GH_SHIM_DIR のディレクトリを除く）
 # - トークンと鍵の中身は標準出力・標準エラーに出さない。git push（SSH）には関係しない
 set -euo pipefail

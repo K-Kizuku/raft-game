@@ -28,7 +28,9 @@
 #   --previous       前回のレビュー記録（JSON かコメントの本文。省略時は PR のコメントの最新のもの）
 #
 # - GitHub への投稿・読み取り（--via github と、記録のコメント）は agentctl comment・agentctl pr（REST）で行う。
-#   GITHUB_TOKEN か GH_TOKEN が必要（どちらもなければ gh auth token を使う）
+#   GITHUB_TOKEN か GH_TOKEN があればそれを使う。どちらもなければ、呼ぶたびに AI 用の GitHub App のトークン
+#   （#282。記録の作者は App。Merge Gate の C5 は trusted_authors で数える）、使えなければ gh auth token を使う。
+#   直接呼ぶ gh も ghx（lib.sh）で同じトークンにする
 # - 役割が orchestrator でなければ拒否する
 # - PR の HEAD を一時的な Worktree に --detach で取り出し、そこでレビューする（終了時に必ず消す）
 # - Codex は timeout（既定 300 秒、AGENT_CODEX_TIMEOUT）付きで実行し、失敗の理由を標準エラーと
@@ -153,7 +155,8 @@ fallback_reason=""
 head_sha=""
 round=""
 
-ensure_github_token
+# トークンは export しない（#282）。agentctl・ghx（lib.sh）が呼ぶたびに作って渡すので、待ちが長くても
+# App のトークンが切れない
 repo="$(repo_slug)"
 agent_config="$(config_file)"
 
@@ -199,7 +202,7 @@ is_rate_limited() {
 rate_limit_wait() {
   local rl remaining reset w
   if command -v gh >/dev/null 2>&1 &&
-    rl="$(gh api rate_limit --jq '"\(.resources.core.remaining) \(.resources.core.reset)"' 2>/dev/null)"; then
+    rl="$(ghx api rate_limit --jq '"\(.resources.core.remaining) \(.resources.core.reset)"' 2>/dev/null)"; then
     remaining="${rl%% *}"
     reset="${rl#* }"
     case "$remaining:$reset" in
@@ -312,7 +315,7 @@ prepare_local() {
   pr_json="{}"
   if [ -z "$head_ref" ] || [ -z "$base_ref" ] || [ -z "$issue_file" ] || [ -z "$previous_file" ]; then
     need gh
-    pr_json="$(gh pr view "$pr" --json headRefOid,baseRefOid,baseRefName,body,comments)" || die "PR #$pr を読めない（gh pr view）"
+    pr_json="$(ghx pr view "$pr" --json headRefOid,baseRefOid,baseRefName,body,comments)" || die "PR #$pr を読めない（gh pr view）"
   fi
 
   if [ -n "$head_ref" ]; then
@@ -341,7 +344,7 @@ prepare_local() {
     issue_no="$(printf '%s' "$pr_json" | jq -r '.body // ""' |
       grep -Eio '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' | head -n 1 | grep -Eo '[0-9]+' || true)"
     if [ -n "$issue_no" ]; then
-      issue_body="$(gh issue view "$issue_no" --json body -q .body)" || die "Issue #$issue_no を読めない"
+      issue_body="$(ghx issue view "$issue_no" --json body -q .body)" || die "Issue #$issue_no を読めない"
     else
       issue_body="（PR の本文に Closes #N がないため、Issue の本文は分からない）"
     fi

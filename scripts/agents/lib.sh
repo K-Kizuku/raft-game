@@ -117,8 +117,8 @@ repo_slug() {
 }
 
 # ---- AI 用の GitHub App のトークン（Issue #282。ADR-0021）----
-# Worker と Orchestrator の GitHub の操作は、オーナーのトークンと別の上限（1 時間に 5,000 回）を持つ
-# GitHub App のインストールのトークンで行う。App ID と秘密鍵のパスは AGENT_APP_ID・AGENT_APP_KEY、
+# AI の役割（Orchestrator・Worker・Reviewer）の GitHub の操作（merge.sh のマージ・review.sh の記録を含む）は、
+# オーナーのトークンと別の上限（1 時間に 5,000 回）を持つ GitHub App のインストールのトークンで行う。App ID と秘密鍵のパスは AGENT_APP_ID・AGENT_APP_KEY、
 # なければ .agents/config.json の github_app.app_id・key_path（App ID がどこにもなければ App を使わない）。
 # 秘密鍵はリポジトリの外に置く（chmod 600）。トークンは ~/.config/raft-game/ の下にキャッシュし（umask 077）、
 # 作ってから 50 分（APP_TOKEN_TTL 秒）で作り直す。
@@ -292,15 +292,12 @@ app_token() {
   printf '%s\n' "$tok"
 }
 
-# app_token_wanted: App のトークンを使う場面なら 0。役割（agent_role）が worker・orchestrator のときだけ。
-# merge.sh（PROG=merge）と review.sh（PROG=review）は、マージとレビュー記録の作者（Merge Gate の C5 の
-# trusted_authors）を変えないよう、今までどおりオーナーのトークンを使う。
+# app_token_wanted: App のトークンを使う場面なら 0。役割（agent_role）が AI（worker・orchestrator・reviewer）のとき。
+# merge.sh・review.sh も Orchestrator が動かすので App のトークンを使う（オーナーの判断。2026-11-08）。
+# レビュー記録の作者は App（kizuku-claude[bot]）になり、Merge Gate の C5 は trusted_authors でそれを数える。
 app_token_wanted() {
-  case "${PROG:-}" in
-    merge | review) return 1 ;;
-  esac
   case "$(agent_role)" in
-    worker | orchestrator) return 0 ;;
+    worker | orchestrator | reviewer) return 0 ;;
   esac
   return 1
 }
@@ -324,9 +321,9 @@ gh_token_value() {
 
 # ensure_gh_token: GITHUB_TOKEN も GH_TOKEN もなければ、トークン（gh_token_value）を GH_TOKEN に入れて export する
 # （#107。agentctl はこの 2 つの環境変数からトークンを読む）。トークンは標準出力・標準エラーに出さない。
-# 役割が worker・orchestrator なら App のトークン（#282）、作れなければ gh auth token の値。
+# 役割が AI（app_token_wanted）なら App のトークン（#282）、作れなければ gh auth token の値。
 # gh がない・未ログインなら何もしない（agentctl が「トークンがない」で止める）。
-# App のトークンは 1 時間で切れるので、長く動くシェルでは使わず、コマンドごとに渡す（agentctl・gh-app.sh）。
+# App のトークンは 1 時間で切れるので、長く動くシェルでは使わず、コマンドごとに渡す（agentctl・ghx・gh-app.sh）。
 ensure_gh_token() {
   if [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ]; then
     return 0
@@ -340,8 +337,8 @@ ensure_gh_token() {
 
 # agentctl を実行する。AGENTCTL → PATH の agentctl → scripts/agents/agentctl.sh の順。
 # GITHUB_TOKEN も GH_TOKEN もなければ、呼ぶたびにトークン（gh_token_value）を作り、GH_TOKEN でその子にだけ渡す
-# （#282。呼び出し側のシェルには export しない。長く動くシェルで App のトークンが切れないように、
-# また、そのシェルから起動する merge.sh・review.sh に App のトークンが渡らないように）。
+# （#282。呼び出し側のシェルには export しない。長く動くシェル（merge-train.sh・review.sh の待ち）で
+# App のトークンが切れないように）。
 # （command -v はこの関数自身にも一致するので、実行ファイルだけを探す type -P を使う）
 agentctl() {
   local exe t=""
@@ -362,17 +359,21 @@ agentctl() {
   fi
 }
 
-# ensure_github_token: review.sh が使う。GITHUB_TOKEN も GH_TOKEN もなければ、gh auth token の値を GH_TOKEN に入れる
-# （agentctl の REST のサブコマンドが使う）。gh がない・ログインしていなければ何もしない。
-# 役割にかかわらずオーナーのトークンだけを使う（#282。レビュー記録の作者を変えない）。
-ensure_github_token() {
-  local t
-  if [ -n "${GITHUB_TOKEN:-}" ] || [ -n "${GH_TOKEN:-}" ]; then
-    return 0
+# ghx <gh の引数…>: gh を役割のトークンで実行する（#282。merge.sh・review.sh が直接呼ぶ gh に使う）。
+# GITHUB_TOKEN も GH_TOKEN もなく、App のトークンを使う場面（app_token_wanted）なら、呼ぶたびに App のトークンを
+# GH_TOKEN でその gh にだけ渡す（呼び出し側のシェルには export しない）。作れなければ（理由は app_token が
+# 標準エラーに出す）、そのまま gh を実行する（gh のログイン＝オーナーのトークン）。
+ghx() {
+  local t="" rc=0
+  if [ -z "${GITHUB_TOKEN:-}" ] && [ -z "${GH_TOKEN:-}" ] && app_token_wanted; then
+    t="$(app_token)" || rc=$?
+    [ "$rc" = 0 ] || t=""
   fi
-  command -v gh >/dev/null 2>&1 || return 0
-  t="$(gh auth token 2>/dev/null || true)"
-  [ -z "$t" ] || export GH_TOKEN="$t"
+  if [ -n "$t" ]; then
+    GH_TOKEN="$t" command gh "$@"
+  else
+    command gh "$@"
+  fi
 }
 
 now_utc() {

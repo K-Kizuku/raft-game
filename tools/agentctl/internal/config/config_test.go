@@ -22,6 +22,10 @@ func TestRepoConfigIsValid(t *testing.T) {
 	if !c.IsTrustedAuthor("k-kizuku") || c.IsTrustedAuthor("other") {
 		t.Error("IsTrustedAuthor")
 	}
+	// Issue #282: AI 用の GitHub App（kizuku-claude）が書いたレビュー記録も C5 で数える（[bot] の付いた名前だけ）
+	if !c.IsTrustedAuthor("kizuku-claude[bot]") || c.IsTrustedAuthor("kizuku-claude") {
+		t.Error("IsTrustedAuthor（kizuku-claude[bot]）")
+	}
 	if !c.IsCodexBot("chatgpt-codex-connector[bot]") || c.IsCodexBot("chatgpt-codex-connector") || c.IsCodexBot("K-Kizuku") {
 		t.Error("IsCodexBot")
 	}
