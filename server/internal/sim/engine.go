@@ -38,6 +38,7 @@ type Config struct {
 	Resources     []ledger.ResourceDef // 台帳の資源（各ノードに同じ定義で 1 つずつ作る）
 	Requests      game.RequestConfig   // 依頼（requests.*）。ゼロ値は依頼なし
 	Score         game.ScoreConfig     // スコア・満足度・クリア判定（scoring.*・satisfaction.*）。ゼロ値は採点しない
+	DemoStorm     *DemoStorm           // デモの嵐（demo.storm）。nil = ステージに書いていない（demo.trigger は bad_request）
 }
 
 // Options はゲームの結果に影響しない動作の切り替え。
@@ -177,6 +178,9 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	if err := e.initStorms(seed); err != nil {
 		return nil, err
 	}
+	if err := e.initDemo(); err != nil {
+		return nil, err
+	}
 	e.cfg.Requests = cfg.Requests.Clone()
 	plan, err := game.PlanRequests(e.cfg.Requests, cfg.Islands, int64(cfg.DurationMs), e.cfg.Resources, Sub(seed, StreamRequests))
 	if err != nil {
@@ -216,6 +220,11 @@ func (e *Engine) Apply(cmd Command) Ack {
 		}
 		if err := e.applyFerry(cmd); err != nil {
 			return e.fail(ferryErrCode(err), err.Error())
+		}
+		e.afterStep()
+	case CmdDemoTrigger:
+		if code, msg := e.applyDemo(cmd); code != "" {
+			return e.fail(code, msg)
 		}
 		e.afterStep()
 	default:

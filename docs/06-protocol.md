@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.6（プロトコルバージョン `1`） |
-| 更新日 | 2026-11-07 |
+| 版 | v0.7（プロトコルバージョン `1`） |
+| 更新日 | 2026-11-08 |
 | 状態 | レビュー済み |
 | 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) / [ADR-0018](./adr/0018-cost-guard.md) / [ADR-0023](./adr/0023-durable-object-fetch-handler.md) |
 
@@ -316,7 +316,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `cmd.relay.load` | `{ "ferryId": "f1", "letterIds": [20] }` | 中継倉庫の手紙を積む | P1 |
 | `cmd.sync` | `{}` | スナップショットを要求する | P0 |
 | `sub.engineer` | `{ "enabled": true, "nodeId": 2 }` | エンジニアモードの購読（`nodeId` の詳細を 2Hz で送る） | P0 |
-| `demo.trigger` | `{ "event": "storm" }` | デモ用。ステージ定義の `demo.storm`（対象の航路・時間）で嵐を起こす。デモ操作が有効なセッションだけ | P0 |
+| `demo.trigger` | `{ "event": "storm" }` | デモ用。ステージ定義の `demo.storm`（対象の航路・時間）で嵐を起こす。デモ操作が有効なセッションだけ。嵐は送った時刻に始まり、`demo.storm.durationMs` だけ続く（予報なし。嵐の途中でもう一度送ると遮断が延びる）。成功すると `ok: true` の `ack`（`t` は起こした時刻）を返し、入力ログに記録してリプレイで再現する | P0 |
 | `ping` | `{ "clientTime": 123456 }` | 15 秒ごと | P0 |
 
 ### 4.1 コマンドの検証とエラーコード
@@ -337,6 +337,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `bad_request` | 形式が不正 |
 
 - `cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` の失敗の `code`: payload の誤り（必須のキーがない・型が違う・`until` が `next_notable` でない）・使えない速度・デモ操作が有効でないセッションの `skip` は `bad_request`。ラウンドの終了後の 3 種類と、Intro（`cmd.game.start` の前）の `skip` は `phase_invalid`（Intro の `pause`・`speed` は受け付ける）
+- `demo.trigger` の失敗の `code`: payload の誤り（`event` が `storm` でない）・デモ操作が有効でないセッション・ステージに `demo.storm` がない → `bad_request`。航行中でない（Intro・終了後）→ `phase_invalid`
 - `rate_limited`: 1 セッションあたり 30 回/秒を超えたコマンド（`hello`・`cmd.*`・`sub.engineer`・`demo.trigger` を数え、`ping` は数えない）。超えた電文は処理せず、`cmdId` があれば `ack`（`ok: false`・`rate_limited`）を返し、`cmdId` のない電文は捨てる。Durable Object も同じ上限で数え、超えた電文は返事をせずに捨てる（[DesignDoc §12.5](./03-design-doc.md#125-寿命と上限)）
 - `ok: true` の `ack` の `t` は、処理した後のゲーム内時刻（`cmd.game.skip` では進めた先）
 

@@ -19,11 +19,13 @@ const (
 )
 
 // Command はプレイヤーのコマンド（プロトコル §4 の type と payload を平らにしたもの）。
+// Type は上の定数・CmdFerryAutoload（autoload.go）・CmdDemoTrigger（demo.go）のどれか。
 type Command struct {
 	Type      CommandType
-	FerryID   string   // load・unload・depart
+	FerryID   string   // load・unload・depart・autoload
 	LetterIDs []uint64 // load・unload
-	To        uint64   // depart
+	To        uint64   // depart・autoload
+	Event     string   // demo.trigger
 }
 
 // Ack はコマンドの結果（プロトコル §5 の ack から cmdId を除いたもの）。
