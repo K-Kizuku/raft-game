@@ -2,7 +2,8 @@ package sim
 
 import "github.com/K-Kizuku/raft-game/server/internal/game"
 
-// RoundResult はラウンドの結果（プロトコル §5.5 の RoundResult のうち T-203 の分）。統計のほかの欄は T-208 が足す。
+// RoundResult はラウンドの結果（プロトコル §5.5 の RoundResult のうち T-203 の分）。統計のほかの欄は TechStats、
+// 「今日の出来事」の材料は StoryFacts が返す（T-208）。
 type RoundResult struct {
 	Score ResultScore `json:"score"`
 	Stars int         `json:"stars"`
