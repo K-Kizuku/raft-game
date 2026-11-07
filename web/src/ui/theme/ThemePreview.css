@@ -1,0 +1,88 @@
+/* デザインの見本の画面（T-420）の配置だけ。開発のときだけ読み込まれる。 */
+.theme-preview {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.theme-preview section {
+  margin-top: var(--space-6);
+}
+
+.theme-preview__group {
+  margin-top: var(--space-4);
+}
+
+.theme-preview__swatches,
+.theme-preview__type {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.theme-preview__type {
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.theme-preview__swatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 10rem;
+}
+
+.theme-preview__chip {
+  display: block;
+  height: 4rem;
+  border: 1px solid rgba(59, 58, 54, 0.2);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+}
+
+.theme-preview__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+}
+
+.theme-preview__panel,
+.theme-preview__bubble,
+.theme-preview__storm {
+  width: 16rem;
+}
+
+.theme-preview__storm {
+  padding: var(--space-4);
+  color: #ffffff;
+  background: linear-gradient(180deg, var(--color-storm), var(--color-storm-deep));
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-paper);
+}
+
+.theme-preview__space {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.theme-preview__space span {
+  display: block;
+  background: var(--color-sea-mid);
+}
+
+.theme-preview__radius {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 8rem;
+  height: 5rem;
+  background: var(--color-paper-deep);
+  border: 2px solid var(--color-ink);
+}
