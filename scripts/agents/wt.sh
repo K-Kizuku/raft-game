@@ -158,12 +158,12 @@ for wt in "$root"/.claude/worktrees/issue-*; do
     reason="push していないコミットがある"
   fi
   if [ -n "$reason" ]; then
-    echo "残す: issue-$n（$reason）"
+    echo "残す: issue-${n}（${reason}）"
     continue
   fi
 
   if [ "$dry_run" = 1 ]; then
-    echo "消す予定: issue-$n（branch=$branch・PR #$pr_no $pr_state）"
+    echo "消す予定: issue-${n}（branch=${branch}・PR #$pr_no ${pr_state}）"
     continue
   fi
 
@@ -180,7 +180,7 @@ for wt in "$root"/.claude/worktrees/issue-*; do
     git worktree unlock "$wt"
   fi
   if ! git worktree remove "$wt"; then
-    echo "残す: issue-$n（git worktree remove に失敗した。--force は使わない）" >&2
+    echo "残す: issue-${n}（git worktree remove に失敗した。--force は使わない）" >&2
     status=1
     continue
   fi
@@ -189,7 +189,7 @@ for wt in "$root"/.claude/worktrees/issue-*; do
   fi
   "$AGENTS_DIR/../dev-slot.sh" release --path "$wt" >/dev/null 2>&1 || true
   rm -f "$run_file"
-  echo "消した: issue-$n（記録: .agents/archive/issue-$n.json）"
+  echo "消した: issue-${n}（記録: .agents/archive/issue-$n.json）"
 done
 
 if [ "$found" = 0 ] && [ -n "$only_issue" ]; then

@@ -110,7 +110,7 @@ PR の中の変更でガードを弱められないように、次の 2 つを�
 
 ### hooks と権限が拒否する操作
 
-[guard-bash.sh](../../.claude/hooks/guard-bash.sh)（Bash）・[guard-write.sh](../../.claude/hooks/guard-write.sh)（Edit・Write・MultiEdit・NotebookEdit）・[guard-mcp.sh](../../.claude/hooks/guard-mcp.sh)（GitHub の MCP）と、`settings.json` の `permissions.deny` の内容。拒否は終了コード 2 と、標準エラーの `[guard] 拒否（AGENT_ROLE=…）: 理由`。
+[guard-bash.sh](../../.claude/hooks/guard-bash.sh)（Bash）・[guard-write.sh](../../.claude/hooks/guard-write.sh)（Edit・Write・MultiEdit・NotebookEdit）・[guard-mcp.sh](../../.claude/hooks/guard-mcp.sh)（GitHub の MCP）と、`settings.json` の `permissions.deny` の内容。拒否は終了コード 2 と、標準エラーの `[guard] 拒否（AGENT_ROLE=…）: 理由`。hooks は fail-closed で、想定外のエラー（`set -e`・`set -u` での終了など）でも終了コード 2 と `[guard] 拒否（内部エラー）: …` を出す（Claude Code は終了コード 2 だけを拒否として扱うため。#107）。
 
 | 対象 | 拒否する操作 | 役割 |
 |---|---|---|
@@ -139,7 +139,7 @@ PR の中の変更でガードを弱められないように、次の 2 つを�
 | ファイル | すべての書き込み | Reviewer |
 | ファイル | 自分の Worktree の外・`.git/` の中への書き込み | Worker |
 | ファイル | 保護されたパス（`.agents/config.json` の `protected_paths`）への書き込み（Edit・Write と、Bash の書き込みのコマンド・リダイレクト・インタプリタのコードの中のパス）。`AGENT_ALLOW_PROTECTED=1` のときだけ許す | Worker |
-| ファイル | `.agents/`・`.claude/worktrees/` 以外への書き込み | Orchestrator |
+| ファイル | `.agents/`・`.claude/worktrees/` 以外への書き込み。ただし、リポジトリの外では Claude Code のこのプロジェクトのメモリのディレクトリ `$HOME/.claude/projects/<キー>/memory/` の下にだけ書ける（`<キー>` はメインの作業ツリーの絶対パスの `/` を `-` に置き換えたもの。例: `/Users/me/work/raft-game` → `-Users-me-work-raft-game`）。別のキー・`memory/` の外（`projects/<キー>/` の直下など）・`..` を含むパス・シンボリックリンク（`<キー>`・`memory` 自身を含む）は拒否する | Orchestrator |
 | 読み取り | `.env`・`.env.*`・`*.secrets*`（`permissions.deny`） | 全員 |
 
 `AGENT_ALLOW_PROTECTED=1` は、Issue の変更予定ファイルが保護されたパスと重なるときに `spawn-worker.sh` が付ける。Merge Gate の C12 で、保護されたパスの変更はレビューで「確認した・ガードを弱めない」と記録されていなければ fail になる。
