@@ -372,6 +372,13 @@ flowchart LR
 - 知らない `key` の通知は表示しません。形の違う `params` は上の既定の言葉で埋めます
 - 表示は新しい 3 件までで、ゲーム内の 10 秒たつと消えます（一時停止中は消えない）
 - 話し手は「〇〇島の郵便局長」です。郵便局長の名前と絵がプロトコルに届くまでは、絵の代わりに島の色の丸に島の名前の頭文字を出します
+- サーバー（セッション）が出すきっかけ: Engine のイベントを観察して作り、きっかけのイベントの直後に入れます（Engine には何も返しません）
+  - `request.created`: `request.created`（話すのは依頼元。`request.*` の 4 つは同じ）。`request.succeeded`・`request.rejected`: `request.updated` の `status` が `succeeded`・`rejected` になった。`request.expired`: `request.updated` の `expired` が真になった（確定と同じイベントなら期限切れを先に出す）
+  - `island.silent`: `island.updated` の時刻が `lastDeliveredAt` から `satisfaction.silenceAfterMs` 以上たっている（話すのはその島）
+  - `node.campaign`: `node.state` の `role` が `candidate` になった（話すのはその島）。開会式の間と `pre_candidate` では出さず、`candidate` のまま Term が上がっても出さない
+  - `leader.elected`: `node.leader_elected`（開会式の最初の代表も出す）。`leader.stepped_down`: `node.stepped_down` の `reason` が `check_quorum`（`higher_term` は新しい代表の `leader.elected` が出るので出さない）
+  - `storm.forecast`: `forecast` の `event` が `storm`（話すのは、嵐の航路 `A-B` の `A` のうち最小の島）
+  - 同じ出来事で 2 回出しません（同じ依頼の確定・期限切れ、同じ音信不通の間）。つなぎ直した後（`snapshot` を送った後）は、それより前の出来事の通知を出しません
 
 ### 7.4 エンジニアモード
 
