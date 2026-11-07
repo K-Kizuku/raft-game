@@ -126,8 +126,10 @@ flowchart LR
 | 容量 | `capacity = max_workers −（in-progress と changes-requested の数）`。`max_workers` は [.agents/config.json](../../.agents/config.json) で 5。同時に動く数を増やすと、CPU（`go test -race`・`pnpm install` の重なり）と API の利用量が増える |
 | 順番 | クリティカルパス（後ろに続く依存の鎖の長さ）の長いものを先に、同じなら番号の小さいものを先に |
 | 競合の回避 | 変更予定ファイルの glob の、最初のワイルドカードより前の部分が、一方が他方の前方一致なら「重なる」とみなす（控えめな判定）。実装中の Issue（`in-progress`〜`ready-to-merge`）と、同時に選ぶ Issue の両方と比べる |
-| 追記だけのファイル | `shared_append_files`（`CLAUDE.md`・`docs/README.md`・`docs/adr/README.md`・`docs/08-implementation-plan.md`）だけの重なりは、競合にせず警告にする。マージの後の Conflict は [Conflict の解消](#conflict-の解消の手順) で扱う |
+| 追記だけのファイル | `shared_append_files`（`CLAUDE.md`・`docs/README.md`・`docs/adr/README.md`・`docs/08-implementation-plan.md`・`docs/02-architecture.md`・`docs/03-design-doc.md`・`docs/04-game-design.md`・`docs/06-protocol.md`・`docs/07-data-spec.md`）だけの重なりは、競合にせず警告にする。値は glob ではなくパスで、変更予定ファイルに同じパスがそのまま書かれたときだけ警告になる（`docs/**` のような glob との重なりは競合のまま）。マージの後の Conflict は [Conflict の解消](#conflict-の解消の手順) で扱う |
 | 数える PR | 作者が `trusted_authors`（か `AGENTCTL_BOT_LOGIN`）のものだけ |
+
+`docs/02-architecture.md`・`docs/03-design-doc.md`・`docs/04-game-design.md`・`docs/06-protocol.md`・`docs/07-data-spec.md` を `shared_append_files` に入れているのは、多くの Issue がこれらの別々の節を少しずつ直すためである（AG-15）。重なりを競合にすると、1 つの Issue が実装中なだけで、ほかの多くの Issue が `conflicts` に入って Worker の枠が空いたままになる。節が別なら Conflict は小さく、起きても Worker が `--mode conflict` で解消できる。`Makefile` やコードのファイルは入れず、重なれば今までどおり選ばない。
 
 `spawn-worker.sh` も、動いている Worker（`.agents/run/issue-*.json` の pid が生きているもの）が `max_workers` 以上なら起動を拒否する。DAG の図は `agentctl plan --mermaid` で出せる。
 
