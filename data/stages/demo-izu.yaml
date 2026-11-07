@@ -1,10 +1,10 @@
-# デモ（伊豆版・サブ）。値は進行表 §8・データ仕様 §5.3・§5.5 のとおり（調整は T-501。T-501b・T-501c で台本どおりに進む値が見つからず、2026-11-08 にメインを五島版に入れ替えた）。
+# デモ（伊豆版・サブ）。値は進行表 §8・データ仕様 §4.5・§5.3・§5.5 のとおり（調整は T-501。T-501b・T-501c で台本どおりに進む値が見つからず、2026-11-08 にメインを五島版に入れ替えた。T-501e で航路をフルメッシュに作り直した）。
 format: 1
 id: demo-izu
 title: 嵐の離島共和国（デモ・伊豆版）
 region: 伊豆諸島（東京都）
 intro:
-  text: 伊豆諸島の 6 つの島。令和 2 年の定期貨客船の欠航率は、利島 17%、御蔵島・青ヶ島 41% です。ヘリコミューターでつながる島々を、3 隻の郵便船で結びます。船の名前は計画書に記載された船名を使用しており、運航会社とは関係ありません。
+  text: 伊豆諸島の 6 つの島。令和 2 年の定期貨客船の欠航率は、利島 17%、御蔵島・青ヶ島 41% です。ヘリコミューターでつながる島々を、6 隻の郵便船で結びます。船の名前は計画書に記載された船名を使用しており、運航会社とは関係ありません。
   provenance: derived
   source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "令和2(2020)年利島17%、御蔵島・青ヶ島41%" }
 durationMs: 120000
@@ -40,43 +40,37 @@ islands:
     color: "#5FB3B3"
     postmaster: { name: ほしぞら局長, tone: elder, provenance: creative }
 
-routes:                         # つながりは計画書のヘリコミューターの区間（§4.5）。時間は Stage 3 の 0.6 倍
-  - a: tokyo-toshima
-    b: tokyo-oshima
-    travelMs: 1800
-    provenance: derived
-    source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航" }
-  - a: tokyo-oshima
-    b: tokyo-miyakejima
-    travelMs: 6000
-    provenance: derived
-    source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航" }
-  - a: tokyo-miyakejima
-    b: tokyo-mikurajima
-    travelMs: 2400
-    provenance: derived
-    source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航" }
-  - a: tokyo-mikurajima
-    b: tokyo-hachijojima
-    travelMs: 5400
-    provenance: derived
-    source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航" }
-  - a: tokyo-hachijojima
-    b: tokyo-aogashima
-    travelMs: 3600
-    provenance: derived
-    source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: MARITIME_TRANSPORT, quote: "青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター(ヘリコプターによる乗客の定期輸送)が運航" }
+routes:                         # 6 島のすべての組（15 本）。航路の形＝Raft のネットワーク（ゲームデザイン §3.5）
+                                # travelMs = 65 + 1.1 × 配置（layout）の距離、10 ms 単位（最短 190・最長 730、比 3.8 倍。データ仕様 §4.5）
+  - { a: tokyo-oshima, b: tokyo-toshima, travelMs: 220, provenance: creative }
+  - { a: tokyo-oshima, b: tokyo-miyakejima, travelMs: 260, provenance: creative }
+  - { a: tokyo-oshima, b: tokyo-mikurajima, travelMs: 380, provenance: creative }
+  - { a: tokyo-oshima, b: tokyo-hachijojima, travelMs: 580, provenance: creative }
+  - { a: tokyo-oshima, b: tokyo-aogashima, travelMs: 730, provenance: creative }
+  - { a: tokyo-toshima, b: tokyo-miyakejima, travelMs: 210, provenance: creative }
+  - { a: tokyo-toshima, b: tokyo-mikurajima, travelMs: 290, provenance: creative }
+  - { a: tokyo-toshima, b: tokyo-hachijojima, travelMs: 480, provenance: creative }
+  - { a: tokyo-toshima, b: tokyo-aogashima, travelMs: 620, provenance: creative }
+  - { a: tokyo-miyakejima, b: tokyo-mikurajima, travelMs: 190, provenance: creative }
+  - { a: tokyo-miyakejima, b: tokyo-hachijojima, travelMs: 390, provenance: creative }
+  - { a: tokyo-miyakejima, b: tokyo-aogashima, travelMs: 540, provenance: creative }
+  - { a: tokyo-mikurajima, b: tokyo-hachijojima, travelMs: 270, provenance: creative }
+  - { a: tokyo-mikurajima, b: tokyo-aogashima, travelMs: 410, provenance: creative }
+  - { a: tokyo-hachijojima, b: tokyo-aogashima, travelMs: 210, provenance: creative }
 
-ferries:                        # 船名は計画書の PORTS の記述（fact）。積載量・速度・母港はゲーム上の設定（§5.5）
+ferries:                        # 船名は計画書の PORTS の記述（fact。6 隻すべて）。積載量・速度・母港はゲーム上の設定（§5.5）。各島に 1 隻（T-501e）
   - { id: f1, name: 橘丸, home: tokyo-oshima, capacity: 4, speed: 1.0, provenance: fact }
   - { id: f2, name: くろしお丸, home: tokyo-miyakejima, capacity: 3, speed: 1.0, provenance: fact }
   - { id: f3, name: あおがしま丸, home: tokyo-hachijojima, capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f4, name: フェリーあぜりあ, home: tokyo-mikurajima, capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f5, name: 新さるびあ丸, home: tokyo-toshima, capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f6, name: セブンアイランド結, home: tokyo-aogashima, capacity: 3, speed: 1.0, provenance: fact }
 
 raft:
   initialLeader: tokyo-oshima
   tickMs: 500
   heartbeatTick: 2
-  electionTick: 16              # 8〜16 秒（進行表 §8）
+  electionTick: 28              # 14〜28 秒（進行表 §8。T-501e）
   checkQuorum: true
   preVote: true
   maxInflightMsgs: 4
@@ -108,10 +102,10 @@ events: []                      # 欠航は止める（データ仕様 §4.4）�
 demo:
   endOnAllCriticalSecured: true
   storm:
-    routes: [[tokyo-oshima, tokyo-miyakejima]]   # 北の 2 島（大島・利島）と南の 4 島に分かれる
-    durationMs: 20000
+    routes: [[tokyo-oshima, tokyo-toshima], [tokyo-oshima, tokyo-miyakejima], [tokyo-oshima, tokyo-mikurajima], [tokyo-oshima, tokyo-hachijojima], [tokyo-oshima, tokyo-aogashima]]   # 代表の大島を孤立させる（大島と残りの 5 島）
+    durationMs: 40000
     flavor:
-      text: 台風が近づき、大島と三宅島の間の海が荒れています
+      text: 台風が近づき、大島のまわりの海が荒れています
       provenance: derived
       source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: DISASTER_LAND_CONSERVATION, quote: "平成25年台風26号による大島町の被害" }
 
