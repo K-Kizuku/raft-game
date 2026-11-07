@@ -162,6 +162,8 @@ sources:
 islands:
   - { id: kagawa-shodoshima, prefecture: 香川県, name: 小豆島, designatedArea: 小豆島, municipalities: [小豆島町, 土庄町], plan: { region: 小豆島地域 } }
   - { id: kagawa-naoshima, prefecture: 香川県, name: 直島, designatedArea: 直島諸島, municipalities: [直島町] }
+  - { id: nagasaki-fukue, prefecture: 長崎県, name: 福江島, designatedArea: 五島列島, municipalities: [五島市], plan: { region: 離島振興対策実施地域, islandName: 五島列島 } }
+  - { id: hokkaido-rishiri, prefecture: 北海道, name: 利尻島, designatedArea: 利尻島, municipalities: [利尻町, 利尻富士町], plan: { region: "礼文島地域、利尻島(利尻町)地域、利尻島(利尻富士町)地域、天売・焼尻地域、奥尻島地域、小島地域" } }
   # plan: { region: <D2 の DESIGNATED_REGION_NAME>, islandName: <D2 の ISLAND_NAME での書き方。省略時は name> }
 ```
 
@@ -175,7 +177,11 @@ islands:
 - `municipalities` が 1 つ以上で、重複も空の要素もない
 - `plan` があれば `plan.region` が空でない
 
-`plan.region` は、地域名を確かめた島（小豆島地域・長崎県・伊豆諸島地域）にだけ書きます。直島と Stage 4 だけの島は、実データで確かめてから足します。
+`plan.region` には、D2（`shinkou-keikaku/01_zentaijouhou.csv`）の `DESIGNATED_REGION_NAME` を実データのとおりに書きます（§3.2 の表の「計画の地域（D2）」）。地域名は、提供データで ETL を通して確かめました（T-205・#119）。
+
+- D2 にその島を含む地域がない島（直島）には、`plan` を書きません
+- 長崎県の D2 の `DESIGNATED_REGION_NAME` は「離島振興対策実施地域」で、`ISLAND_NAME` は「壱岐島、対馬島、平戸諸島、蠣浦大島、松島、中通島、五島列島、高島等を含む長崎県の離島地域」です。福江島・奈留島は個別に書かれていないので、`plan.islandName: 五島列島` で照合します
+- 北海道の `DESIGNATED_REGION_NAME` は `、` や括弧を含むので、引用符で囲みます
 
 再生成するときは、`generatedAt` を人が更新します。
 
@@ -237,26 +243,26 @@ islands:
 
 ### 3.2 使う島（確定）
 
-人口・面積は D1 の令和 8 年 4 月 1 日の値です。
+人口・面積は D1 の令和 8 年 4 月 1 日の値です。「計画の地域（D2）」は `islands-select.yaml` の `plan.region`（§2.6）で、「なし」は `plan` を書かない島です。
 
-| ID | 島 | 都道県 | 指定地域（D1） | 自治体 | 人口 | 面積（km²） | ステージ |
-|---|---|---|---|---|---|---|---|
-| `kagawa-shodoshima` | 小豆島 | 香川県 | 小豆島 | 小豆島町・土庄町 | 25,881（合計） | 153.27（合計） | 1 |
-| `kagawa-teshima` | 豊島 | 香川県 | 小豆島 | 土庄町 | 768 | 14.50 | 1 |
-| `kagawa-naoshima` | 直島 | 香川県 | 直島諸島 | 直島町 | 3,071 | 7.82 | 1, 4 |
-| `nagasaki-fukue` | 福江島 | 長崎県 | 五島列島 | 五島市 | 31,945 | 326.36 | 2, 4, demo-goto |
-| `nagasaki-naru` | 奈留島 | 長崎県 | 五島列島 | 五島市 | 1,927 | 23.68 | 2, demo-goto |
-| `nagasaki-nakadori` | 中通島 | 長崎県 | 五島列島 | 新上五島町 | 16,112 | 168.39 | 2, demo-goto |
-| `tokyo-oshima` | 大島 | 東京都 | 伊豆諸島 | 大島町 | 7,102 | 90.73 | 3, demo-izu |
-| `tokyo-toshima` | 利島 | 東京都 | 伊豆諸島 | 利島村 | 327 | 4.12 | 3, demo-izu |
-| `tokyo-miyakejima` | 三宅島 | 東京都 | 伊豆諸島 | 三宅村 | 2,273 | 55.20 | 3, demo-izu |
-| `tokyo-mikurajima` | 御蔵島 | 東京都 | 伊豆諸島 | 御蔵島村 | 323 | 20.51 | 3, demo-izu |
-| `tokyo-hachijojima` | 八丈島 | 東京都 | 伊豆諸島 | 八丈町 | 7,042 | 69.11 | 3, 4, demo-izu |
-| `tokyo-aogashima` | 青ヶ島 | 東京都 | 伊豆諸島 | 青ヶ島村 | 169 | 5.96 | 3, demo-izu |
-| `niigata-sado` | 佐渡島 | 新潟県 | 佐渡島 | 佐渡市 | 51,492 | 854.81 | 4 |
-| `hokkaido-rishiri` | 利尻島 | 北海道 | 利尻島 | 利尻町・利尻富士町 | 4,462（合計） | 182.08（合計） | 4 |
-| `shimane-dogo` | 島後 | 島根県 | 隠岐島 | 隠岐の島町 | 13,433 | 241.53 | 4 |
-| `nagasaki-tsushima` | 対馬島 | 長崎県 | 対馬島 | 対馬市 | 28,374 | 695.74 | 4 |
+| ID | 島 | 都道県 | 指定地域（D1） | 自治体 | 人口 | 面積（km²） | 計画の地域（D2） | ステージ |
+|---|---|---|---|---|---|---|---|---|
+| `kagawa-shodoshima` | 小豆島 | 香川県 | 小豆島 | 小豆島町・土庄町 | 25,881（合計） | 153.27（合計） | 小豆島地域 | 1 |
+| `kagawa-teshima` | 豊島 | 香川県 | 小豆島 | 土庄町 | 768 | 14.50 | 小豆島地域 | 1 |
+| `kagawa-naoshima` | 直島 | 香川県 | 直島諸島 | 直島町 | 3,071 | 7.82 | なし | 1, 4 |
+| `nagasaki-fukue` | 福江島 | 長崎県 | 五島列島 | 五島市 | 31,945 | 326.36 | 離島振興対策実施地域（`islandName`: 五島列島） | 2, 4, demo-goto |
+| `nagasaki-naru` | 奈留島 | 長崎県 | 五島列島 | 五島市 | 1,927 | 23.68 | 離島振興対策実施地域（`islandName`: 五島列島） | 2, demo-goto |
+| `nagasaki-nakadori` | 中通島 | 長崎県 | 五島列島 | 新上五島町 | 16,112 | 168.39 | 離島振興対策実施地域 | 2, demo-goto |
+| `tokyo-oshima` | 大島 | 東京都 | 伊豆諸島 | 大島町 | 7,102 | 90.73 | 伊豆諸島地域 | 3, demo-izu |
+| `tokyo-toshima` | 利島 | 東京都 | 伊豆諸島 | 利島村 | 327 | 4.12 | 伊豆諸島地域 | 3, demo-izu |
+| `tokyo-miyakejima` | 三宅島 | 東京都 | 伊豆諸島 | 三宅村 | 2,273 | 55.20 | 伊豆諸島地域 | 3, demo-izu |
+| `tokyo-mikurajima` | 御蔵島 | 東京都 | 伊豆諸島 | 御蔵島村 | 323 | 20.51 | 伊豆諸島地域 | 3, demo-izu |
+| `tokyo-hachijojima` | 八丈島 | 東京都 | 伊豆諸島 | 八丈町 | 7,042 | 69.11 | 伊豆諸島地域 | 3, 4, demo-izu |
+| `tokyo-aogashima` | 青ヶ島 | 東京都 | 伊豆諸島 | 青ヶ島村 | 169 | 5.96 | 伊豆諸島地域 | 3, demo-izu |
+| `niigata-sado` | 佐渡島 | 新潟県 | 佐渡島 | 佐渡市 | 51,492 | 854.81 | 新潟県離島振興対策実施地域 | 4 |
+| `hokkaido-rishiri` | 利尻島 | 北海道 | 利尻島 | 利尻町・利尻富士町 | 4,462（合計） | 182.08（合計） | 礼文島地域、利尻島(利尻町)地域、利尻島(利尻富士町)地域、天売・焼尻地域、奥尻島地域、小島地域 | 4 |
+| `shimane-dogo` | 島後 | 島根県 | 隠岐島 | 隠岐の島町 | 13,433 | 241.53 | 隠岐島 | 4 |
+| `nagasaki-tsushima` | 対馬島 | 長崎県 | 対馬島 | 対馬市 | 28,374 | 695.74 | 離島振興対策実施地域 | 4 |
 
 選定の基準と経緯は [A-05](./09-assumptions-and-open-questions.md#a-05) と [R-07](./09-assumptions-and-open-questions.md#r-07) にあります。
 
@@ -266,8 +272,8 @@ islands:
 |---|---|---|---|
 | 1 | 小豆島地域の `MARITIME_TRANSPORT`：「豊島~小豊島~土庄(8km・25分貸客船1便/日)」「高松~直島~豊島(22.6km・35分3~4便/日)」 | 航路と航行時間（§4.3） | `derived` |
 | 1 | 小豆島地域の `NATURAL_CLIMATE_FEATURES`：「温暖、小雨の典型的な瀬戸内式気候」 | 嵐のない穏やかな海のチュートリアルの紹介文 | `fact` |
-| 2 | 長崎県の `NATURAL_CLIMATE_FEATURES`：「台風等の自然災害の影響を受けやすい」 | 嵐のイベントの題材 | `fact` |
-| 2 | 長崎県の `LOCAL_INDUSTRY_TOURISM`：「世界遺産登録された『長崎と天草地方の潜伏キリシタン関連遺産』」 | 島の紹介文 | `fact` |
+| 2 | 長崎県（離島振興対策実施地域）の `NATURAL_CLIMATE_FEATURES`：「台風等の自然災害の影響を受けやすい」 | 嵐のイベントの題材 | `fact` |
+| 2 | 長崎県（離島振興対策実施地域）の `LOCAL_INDUSTRY_TOURISM`：「世界遺産登録された『長崎と天草地方の潜伏キリシタン関連遺産』」 | 島の紹介文 | `fact` |
 | 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「令和2(2020)年利島17%、御蔵島・青ヶ島41%」（定期貨客船の欠航） | 欠航のイベントの確率（§4.4） | `derived` |
 | 3 | 伊豆諸島地域の `MARITIME_TRANSPORT`：「青ヶ島-八丈島-御蔵島-三宅島-大島-利島の各区間においては、ヘリコミューター … が運航」 | 島どうしのつながり（どの島とどの島に航路を引くか）（§4.5） | `derived` |
 | 3 | 伊豆諸島地域の `PORTS`：「… あおがしま丸、橘丸、フェリーあぜりあ、… 新さるびあ丸、セブンアイランド結、… くろしお丸が就航」 | 船の名前（「計画書に記載された船名を使用しており、運航会社とは関係ありません」と注記する） | `fact` |
@@ -507,7 +513,7 @@ events:
     flavor:
       text: 台風が近づき、福江島のまわりの海が荒れています
       provenance: derived
-      source: { dataset: mlit-ritou-2026, region: 長崎県, field: NATURAL_CLIMATE_FEATURES, quote: "台風等の自然災害の影響を受けやすい" }
+      source: { dataset: mlit-ritou-2026, region: 離島振興対策実施地域, field: NATURAL_CLIMATE_FEATURES, quote: "台風等の自然災害の影響を受けやすい" }
   - kind: cancellation          # Stage 3（P1）：欠航率から決める欠航。利島・御蔵島・青ヶ島の 3 つを書く
     island: tokyo-toshima
     probabilityPermille: 170    # 欠航率 17% × 10
