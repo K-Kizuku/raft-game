@@ -82,7 +82,7 @@ events:
       source: { dataset: mlit-ritou-2026, region: 離島振興対策実施地域, field: NATURAL_CLIMATE_FEATURES, quote: "台風等の自然災害の影響を受けやすい" }
 
 scoring:
-  target: { successes: 5, score3: 1400 }
+  target: { successes: 2, score3: 1400 }   # ★1 の目標は novice で決める（T-501g #332。進行表 §4）
   points: { normal: 100, critical: 300, late: 30, rejected: 0, expiredPenalty: 50 }
   ferryCostMsPerPoint: 2000
   fairnessPerSatisfaction: 5

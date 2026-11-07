@@ -47,7 +47,13 @@ const stage1NoviceSeeds = 200
 // stage1Stars は、Stage 1 をシード 1..stage1NoviceSeeds でボット name に遊ばせ、★が minStars 以上のシードの数を返す。
 func stage1Stars(t *testing.T, name string, minStars int) int {
 	t.Helper()
-	st := repoStage(t, "stage1")
+	return stageStars(t, "stage1", name, minStars)
+}
+
+// stageStars は、ステージ id をシード 1..stage1NoviceSeeds でボット name に遊ばせ、★が minStars 以上のシードの数を返す。
+func stageStars(t *testing.T, id, name string, minStars int) int {
+	t.Helper()
+	st := repoStage(t, id)
 	runs := playGreedySeeds(t, name, st, stage1NoviceSeeds)
 	logGreedySummary(t, name+"/"+st.ID, runs)
 	n := 0
@@ -84,6 +90,26 @@ func TestRepoStage1SpreadBalance(t *testing.T) {
 	t.Run("greedy", func(t *testing.T) {
 		t.Parallel()
 		if n := stage1Stars(t, "greedy", 3); n*10 > stage1NoviceSeeds*9 {
+			t.Fatalf("greedy: ★3 のシード = %d / %d（90%% より多い）", n, stage1NoviceSeeds)
+		}
+	})
+}
+
+// Stage 2 も、初心者のボット novice を基準に難しさを下げる（T-501g #332）。シード 1〜200 で、
+// novice の★1 の割合が 50% 以上で、上手な人の greedy が★3 に届く割合が 90% 以下（上手な人に伸びしろを残す）。
+//
+//	go -C server test -tags balance -count=1 -run Novice -v ./internal/stage/...
+func TestRepoNoviceStage2Balance(t *testing.T) {
+	t.Parallel()
+	t.Run("novice", func(t *testing.T) {
+		t.Parallel()
+		if n := stageStars(t, "stage2", "novice", 1); n*10 < stage1NoviceSeeds*5 {
+			t.Fatalf("novice: ★1 以上のシード = %d / %d（50%% 未満）", n, stage1NoviceSeeds)
+		}
+	})
+	t.Run("greedy", func(t *testing.T) {
+		t.Parallel()
+		if n := stageStars(t, "stage2", "greedy", 3); n*10 > stage1NoviceSeeds*9 {
 			t.Fatalf("greedy: ★3 のシード = %d / %d（90%% より多い）", n, stage1NoviceSeeds)
 		}
 	})
