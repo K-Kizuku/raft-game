@@ -509,7 +509,7 @@ invoked_script() {
 }
 
 # agentctl_write_sub <セグメントの単語…>: agentctl の書き込みのサブコマンド（comment・state・claim・attempt）を
-# 呼ぶ形なら、そのサブコマンドを出す（なければ空。--dry-run があれば空）。
+# 呼ぶ形なら、そのサブコマンドを出す（なければ空。有効な --dry-run が true なら空。agentctl_dry_run を参照）。
 # 見る形: agentctl …（.agents/bin/agentctl・lib.sh の関数を含む）、scripts/agents/agentctl.sh …、
 # bash agentctl.sh …、go … run …（go -C tools/agentctl run . … など。cd してからの go run . も
 # 見分けられないので、go run では agentctl の有無を問わない）。
@@ -540,19 +540,62 @@ agentctl_write_sub() {
       ;;
   esac
   [ "$start" -ge 0 ] || return 0
-  for x in "${w[@]:start}"; do
-    case "$x" in
-      --dry-run | -dry-run | --dry-run=true | -dry-run=true) return 0 ;;
-    esac
-  done
-  for x in "${w[@]:start}"; do
-    case "$x" in
+  local sub="" subi=-1
+  for ((i = start; i < ${#w[@]}; i++)); do
+    case "${w[$i]}" in
       comment | state | claim | attempt)
-        printf '%s\n' "$x"
-        return 0
+        sub="${w[$i]}"
+        subi=$i
+        break
         ;;
     esac
   done
+  [ -n "$sub" ] || return 0
+  agentctl_dry_run "$sub" "${w[@]:subi+1}" && return 0
+  printf '%s\n' "$sub"
+}
+
+# agentctl_dry_run <サブコマンド> <サブコマンドより後の単語…>: 最後に有効な --dry-run が true と判定できるときだけ 0。
+# Go の flag と同じく、値をとるフラグ（--reason・--repo・--pr・--cause・--worker・--session・--config・--input・
+# --body・--body-file など）の値を飛ばして読み、同じフラグが何度あれば最後のものを使う。真偽値のフラグとして扱うのは
+# --dry-run と claim の --resume だけで、ほかのフラグ（未知のものを含む）は値をとるものとみなす（値を読み違えて
+# --dry-run を見落とすのは拒否の側に倒れるだけなので安全）。判定できない形は拒否する: 元のコマンドの引用符・\
+# （単語の区切りは引用符を取り除いた後のものなので、`--reason "a --dry-run"` を見分けられない）、$・` を含む単語、
+# --（フラグの終わり）、--dry-run=<true・false 以外>。state・claim・attempt は位置引数の後もフラグを読む
+# （parseInterleaved）。comment は読み方がわからないので、最初の位置引数より後は読まない。
+agentctl_dry_run() {
+  local sub="$1" x name dry=0 skip=0
+  shift
+  case "$raw" in
+    *[\'\"\\]*) return 1 ;;
+  esac
+  for x in "$@"; do
+    case "$x" in
+      *[\$\`]*) return 1 ;;
+    esac
+    if [ "$skip" = 1 ]; then
+      skip=0
+      continue
+    fi
+    case "$x" in
+      --) return 1 ;;
+      -*)
+        name="${x#-}"
+        name="${name#-}"
+        case "$name" in
+          dry-run) dry=1 ;;
+          dry-run=true) dry=1 ;;
+          dry-run=false) dry=0 ;;
+          dry-run=*) return 1 ;;
+          *=*) ;;
+          resume) [ "$sub" = claim ] || skip=1 ;;
+          *) skip=1 ;;
+        esac
+        ;;
+      *) [ "$sub" = comment ] && break ;;
+    esac
+  done
+  [ "$dry" = 1 ]
 }
 
 WRITERS=" cp mv tee install rsync ln touch rm rmdir mkdir truncate dd patch chmod chown unzip tar python python3 node perl ruby "

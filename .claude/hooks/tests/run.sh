@@ -372,6 +372,25 @@ agentctl_write_cmds=(
   "scripts/agents/agentctl.sh attempt 5 --cause review:F1 --repo o/r"
   "go -C tools/agentctl run . attempt 5 --cause x --repo o/r"
   "agentctl comment --dry-run=false --pr 12"
+  # --dry-run の字句があっても、有効な値が true でなければ拒否する（PR #87 の Codex の P1）
+  "agentctl state 5 in-review --repo o/r --reason '--dry-run'"
+  "agentctl state 5 in-review --repo o/r --reason --dry-run"
+  "agentctl state 5 in-review --repo o/r --dry-run --dry-run=false"
+  "agentctl state 5 in-review --repo o/r --dry-run=false"
+  "scripts/agents/agentctl.sh claim 5 --worker --dry-run --repo o/r"
+  "agentctl attempt 5 --cause --dry-run --repo o/r"
+  "agentctl comment --pr 12 --body --dry-run"
+  "agentctl comment --pr 12 --body-file --dry-run"
+  "agentctl state 5 in-review --repo o/r --session=x --config --dry-run"
+  "agentctl state 5 in-review --repo o/r --dry-run=1"
+  "agentctl state 5 in-review --repo o/r --dry-run=yes"
+  "agentctl state 5 in-review --repo o/r --reason \"a --dry-run\""
+  "agentctl state 5 in-review --repo o/r --reason 'a' --dry-run"
+  "agentctl state 5 in-review --repo o/r -- --dry-run"
+  "agentctl state 5 in-review --repo o/r \$DRY"
+  "agentctl state 5 in-review --repo o/r --dry-run=\$X"
+  "agentctl --dry-run state 5 in-review --repo o/r"
+  "agentctl comment 12 --dry-run"
 )
 for role in worker reviewer; do
   for cmd in "${agentctl_write_cmds[@]}"; do
@@ -391,6 +410,13 @@ for role in worker reviewer orchestrator; do
     "scripts/agents/agentctl.sh state 5 in-review --repo o/r --pr 12 --dry-run" \
     "go -C tools/agentctl run . claim 5 --repo o/r --dry-run" \
     "scripts/agents/agentctl.sh attempt 5 --cause x --repo o/r --dry-run" \
+    "agentctl state 5 in-review --repo o/r --dry-run" \
+    "agentctl state 5 in-review --repo o/r --dry-run=true" \
+    "agentctl state 5 in-review --dry-run=false --repo o/r -dry-run" \
+    "agentctl state --dry-run 5 in-review --reason=x --pr 12 --cause ci:ci-ok --repo o/r" \
+    "agentctl claim 5 --resume --dry-run --worker issue-5 --session s --repo o/r" \
+    "agentctl attempt 5 --config c.json --input s.json --cause x --dry-run" \
+    "agentctl comment --repo o/r --pr 12 --body x --dry-run" \
     "scripts/agents/agentctl.sh plan --repo o/r --json" \
     "scripts/agents/agentctl.sh recover --repo o/r --json" \
     "go -C tools/agentctl run . gate --repo o/r --pr 12 --json --input $tmp/pass.json" \
