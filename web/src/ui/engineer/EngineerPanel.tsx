@@ -9,6 +9,7 @@ import type { ReactElement } from "react";
 import type { Letter, LetterEntry } from "../../protocol/index.ts";
 import { gameStore, lettersAtPort, lettersOnFerry, useGameStore } from "../../state/index.ts";
 import type { UiSelection, World } from "../../state/index.ts";
+import { engineerModeStore } from "../../state/engineerMode.ts";
 import { formatDuration } from "../../app/format.ts";
 import { LetterIcon } from "../letters/LetterIcon.tsx";
 import { isEngineerToggleKey } from "./engineerKey.ts";
@@ -39,6 +40,14 @@ export function EngineerPanel(): ReactElement {
   const targetId = useMemo(() => targetNodeId(world, selectedIslandId), [world, selectedIslandId]);
   const subscribedId = open ? targetId : null;
   useEngineerSubscription(subscribedId, subscribe);
+
+  // 開閉をマップ（React の外）が読める外部ストアに写す。ゲーム画面を離れたら閉じた状態に戻す（T-712）。
+  useEffect(() => {
+    engineerModeStore.getState().setOpen(open);
+    return () => {
+      engineerModeStore.getState().setOpen(false);
+    };
+  }, [open]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {

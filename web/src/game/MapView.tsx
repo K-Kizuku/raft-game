@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
 
 import { gameStore, useGameStore } from "../state/index.ts";
+import { engineerModeStore } from "../state/engineerMode.ts";
 import { RaftTerm } from "../ui/terms/RaftTerm.tsx";
 import { roleMarkOf } from "./model/scene.ts";
 import type { MapHandle } from "./pixi/mapRenderer.ts";
@@ -28,7 +29,13 @@ function LoadedMap(): ReactElement {
     let disposed = false;
     let handle: MapHandle | null = null;
     import("./pixi/mapRenderer.ts")
-      .then(({ mountMap }) => mountMap(host, { store: gameStore, now: () => performance.now() }))
+      .then(({ mountMap }) =>
+        mountMap(host, {
+          store: gameStore,
+          now: () => performance.now(),
+          engineer: () => engineerModeStore.getState().open,
+        }),
+      )
       .then(
         (mounted) => {
           // 載せている途中で後始末された（StrictMode の二重の実行・すぐ画面を離れた）ならすぐ壊す。

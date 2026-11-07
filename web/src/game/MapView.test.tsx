@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
 import { gameStore } from "../state/index.ts";
+import { engineerModeStore } from "../state/engineerMode.ts";
 import { setShowRaftTerms } from "../ui/terms/preference.ts";
 import { MapView } from "./MapView.tsx";
 import type { MapHandle } from "./pixi/mapRenderer.ts";
@@ -182,5 +183,23 @@ describe("MapView", () => {
     expect(h.destroy).toHaveBeenCalledTimes(1);
     expect(screen.getByText("マップ（準備中）")).toBeDefined();
     expect(screen.queryByRole("navigation", { name: "島を選ぶ" })).toBeNull();
+  });
+
+  it("MV-M1 mountMap に engineer を渡し、engineerModeStore の値を返す", async () => {
+    mountMock.mockResolvedValue(handle());
+    render(<MapView />);
+    load();
+    await waitFor(() => expect(mountMock).toHaveBeenCalledTimes(1));
+    const [, deps] = mountMock.mock.calls[0] ?? [];
+    const engineer = deps?.engineer;
+    expect(typeof engineer).toBe("function");
+    try {
+      engineerModeStore.getState().setOpen(false);
+      expect(engineer?.()).toBe(false);
+      engineerModeStore.getState().setOpen(true);
+      expect(engineer?.()).toBe(true);
+    } finally {
+      engineerModeStore.getState().setOpen(false);
+    }
   });
 });
