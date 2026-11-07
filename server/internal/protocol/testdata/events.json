@@ -1,0 +1,34 @@
+{
+  "clock": { "t": 61200, "speed": 1, "paused": false, "endsAt": 210000 },
+  "events": [
+    { "seq": 1, "t": 0, "type": "phase.changed", "phase": "opening" },
+    { "seq": 2, "t": 57000, "type": "letter.created", "letter": {
+        "id": 31, "kind": "raft", "from": 1, "to": 2, "createdAt": 57000,
+        "loc": { "type": "port", "islandId": 1 }, "label": "append",
+        "raft": { "type": "MsgApp", "term": 2, "logTerm": 2, "index": 13, "commit": 13,
+          "entries": [ { "index": 14, "term": 2, "type": "normal", "summary": "stall.reserve stage2-0005" } ],
+          "reject": false, "rejectHint": 0, "stale": false } } },
+    { "seq": 3, "t": 57500, "type": "letter.moved", "letterId": 31, "loc": { "type": "ferry", "ferryId": "f1" } },
+    { "seq": 4, "t": 61000, "type": "letter.delivered", "letterId": 31, "islandId": 2, "accepted": true },
+    { "seq": 5, "t": 61000, "type": "letter.dropped", "letterId": 29, "reason": "superseded" },
+    { "seq": 6, "t": 61000, "type": "letter.stale", "letterId": 30 },
+    { "seq": 7, "t": 58000, "type": "ferry.departed", "ferryId": "f1", "from": 1, "to": 2, "departAt": 58000, "arriveAt": 61000 },
+    { "seq": 8, "t": 61000, "type": "ferry.arrived", "ferryId": "f1", "islandId": 2, "readyAt": 62500 },
+    { "seq": 9, "t": 61000, "type": "ferry.broken", "ferryId": "f2", "until": 80000 },
+    { "seq": 10, "t": 80000, "type": "ferry.repaired", "ferryId": "f2", "until": 80000 },
+    { "seq": 11, "t": 70000, "type": "route.blocked", "routeIds": ["1-2", "1-3"], "until": 100000 },
+    { "seq": 12, "t": 100000, "type": "route.unblocked", "routeIds": ["1-2", "1-3"], "until": 100000 },
+    { "seq": 13, "t": 60000, "type": "forecast", "event": "storm", "at": 70000, "routeIds": ["1-2"] },
+    { "seq": 14, "t": 0, "type": "node.state", "id": 1, "role": "leader", "term": 2, "lead": 1, "commit": 14, "applied": 14, "lastIndex": 15 },
+    { "seq": 15, "t": 0, "type": "node.leader_elected", "id": 1, "term": 2 },
+    { "seq": 16, "t": 72000, "type": "node.stepped_down", "id": 1, "term": 2, "reason": "check_quorum" },
+    { "seq": 17, "t": 10000, "type": "request.created", "request": {
+        "id": "stage2-0005", "origin": 2, "kind": "stall.reserve", "resource": "stall:main", "critical": false,
+        "createdAt": 10000, "deadline": 70000, "status": "received", "expired": false, "result": null } },
+    { "seq": 18, "t": 61000, "type": "request.updated", "id": "stage2-0005", "status": "succeeded", "expired": false, "result": "ok" },
+    { "seq": 19, "t": 61000, "type": "ledger.applied", "islandId": 2, "index": 14, "reqId": "stage2-0005", "result": "rejected", "reason": "full" },
+    { "seq": 20, "t": 61000, "type": "island.updated", "id": 2, "satisfaction": 70, "lastDeliveredAt": 61000 },
+    { "seq": 21, "t": 61000, "type": "score.updated", "total": 520, "successes": 3, "criticalSecured": ["firework:a"] },
+    { "seq": 22, "t": 61000, "type": "notice", "islandId": 2, "key": "island.thanks", "params": { "name": "小豆島", "count": 3 } }
+  ]
+}
