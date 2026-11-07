@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 と H-5 の測定を実施済み。500 ms の反映をメタデータで確認し、s-25 で WS 再測定が成功。limits.cpuMs の本番向け暫定候補は 500 ms。次は H-6 で使用済み 20 セッションの最終停止と資源の削除。後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 / H-5 の測定を実施済み。H-6 では 19 セッションの停止を確認、s-16 はタイムアウトで未確認。アプリ一覧の active / starting はともに 0。次は s-16 の再確認と、対象を限定したクラウド資源の削除。ローカルの後片付け・費用確認・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -23,7 +23,7 @@
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
 | H-5 limits.cpuMs の判断 | 暫定値の検証完了 | cpu_ms=500 を確認、WS 再測定成功、終了コード 0。CPU は Worker が 1e9 で 503、DO は 1e9 まで成功。本体での最終調整は T-605 に残す |
-| H-6 後片付け・費用確認 | 停止確認の手順を案内 | 使用済み 20 セッションの全停止と資源一覧・削除コマンドのヘルプを次に取得する。削除・翌日の費用確認は未実施 |
+| H-6 後片付け・費用確認 | 途中 | 19/20 の running=false を確認。s-16 はタイムアウト。アプリ active=0 / starting=0。削除対象と手元の CLI の引数を確認済み、再確認と削除を次に案内 |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
 
@@ -1244,6 +1244,97 @@ pnpm -C spike exec cf containers images delete --help
 停止スクリプトは固定のスパイク URL と既知の番号だけに要求する。トークンはローカルファイルから読み、表示しない。エラーの番号があっても残りの番号の停止を試し、final-stop.json に結果を保存する。JavaScript の構文は確認したが、API 要求と一覧取得はユーザーの実行結果をまだ受領していない。
 
 H-6 の資源削除、ローカルの後片付け、2026-11-08 (JST) の費用確認は未完了。測定の記録と ADR をまとめる PR も引き続き作成予定。
+
+## 2026-11-07: H-6 の停止確認と削除対象の一覧を受領
+
+### 最終停止確認: 19 件成功、s-16 は未確認
+
+プロンプト表示は 17:50:54。s-1〜s-10 と s-17〜s-25 の 19 件は stopHTTP=200 / statusHTTP=200 / running=false。s-16 は `The operation was aborted due to timeout`。最終出力の allStopped=false をそのまま記録し、20 件すべて停止したとは扱わない。
+
+タイムアウトしたのが stop の要求・本文取得・status の要求のどの段階だったかは、この出力だけでは判別できない。タイムアウトを起動中の証拠とも扱わない。次に s-16 の status を取得し直す。
+
+### 500 ms 再測定の日時と stopFailures
+
+| 項目 | 結果 |
+|---|---|
+| startedAt | 2026-11-07 17:48:02.685 JST |
+| finishedAt | 2026-11-07 17:50:49.516 JST |
+| 所要 | 166.831 秒 |
+| sessions | [25] |
+| stopFailures | [] |
+
+### 19:41 のアプリケーションとイメージの一覧
+
+一覧取得のプロンプト表示は 19:41:42。アプリケーションは 1 件で、対象名は raft-game-spike-server、ID は 065546f5b8c94deeae247939d516c458。scheduling_policy=durable_object、health.instances.active=0 / starting=0。
+
+このアプリ全体の状態は、s-16 の HTTP による停止確認とは別の証拠。取得時点で active / starting は 0 だが、s-16 の最終確認を成功に書き換えない。
+
+レジストリのイメージも 1 件。名前は cloudflare-build/b8366d8bfb35/raft-game-spike-server-server、タグは c4818d2dac5b だけだった。アカウント ID は公開記録に転載しない。
+
+### 実際の CLI の削除引数
+
+| コマンド | 確認した引数 |
+|---|---|
+| workers delete | worker-id は ID または名前。--force で確認入力を省略。--delete-with-references は他の Worker の参照があっても削除する指定 |
+| containers applications delete | application-id が位置引数。--force に対応 |
+| containers images delete | IMAGE:TAG が位置引数。削除対象はレジストリのタグ。--force に対応 |
+
+### 次の手順: s-16 の確認後、スパイクのクラウド資源を削除する
+
+#15 の H-6 とユーザーの継続した指示の範囲で、ユーザーが実行する。s-16 の GET が 200 / running=false の場合に削除へ進む。--force は CLI の確認入力の省略に使い、--delete-with-references は使わない。
+
+Worker を削除した後、アプリが残っていれば ID と名前の両方が一致することを確認して削除する。既に消えていればスキップする。レジストリも指定したイメージ名の既知のタグだけを対象にする。最後に Worker・アプリ・タグの一覧で対象が残っていないことを確認し、cloud-cleanup.json に保存する。
+
+```fish
+node --input-type=module -e '
+import fs from "node:fs";
+const token = JSON.parse(fs.readFileSync("spike/spike.secrets.json", "utf8")).SPIKE_TOKEN;
+const r = await fetch("https://raft-game-spike.kizuku.workers.dev/spike/s/16/status",
+  {headers: {Authorization: "Bearer " + token}, signal: AbortSignal.timeout(30000)});
+const body = await r.json();
+const row = {at: new Date().toISOString(), session: 16, statusHTTP: r.status, running: body.running};
+fs.writeFileSync("spike/.cloudflare/final-stop-s16-retry.json", JSON.stringify(row, null, 2));
+console.log(JSON.stringify(row));
+if (r.status !== 200 || body.running !== false) process.exitCode = 1;
+'
+and node -e '
+const fs = require("node:fs");
+const {execFileSync} = require("node:child_process");
+const cf = (...args) => execFileSync("pnpm", ["-C", "spike", "exec", "cf", ...args],
+  {encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 16 * 1024 * 1024});
+const list = (...args) => {
+  const x = JSON.parse(cf(...args));
+  const a = Array.isArray(x) ? x : x.result ?? x.workers ?? x.applications ?? x.images;
+  if (!Array.isArray(a)) throw new Error("Unexpected list response: " + args.join(" "));
+  return a;
+};
+const worker = "raft-game-spike", appName = "raft-game-spike-server";
+const appId = "065546f5b8c94deeae247939d516c458";
+const image = "cloudflare-build/b8366d8bfb35/raft-game-spike-server-server", tag = "c4818d2dac5b";
+console.log(cf("workers", "delete", worker, "--force"));
+const app = list("containers", "applications", "list").find(a => a.id === appId || a.name === appName);
+if (app) {
+  if (app.id !== appId || app.name !== appName) throw new Error("Application identity mismatch");
+  console.log(cf("containers", "applications", "delete", appId, "--force"));
+} else console.log("Spike application already absent");
+const img = list("containers", "images", "list").find(i => i.name === image);
+if (img?.tags?.includes(tag)) console.log(cf("containers", "images", "delete", image + ":" + tag, "--force"));
+else console.log("Spike image tag already absent");
+const report = {
+  at: new Date().toISOString(),
+  remainingWorkers: list("workers", "list").filter(w => w.name === worker).map(w => ({id: w.id, name: w.name})),
+  remainingApplications: list("containers", "applications", "list").filter(a => a.id === appId || a.name === appName).map(a => ({id: a.id, name: a.name})),
+  remainingImageTags: list("containers", "images", "list").filter(i => i.name === image).flatMap(i => (i.tags ?? []).map(t => image + ":" + t))
+};
+fs.writeFileSync("spike/.cloudflare/cloud-cleanup.json", JSON.stringify(report, null, 2));
+console.log(JSON.stringify(report, null, 2));
+if (report.remainingWorkers.length || report.remainingApplications.length || report.remainingImageTags.length) process.exitCode = 1;
+'
+```
+
+JavaScript の構文を確認した。CLI は引数の配列で起動し、コマンド文字列をシェルに再解釈させない。途中のエラーは後続の削除に進まず報告する。s-16 の確認・クラウド資源の削除はまだ実行結果を受け取っていない。
+
+クラウドの削除後に、ダッシュボードで DO も含めた残存の確認、ローカルのシークレット・対象イメージ・停止済み中継コンテナの後片付け、2026-11-08 (JST) の費用確認を行う。ADR の更新と最終 PR の作成も継続中。
 
 ## 測定前に確定・確認する事項
 
