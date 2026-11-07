@@ -45,6 +45,9 @@ type Review struct {
 	TrustedAuthors     []string `json:"trusted_authors"`
 	// CodexBotAuthors は、Codex の GitHub 連携の結果（要約のコメント・行コメント）として信頼する作者（Issue #82）。
 	CodexBotAuthors []string `json:"codex_bot_authors"`
+	// CarryOverOnBaseMerge は、HEAD より前の SHA のレビュー記録を、そのあとが既定のブランチの取り込みだけで
+	// PR の自分の変更が同じときに引き継ぐこと（Merge Gate の C6。Issue #120）。既定は false。
+	CarryOverOnBaseMerge bool `json:"carry_over_on_base_merge"`
 }
 
 // Config は `.agents/config.json` の内容。
