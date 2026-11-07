@@ -12,12 +12,13 @@ import type {
 } from "./ports.ts";
 import { createHandler } from "./router.ts";
 import type { StageSummary } from "./stages.ts";
+import { stageFixture } from "./test-stages.ts";
 
 const ORIGIN = "https://raft.example";
 const SESSION_ID = "s_abc.def" as VerifiedSessionId;
 
 const STAGES: readonly StageSummary[] = [
-  {
+  stageFixture({
     id: "stage1",
     title: "はじめての郵便船",
     region: "瀬戸内（香川県）",
@@ -25,7 +26,7 @@ const STAGES: readonly StageSummary[] = [
     ferries: 1,
     durationMs: 180000,
     unlock: null,
-  },
+  }),
 ];
 
 interface FakeOptions {
@@ -357,6 +358,40 @@ describe("POST /api/sessions", () => {
 
       expect(res.status).toBe(429);
       expect(request.bodyUsed).toBe(false);
+    });
+  });
+
+  describe("SS デモ用のステージ", () => {
+    const WITH_DEMO: readonly StageSummary[] = [
+      ...STAGES,
+      stageFixture({ id: "demo-goto", demo: true }),
+    ];
+
+    it("SS-1 DEMO_CONTROLS なしで demo のステージの stageId は 400 で、checkRateLimit だけを呼ぶ", async () => {
+      const fakes = makeFakes();
+      const res = await handlerFor({ ...fakes.deps, stages: WITH_DEMO })(
+        postJson({ stageId: "demo-goto" }),
+        {},
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: "bad_request" });
+      expect(fakes.names()).toEqual(["checkRateLimit"]);
+    });
+
+    it.each<[string, Record<string, unknown>]>([
+      ["demo: true あり", { stageId: "demo-goto", demo: true }],
+      ["demo なし", { stageId: "demo-goto" }],
+    ])('SS-2 DEMO_CONTROLS が "1" なら %s で 201', async (_name, body) => {
+      const fakes = makeFakes();
+      const res = await handlerFor({ ...fakes.deps, stages: WITH_DEMO })(postJson(body), {
+        DEMO_CONTROLS: "1",
+      });
+
+      expect(res.status).toBe(201);
+      const init = fakes.calls.find((call) => call.name === "init")?.args[1] as SessionInit;
+      expect(init.stageId).toBe("demo-goto");
+      expect(init.demo).toBe(body["demo"] === true);
     });
   });
 });

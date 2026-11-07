@@ -6,7 +6,7 @@
 
 import { errorResponse, json, readJsonBody } from "./http.ts";
 import type { RequestContext, WorkerDeps } from "./ports.ts";
-import type { StageSummary } from "./stages.ts";
+import { type StageSummary, visibleStages } from "./stages.ts";
 
 const MAX_BODY_BYTES = 4096;
 const MAX_TURNSTILE_TOKEN_LENGTH = 2048;
@@ -85,7 +85,8 @@ export async function handleCreateSession(
 
   const read = await readJsonBody(ctx.request, MAX_BODY_BYTES);
   if (!read.ok) return badRequest();
-  const body = parseBody(read.value, deps.stages, ctx.env.DEMO_CONTROLS);
+  // stageId は、この Worker の GET /api/stages が返すもの（一般公開ならデモ用を除く）だけを受け付ける。
+  const body = parseBody(read.value, visibleStages(deps.stages, ctx.env), ctx.env.DEMO_CONTROLS);
   if (body === null) return badRequest();
 
   if ((await security.verifyTurnstile(body.turnstileToken, ctx)) !== "ok") {
