@@ -12,39 +12,46 @@ set -euo pipefail
 # lib.sh を読む前の失敗も拒否にする（lib.sh を読むと、lib.sh の trap に置き換わる）
 trap 'echo "[guard] 拒否（内部エラー）: lib.sh を読み込めない" >&2; exit 2' EXIT
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# （入れ子のコマンド置換の内側の失敗は伝わらないので、1 つずつ検査する）
+here="$(dirname "${BASH_SOURCE[0]}")" || exit 2
+here="$(cd "$here" && pwd)" || exit 2
 # shellcheck source=lib.sh disable=SC1091
 . "$here/lib.sh"
 
 hook_read_input
-CWD="$(hook_cwd)"
+CWD="$(hook_cwd)" || internal_error "作業ディレクトリが分からない"
 detect_role "$CWD"
 
-raw="$(hook_field '.tool_input.command')"
+raw="$(hook_field '.tool_input.command')" || internal_error "コマンドを読めない"
 [ -n "$raw" ] || allow
 
-TOP="$(repo_toplevel "$CWD")"
-MAIN_ROOT="$(repo_main_root "$CWD")"
+TOP="$(repo_toplevel "$CWD")" || internal_error "作業ツリーのルートが分からない（git が失敗した）"
+MAIN_ROOT="$(repo_main_root "$CWD")" || internal_error "メインの作業ツリーのルートが分からない（git が失敗した）"
 
 # 引用符とバックスラッシュを取り除き、ファイル記述子の複製（2>&1 など）を消す。
-noquote="$(printf '%s\n' "$raw" | tr -d "\"'\\\\")"
-norm="$(printf '%s\n' "$noquote" | sed -E 's/[0-9]*>&[0-9-]+/ /g; s/&>/>/g')"
+# （判定に使うデータを作るコマンドの失敗は、ここから下でもすべて明示的に検査する。lib.sh の先頭を参照）
+noquote="$(printf '%s\n' "$raw" | tr -d "\"'\\\\")" || internal_error "コマンドの引用符を取り除けない（tr が失敗した）"
+norm="$(printf '%s\n' "$noquote" | sed -E 's/[0-9]*>&[0-9-]+/ /g; s/&>/>/g')" ||
+  internal_error "コマンドを正規化できない（sed が失敗した）"
 
 # ---- Worker の保護されたパス（.agents/config.json の protected_paths） ----
 # AGENT_ALLOW_PROTECTED=1 でなければ、Bash からの書き込み（WRITERS・sed -i・リダイレクトなど）も拒否する。
+# jq が失敗したら（壊れた config.json を含む）、保護されたパスが空のまま進まずに拒否する。
 PROTECTED=()
 if [ "$ROLE" = "worker" ] && [ "${AGENT_ALLOW_PROTECTED:-0}" != "1" ] && [ -n "$TOP" ] &&
   [ -f "$TOP/.agents/config.json" ]; then
+  pp="$(jq -r '.protected_paths[]? // empty' "$TOP/.agents/config.json")" ||
+    internal_error "保護されたパス（.agents/config.json の protected_paths）を読めない"
   while IFS= read -r p; do
     [ -n "$p" ] && PROTECTED+=("$p")
-  done < <(jq -r '.protected_paths[]? // empty' "$TOP/.agents/config.json" 2>/dev/null || true)
+  done <<<"$pp"
 fi
 
-# lex_norm <絶対パス>: . と .. を字句のまま取り除く。
+# lex_norm <絶対パス>: . と .. を字句のまま取り除く。失敗したら 0 以外を返す。
 lex_norm() {
   local out="" part
   local parts=()
-  IFS=/ read -r -a parts <<<"$1" || true
+  IFS=/ read -r -a parts <<<"$1" || return 1
   for part in "${parts[@]+"${parts[@]}"}"; do
     case "$part" in
       '' | .) ;;
@@ -79,7 +86,8 @@ protected_hit() {
     '~'* | '$'*) return 1 ;;
     *) t="$CWD/$w" ;;
   esac
-  t="$(lex_norm "$t")"
+  # （protected_hit は if の中で呼ぶので set -e が効かない。失敗は明示的に検査する）
+  t="$(lex_norm "$t")" || internal_error "パスを正規化できない: $w"
   case "$t" in
     "$TOP"/*) rel="${t#"$TOP"/}" ;;
     *) return 1 ;;
@@ -102,35 +110,44 @@ PROTECTED_MSG="保護されたパス（.agents/config.json の protected_paths�
 # ---- 書き込みのリダイレクト ----
 # 引用符の中身を消してから、> の先を調べる。
 noqstr="$(printf '%s\n' "$raw" | sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g" |
-  sed -E 's/[0-9]*>&[0-9-]+/ /g; s/&>/>/g; s/[0-9]*>>?[[:space:]]*\/dev\/null//g')"
+  sed -E 's/[0-9]*>&[0-9-]+/ /g; s/&>/>/g; s/[0-9]*>>?[[:space:]]*\/dev\/null//g')" ||
+  internal_error "コマンドから引用符の中身を取り除けない（sed が失敗した）"
 
 if [ "$ROLE" != "human" ]; then
   # .github/workflows/ へのリダイレクト（引用符の中のパスも見るため norm を使う）
-  if printf '%s\n' "$norm" | grep -Eq '>>?[[:space:]]*[^[:space:]]*\.github/workflows(/|[[:space:]]|$)'; then
+  if re_match "$norm" -E '>>?[[:space:]]*[^[:space:]]*\.github/workflows(/|[[:space:]]|$)'; then
     deny ".github/workflows/ には書き込まない（ワークフローは .github/workflow-sources/ に書き、人が取り込む）"
   fi
 fi
 if [ "$ROLE" = "reviewer" ]; then
-  if printf '%s\n' "$noqstr" | grep -q '>'; then
+  if re_match "$noqstr" '>'; then
     deny "Reviewer はファイルを書き換えない（リダイレクト > ・>> は使えない）"
   fi
 fi
 if [ "${#PROTECTED[@]}" -gt 0 ]; then
+  redirs="$(grep_out "$norm" -Eo '>>?\|?[[:space:]]*[^[:space:]<>;&|()]+')" ||
+    internal_error "リダイレクトの先を取り出せない（grep が失敗した）"
+  if [ -n "$redirs" ]; then
+    redirs="$(printf '%s\n' "$redirs" | sed -E 's/^>>?\|?[[:space:]]*//')" ||
+      internal_error "リダイレクトの先を取り出せない（sed が失敗した）"
+  fi
   while IFS= read -r target; do
     [ -n "$target" ] || continue
     if protected_hit "$target"; then
       deny "${PROTECTED_MSG}（リダイレクトの先: ${target}）"
     fi
-  done < <(printf '%s\n' "$norm" | grep -Eo '>>?\|?[[:space:]]*[^[:space:]<>;&|()]+' | sed -E 's/^>>?\|?[[:space:]]*//' || true)
+  done <<<"$redirs"
   # インタプリタのコード（python3 -c "open('…','w')" など）は ( や , で区切られてセグメントに分かれるので、
   # コマンド全体の単語を調べる。
-  if printf '%s\n' "$norm" | grep -Eq '(^|[^A-Za-z0-9_.-])(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|perl[0-9.]*|ruby|php|lua|luajit|tclsh|osascript|Rscript)([[:space:]]|$)'; then
+  if re_match "$norm" -E '(^|[^A-Za-z0-9_.-])(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|perl[0-9.]*|ruby|php|lua|luajit|tclsh|osascript|Rscript)([[:space:]]|$)'; then
+    toks="$(printf '%s\n' "$norm" | tr -c 'A-Za-z0-9_./~$*?=:@+%-' '\n')" ||
+      internal_error "インタプリタのコードを単語に分けられない（tr が失敗した）"
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       if protected_hit "$tok"; then
         deny "${PROTECTED_MSG}（インタプリタのコードの中: ${tok}）"
       fi
-    done < <(printf '%s\n' "$norm" | tr -c 'A-Za-z0-9_./~$*?=:@+%-' '\n')
+    done <<<"$toks"
   fi
 fi
 
@@ -184,8 +201,13 @@ check_push() {
     pos+=("$a")
   done
 
-  local cur
-  cur="$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  local cur rc=0
+  cur="$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0) ;;
+    1 | 128) cur="" ;; # 1: HEAD がブランチを指していない（detached）。128: Git の外
+    *) internal_error "push の元のブランチが分からない（git symbolic-ref が終了コード ${rc} で失敗した）" ;;
+  esac
   local dsts=() r src dst i
   if [ "${#pos[@]}" -le 1 ]; then
     dsts+=("${cur:-HEAD}")
@@ -229,7 +251,7 @@ check_push() {
   fi
   if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
     local issue
-    issue="$(agent_issue "$dir")"
+    issue="$(agent_issue "$dir")" || internal_error "担当の Issue が分からない（git が失敗した）"
     [ -n "$issue" ] || deny "担当の Issue（AGENT_ISSUE）が分からないため push できない"
     for d in "${dsts[@]}"; do
       d="${d#refs/heads/}"
@@ -364,10 +386,10 @@ check_gh() {
     deny "gh pr merge は禁止（マージは Orchestrator が scripts/agents/merge.sh で Merge Gate を通して行う）"
   fi
   if [ "$sub" = "api" ]; then
-    if printf '%s\n' "$seg" | grep -Eq '/merges?([/?[:space:]]|$)|/rulesets|/branches/[^[:space:]]*/protection|/actions/secrets|/actions/variables|/environments/[^[:space:]]*/(secrets|variables)'; then
+    if re_match "$seg" -E '/merges?([/?[:space:]]|$)|/rulesets|/branches/[^[:space:]]*/protection|/actions/secrets|/actions/variables|/environments/[^[:space:]]*/(secrets|variables)'; then
       deny "gh api での マージ・Rulesets・ブランチ保護・シークレット・変数 の操作は禁止"
     fi
-    if printf '%s\n' "$seg" | grep -Eiq 'mergePullRequest|enablePullRequestAutoMerge|RepositoryRuleset|BranchProtectionRule'; then
+    if re_match "$seg" -Ei 'mergePullRequest|enablePullRequestAutoMerge|RepositoryRuleset|BranchProtectionRule'; then
       deny "gh api graphql でのマージ・Rulesets・ブランチ保護の操作は禁止"
     fi
   fi
@@ -407,7 +429,7 @@ check_gh() {
         esac
         ;;
       api)
-        if printf '%s\n' " $seg " | grep -Eq '[[:space:]](-X|--method)[[:space:]=]*[^Gg[:space:]]|[[:space:]](-f|-F|--field|--raw-field|--input)([[:space:]=]|$)'; then
+        if re_match " $seg " -E '[[:space:]](-X|--method)[[:space:]=]*[^Gg[:space:]]|[[:space:]](-f|-F|--field|--raw-field|--input)([[:space:]=]|$)'; then
           deny "Reviewer は gh api で書き込まない"
         fi
         ;;
@@ -421,10 +443,10 @@ check_curl() {
     *api.github.com*) ;;
     *) return 0 ;;
   esac
-  if printf '%s\n' "$seg" | grep -Eiq '[[:space:]](-X[[:space:]]*|--request[[:space:]=]+|--method[[:space:]=]+)(POST|PUT|PATCH|DELETE)'; then
+  if re_match "$seg" -Ei '[[:space:]](-X[[:space:]]*|--request[[:space:]=]+|--method[[:space:]=]+)(POST|PUT|PATCH|DELETE)'; then
     deny "curl・wget での api.github.com への書き込みは禁止"
   fi
-  if printf '%s\n' "$seg" | grep -Eq '[[:space:]](-d|--data[a-z-]*|-F|--form[a-z-]*|--json|-T|--upload-file|--post-data|--post-file|--body-data|--body-file)([[:space:]=]|$)|[[:space:]]-d[^[:space:]]'; then
+  if re_match "$seg" -E '[[:space:]](-d|--data[a-z-]*|-F|--form[a-z-]*|--json|-T|--upload-file|--post-data|--post-file|--body-data|--body-file)([[:space:]=]|$)|[[:space:]]-d[^[:space:]]'; then
     deny "curl・wget での api.github.com への書き込みは禁止"
   fi
 }
@@ -485,7 +507,7 @@ check_rm() {
         deny "rm -r の対象が危険（${t}）"
         ;;
     esac
-    r="$(resolve_target "$t")"
+    r="$(resolve_target "$t")" || internal_error "rm -r の対象の物理パスが分からない（${t}）"
     if [ "$r" = "/" ] || [ "$r" = "$home_p" ] || [ "$r" = "$HOME" ] ||
       { [ -n "$TOP" ] && [ "$r" = "$TOP" ]; } || { [ -n "$MAIN_ROOT" ] && [ "$r" = "$MAIN_ROOT" ]; }; then
       deny "rm -r の対象が /・ホーム・リポジトリのルートになっている（${t}）"
@@ -522,11 +544,13 @@ invoked_script() {
 # ない gate）は、書き込みの語を含まなければ通る。
 # 第 2 引数に any を渡すと、agentctl の語と書き込みの語のどちらか一方でもあれば出す。
 # 呼び出し側で、行の継続（\ と改行）・$'...'・$"..." を正規化してから渡す。改行・タブも語の区切りになる。
+# 単語に分ける tr が失敗したら 0 以外を返す（呼び出し側で internal_error にする）。
 agentctl_write_hit() {
-  local s="$1" t mention=0 has_go=0 has_run=0 sub=""
+  local s="$1" t mention=0 has_go=0 has_run=0 sub="" toks
   case "$s" in
     *agentctl*) mention=1 ;;
   esac
+  toks="$(printf '%s\n' "$s" | tr -c 'A-Za-z0-9_./=\n-' '\n')" || return 1
   while IFS= read -r t; do
     case "$t" in
       go) has_go=1 ;;
@@ -535,7 +559,7 @@ agentctl_write_hit() {
       -comment | --comment | -comment=* | --comment=*) [ -n "$sub" ] || sub="gate --comment" ;;
       -set-status | --set-status | -set-status=* | --set-status=*) [ -n "$sub" ] || sub="gate --set-status" ;;
     esac
-  done < <(printf '%s\n' "$s" | tr -c 'A-Za-z0-9_./=\n-' '\n')
+  done <<<"$toks"
   [ "$has_go" = 1 ] && [ "$has_run" = 1 ] && mention=1
   if [ "${2:-}" = any ]; then
     # どちらか一方でもあれば出す（正規化しきれない $'...' があるとき）
@@ -563,7 +587,7 @@ is_interpreter() {
 check_segment() {
   local seg="$1"
   local w=()
-  read -r -a w <<<"$seg" || true
+  read -r -a w <<<"$seg" || internal_error "セグメントを単語に分けられない"
   [ "${#w[@]}" -gt 0 ] || return 0
 
   # 先頭の変数の代入・ラッパー（env・sudo など）・bash -c を取り除く。
@@ -630,7 +654,7 @@ check_segment() {
   fi
 
   # スクリプトの実行
-  s0="$(invoked_script "${w[@]}")"
+  s0="$(invoked_script "${w[@]}")" || internal_error "実行するスクリプトが分からない"
   if [ -n "$s0" ]; then
     case "${s0##*/}" in
       install-workflows.sh)
@@ -649,7 +673,7 @@ check_segment() {
   for x in "${w[@]}"; do
     [ "${x##*/}" = "wrangler" ] && deny "wrangler は使わない（インフラは cf で CI だけが反映する。ADR-0016）"
   done
-  if printf '%s\n' "$segstr" | grep -Eq '[[:space:]/]cf[[:space:]]+deploy([[:space:]]|$)'; then
+  if re_match "$segstr" -E '[[:space:]/]cf[[:space:]]+deploy([[:space:]]|$)'; then
     case "$segstr" in
       *" --dry-run "* | *" --dry-run="*) ;;
       *) deny "cf deploy は CI だけが行う（--dry-run だけ許す）" ;;
@@ -789,21 +813,29 @@ if [ "$ROLE" = "worker" ] || [ "$ROLE" = "reviewer" ]; then
   esac
   acraw="${acraw//\$\'/\'}"
   acraw="${acraw//\$\"/\"}"
-  acnorm="$(printf '%s\n' "$acraw" | tr -d "\"'\\\\")"
-  acsub="$(agentctl_write_hit "$acnorm")"
+  acnorm="$(printf '%s\n' "$acraw" | tr -d "\"'\\\\")" ||
+    internal_error "agentctl の判定のためにコマンドを正規化できない（tr が失敗した）"
+  acsub="$(agentctl_write_hit "$acnorm")" ||
+    internal_error "agentctl の書き込みかどうかを判定できない（tr が失敗した）"
   # $'\x73tate' のようなエスケープは正規化しきれないので、$'...' があるときは agentctl の語か
   # 書き込みの語のどちらか一方でもあれば拒否する
-  if [ -z "$acsub" ] && [ "$ansi_c" = 1 ] && [ -n "$(agentctl_write_hit "$acnorm" any)" ]; then
-    acsub="ANSI-C 引用 \$'...'"
+  # （[ -n "$(…)" ] の中の失敗は伝わらないので、いったん変数に受ける）
+  if [ -z "$acsub" ] && [ "$ansi_c" = 1 ]; then
+    acany="$(agentctl_write_hit "$acnorm" any)" ||
+      internal_error "agentctl の書き込みかどうかを判定できない（tr が失敗した）"
+    [ -z "$acany" ] || acsub="ANSI-C 引用 \$'...'"
   fi
   if [ -n "$acsub" ]; then
     deny "Worker・Reviewer は agentctl の書き込み（${acsub}）を含むコマンドを使わない（PR へのコメントと Issue の状態の書き込みは Orchestrator が行う。--dry-run でも、コメントや引用符の中の語でも拒否する）"
   fi
 fi
 
+# プロセス置換 < <(… | tr …) の失敗は親に伝わらず、セグメントがないまま許可になるので、変数に受けて検査する
 # shellcheck disable=SC2020
+segs="$(printf '%s\n' "$norm" | tr ';&|()`' '\n\n\n\n\n\n')" ||
+  internal_error "コマンドをセグメントに分けられない（tr が失敗した）"
 while IFS= read -r seg; do
   check_segment "$seg"
-done < <(printf '%s\n' "$norm" | tr ';&|()`' '\n\n\n\n\n\n')
+done <<<"$segs"
 
 allow

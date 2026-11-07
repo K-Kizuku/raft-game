@@ -663,6 +663,95 @@ chmod +x "$tmp/badjq/jq"
 run_path="$tmp/badjq:$PATH"
 expect_internal_all "jq が失敗する"
 run_path=""
+
+# 判定に使うデータを作るコマンド（プロセス置換・コマンド置換の中の tr・jq・sed・grep・git・dirname）の一部だけが
+# 失敗しても、許可にせず拒否（2）にする（#107。< <(…) や if の中の失敗が親に伝わらず、許可に着いていた）。
+# make_fake <名前> <コマンド> <case のパターン>: 引数（" $* "）がパターンに一致したときだけ終了コード 5 で失敗し、
+# それ以外は本物を実行する偽物を $tmp/fake-<名前>/ に置き、run_path をそのディレクトリを先頭にした PATH にする
+make_fake() {
+  local name="$1" cmd="$2" pat="$3" real
+  real="$(command -v "$cmd")"
+  mkdir -p "$tmp/fake-$name"
+  cat >"$tmp/fake-$name/$cmd" <<EOF
+#!/bin/sh
+case " \$* " in
+  $pat) echo "$cmd: 壊れている（テスト）" >&2; exit 5 ;;
+esac
+exec "$real" "\$@"
+EOF
+  chmod +x "$tmp/fake-$name/$cmd"
+  run_path="$tmp/fake-$name:$PATH"
+}
+# 差し替える前は、本来の理由で拒否・許可になることを確かめておく
+expect_bash 2 worker "$wt" "rm -r /"
+expect_bash 2 worker "$wt" "python3 -c \"open('.claude/hooks/x','w')\""
+expect_bash 2 worker "$wt" ".agents/bin/agentctl comment 1 x"
+expect_bash 2 orchestrator "$repo" "echo x > .github/workflows/ci.yml"
+expect_bash 2 orchestrator "$repo" "git push"
+expect_write 2 worker "$wt" "$wt/.claude/hooks/guard-bash.sh"
+expect_write 0 orchestrator "$repo" "$repo/.agents/newdir/x.md"
+got="$(cd "$repo" && run guard-mcp.sh - "$wt" '{"pullNumber":1}' mcp__github__merge_pull_request)"
+[ "$got" = 2 ] && pass || fail "fail-closed: 差し替える前の guard-mcp は Worktree の中を worker として拒否する（got=${got}）"
+# セグメントに分ける tr（再現: rm -r / が許可になっていた）
+make_fake tr-seg tr '*";&|()"*'
+expect_internal "セグメントに分ける tr が失敗する（rm -r /）" guard-bash.sh worker "$wt" "$(bash_input "rm -r /")"
+expect_internal "セグメントに分ける tr が失敗する（git status）" guard-bash.sh worker "$wt" "$(bash_input "git status")"
+# インタプリタのコードを単語に分ける tr
+make_fake tr-interp tr '*"A-Za-z0-9_./~"*'
+expect_internal "インタプリタのコードを単語に分ける tr が失敗する" guard-bash.sh worker "$wt" \
+  "$(bash_input "python3 -c \"open('.claude/hooks/x','w')\"")"
+# agentctl の書き込みの判定で単語に分ける tr
+make_fake tr-agentctl tr '*"A-Za-z0-9_./="*'
+expect_internal "agentctl の判定の tr が失敗する" guard-bash.sh worker "$wt" "$(bash_input ".agents/bin/agentctl comment 1 x")"
+# protected_paths を読む jq（再現: Worker の .claude/hooks/guard-bash.sh への書き込みが許可になっていた）
+make_fake jq-protected jq '*"protected_paths"*'
+expect_internal "protected_paths を読む jq が失敗する（guard-write）" guard-write.sh worker "$wt" \
+  "$(jq -cn --arg p "$wt/.claude/hooks/guard-bash.sh" '{file_path:$p}')" Write
+expect_internal "protected_paths を読む jq が失敗する（guard-bash）" guard-bash.sh worker "$wt" \
+  "$(bash_input "cp x .claude/hooks/guard-bash.sh")"
+# 入力の cwd を読む jq（入力の cwd を読めずに PWD へ戻ると、役割が変わりうる）
+make_fake jq-cwd jq '*"(.cwd)"*'
+for h in guard-bash.sh guard-write.sh guard-mcp.sh; do
+  got="$(cd "$repo" && run "$h" - "$wt" '{"command":"git status","file_path":"/dev/null/x","pullNumber":1}' mcp__github__merge_pull_request)"
+  if [ "$got" = 2 ] && grep -qF "$internal_msg" "$tmp/stderr"; then pass; else fail "fail-closed: 入力の cwd を読む jq が失敗する ${h}（got=${got}）"; fi
+done
+# grep（一致しない（1）とエラー（2 以上）を見分ける。再現: .github/workflows/ へのリダイレクトが許可になっていた）
+make_fake grep-all grep '*'
+expect_internal "grep が失敗する（.github/workflows/ へのリダイレクト）" guard-bash.sh orchestrator "$repo" \
+  "$(bash_input "echo x > .github/workflows/ci.yml")"
+expect_internal "grep が失敗する（リダイレクトの先）" guard-bash.sh worker "$wt" "$(bash_input "echo x > .claude/hooks/x")"
+expect_internal "grep が失敗する（gh api）" guard-bash.sh orchestrator "$repo" "$(bash_input "gh api repos/o/r/rulesets")"
+expect_internal "grep が失敗する（curl）" guard-bash.sh orchestrator "$repo" \
+  "$(bash_input "curl -X POST https://api.github.com/repos/o/r/merges")"
+# sed
+make_fake sed-all sed '*'
+expect_internal "sed が失敗する" guard-bash.sh worker "$wt" "$(bash_input "git status")"
+# git（Git の外の 128 以外の失敗。再現: 元のブランチが分からず、main での git push が許可になっていた）
+make_fake git-symref git '*" symbolic-ref "*'
+expect_internal "git symbolic-ref が失敗する（main での git push）" guard-bash.sh orchestrator "$repo" "$(bash_input "git push")"
+make_fake git-toplevel git '*" --show-toplevel "*'
+expect_internal "git rev-parse --show-toplevel が失敗する（guard-bash）" guard-bash.sh worker "$wt" "$(bash_input "git status")"
+expect_internal "git rev-parse --show-toplevel が失敗する（guard-write）" guard-write.sh worker "$wt" \
+  "$(jq -cn --arg p "$wt/README.md" '{file_path:$p}')" Write
+make_fake git-commondir git '*" --git-common-dir "*'
+expect_internal "git rev-parse --git-common-dir が失敗する（guard-bash）" guard-bash.sh - "$wt" "$(bash_input "git status")"
+expect_internal "git rev-parse --git-common-dir が失敗する（guard-write）" guard-write.sh orchestrator "$repo" \
+  "$(jq -cn --arg p "$repo/.agents/x.md" '{file_path:$p}')" Write
+make_fake git-gitdir git '*" --absolute-git-dir "*'
+expect_internal "git rev-parse --absolute-git-dir が失敗する（guard-mcp）" guard-mcp.sh - "$wt" '{"pullNumber":1}' \
+  mcp__github__merge_pull_request
+# 書き込み先の物理パスを求める dirname
+make_fake dirname-newdir dirname '*"/newdir/"*'
+expect_internal "書き込み先の dirname が失敗する" guard-write.sh orchestrator "$repo" \
+  "$(jq -cn --arg p "$repo/.agents/newdir/x.md" '{file_path:$p}')" Write
+run_path=""
+# Git の外（git が 128 で失敗する）は、今までどおり内部エラーにしない
+nogit="$tmp/nogit"
+mkdir -p "$nogit"
+expect_bash 0 orchestrator "$nogit" "ls"
+expect_bash 2 orchestrator "$nogit" "rm -r /"
+got="$(run guard-mcp.sh - "$nogit" '{"pullNumber":1}' mcp__github__merge_pull_request)"
+[ "$got" = 0 ] && pass || fail "fail-closed: Git の外は内部エラーにしない（guard-mcp・got=${got}）"
 # 正しく拒否するときは、内部エラーではなく本来の理由を出す
 got="$(run guard-bash.sh worker "$wt" "$(bash_input "git push origin main")")"
 if [ "$got" = 2 ] && grep -qF 'main への push は禁止' "$tmp/stderr" && ! grep -qF "$internal_msg" "$tmp/stderr"; then
