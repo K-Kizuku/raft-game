@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.4（プロトコルバージョン `1`） |
+| 版 | v0.5（プロトコルバージョン `1`） |
 | 更新日 | 2026-11-07 |
 | 状態 | レビュー済み |
-| 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) |
+| 関連 | [DesignDoc §12, §13](./03-design-doc.md) / [ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [ADR-0014](./adr/0014-monorepo-and-shared-types.md) / [ADR-0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [ADR-0017](./adr/0017-persist-input-log-in-durable-object.md) / [ADR-0018](./adr/0018-cost-guard.md) / [ADR-0023](./adr/0023-durable-object-fetch-handler.md) |
 
 型の正本は Go の `server/internal/protocol` です。TypeScript の型は `tygo` で `web/src/protocol/` に生成します。この文書と Go のコードが食い違ったら、**コードを直してからこの文書を更新**してください。
 
@@ -36,16 +36,19 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
 
 | HTTP | `code` | いつ |
 |---|---|---|
-| 400 | `bad_request` | `POST /api/sessions` の本文が不正 |
+| 400 | `bad_request` | `POST /api/sessions`・`PATCH /api/admin/guards` の本文が不正 |
+| 400 | `locked` | `PATCH /api/admin/guards` で変えられない項目（`signature`・`cpuMs`・`gameTime.enabled`・`gameTime.maxAlarms`）を変えようとした |
+| 401 | `unauthorized` | 管理用 API の `Authorization` がない・違う。`www-authenticate: Bearer` を付ける |
 | 403 | `forbidden_origin` | `Origin` が許可リストにない・必須のルートで `Origin` がない |
 | 403 | `turnstile_failed` | Turnstile の確認に失敗 |
-| 404 | `not_found` | 知らないパス、`/ws/sessions/{id}` の id が不正・検証に失敗・部品がない、管理用 API の部品がない |
+| 404 | `not_found` | 知らないパス、`/ws/sessions/{id}` の id が不正・検証に失敗・部品がない、管理用 API の部品がない・`ADMIN_TOKEN` が未設定や不正 |
 | 405 | `method_not_allowed` | パスは知っているがメソッドが違う（`HEAD`・`OPTIONS` も）。`Allow` ヘッダーに許すメソッドを `, ` 区切りで入れる |
 | 426 | `upgrade_required` | `/ws/sessions/{id}` に `Upgrade: websocket` がない |
 | 429 | `rate_limited` | レート制限 |
 | 500 | `internal_error` | Worker の中で例外が出た |
 | 503 | `budget_exhausted` | 費用の上限に達した（G1） |
-| 503 | `sessions_disabled` | 管理者が受付を一括で止めている（G6）、または受付の部品がそろっていない |
+| 503 | `sessions_disabled` | 管理者が受付を一括で止めている（G6）、または受付の部品がそろっていない・`GUARDS` が不正 |
+| 503 | `guards_invalid` | 管理用 API で、コストガードの設定 `GUARDS` が未設定・不正 |
 
 ルートはパスの**完全一致**で決まります（大文字・小文字を区別し、末尾の `/` を許さない）。下の表にないパス（`/api`・`/api/`・`/api/healthz/`・`/ws/sessions/`・`/ws/sessions/a/b` など）は、メソッドや `Origin` に関係なく `404 not_found` です。検査の順序は「パス → メソッド（405）→ `Origin`（403）→ ルートごとの処理」です。
 
@@ -146,9 +149,15 @@ Worker が返すエラー:
 
 ### `GET /api/admin/guards`・`PATCH /api/admin/guards`（管理用）
 
-コストガード（[ADR-0018](./adr/0018-cost-guard.md)）の確認と切り替えです。`Authorization: Bearer <ADMIN_TOKEN>` が必要です。`Origin` は、あれば許可リストと照合します（なければ通す）。管理用の部品がない Worker は `404 not_found` を返します。
+コストガード（[ADR-0018](./adr/0018-cost-guard.md)）の確認と切り替えです。中身は Durable Object `CostGuard`（[DesignDoc §12.3.1](./03-design-doc.md#1231-durable-object-costguard)）が持ちます。`Origin` は、あれば許可リストと照合します（なければ通す）。管理用の部品がない Worker（`COST_GUARD` のバインディングがない）は `404 not_found` を返します。
 
-`GET` のレスポンス:
+認証（Worker が行う。通るまで本文を読まず、`CostGuard` を呼ばない）:
+
+- `Authorization: Bearer <ADMIN_TOKEN>` が必要です。`Bearer` の大文字・小文字は区別せず、`Bearer` とトークンの間の空白はちょうど 1 つです
+- `ADMIN_TOKEN`（Worker のシークレット）は、32〜256 文字の表示できる ASCII（`0x21`〜`0x7E`。例: `openssl rand -hex 32`）です。未設定・空・31 文字以下・空白や改行を含むときは、管理用 API が無いのと同じ扱いで `404 not_found` を返します（`--secrets-file` に書いた値の末尾に改行が入らないように注意）
+- トークンがない・書式が違う・一致しないときは `401 unauthorized` と `www-authenticate: Bearer` を返します。比較は両方の SHA-256 を定数時間で比べます
+
+`GET` のレスポンス（`PATCH` の成功も同じ形で、変更後の値を返す）:
 
 ```json
 {
@@ -161,20 +170,51 @@ Worker が返すエラー:
     "cpuMs":       { "value": 50, "note": "変更には再デプロイが必要" },
     "acceptGames": true
   },
-  "usage": { "todayUsd": 0.12, "monthUsd": 1.48, "activeGames": 2 },
-  "unitCostUsd": { "lite": 0.0065, "standard-1": 0.040 }
+  "usage": { "todayUsd": 0.0195, "monthUsd": 0.0195, "activeGames": 3 },
+  "unitCostUsd": { "lite": 0.0065, "standard-1": 0.04 },
+  "recentChanges": [
+    { "at": "2026-11-07T03:00:00.000Z", "change": { "budget.enabled": false }, "reason": "デモ当日のため一時的に外す" }
+  ]
 }
 ```
 
-`PATCH` のリクエスト（変えたい項目だけ）:
+- `guards` は、設定 `GUARDS`（`cloudflare.config.ts`）の既定値に、管理用 API で保存した上書きを重ねたものです。`gameTime.enabled` と `signature` は常に `true` です
+- `usage.todayUsd`・`monthUsd` は、今日・今月に**予約した**ゲームの見込みの費用の合計（USD）です。1 日・1 か月は **UTC** の暦で区切ります（Cloudflare の請求と同じ）。取り消したゲームは 0、精算したゲームは実際に動いた時間の額、まだのゲームは予約額で数えます
+- `usage.activeGames` は、精算されていない予約のうち、`gameTime.maxMinutes` 分以内に予約したものの数です（目安の値）
+- `unitCostUsd` は 30 分あたりの最悪の費用（USD）です。管理用 API では変えられません
+- `recentChanges` は切り替えの記録の新しい順に最大 10 件です。`at` は ISO 8601（UTC）、`change` は下の「平らな形」です
+
+`PATCH` のリクエスト（`Content-Type: application/json`、4096 バイトまで。変えたい項目だけを送る）:
 
 ```json
-{ "budget": { "enabled": false }, "reason": "デモ当日のため一時的に外す" }
+{ "budget": { "enabled": false }, "acceptGames": true, "reason": "デモ当日のため一時的に外す" }
 ```
 
-- `signature` は変更できません（`locked: true`。変えようとすると `400 locked`）
-- `acceptGames: false` で、新しいゲームの受付を一括で止めます（遊んでいるゲームは続きます）
-- 変更は数秒で反映され、`CostGuard` に記録（いつ・何を・理由）が残ります
+| キー | 変えられる項目と値 |
+|---|---|
+| `budget` | `enabled`（真偽値）・`monthlyUsd`・`dailyUsd`（有限の数、0 以上 1000 以下。0 はすべての予約を断る） |
+| `gameTime` | `maxMinutes`（整数、1〜60） |
+| `turnstile` | `enabled`（真偽値） |
+| `rateLimit` | `enabled`（真偽値）・`perIpPerMinute`（整数、1〜1000） |
+| `acceptGames` | 真偽値。`false` で新しいゲームの受付を一括で止める（G6。遊んでいるゲームは続く） |
+| `reason` | **必須**。前後の空白を除いて 1〜200 文字の文字列。記録に残る |
+
+- 項目の値に `null` を送ると、その項目の上書きを消して `GUARDS` の既定値に戻します
+- 次の項目は変更できません。値に関係なく `400 locked` を返します（ほかの誤りより先に判定する）: `signature`（G3）・`cpuMs`（再デプロイが必要）・`gameTime.enabled`・`gameTime.maxAlarms`（G2 のアラームの回数の上限は常に有効）
+- 未知のキー・型や範囲の違い・`reason` がない・変える項目が 1 つもない・`Content-Type` が違う・4096 バイトを超える・壊れた JSON は `400 bad_request` です
+- 記録の `change` は、変えた項目をドット区切りのキーにした平らな形（`{"budget.enabled": false, "acceptGames": true}`。金額は USD のまま）です
+- 変更は次の要求からすぐに効きます。記録（いつ・誰が・何を・理由）は `CostGuard` に残ります（新しい 1000 件まで）
+
+エラー:
+
+| HTTP | `code` | いつ |
+|---|---|---|
+| 400 | `bad_request` | `PATCH` の本文が不正（上の検証） |
+| 400 | `locked` | 変えられない項目を変えようとした |
+| 401 | `unauthorized` | `Authorization` がない・違う |
+| 404 | `not_found` | 管理用の部品がない・`ADMIN_TOKEN` が未設定や不正 |
+| 500 | `internal_error` | `CostGuard` の呼び出しに失敗した |
+| 503 | `guards_invalid` | 設定 `GUARDS` が未設定・不正（このとき `POST /api/sessions` は `503 sessions_disabled`） |
 
 ---
 

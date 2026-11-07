@@ -10,6 +10,7 @@ import { createHandler } from "./routes/router.ts";
 import { STAGE_CATALOG } from "./routes/stage-catalog.ts";
 import { createSecurityPorts } from "./security/ports.ts";
 import { createSessionPorts } from "./session/ports.ts";
+export { CostGuard } from "./cost-guard.ts";
 
 export const handleRequest = createHandler((env) => ({
   stages: STAGE_CATALOG,
