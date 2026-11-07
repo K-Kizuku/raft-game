@@ -39,6 +39,8 @@ func TestStandaloneIsolation(t *testing.T) {
 	ts := newTestServer(t, ModeStandalone, nil)
 	a := ts.dialSession(t, ts.createSession(t, `{"stageId":"alpha"}`))
 	b := ts.dialSession(t, ts.createSession(t, `{"stageId":"omega"}`))
+	a.send(protocol.MessageTypeHello, "", protocol.HelloPayload{}) // standalone は hello の snapshot の後だけ events を送る（T-303）
+	a.expect(protocol.MessageTypeSnapshot, nil)
 	a.send(protocol.MessageTypeCmdGameStart, "c-1", struct{}{})
 	a.expect(protocol.MessageTypeAck, nil)
 	a.expect(protocol.MessageTypeEvents, nil)
@@ -96,7 +98,7 @@ func waitDetached(t *testing.T, ts *testServer) {
 // ST-4: 片付け。
 func TestStandaloneSweep(t *testing.T) {
 	t.Parallel()
-	clock := newFakeClock()
+	clock := newFakeClock(testStart)
 	ts := newTestServer(t, ModeStandalone, func(c *Config, s *Server) {
 		c.MaxSessions = 2
 		s.now = clock.Now

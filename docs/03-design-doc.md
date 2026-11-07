@@ -69,7 +69,7 @@ flowchart LR
 `SimTime` の進み方は、セッションループが決めます（§12.2）。
 
 - 通常: 実時間 1 秒 = ゲーム内 1 秒（`speed = 1.0`）
-- 速度変更: 0.5x / 1x / 2x / 4x（P0）。デモ操作では 8x と「次の到着・出来事まで進める」も使える（A-17）
+- 速度変更: 0.5x / 1x / 2x / 4x（P0）。デモ操作では 8x と「次の到着・出来事まで進める」も使える（A-17）。速度は千分率の整数で持ち、端数は次のステップに持ち越す。デモ操作が有効なセッションでは 8x を足す（T-303）
 - 一時停止: 進まない
 
 速度を変えても、`Engine` から見れば「`RunUntil` に渡される時刻の刻み方」が変わるだけです。イベントの時刻は実時間に依存しないので、**結果は変わりません**（コマンドが届いたゲーム内時刻だけは実時間に依存しますが、これは入力ログに記録されるので再現できます）。
@@ -919,42 +919,64 @@ CREATE TABLE IF NOT EXISTS audit (
 ### 12.4 セッションループ（Go）
 
 ```go
-func (s *Session) run(ctx context.Context) {
-    step := time.NewTicker(50 * time.Millisecond)  // シミュレーションを進める間隔
-    flush := time.NewTicker(100 * time.Millisecond) // イベントをまとめて送る間隔
-    last := time.Now()
+// 実時間はすべて loopClock から取る（time.Now・time.NewTicker を直接呼ばない。テストは偽の時計を渡す）。
+func (s *session) run(ctx context.Context) {
+    step := s.wall.NewTicker(50 * time.Millisecond)   // シミュレーションを進める間隔
+    flush := s.wall.NewTicker(100 * time.Millisecond) // イベントをまとめて送る間隔
+    s.lastStep = s.wall.Now()
     for {
         select {
         case <-ctx.Done(): return
-        case c := <-s.cmdCh:          // WS の読み取り goroutine から
-            switch c.Type {
-            case "cmd.game.speed":    // 0.5 / 1 / 2 / 4（デモ操作では 8 も）
-                s.speed = c.Speed
-            case "cmd.game.skip":     // デモ操作のみ：次の出来事まで進めて一時停止
-                if t, ok := s.engine.NextNotableAt(); ok && t-s.engine.Now() <= 30_000 {
+        case a := <-s.attach: s.onAttach(a)  // 切断で止めていたら再開する
+        case c := <-s.detach: s.onDetach(c)  // ラウンドの途中なら自動で一時停止
+        case m := <-s.inbox:                 // WS の読み取り goroutine から
+            if m.Type != "ping" && !s.bucket.allow(s.wall.Now()) {
+                s.ackRateLimited(m)          // 30 回/秒を超えた（cmdId がなければ捨てる）
+                continue
+            }
+            switch m.Type {
+            case "cmd.game.pause": s.pause.set(m.Paused)
+            case "cmd.game.speed": s.speedPermille = m.SpeedPermille // allowedSpeeds のどれか
+            case "cmd.game.skip":  // デモ操作が有効なセッションだけ：次の出来事まで進めて一時停止
+                if t, ok := skipTarget(s.engine.Now(), s.engine.NextNotableAt()); ok { // 30 秒まで
                     s.engine.RunUntil(t)
                 }
-                s.paused = true
+                s.pause.hold()
+            default:
+                ack := s.engine.Apply(m.Cmd) // ack には適用時刻 t が入る（ADR-0017）
+                s.send(ack)
             }
-            ack := s.engine.Apply(c)   // ack には適用時刻 t が入る（ADR-0017）
-            s.out.enqueueAck(ack)
-        case now := <-step.C:
-            if !s.paused && s.engine.Phase() != sim.Ended {
-                dt := now.Sub(last)
-                adv := min(sim.SimTime(float64(dt.Milliseconds())*s.speed), 1000) // 1 回に進めるのは 1 秒まで
-                s.engine.RunUntil(s.engine.Now() + adv)
-            }
-            last = now
-        case <-flush.C:
-            s.out.send(s.engine.DrainEvents(), s.clock())
+            s.flushNow(true)                 // 新しい clock を載せた events（イベントがなくても送る）
+        case now := <-step.C():
+            s.step(now)
+        case now := <-flush.C():
+            s.flushTick(now)                 // DrainEvents → 保留 → events か snapshot
         }
     }
+}
+
+func (s *session) step(now time.Time) {
+    elapsed := now.Sub(s.lastStep)
+    s.lastStep = now
+    if s.pause.isPaused() || s.engine.Phase() != sim.PhaseSailing {
+        s.rem = 0
+        return
+    }
+    // 千分率の速度で、端数（ナノ秒 × 千分率）を次に持ち越す。1 回に進めるのは 1 秒まで（切ったら余りは捨てる）。
+    adv, rem := advance(elapsed, s.speedPermille, s.rem)
+    s.rem = rem
+    s.engine.RunUntil(s.engine.Now() + adv) // 終わったら events → round.result の順に送る
 }
 ```
 
 - `Engine` に触れるのはこの goroutine だけ（ロック不要）
-- 速度はセッションループの中だけの値で、エンジンの結果には影響しません。8 倍速でも、1 ステップで進めるのは 400ms（＜上限の 1 秒）です
-- 送信キューが詰まった場合（クライアントが遅い）は、イベントを捨てずに次回まとめて送ります。一定量（1,000 件）を超えたらイベント列を捨て、代わりにスナップショットを送ります
+- 速度はセッションループの中だけの値で、エンジンの結果には影響しません。8 倍速でも、1 ステップで進めるのは 400ms（＜上限の 1 秒）です。再開・速度の変更・`skip` の後は、ステップの起点を今にします（止まっていた間の実時間を数えない）
+- 一時停止の理由は 4 つ: プレイヤー（`cmd.game.pause`）・`cmd.game.skip`・復元（`internal.restore`）・切断。切断で止めたときだけ、つなぎ直したら自動で再開します。ほかの理由で止まったセッションは、つなぎ直しても止まったまま（プレイヤーが ▶ を送る）
+- `cmd.game.skip` はデモ操作が有効なセッションだけで受け付けます。次の出来事が 30 秒より先（か、ない）なら、進めずに止めます
+- `snapshot` を送る前に、保留のイベント（`DrainEvents` の残りを含む）を捨てます。`snapshot` は `lastSeq` までのイベントをすべて含むので、捨てないと二重に送ります。`standalone` では `hello` の `snapshot` まで `events` を送りません
+- 送信キュー（容量 256）に 64 個以上あれば `events` を積まずに保留し、次回まとめて送ります（`ack` の入る余地を残すため）。保留が 1,000 件を超えたらイベント列を捨て、キューが空いたら代わりにスナップショットを送ります
+- コマンドのレート制限（1 セッションあたり 30 回/秒、§12.5）は Go でも数えます。超えたコマンドには `rate_limited` の `ack` を返し、`cmdId` のない電文は捨てます。どちらかで弾かれたコマンドは `ok: true` の `ack` を受けないので、入力ログは食い違いません
+- `single` の自動一時停止は、Durable Object がコンテナへの接続を閉じたときに働きます（ブラウザが切れたことを、Go はその接続の切断で知る）
 - `internal.restore` を受けたら、`sim.Replay` で入力ログの最後の時刻（`until` があればその時刻）まで一気に進め、`Replay` の Engine に残ったイベントを捨て、一時停止の状態で `snapshot`（`session.restored: true`）を返します。入力ログの `build` が違っても復元を試みます（食い違えば `restore_failed`。T-302。検査の順序は[プロトコル §9](./06-protocol.md#9-内部の電文durable-object--コンテナ)）
 
 ### 12.5 寿命と上限
@@ -969,7 +991,7 @@ func (s *Session) run(ctx context.Context) {
 | ラウンド終了後 | すぐにコンテナを止める。入力ログと結果は Durable Object に残る | Durable Object |
 | セッション作成のレート制限 | 1 IP（IPv6 は /64）あたり 10 回/分 ＋ Turnstile | Worker（G4。Rate Limiting の束縛 `SESSION_RATE_LIMIT`、拠点ごとの近似の値。[ADR-0024](./adr/0024-worker-rate-limit-binding.md)） |
 | sessionId の有効期限 | 発行 + `gameTime.maxMinutes` + 5 分（期限は sessionId に入れて署名する） | Worker（G2・G3。期限を過ぎた sessionId は Durable Object を呼ばずに `404`） |
-| コマンドのレート制限 | 1 セッションあたり 30 回/秒。DO は 1 秒の枠で 30 通を超えた電文を捨てる（返事はしない） | Durable Object |
+| コマンドのレート制限 | 1 セッションあたり 30 回/秒。DO は 1 秒の枠で 30 通を超えた電文を捨てる（返事はしない）。Go は超えたコマンドに `rate_limited` の `ack` を返す（`ping` は数えない。§12.4） | Durable Object と Go の両方 |
 | コンテナの起動を待つ上限 | `CONTAINER_START_TIMEOUT_MS`（仮に 30 秒。T-007 の結果で見直す） | Durable Object（`/healthz` が `200` を返すまで） |
 | WS の受信メッセージの最大サイズ | 16 KiB | Durable Object と Go の両方 |
 | Worker 1 回あたりの CPU 時間 | `limits.cpuMs`（値は T-007 で測って決める） | Cloudflare（G5） |
