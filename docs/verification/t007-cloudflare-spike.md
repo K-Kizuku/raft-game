@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 の測定を実施済み。H-5 の対象デプロイの CPU 上限 50 ms とログ設定を取得し、CPU 時間・実行モデルなどのログ項目を確認済み。次は通常処理の CPU p99/最大値の集計。後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 を実施済み。H-5 の対象デプロイの CPU 上限は 50 ms。反復負荷試験を除く集計で SpikeSession fetch の CPU p99 112 ms / 最大 116 ms を取得した。Worker は今回の集計に現れず、次は全体と経路別の内訳を確認する。後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -22,7 +22,7 @@
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
-| H-5 limits.cpuMs の判断 | 途中 | 対象バージョンの limits.cpu_ms=50、ログ保存・invocation logs・サンプリング率 1 を確認。cpuTimeMs が存在。通常処理の p99/最大値は未取得 |
+| H-5 limits.cpuMs の判断 | 途中 | 50 ms を確認済み。SpikeSession fetch は n=113 / CPU p99=112 ms / 最大=116 ms。Worker が未集計のため、全体と経路別の内訳を確認してから値を決める |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -1009,6 +1009,74 @@ console.log(JSON.stringify({
 ```
 
 CLI に通す JSON と抽出用の JavaScript の構文は確認した。--preview による読み取りのみで、再デプロイや追加の負荷試験はしない。集計結果はまだ受領していない。
+
+## 2026-11-07: 通常処理の CPU 集計 v2 を受領
+
+プロンプト表示は 17:17:52。t007-normal-cpu-v2 は status=COMPLETED。scriptName=raft-game-spike、cpuTimeMs が存在し、request.search.iters と event.search.iters がどちらも存在しない、という条件で取得した。API が返した filters / groupBys は指定した条件と一致した。
+
+### 実際に表示された集計
+
+| executionModel | entrypoint | eventType | 件数 n | CPU p99 (ms) | CPU 最大 (ms) |
+|---|---|---|---|---|---|
+| durableObject | SpikeSession | fetch | 113 | 112 | 116 |
+| durableObject | SpikeSession | alarm | 10 | 1 | 1 |
+| durableObject | PlainStore | fetch | 2 | 1 | 1 |
+
+集計ごとの count も上記の件数と一致し、interval / sampleInterval はいずれも 1。statistics の elapsed は 0.116443379 秒、abr_level=1。rows_read は 4,123,602 だったが、一致する通常要求の件数としては使わない。
+
+### 判断と未確認の点
+
+- 取得できた SpikeSession fetch の p99 / 最大値は、対象バージョンの cpu_ms=50 を上回った。50 ms が通常処理に十分な余裕を持つとは、まだ結論できない。
+- 今回の結果には Worker と ControlStore が現れていない。CPU 0 ms や未実行とは判断しない。entrypoint を含めたグループ化で項目のないログが外れた可能性を含め、条件を変えて確認する。
+- 経路別にはまだ分かれていない。スパイクには ping の 200 回の HTTP 往復、sql の 100 / 1,000 行の同期 INSERT、WS の長時間の中継などが含まれる。112 ms がどの処理に対応するか、CPU 上限を変更する前に調べる。
+- PlainStore の 2 件の p99 は参考値。少数の測定から本番の高い百分位数の安定性は推定しない。
+- 前回集計が空だった原因はまだ断定しない。今回はフィルターとグループ化を同時に変えたため、原因の切り分け実験にはなっていない。
+- [最新の Issue #15](https://github.com/K-Kizuku/raft-game/issues/15) を再読した。H-5 は通常要求の p99 の数倍を目安に、必要なら cpuMs を変更して cpu / ws を再測定する手順のまま。現時点では再デプロイを案内しない。
+
+### 次は同じ時間帯の内訳を取得する
+
+既存の normal-cpu-query.json の filters と calculations を再利用し、3 つの読み取りを行う。
+
+1. overview: entrypoint をグループ化から外し、実行モデルとイベントの種類だけで集計する。
+2. request-path: request.path があるイベントを経路別に集計する。
+3. do-path: executionModel=durableObject を指定し、entrypoint・eventType・event.path で集計する。
+
+経路の項目がないログは経路別の結果に含まれない可能性があるため、overview と件数を照合する。各結果の CPU 最大値が大きい順で先頭 20 グループを表示し、全体のグループ数も残す。生のイベント、ヘッダーやクエリの値は表示しない。
+
+```fish
+node -e '
+const fs = require("node:fs");
+const {execFileSync} = require("node:child_process");
+const p = JSON.parse(fs.readFileSync("spike/.cloudflare/normal-cpu-query.json", "utf8")).run.query.parameters;
+const cases = [
+  ["overview", ["$workers.executionModel", "$workers.eventType"], []],
+  ["request-path", ["$workers.executionModel", "$workers.eventType", "$workers.event.request.path"], []],
+  ["do-path", ["$workers.entrypoint", "$workers.eventType", "$workers.event.path"],
+    [{key: "$workers.executionModel", operation: "eq", type: "string", value: "durableObject"}]]
+];
+for (const [name, keys, extra] of cases) {
+  const args = ["-C", "spike", "exec", "cf", "o11y", "telemetry", "query",
+    "--query-id", "t007-cpu-" + name, "--preview", "--view", "calculations",
+    "--timeframe-from", "1794035511730", "--timeframe-to", "1794038049020",
+    "--parameters-filters", JSON.stringify([...p.filters, ...extra]),
+    "--parameters-calculations", JSON.stringify(p.calculations),
+    "--parameters-group-bys", JSON.stringify(keys.map(value => ({type: "string", value}))),
+    "--parameters-limit", "500"];
+  const raw = execFileSync("pnpm", args, {encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 32 * 1024 * 1024});
+  fs.writeFileSync("spike/.cloudflare/normal-cpu-" + name + ".json", raw);
+  const r = JSON.parse(raw), rows = new Map();
+  for (const c of r.calculations ?? []) for (const a of c.aggregates ?? []) {
+    const key = JSON.stringify(a.groups);
+    if (!rows.has(key)) rows.set(key, {group: a.groups.map(g => g.value).join(" / ")});
+    rows.get(key)[c.alias ?? c.calculation] = a.value;
+  }
+  const sorted = [...rows.values()].sort((a, b) => (b.cpu_max_ms ?? 0) - (a.cpu_max_ms ?? 0));
+  console.log(JSON.stringify({query: name, status: r.run?.status, totalGroups: rows.size, top20: sorted.slice(0, 20)}, null, 2));
+}
+'
+```
+
+JavaScript の構文を確認した。pnpm の引数は配列で渡し、シェルへの文字列の再解釈を行わない。API の結果は未受領。H-5 の値の判断と H-6 以降は継続中。
 
 ## 測定前に確定・確認する事項
 
