@@ -17,6 +17,7 @@
 | 8 | [08-implementation-plan.md](./08-implementation-plan.md) | 実装計画 — マイルストーン・タスク一覧・最初の手順 | 実装者 |
 | 9 | [09-assumptions-and-open-questions.md](./09-assumptions-and-open-questions.md) | **判断の記録と未決事項** — 24 項目の判断の理由・決定・変更箇所 | プロダクトオーナー |
 | 10 | [10-glossary.md](./10-glossary.md) | 用語集（ゲームの言葉 ⇔ Raft の言葉） | 全員 |
+| 11 | [11-visual-design.md](./11-visual-design.md) | ビジュアルデザインの方針 — 温かい絵本・海図風の配色・文字・余白・嵐と花火の表現・アクセシビリティ・デザイントークン | 実装者・プロダクトオーナー |
 | — | [adr/](./adr/README.md) | **ADR** — 技術判断の記録（21 件。うち 2 件は置き換え済み） | 全員 |
 | — | [agents/](./agents/README.md) | **AI エージェントによる並列開発** — 役割と権限・Issue からマージまでの流れ・Merge Gate・運用と障害の対応（[ADR-0021](./adr/0021-hootl-agent-development.md)） | 実装者・プロダクトオーナー |
 | — | [runbooks/](./runbooks/README.md) | 本番の運用の手順 — 前の版に戻す・`cf` の版を上げる | プロダクトオーナー |
