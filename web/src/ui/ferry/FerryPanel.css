@@ -1,0 +1,255 @@
+/* フェリー操作（T-405・ゲームデザイン §7.2 の下）。文字は白地に #111827・#374151・#7f1d1d・#1e3a8a
+   （コントラスト比 4.5:1 以上。NFR-10）。T-409（チュートリアル）が指すので、ferry-panel・ferry-panel__tabs・
+   ferry-panel__port・ferry-panel__cargo・ferry-panel__destinations・ferry-panel__autoload・
+   ferry-panel__depart・ferry-panel__status の className を変えない。 */
+.ferry-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: #111827;
+}
+
+.ferry-panel button {
+  font: inherit;
+  color: #111827;
+  background: #ffffff;
+  border: 1px solid #6b7280;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ferry-panel button:focus-visible,
+.ferry-panel h3:focus-visible,
+.ferry-panel input:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+/* 押せないボタンは disabled にせず aria-disabled にする（フォーカスを失わないため）。
+   薄く見せるが、文字は #374151 on #f3f4f6 でコントラスト比 4.5:1 以上を保つ（opacity は使わない）。 */
+.ferry-panel button[aria-disabled="true"] {
+  color: #374151;
+  background: #f3f4f6;
+  border-style: dashed;
+  border-color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.ferry-panel__note,
+.ferry-panel__ready,
+.ferry-panel__reason {
+  margin: 0;
+  color: #374151;
+}
+
+.ferry-panel__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ferry-panel__tab {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.6rem;
+  min-height: 44px;
+  padding: 0.35rem 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ferry-panel__tab[aria-pressed="true"] {
+  border-width: 3px;
+  background: #e0ecff;
+}
+
+.ferry-panel__tab-name {
+  font-weight: bold;
+}
+
+.ferry-panel__broken {
+  color: #7f1d1d;
+}
+
+.ferry-panel__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ferry-panel__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ferry-panel__areas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.ferry-panel__section {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.ferry-panel__section h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  border-bottom: 1px solid #c8d3dc;
+}
+
+.ferry-panel__port,
+.ferry-panel__cargo {
+  min-height: 56px;
+  padding: 0.35rem;
+  border: 2px solid #c8d3dc;
+  border-radius: 6px;
+}
+
+/* ドラッグ中に上に来たら、枠を太い破線にする（色だけで示さない）。 */
+.ferry-panel__port.is-over,
+.ferry-panel__cargo.is-over {
+  border: 4px dashed #1d4ed8;
+  padding: calc(0.35rem - 2px);
+}
+
+.ferry-panel__piles,
+.ferry-panel__letters,
+.ferry-panel__cargo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  list-style: none;
+}
+
+.ferry-panel__piles,
+.ferry-panel__letters {
+  padding: 0;
+}
+
+.ferry-panel__piles {
+  flex-direction: column;
+}
+
+.ferry-panel__pile-to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+}
+
+.ferry-panel__pile-target {
+  padding: 0 0.35rem;
+  font-size: 0.8rem;
+  color: #1e3a8a;
+  border: 1px solid #1e3a8a;
+  border-radius: 4px;
+}
+
+.ferry-panel__letter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.25rem 0.45rem;
+  touch-action: none;
+}
+
+.ferry-panel__letter.is-dragging {
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 4px 10px rgb(0 0 0 / 25%);
+}
+
+.ferry-panel__letter-note {
+  margin-left: 0.25rem;
+  font-size: 0.8rem;
+  color: #374151;
+}
+
+.ferry-panel__slot {
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.ferry-panel__slot--empty,
+.ferry-panel__slot--unknown {
+  justify-content: center;
+  padding: 0 0.5rem;
+  color: #374151;
+  border: 1px dashed #6b7280;
+  border-radius: 6px;
+}
+
+.ferry-panel__cargo-letter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.35rem;
+}
+
+.ferry-panel__destinations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #c8d3dc;
+  border-radius: 6px;
+}
+
+.ferry-panel__destination {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.ferry-panel__destination input {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.ferry-panel__storm {
+  color: #7f1d1d;
+}
+
+.ferry-panel__forecast {
+  color: #374151;
+}
+
+.ferry-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.ferry-panel__action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ferry-panel__autoload,
+.ferry-panel__depart {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.35rem 1rem;
+  font-weight: bold;
+}
+
+.ferry-panel__status {
+  min-height: 1.5em;
+  margin: 0;
+}
