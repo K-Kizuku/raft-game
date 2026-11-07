@@ -1,7 +1,7 @@
 // エンジニアパネルの表示のための純粋な関数（T-407・FR-ENG-02・FR-ENG-03・ゲームデザイン §7.4）。
 // 値はストア（T-403）に届いたものをそのまま出し、Leader や Commit をここで決めない（ADR-0009）。
 // 欄の名前と役割は常に Raft の用語（ゲームデザイン §8）。
-import type { Letter, Loc, NodeDetail, Role } from "../../protocol/index.ts";
+import type { Letter, Loc, Role } from "../../protocol/index.ts";
 import { leaderId } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { formatDuration } from "../../app/format.ts";
@@ -47,7 +47,7 @@ export type NodeRow = Readonly<{
   role: string;
   roleLabel: string;
   term: number;
-  vote: number | null;
+  vote: number; // node.state の値（0 = 投票していない）
   lead: number;
   commit: number;
   applied: number;
@@ -56,12 +56,8 @@ export type NodeRow = Readonly<{
 }>;
 
 // ノード一覧の行。stage の島の順のうち nodes にあるもの、続けて stage に無いノードの ID の昇順。
-// vote は node.state に無いので、detail のノードの行だけに出す。
-export function nodeRows(
-  world: World,
-  detail: NodeDetail | null,
-  targetId: number | null,
-): NodeRow[] {
+// 値はすべて node.state（ストアの nodes）のもの。vote も全ノードについて出す。
+export function nodeRows(world: World, targetId: number | null): NodeRow[] {
   const inStage = world.stage.islandIds.filter((id) => world.nodes[id] !== undefined);
   const stageSet = new Set(inStage);
   const rest = nodeIds(world)
@@ -77,7 +73,7 @@ export function nodeRows(
       role: node.role,
       roleLabel: roleLabel(node.role),
       term: node.term,
-      vote: detail !== null && detail.id === id ? detail.vote : null,
+      vote: node.vote,
       lead: node.lead,
       commit: node.commit,
       applied: node.applied,

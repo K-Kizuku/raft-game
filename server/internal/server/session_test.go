@@ -115,7 +115,7 @@ func TestSessionHandle(t *testing.T) {
 	}
 
 	notImplemented := []protocol.MessageType{
-		protocol.MessageTypeSubEngineer, protocol.MessageTypeCmdRelayLoad,
+		protocol.MessageTypeCmdRelayLoad,
 	}
 	for _, typ := range notImplemented {
 		c.send(typ, "n-1", struct{}{})

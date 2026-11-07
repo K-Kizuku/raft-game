@@ -278,6 +278,7 @@ func SnapshotFromSim(s sim.Snapshot) protocol.Snapshot {
 			ID:        n.ID,
 			Role:      protocol.Role(n.Role),
 			Term:      n.Term,
+			Vote:      n.Vote,
 			Lead:      n.Lead,
 			Commit:    n.Commit,
 			Applied:   n.Applied,

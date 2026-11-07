@@ -112,7 +112,10 @@ func (s *session) flushTick(now time.Time) {
 	if s.broken {
 		return
 	}
-	s.guard("flush", func() { s.flush(false, now) })
+	s.guard("flush", func() {
+		s.flush(false, now)
+		s.tickEngineer(now)
+	})
 }
 
 // flushNow は、いまの時刻でまとめ送りをする。force なら、イベントがなくても events を送る

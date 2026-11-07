@@ -51,9 +51,9 @@ export function makeSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     letters: [],
     requests: [],
     nodes: [
-      { id: 1, role: "leader", term: 2, lead: 1, commit: 3, applied: 3, lastIndex: 3 },
-      { id: 2, role: "follower", term: 2, lead: 1, commit: 3, applied: 3, lastIndex: 3 },
-      { id: 3, role: "follower", term: 2, lead: 1, commit: 3, applied: 3, lastIndex: 3 },
+      { id: 1, role: "leader", term: 2, vote: 1, lead: 1, commit: 3, applied: 3, lastIndex: 3 },
+      { id: 2, role: "follower", term: 2, vote: 1, lead: 1, commit: 3, applied: 3, lastIndex: 3 },
+      { id: 3, role: "follower", term: 2, vote: 1, lead: 1, commit: 3, applied: 3, lastIndex: 3 },
     ],
     islandsState: [
       { id: 1, satisfaction: 72, lastDeliveredAt: null },

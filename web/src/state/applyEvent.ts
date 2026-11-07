@@ -319,6 +319,7 @@ export function applyEvent(world: World, event: ServerEvent): World {
         id: event.id,
         role: event.role,
         term: event.term,
+        vote: event.vote,
         lead: event.lead,
         commit: event.commit,
         applied: event.applied,

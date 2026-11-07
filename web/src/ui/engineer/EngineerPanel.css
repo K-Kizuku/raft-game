@@ -106,10 +106,6 @@
   font-weight: bold;
 }
 
-.engineer-note {
-  font-size: 0.8rem;
-}
-
 .engineer-letters ul {
   display: flex;
   flex-direction: column;

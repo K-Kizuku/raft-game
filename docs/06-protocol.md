@@ -347,9 +347,17 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `cmd.ferry.depart` | `{ "ferryId": "f1", "to": 2 }` | 出航 | P0 |
 | `cmd.relay.load` | `{ "ferryId": "f1", "letterIds": [20] }` | 中継倉庫の手紙を積む | P1 |
 | `cmd.sync` | `{}` | スナップショットを要求する | P0 |
-| `sub.engineer` | `{ "enabled": true, "nodeId": 2 }` | エンジニアモードの購読（`nodeId` の詳細を 2Hz で送る） | P0 |
+| `sub.engineer` | `{ "enabled": true, "nodeId": 2 }` | エンジニアモードの購読（`nodeId` の詳細 `node.detail` を、すぐに 1 つと、以後 2Hz で送る）。`{ "enabled": false }` でやめる（`nodeId` は見ない）。注記は表の下 | P0 |
 | `demo.trigger` | `{ "event": "storm" }` | デモ用。ステージ定義の `demo.storm`（対象の航路・時間）で嵐を起こす。デモ操作が有効なセッションだけ。嵐は送った時刻に始まり、`demo.storm.durationMs` だけ続く（予報なし。嵐の途中でもう一度送ると遮断が延びる）。成功すると `ok: true` の `ack`（`t` は起こした時刻）を返し、入力ログに記録してリプレイで再現する | P0 |
 | `ping` | `{ "clientTime": 123456 }` | 15 秒ごと | P0 |
+
+`sub.engineer` の注記（T-407b）:
+
+- 返事: `cmdId` がなければ、成功しても何も返さない（web は `cmdId` を付けない）。`cmdId` があれば、成功は `ok: true` の `ack`（`t` はいまのゲーム内時刻）
+- 誤り: payload が空・`null`（`{}` として読むので `enabled` がない）・`enabled` が真偽値でない・`enabled: true` で `nodeId` がない・`nodeId` が整数でない（小数・負・文字列）・0・島の数より大きい → `bad_request`（`cmdId` があれば `ack`、なければ fatal でない `error`）。誤りのときは購読の状態を変えない（前の購読が続く）。知らないキーは無視する（§8）
+- `enabled: true` は購読するノードを置き換え、すぐにそのノードの `node.detail` を 1 つ送る（保留のイベントがあれば先に送る）。`enabled: false` は購読していなくても成功する
+- 購読をやめる時機: `enabled: false`・同じセッションへの新しい接続（古い接続の購読を引き継がない）・切断。クライアントは再接続して `snapshot` を受けた後に送り直す（§10.5）
+- Intro（`cmd.game.start` の前）は、購読は受け付けるが `node.detail` を送らない（`snapshot` の `nodes` は開会式の前の値なので）。開始後の最初のまとめ送りから送る。`snapshot` を送る前（standalone の `hello` の前）と、送信キューが詰まっているとき（`events` と同じ基準）も送らない。一時停止中・ラウンドの終了後は、購読中なら 2Hz で送り続ける
 
 ### 4.1 コマンドの検証とエラーコード
 
@@ -382,7 +390,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `snapshot` | `Snapshot`（§5.1） | 接続時・`cmd.sync` の応答・送信キューがあふれたとき |
 | `events` | `{ "clock": Clock, "events": Event[] }` | 100ms ごとにまとめて送る（イベントがなくても 1 秒に 1 回は `clock` のために送る）。コマンドと `pause`・`speed`・`skip` の後はすぐに送る（イベントがなくても `clock` のために送る）。`snapshot` の前のイベントは送らない（`snapshot` の後のイベントの `seq` は `lastSeq` より大きい） |
 | `ack` | `{ "cmdId": "c-12", "ok": true, "t": 61200 }` / `{ "cmdId": "c-12", "ok": false, "t": 61200, "code": "route_blocked", "message": "…" }` | コマンドの結果。`t` は適用したゲーム内時刻で、Durable Object が入力ログに記録するのに使う。失敗のときも `t`（そのときのゲーム内時刻）を入れる（後方互換なフィールドの追加、§8） |
-| `node.detail` | `NodeDetail`（§5.4） | エンジニアモードの購読中、2Hz |
+| `node.detail` | `NodeDetail`（§5.4） | エンジニアモードの購読中、2Hz（`sub.engineer` の注記は §4） |
 | `round.result` | `RoundResult`（§5.5） | ラウンド終了時 |
 | `error` | `{ "code": "…", "message": "…", "fatal": true }` | `fatal` なら直後に切断する |
 | `pong` | `{ "clientTime": 123456, "simTime": 61200 }` | — |
@@ -434,7 +442,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
   "routesState": [ { "id": "1-2", "blockedUntil": null } ],
   "letters": [ /* 港と船の上にある Letter（§5.2）。P1 では中継倉庫も。配達済み・破棄は含めない */ ],
   "requests": [ /* 発生済みの Request（§5.3）。ID の順 */ ],
-  "nodes": [ { "id": 1, "role": "leader", "term": 2, "lead": 1, "commit": 14, "applied": 14, "lastIndex": 15 } ],
+  "nodes": [ { "id": 1, "role": "leader", "term": 2, "vote": 1, "lead": 1, "commit": 14, "applied": 14, "lastIndex": 15 } ],
   "islandsState": [ { "id": 1, "satisfaction": 64, "lastDeliveredAt": 60500 } ],
   "score": { "total": 520, "successes": 3, "target": 5, "criticalSecured": ["firework:a"] },
   "lastSeq": 41
@@ -444,6 +452,8 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 `stage.islands[]` の `name`・`municipality`・`population` は `data/islands.json` の値（データ仕様 §3.1）。`municipality` は `municipalities` を `・` でつないだもの（`小豆島町・土庄町`）。`population.note` は自治体が 2 つ以上の島だけ（T-201b）。
 
 `phase` の値: `intro`（`cmd.game.start` の前。ステージ紹介）/ `opening` / `sailing` / `ended`
+
+`nodes[]` は全ノードを ID の順に並べ、各要素は最後に出した `node.state`（§6）と同じ形です。`vote` は `HardState` の Vote（0 = 投票していない。後方互換なフィールドの追加、§8）。
 
 `ferries[]` の注記（後方互換なフィールドの追加、§8）:
 
@@ -522,16 +532,22 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 ```json
 {
-  "id": 2, "role": "follower", "term": 3, "vote": 2, "lead": 2,
+  "id": 2, "role": "leader", "term": 3, "vote": 2, "lead": 2,
   "commit": 18, "applied": 18, "lastIndex": 19,
-  "log": [ { "index": 19, "term": 3, "type": "normal", "summary": "firework.reserve stage2-0009 (中通島)", "committed": false } ],
-  "progress": [ { "id": 1, "match": 15, "next": 16, "state": "probe", "recentActive": false } ],
+  "log": [ { "index": 19, "term": 3, "type": "normal", "summary": "firework.reserve stage2-0009", "committed": false } ],
+  "progress": [ { "id": 1, "match": 15, "next": 16, "state": "probe", "recentActive": false },
+                { "id": 3, "match": 19, "next": 20, "state": "replicate", "recentActive": true } ],
   "ledger": { "firework:a": "stage2-0002", "stall:main": ["stage2-0001", "stage2-0005"] },
-  "electionEstimate": { "ticksSinceLeaderContact": 12, "note": "推定値" }
+  "electionEstimate": { "ticksSinceLeaderContact": 0, "note": "推定値" }
 }
 ```
 
-`progress` は、そのノードが Leader のときだけ入ります。`log` は末尾の 50 件です。
+- `id`〜`lastIndex` は `node.state`（§6）と同じ値です
+- `log` は末尾の 50 件（50 件以下なら全部）を `index` の昇順に並べます。エントリがなければ `[]`。`type` と `summary` は §5.2 の `raft.entries[]` と同じ規則で、`summary` は通常のエントリなら `"<kind> <reqId>"`、読めなければ `"invalid"`、空のエントリと構成変更は `""`。`committed` は `index <= commit`
+- `progress` は、そのノードが Leader のときだけ入ります（Leader でなければキーがない）。Leader から見た Follower の複製の進み具合を、自分を除いて ID の順に並べます。`state` は `probe` / `replicate` / `snapshot`。Follower がいない（島が 1 つ）ときもキーがありません
+- `ledger` は、そのノードの台帳のすべての資源をキーに持ちます。`firework` は予約した `reqId` の文字列（予約がなければ `""`）、`stall` は予約した `reqId` の配列（適用の順。予約がなければ `[]`）。資源がなければ `{}`
+- `electionEstimate.ticksSinceLeaderContact` は、そのノードが最後に Leader から手紙を受け取ってから経った Raft の tick 数の推定値です（ゲーム内時間 ÷ `raft.tickMs` の切り捨て。開会式の後に一度も受け取っていなければ時刻 0 から数える。Leader は `0`）。`etcd-io/raft` の `electionElapsed` は公開されていないので、ゲーム側で船の配達を観察して計算します（[DesignDoc §3.3](./03-design-doc.md)）。`note` は常に `"推定値"`
+- Intro（`cmd.game.start` の前）は送りません（§4）
 
 ### 5.5 RoundResult
 
@@ -582,7 +598,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `ferry.broken` / `ferry.repaired` | `ferryId`, `until` | 故障（P1） |
 | `route.blocked` / `route.unblocked` | `routeIds`, `until` | 嵐 |
 | `forecast` | `event`, `at`, `routeIds` | 嵐の予報 |
-| `node.state` | `id`, `role`（`follower` / `pre_candidate` / `candidate` / `leader`）, `term`, `lead`, `commit`, `applied`, `lastIndex` | いずれかの値が変わった（同じステップ内の変化はまとめる） |
+| `node.state` | `id`, `role`（`follower` / `pre_candidate` / `candidate` / `leader`）, `term`, `vote`（`HardState` の Vote。0 = 投票していない）, `lead`, `commit`, `applied`, `lastIndex` | いずれかの値が変わった（同じステップ内の変化はまとめる） |
 | `node.leader_elected` | `id`, `term` | 新しい Leader が誕生した（開会式を含む） |
 | `node.stepped_down` | `id`, `term`, `reason`（`check_quorum` / `higher_term`） | Leader でなくなった |
 | `request.created` | `request`（Request 全体。`status` は `received`） | 依頼の発生 |

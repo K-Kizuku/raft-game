@@ -88,6 +88,7 @@ type session struct {
 	bucket        tokenBucket       // コマンドのレート制限
 	stepHook      func()            // テスト用。ステップの最初に呼ぶ
 	notices       *noticer          // 通知（notice）と seq の振り直し。run の goroutine だけが触れる
+	eng           engineerSub       // エンジニアモードの購読（engineer.go。T-407b）
 
 	inbox  chan inbound
 	attach chan attachReq
@@ -251,6 +252,7 @@ func (s *session) onAttach(a attachReq) {
 	s.connected.Store(true)
 	s.lastSeen.Store(s.now().UnixNano())
 	s.snapshotSent = false // standalone は hello まで events を送らない
+	s.eng.reset()          // 古い接続の購読を引き継がない
 	if s.broken {
 		s.closeBroken()
 		return
@@ -274,6 +276,7 @@ func (s *session) onAttach(a attachReq) {
 // 古い接続・置き換えられた接続の切断では呼ばれない。
 func (s *session) onDetach() {
 	s.snapshotSent = false
+	s.eng.reset()
 	if s.broken || s.engine.Phase() == sim.PhaseEnded || s.pause.isPaused() {
 		return
 	}
@@ -366,8 +369,10 @@ func (s *session) handleEnvelope(env protocol.Envelope) {
 	case protocol.MessageTypeDemoTrigger:
 		s.handleDemoTrigger(env)
 		return
-	case protocol.MessageTypeSubEngineer, // T-407
-		protocol.MessageTypeCmdRelayLoad: // P1
+	case protocol.MessageTypeSubEngineer:
+		s.handleSubEngineer(env)
+		return
+	case protocol.MessageTypeCmdRelayLoad: // P1
 		s.reject(env, "not implemented")
 		return
 	}

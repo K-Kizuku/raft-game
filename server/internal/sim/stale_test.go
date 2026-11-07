@@ -74,7 +74,7 @@ func TestLetterStalePortAndFerry(t *testing.T) { // ST-1
 		SteppedDown{ID: 1, Term: 3, Reason: "higher_term"},
 		LetterStale{LetterID: 1},
 		LetterStale{LetterID: 2},
-		NodeState{ID: 1, Role: "follower", Term: 3, Lead: 2, Commit: 4, Applied: 4, LastIndex: 4},
+		NodeState{ID: 1, Role: "follower", Term: 3, Vote: 0, Lead: 2, Commit: 4, Applied: 4, LastIndex: 4},
 	})
 
 	s := e.Snapshot()

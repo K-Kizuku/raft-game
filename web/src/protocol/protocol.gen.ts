@@ -801,6 +801,7 @@ export interface NodeSummary {
   id: number /* uint64 */;
   role: Role;
   term: number /* uint64 */;
+  vote: number /* uint64 */; // HardState の Vote（0 = 投票していない）
   lead: number /* uint64 */;
   commit: number /* uint64 */;
   applied: number /* uint64 */;
