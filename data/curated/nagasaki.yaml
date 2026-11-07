@@ -1,0 +1,16 @@
+# 長崎県（Stage 2・demo-goto の五島）で使う、離島振興計画書（D2）の抜き出し（データ仕様 §3.3）。
+# 長崎県の計画は地域名が「離島振興対策実施地域」で、五島列島を含む長崎県の離島地域全体の記述（福江島・奈留島の個別の記述ではない）。
+format: 1
+excerpts:
+  - id: nagasaki-typhoon
+    region: 離島振興対策実施地域
+    field: NATURAL_CLIMATE_FEATURES
+    quote: "台風等の自然災害の影響を受けやすい"
+    provenance: fact
+    note: 嵐のイベントの題材（Stage 2・demo-goto）
+  - id: nagasaki-world-heritage
+    region: 離島振興対策実施地域
+    field: LOCAL_INDUSTRY_TOURISM
+    quote: "世界遺産登録された「長崎と天草地方の潜伏キリシタン関連遺産」"
+    provenance: fact
+    note: 島の紹介文（Stage 2・demo-goto）
