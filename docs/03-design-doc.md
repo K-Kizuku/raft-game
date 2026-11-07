@@ -985,7 +985,7 @@ func (s *Session) run(ctx context.Context) {
 | 画面・パネル | React 19 + TypeScript | HUD、フェリー操作、島の詳細、通知、エンジニアパネル、リザルト |
 | マップの描画 | PixiJS v8（React の外で命令的に使う） | 海・島・航路・船・手紙の山・嵐のエフェクト |
 | 状態 | zustand | サーバーのスナップショットとイベントを反映した世界の状態 |
-| ドラッグ＆ドロップ | dnd-kit | 港 → 船への積み込み |
+| ドラッグ＆ドロップ | dnd-kit（`@dnd-kit/core` 6.3.1） | 港 → 船への積み込み |
 | ビルド | Vite | — |
 | テスト | Vitest / Playwright | — |
 
@@ -1234,6 +1234,51 @@ T-412 で決めた、設定「Raft の用語を併記する」（[FR-UI-10](./01
 - React の外（PixiJS）では、`termsPreference.getSnapshot().showRaftTerms` を読み、`termsPreference.subscribe()` で変更を知って、`withRaftTerm` で文字列を作る
 - 各画面に併記を付けるのは、それぞれのタスク（マップ T-404・フェリー操作 T-405・HUD／島の詳細／通知 T-406・チュートリアル T-409）。今は遊び方の画面の「手紙」「確定」に付けている
 - export の名前・意味を変えるとき、`RAFT_TERMS` に項目を足すときは、この節も直す
+
+### 13.8 フェリー操作パネル
+
+T-405 で決めた、ゲーム画面の下のスロット「フェリー操作」（`FerryPanel`、[04-game-design.md §3.2](./04-game-design.md)・§7.2）です。ファイルは `web/src/ui/ferry/`（`FerryPanel.tsx`・`FerryPanel.css`・`ferryView.ts`・`ferryMessages.ts`・`dnd.ts`）にあります。送るコマンドは `cmd.ferry.load`・`cmd.ferry.unload`・`cmd.ferry.autoload`・`cmd.ferry.depart`（[06-protocol.md §4](./06-protocol.md)）で、送る関数は `useGameCommand()`（T-406。`GameCommandProvider` に `sendCommand` を渡すのは T-402b）から得ます。
+
+**表示を作る純粋な関数**（`ferryView.ts`。引数を書き換えず、呼ぶたびに新しい配列を返すので `useMemo` の中で呼ぶ。時刻は引数の `simNow`）
+
+| 関数 | 返すもの |
+|---|---|
+| `ferryTabs(world, selection, simNow)` | 船の一覧（`ferryIds` の順。状態・いる島か行き先の島・到着までの残り・積み荷の数・故障） |
+| `ferryDetail(world, ferryId, simNow)` | 選んだ船の詳細。停泊中ならいる島の港の手紙（`portPiles` の山）・積み荷のスロット（手紙・不明な手紙・空き）・航路でつながる行き先（嵐・予報の印）・停泊の残り時間。船が無ければ `null` |
+| `autoloadBlocker(detail, to)` | おまかせを押せない理由（航行中・行き先が無い）。嵐の航路でも積める（§3.4） |
+| `departBlocker(detail, to)` | 出航を押せない理由（おまかせの理由に加え、停泊の時間中・嵐の航路。FR-FERRY-07） |
+
+**ADR-0009 との関係**
+
+- 表示（手紙の場所・船の状態）はストア（§13.2）の値だけで変え、コマンドを送っただけでは変えない（楽観的に動かさない）。成否はサーバーの `ack` で知り、`ferryResultMessage` の文を `role="status"` に出す
+- 押せなくするのは「送っても明らかに失敗する」ものだけ（Provider の外・`phase` が `sailing` でない・航行中・行き先が無い・停泊の時間中・嵐の航路・違う島で生まれた手紙を降ろす）。満載・行き先宛ての手紙が無い・故障はボタンを止めず、サーバーの `capacity_exceeded`・`letter_not_here`・`ferry_broken` を文で知らせる（§3.4「積めない理由を返す」）
+- 1 度に送るのは 1 つだけで、`ack` が返るまでパネルのすべての操作を押せなくする。`load`・`unload` が `ok` で返っても、`letter.moved` が届くまでは、その手紙を「反映待ち」にして押せなくする（同じ手紙を押して `letter_not_here` になるのを防ぐ）。送っている間にアンマウントされたら結果を捨てる
+- おまかせの積む順（§3.4）はサーバーの `autoload` が決める。クライアントで並べ替えて `load` にしない
+
+**行き先の持ち方**
+
+行き先はパネルのコンポーネントの状態（`{ ferryId, islandId, to }`）に持ち、ストアには入れません（§13.2 の「画面ごとの UI の状態はストアに入れない」）。船と島が今と同じで、`to` が行き先の候補にあるときだけ使うので、出航した・別の島に着いた・別の船を選んだら選び直しになります。
+
+**ドラッグ＆ドロップとキーボード**
+
+- ドラッグ＆ドロップはパネルの中（港の手紙 → 積み荷・積み荷 → 港）で完結する（[ADR-0010](./adr/0010-frontend-react-pixijs.md)）。落とした先からコマンドを決めるのは純粋な関数 `dropCommand`（`dnd.ts`）で、同じ場所・パネルの外に落としたら何もしない
+- センサーは `PointerSensor`（`activationConstraint: { distance: 6 }`）だけ。6 px 動かすまではドラッグを始めないので、クリックはクリックのまま
+- `KeyboardSensor` は使わない。Enter・Space でドラッグを始めるので、ボタンの押下とぶつかるため。キーボードでは、手紙のボタンを Enter・Space で押すとクリックと同じに積む・降ろす。`useDraggable` の `attributes`（`aria-roledescription="draggable"` と英語の説明）は渡さず、ボタンのままの意味にする。`DndContext` の `accessibility` には日本語の `announcements` と `screenReaderInstructions` を渡す
+- `@dnd-kit/core` を import するのは `web/src/ui/ferry/` だけ。`@dnd-kit/utilities`・`@dnd-kit/sortable`・`@dnd-kit/modifiers` は足さない
+
+**押せないボタンとフォーカス**
+
+- 押せないボタンは `disabled` にせず `aria-disabled="true"` にし、押されても送らない。`disabled` にすると、押した直後にフォーカスが外れ、キーボードで続けて操作できないため。押せない理由は文字でボタンの近くに出し、`aria-describedby` でつなぐ
+- 手紙のボタンで積む・降ろした手紙が、イベントで一覧から消えたら、同じ一覧（港・積み荷）の同じ位置のボタン、無ければ 1 つ前、それも無ければその一覧の見出し（`<h3 tabIndex={-1}>`）にフォーカスを移す（`body` に落とさない）。フォーカスがパネルの外にあるときは動かさない
+
+**`@dnd-kit/react` を使わない理由**
+
+新しい `@dnd-kit/react`（0.x）は 1.0 の前で API が変わりうるので使わず、安定した `@dnd-kit/core` の 6 系を使います。版は `web/package.json` で固定します（6.3.1。ライセンスは MIT で、依存の `@dnd-kit/accessibility`・`@dnd-kit/utilities` も MIT、`tslib` は 0BSD）。
+
+**後続のタスクとの境界**
+
+- チュートリアル（T-409）は、`className` の `ferry-panel`・`ferry-panel__tabs`・`ferry-panel__port`・`ferry-panel__cargo`・`ferry-panel__destinations`・`ferry-panel__autoload`・`ferry-panel__depart`・`ferry-panel__status` を指す。これらを変えない
+- 積み替え（`cmd.relay.load`、FR-FERRY-06）・寄港地の予約・キーボードショートカット（FR-UI-09）・故障の操作の制限（P1）は対象外
 
 ---
 
