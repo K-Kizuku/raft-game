@@ -1,0 +1,3 @@
+# cf dev（make dev）が読むローカルのシークレット（docs/03-design-doc.md §12.6）。本物の値をコミットしない
+.dev.vars
+.dev.vars.*
