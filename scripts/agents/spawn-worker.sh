@@ -64,7 +64,7 @@ case "$issue" in
 esac
 case "$mode" in
   implement | fix | conflict) ;;
-  *) die "--mode は implement・fix・conflict のどれか（$mode）" ;;
+  *) die "--mode は implement・fix・conflict のどれか（${mode}）" ;;
 esac
 
 need git jq
@@ -95,13 +95,13 @@ for f in "$run_dir"/issue-*.json; do
   p="$(jq -r '.pid // empty' "$f" 2>/dev/null || true)"
   if pid_alive "$p"; then
     if [ "$f" = "$run_file" ]; then
-      die "Issue #$issue の Worker はすでに動いている（pid $p）"
+      die "Issue #$issue の Worker はすでに動いている（pid ${p}）"
     fi
     running=$((running + 1))
   fi
 done
 if [ "$running" -ge "$max_workers" ]; then
-  die "動いている Worker が max_workers（$max_workers）に達している（$running 件）。終わるのを待つ"
+  die "動いている Worker が max_workers（${max_workers}）に達している（$running 件）。終わるのを待つ"
 fi
 
 # ---- Issue の本文と、保護されたパスとの重なり ----
@@ -144,7 +144,7 @@ while IFS= read -r pf; do
   # 先頭がワイルドカードの項目（**/*.go・*.md など）は、前方一致の空文字がすべてに一致してしまうので、
   # 重なりなしとして扱い、警告を出す（意図せず protected_paths の書き込みを許さないため）。
   if [ -z "$a" ]; then
-    info "警告: 変更予定ファイルの「$pf」は先頭がワイルドカードなので、保護されたパスとは重ならないものとして扱う（必要なら具体的なパスを書く）"
+    info "警告: 変更予定ファイルの「${pf}」は先頭がワイルドカードなので、保護されたパスとは重ならないものとして扱う（必要なら具体的なパスを書く）"
     continue
   fi
   while IFS= read -r pp; do
@@ -176,7 +176,7 @@ use_resume_flag=0
 use_w=1
 session=""
 if [ "$resume" = 1 ]; then
-  resume_note="これは中断した作業の再開です。最初に Git の状態（git status・git log・origin/$branch）と PR の有無を確かめ、どこまで進んだかを判断してから続けてください。"
+  resume_note="これは中断した作業の再開です。最初に Git の状態（git status・git log・origin/${branch}）と PR の有無を確かめ、どこまで進んだかを判断してから続けてください。"
   if [ -d "$wt" ]; then
     use_w=0
     if session_exists "$old_session"; then
@@ -271,7 +271,7 @@ if [ "${#claim_args[@]}" -gt 0 ]; then
   set -e
   if [ "$rc" -ne 0 ]; then
     release_slot
-    die_code "$rc" "agentctl claim が拒否した（終了コード $rc）。Worker は起動しない"
+    die_code "$rc" "agentctl claim が拒否した（終了コード ${rc}）。Worker は起動しない"
   fi
 fi
 
@@ -287,7 +287,7 @@ jq -n --argjson issue "$issue" --arg session "$session" --arg slot "$slot" --arg
 mv "$run_file.tmp" "$run_file"
 "$AGENTS_DIR/../dev-slot.sh" acquire --path "$wt" --pid "$pid" >/dev/null
 
-info "Issue #$issue の Worker を起動した（pid $pid・DEV_SLOT $slot・ログ $log）"
+info "Issue #$issue の Worker を起動した（pid ${pid}・DEV_SLOT ${slot}・ログ ${log}）"
 if [ "$background" = 1 ]; then
   exit 0
 fi
@@ -295,5 +295,5 @@ set +e
 wait "$pid"
 rc=$?
 set -e
-info "Worker が終了した（終了コード $rc）"
+info "Worker が終了した（終了コード ${rc}）"
 exit "$rc"

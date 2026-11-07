@@ -1,0 +1,51 @@
+/* お知らせ（T-406・ゲームデザイン §7.3）。マップの上に重なるので、背景は半透明の白
+   （不透明度 0.92。マップの色が濃くても #111827 の文字のコントラスト比 4.5:1 以上。NFR-10）。 */
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  color: #111827;
+  background: rgb(255 255 255 / 92%);
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+}
+
+/* 郵便局長の絵の代わりの丸（島の色に白い頭文字。縁取りで、明るい島の色でも読める）。 */
+.notice-face {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  color: #ffffff;
+  font-weight: bold;
+  text-shadow:
+    -1px -1px 0 #111827,
+    1px -1px 0 #111827,
+    -1px 1px 0 #111827,
+    1px 1px 0 #111827;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px #4b5563;
+}
+
+.notice-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.notice-speaker {
+  font-size: 0.8rem;
+}

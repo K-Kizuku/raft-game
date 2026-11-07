@@ -6,6 +6,7 @@
 #
 # - .agents/bin/agentctl がないか、tools/agentctl の中にそれより新しいファイルがあれば作り直す
 # - ビルドと実行の場所はメインの作業ツリー（git-common-dir の親）
+# - GITHUB_TOKEN も GH_TOKEN もなければ、gh auth token の値を GH_TOKEN に入れて渡す（トークンは出力しない）
 set -euo pipefail
 
 # shellcheck disable=SC2034 # lib.sh の die などが使う
@@ -30,4 +31,5 @@ if [ ! -x "$bin" ] || [ -n "$(find "$src" -type f -newer "$bin" -print -quit 2>/
   mkdir -p "$root/.agents/bin"
   go -C "$src" build -o "$bin" . || die "agentctl をビルドできない"
 fi
+ensure_gh_token
 exec "$bin" "$@"
