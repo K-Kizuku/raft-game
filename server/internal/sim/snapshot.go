@@ -11,14 +11,16 @@ import (
 // T-301 が protocol.Snapshot に変換する（または置き換える）。JSON はトレースに入らない。ワイヤの形は T-301 が決める。
 type Snapshot struct {
 	Phase    Phase          `json:"phase"`
-	T        SimTime        `json:"t"`           // Now()（プロトコルでは clock.t）
-	EndsAt   SimTime        `json:"endsAt"`      // Config.DurationMs（プロトコルでは clock.endsAt）
-	Ferries  []FerryView    `json:"ferries"`     // Config の順
-	Routes   []RouteView    `json:"routesState"` // Config の順
-	Letters  []LetterView   `json:"letters"`     // 港と船の上にある手紙。ID の昇順
-	Requests []RequestState `json:"requests"`    // 発生済みの依頼。ID の順。最後に出した request.* の値。nil にしない
-	Nodes    []NodeState    `json:"nodes"`       // ID の昇順。最後に出した node.state の値
-	LastSeq  uint64         `json:"lastSeq"`     // 最後に出したイベントの Seq（0 = まだない）
+	T        SimTime        `json:"t"`            // Now()（プロトコルでは clock.t）
+	EndsAt   SimTime        `json:"endsAt"`       // Config.DurationMs（プロトコルでは clock.endsAt）
+	Ferries  []FerryView    `json:"ferries"`      // Config の順
+	Routes   []RouteView    `json:"routesState"`  // Config の順
+	Letters  []LetterView   `json:"letters"`      // 港と船の上にある手紙。ID の昇順
+	Requests []RequestState `json:"requests"`     // 発生済みの依頼。ID の順。最後に出した request.* の値。nil にしない
+	Nodes    []NodeState    `json:"nodes"`        // ID の昇順。最後に出した node.state の値
+	Islands  []IslandState  `json:"islandsState"` // 採点するとき全島を ID の順に。採点しないときは nil
+	Score    *ScoreState    `json:"score"`        // 採点しないときは nil
+	LastSeq  uint64         `json:"lastSeq"`      // 最後に出したイベントの Seq（0 = まだない）
 }
 
 // FerryView は船の状態（プロトコル §5.1 の ferries[]）。
@@ -59,6 +61,8 @@ func (e *Engine) Snapshot() Snapshot {
 		Letters:  []LetterView{},
 		Requests: e.requestStates(),
 		Nodes:    make([]NodeState, 0, len(e.last)),
+		Islands:  e.islandStates(),
+		Score:    e.scoreState(),
 		LastSeq:  e.seq,
 	}
 

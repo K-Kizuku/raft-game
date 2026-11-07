@@ -49,9 +49,15 @@ requests:
 events: []
 scoring:
   target: { successes: 2, score3: 500 }
+  points: { normal: 100, critical: 300, late: 30, rejected: 0, expiredPenalty: 50 }
+  ferryCostMsPerPoint: 2000
+  fairnessPerSatisfaction: 5
 satisfaction:
   initial: 60
   silenceAfterMs: 30000
   silencePenalty: { everyMs: 10000, amount: 2 }
+  succeeded: 10
+  rejectedPenalty: 3
+  expiredPenalty: 10
 speed:
   allowed: [0.5, 1, 2, 4]
