@@ -30,7 +30,11 @@ const FIXED_ROUTES: ReadonlyMap<string, Route> = new Map<string, Route>([
   ],
   [
     "/api/stages",
-    { methods: ["GET"], originRequired: false, handle: async (_ctx, deps) => handleStages(deps) },
+    {
+      methods: ["GET"],
+      originRequired: false,
+      handle: async (ctx, deps) => handleStages(ctx, deps),
+    },
   ],
   ["/api/sessions", { methods: ["POST"], originRequired: true, handle: handleCreateSession }],
   [

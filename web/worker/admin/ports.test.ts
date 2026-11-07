@@ -6,6 +6,7 @@ import type { Env } from "../routes/env.ts";
 import type { SecurityPorts, SessionPorts, VerifiedSessionId } from "../routes/ports.ts";
 import { createHandler } from "../routes/router.ts";
 import type { StageSummary } from "../routes/stages.ts";
+import { stageFixture } from "../routes/test-stages.ts";
 import type { DurableObjectNamespaceLike } from "./cf-types.ts";
 import { createCostGuardPorts } from "./ports.ts";
 import { GUARDS_EXAMPLE, guardsWith } from "./test-fixtures.ts";
@@ -15,7 +16,7 @@ const ORIGIN = "https://raft.example";
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
 const STAGES: readonly StageSummary[] = [
-  {
+  stageFixture({
     id: "stage1",
     title: "はじめての郵便船",
     region: "瀬戸内（香川県）",
@@ -23,7 +24,7 @@ const STAGES: readonly StageSummary[] = [
     ferries: 1,
     durationMs: 180000,
     unlock: null,
-  },
+  }),
 ];
 
 interface Call {

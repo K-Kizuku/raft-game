@@ -2,8 +2,8 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v0.3 |
-| 更新日 | 2026-11-06 |
+| 版 | v0.4 |
+| 更新日 | 2026-11-08 |
 | 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
 | 関連 ADR | [0002](./adr/0002-use-etcd-raft.md) / [0003](./adr/0003-drive-rawnode-single-goroutine.md) / [0004](./adr/0004-virtual-time-discrete-event-simulation.md) / [0006](./adr/0006-ferry-transport-outside-raft.md) / [0009](./adr/0009-server-authoritative-simulation-over-websocket.md) / [0010](./adr/0010-frontend-react-pixijs.md) / [0014](./adr/0014-monorepo-and-shared-types.md) / [0016](./adr/0016-infrastructure-cloudflare-with-cf-cli.md) / [0017](./adr/0017-persist-input-log-in-durable-object.md) / [0018](./adr/0018-cost-guard.md) / [0019](./adr/0019-parallel-local-development.md) |
 
@@ -157,6 +157,7 @@ flowchart TB
 | `internal/stage` | ステージ定義（YAML）と島データ（JSON）の読み込み・検証 | なし |
 | `internal/protocol` | WebSocket の電文と公開 API の本文の型（TS の型を生成する元） | なし |
 | `internal/protocol/simconv` | `sim` の型と `protocol` の型の変換 | `internal/sim`、`internal/protocol` |
+| `internal/protocol/stageconv` | `stage` の型と `protocol` の型の変換 | `internal/stage`、`internal/protocol` |
 | `internal/server` | HTTP / WS・セッションループ・`single` / `standalone` モード | `internal/sim`、`internal/protocol`、`internal/protocol/simconv`、`internal/stage`、`github.com/coder/websocket` |
 
 依存の向きは「`server` → `sim` → (`cluster`, `ferry`, `game`) → (`ledger`, `stage`)」の一方向です。`cluster` と `ferry` はお互いを知りません（`sim` がつなぎます）。
@@ -413,7 +414,8 @@ raft-game/
 │   ├── cmd/
 │   │   ├── server/              # ゲームサーバー（--mode single | standalone）
 │   │   ├── simcli/              # ヘッドレス実行・入力ログの再生・ボット対戦
-│   │   └── islandsdata/         # オープンデータの ETL
+│   │   ├── islandsdata/         # オープンデータの ETL
+│   │   └── stagecatalog/        # /api/stages の一覧の JSON を作る
 │   ├── internal/
 │   │   ├── sim/                 # Engine・時計・スケジューラ・不変条件
 │   │   ├── cluster/             # RawNode のラッパーと Ready ループ
@@ -423,7 +425,8 @@ raft-game/
 │   │   ├── game/                # 依頼・スコア・イベント
 │   │   ├── stage/               # ステージと島データの読み込み
 │   │   ├── protocol/            # WS の電文の型（tygo で TS を生成）
-│   │   │   └── simconv/         # sim の型と protocol の型の変換
+│   │   │   ├── simconv/         # sim の型と protocol の型の変換
+│   │   │   └── stageconv/       # stage の型と protocol の型の変換（/api/stages の 1 行）
 │   │   └── server/              # HTTP / WS / セッションループ
 │   ├── tygo.yaml                # tygo の設定（make gen が使う）
 │   └── third_party/
@@ -435,7 +438,9 @@ raft-game/
 │   ├── worker/                  # Worker と Durable Object（TypeScript）
 │   │   ├── index.ts             # /api/* と /ws/* の振り分け、署名・Turnstile・レート制限
 │   │   ├── game-session.ts      # Durable Object GameSession
-│   │   └── cost-guard.ts        # Durable Object CostGuard（ADR-0018）
+│   │   ├── cost-guard.ts        # Durable Object CostGuard（ADR-0018）
+│   │   └── routes/
+│   │       └── stage-catalog.gen.json  # /api/stages の一覧（cmd/stagecatalog の生成物。コミットする）
 │   ├── src/                     # SPA
 │   │   ├── app/                 # ルーティング・画面
 │   │   ├── game/                # PixiJS の描画（マップ・船・手紙）
@@ -460,7 +465,7 @@ raft-game/
 └── .github/workflows/           # ci.yml / deploy.yml
 ```
 
-`make sync-data` で `data/` を `server/internal/stage/embedded/` にコピーし、`-tags embeddata` でビルドしたときだけ埋め込む（Go の embed は親ディレクトリを参照できない。コピー先は `.gitignore` に入れる）。タグなしのビルド（`make test`・CI）はコピーを要らない。`make dev` は `DATA_DIR` で作業ツリーの `data/` を読む（[ADR-0025](./adr/0025-stage-data-source.md)）。ステージの一覧（`/api/stages`）は、ビルド時に `data/stages/` から JSON を作り、Worker に同梱します。
+`make sync-data` で `data/` を `server/internal/stage/embedded/` にコピーし、`-tags embeddata` でビルドしたときだけ埋め込む（Go の embed は親ディレクトリを参照できない。コピー先は `.gitignore` に入れる）。タグなしのビルド（`make test`・CI）はコピーを要らない。`make dev` は `DATA_DIR` で作業ツリーの `data/` を読む（[ADR-0025](./adr/0025-stage-data-source.md)）。ステージの一覧（`/api/stages`）は、ビルド時に `data/stages/` から JSON を作り、Worker に同梱します。作るのは `server/cmd/stagecatalog`（`go -C server run ./cmd/stagecatalog --data ../data --out ../web/worker/routes/stage-catalog.gen.json`）で、生成物 `web/worker/routes/stage-catalog.gen.json` はコミットします。古ければ `go -C server test ./...` が失敗します（[プロトコル §2](./06-protocol.md)）。
 
 コンテナのイメージは `server/Dockerfile` でビルドする。文脈は `server/` で、`data/` は文脈の外にあるので、先にリポジトリのルートで `make sync-data` を実行する（Dockerfile は `-tags embeddata` でステージ定義を埋め込み、コピーがなければ止まる）。ビルド引数 `BUILD_ID` が `/healthz` の `build` になる。手で確かめるときは `bash scripts/docker-smoke.sh`（`DEV_SLOT` が要る。ADR-0019 の名前を使い、`make clean-docker` で消える）。
 
