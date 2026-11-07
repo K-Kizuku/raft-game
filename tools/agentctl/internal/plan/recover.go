@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/config"
+	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/gate"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/review"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/snapshot"
 	"github.com/K-Kizuku/raft-game/tools/agentctl/internal/state"
@@ -149,7 +150,7 @@ func Recover(snap *snapshot.Snapshot, cfg *config.Config, trusted func(login str
 				add(Action{Action: ActionResetToReady, Reason: "ブランチも PR もない（Worker が push する前に止まった）"})
 			}
 		case state.InReview:
-			if pr != nil && !hasHeadReview(pr, cfg) {
+			if pr != nil && !hasHeadReview(pr, cfg) && !carriesOver(pr, cfg) {
 				add(Action{Action: ActionRequestReview, PR: pr.Number, Reason: fmt.Sprintf("PR #%d の HEAD %s のレビュー記録がない", pr.Number, short(pr.HeadSHA))})
 			}
 		case state.ChangesRequested:
@@ -182,6 +183,15 @@ func hasHeadReview(p *snapshot.Pull, cfg *config.Config) bool {
 		}
 	}
 	return false
+}
+
+// carriesOver は、PR の前の SHA のレビューを、Merge Gate の C6 と同じ条件で HEAD に引き継げるかを返す
+// （main の取り込みだけで PR の自分の変更が同じ。Issue #120）。判定の材料（p.Gate）がなければ false。
+func carriesOver(p *snapshot.Pull, cfg *config.Config) bool {
+	if p.Gate == nil || p.Gate.PullRequest.Number != p.Number || p.Gate.PullRequest.HeadSHA != p.HeadSHA {
+		return false
+	}
+	return gate.CarriesOver(cfg, *p.Gate).OK
 }
 
 func short(sha string) string {
