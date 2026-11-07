@@ -28,6 +28,7 @@ type Ferry struct {
 	DepartAt      int64      // Sailing のとき。Docked のときは 0
 	ArriveAt      int64      // Sailing のとき。Docked のときは 0
 	ReadyAt       int64      // Docked のとき、この時刻から出航できる
+	BrokenUntil   int64      // 故障が直る時刻（0 = 故障したことがない）。now < BrokenUntil の間は故障中で出航できない
 	Cargo         []LetterID // 積んだ順
 }
 
@@ -133,6 +134,9 @@ func (t *Transport) Depart(now int64, id FerryID, to uint64) (arriveAt int64, er
 	if f.State != Docked {
 		return 0, fmt.Errorf("%w: %q", ErrNotDocked, id)
 	}
+	if now < f.BrokenUntil {
+		return 0, fmt.Errorf("%w: %q until %d, now %d", ErrBroken, id, f.BrokenUntil, now)
+	}
 	if now < f.ReadyAt {
 		return 0, fmt.Errorf("%w: %q is ready at %d, now %d", ErrNotReady, id, f.ReadyAt, now)
 	}
@@ -149,6 +153,24 @@ func (t *Transport) Depart(now int64, id FerryID, to uint64) (arriveAt int64, er
 	f.DepartAt = now
 	f.ArriveAt = now + TravelMs(r.TravelMs, f.SpeedPermille)
 	return f.ArriveAt, nil
+}
+
+// Break は停泊中の船を until まで故障させ（出航だけを止める）、故障が直る時刻を返す。
+// 故障中にもう一度呼ぶと、直る時刻は大きい方になる（重なった故障は延びる）。
+// until <= now は ErrInvalidArgument、航行中の船は ErrNotDocked で、何も変えない。
+func (t *Transport) Break(now int64, id FerryID, until int64) (newUntil int64, err error) {
+	f, err := t.ferry(id)
+	if err != nil {
+		return 0, err
+	}
+	if until <= now {
+		return 0, fmt.Errorf("%w: until %d <= now %d", ErrInvalidArgument, until, now)
+	}
+	if f.State != Docked {
+		return 0, fmt.Errorf("%w: %q", ErrNotDocked, id)
+	}
+	f.BrokenUntil = max(f.BrokenUntil, until)
+	return f.BrokenUntil, nil
 }
 
 // Arrive は航行中の船を ArriveAt ちょうどの時刻に到着させ、宛先がその島の手紙を配達する。

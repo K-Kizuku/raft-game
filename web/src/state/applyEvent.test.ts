@@ -170,6 +170,16 @@ describe("worldFromSnapshot", () => {
     expect(world.nodes[1]?.role).toBe("follower");
   });
 
+  it("AE-B1 スナップショットの brokenUntil（故障中だけ）をストアに写す", () => {
+    const snapshot = smallSnapshot();
+    const [f1, f2] = snapshot.ferries;
+    if (f1 === undefined || f2 === undefined) throw new Error("船が 2 隻ない");
+    snapshot.ferries = [{ ...f1, brokenUntil: 20000 }, f2];
+    const world = worldFromSnapshot(snapshot, 0);
+    expect(world.ferries.f1?.brokenUntil).toBe(20000);
+    expect(world.ferries.f2?.brokenUntil).toBeNull();
+  });
+
   it("WF-2 配達済み・破棄の手紙は入れず、同じ ID は後のものを使う", () => {
     const snapshot = smallSnapshot();
     const second = { ...island(1), name: "後の島" };

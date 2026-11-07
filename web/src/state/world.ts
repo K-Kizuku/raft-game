@@ -39,8 +39,8 @@ export type StageStatic = Readonly<{
   demoStorm?: DemoStormView; // デモの嵐（snapshot.stage.demoStorm）。ないステージでは省く
 }>;
 
-// 船（故障は P1 で snapshot に無いので、brokenUntil はイベントだけが入れる）。
-export type FerryView = Readonly<Ferry & { brokenUntil: number | null }>;
+// 船。brokenUntil はスナップショットの brokenUntil（故障中だけ）と ferry.broken / ferry.repaired が入れる。故障していなければ null。
+export type FerryView = Readonly<Omit<Ferry, "brokenUntil"> & { brokenUntil: number | null }>;
 
 export type ForecastView = Readonly<{
   seq: number;

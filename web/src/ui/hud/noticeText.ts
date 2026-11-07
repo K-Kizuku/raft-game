@@ -14,6 +14,7 @@ export const NOTICE_KEYS: readonly string[] = Object.freeze([
   "leader.elected",
   "leader.stepped_down",
   "storm.forecast",
+  "ferry.broken",
 ]);
 
 // 島の名前（ステージに無ければ「島 id」）。
@@ -51,6 +52,20 @@ function stormLead(notice: NoticeView, at: unknown): string {
   return `${String(seconds)} 秒後に`;
 }
 
+// {船}: params.ferryId の船の名前。分からなければ「船」。
+function ferryName(world: World, ferryId: unknown): string {
+  if (typeof ferryId !== "string" || !Object.hasOwn(world.ferries, ferryId)) return "船";
+  const name = world.ferries[ferryId]?.name;
+  return name === undefined || name === "" ? "船" : name;
+}
+
+// 故障で出られない長さ（「20 秒」）。until から notice.t を引いて秒に切り上げる（1 以上）。until が有限の数でなければ「しばらく」。
+function brokenLength(notice: NoticeView, until: unknown): string {
+  if (typeof until !== "number" || !Number.isFinite(until)) return "しばらく";
+  const seconds = Math.max(1, Math.ceil((until - notice.t) / 1000));
+  return `${String(seconds)} 秒`;
+}
+
 // 郵便局長の口調（データ仕様 §5.4・ゲームデザイン §7.3）。サーバーの stage の postmasterTones と同じ並び。
 export type PostmasterTone = "casual" | "polite" | "elder";
 
@@ -83,6 +98,8 @@ type Words = Readonly<{
   leader: string; // {代表}（1 つのセリフの中で最初の 1 か所だけ使う）
   lead: () => string; // {lead}（「n 秒後に」か「まもなく」）
   sea: () => string; // {海域}
+  ferry: () => string; // {船}
+  broken: () => string; // {n} 秒（故障で出られない長さ。分からなければ「しばらく」）
 }>;
 
 type Line = (w: Words) => string;
@@ -164,6 +181,14 @@ const LINES: ReadonlyMap<string, Readonly<Record<PostmasterTone, Line>>> = new M
       elder: (w) => `${w.lead()}${w.sea()}が荒れるぞい！`,
     },
   ],
+  [
+    "ferry.broken",
+    {
+      casual: (w) => `${w.ferry()}が故障してしまった…${w.broken()}は港から出られないよ`,
+      polite: (w) => `${w.ferry()}が故障してしまいました…${w.broken()}は港から出られません`,
+      elder: (w) => `${w.ferry()}が故障してしもうた…${w.broken()}は港から出られんのう`,
+    },
+  ],
 ]);
 
 export function noticeText(notice: NoticeView, world: World, show: boolean): string | null {
@@ -177,6 +202,8 @@ export function noticeText(notice: NoticeView, world: World, show: boolean): str
     leader: withRaftTerm("代表", "Leader", show),
     lead: () => stormLead(notice, params["at"]),
     sea: () => seaArea(world, params["routeIds"]),
+    ferry: () => ferryName(world, params["ferryId"]),
+    broken: () => brokenLength(notice, params["until"]),
   };
   return lines[postmasterTone(world, notice.islandId)](words);
 }

@@ -3,14 +3,17 @@ package server
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"testing"
 
+	"github.com/K-Kizuku/raft-game/server/internal/ferry"
+	"github.com/K-Kizuku/raft-game/server/internal/game"
 	"github.com/K-Kizuku/raft-game/server/internal/protocol"
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
-// noticeKeys は §7.3 の 9 個のキー。
+// noticeKeys は §7.3 の 10 個のキー。
 var noticeKeys = map[string]bool{
 	noticeRequestCreated:    true,
 	noticeRequestSucceeded:  true,
@@ -21,6 +24,7 @@ var noticeKeys = map[string]bool{
 	noticeLeaderElected:     true,
 	noticeLeaderSteppedDown: true,
 	noticeStormForecast:     true,
+	noticeFerryBroken:       true,
 }
 
 // testNoticer は島が 3 つ、silenceAfterMs が silence の noticer。
@@ -154,6 +158,91 @@ func TestNoticeForecast(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// ferryNoticer は島が 3 つ、船が f1（島 1）・f2（島 3）の noticer。
+func ferryNoticer() *noticer {
+	st := &stage.Stage{
+		Islands: make([]stage.Island, 3),
+		Ferries: []stage.Ferry{{ID: "f1", Home: 1}, {ID: "f2", Home: 3}},
+	}
+	st.Satisfaction.SilenceAfterMs = 30000
+	return newNoticer(st)
+}
+
+// NT-B1: ferry.broken。話すのは、その船が停泊している島。
+func TestNoticeFerryBroken(t *testing.T) {
+	t.Parallel()
+	n := ferryNoticer()
+	out := n.expand([]sim.DomainEvent{domainEvent(1, 10000, sim.FerryBroken{FerryID: "f2", Until: 30000})})
+	if len(out) != 2 {
+		t.Fatalf("out = %+v", out)
+	}
+	want := `{"seq":2,"t":10000,"type":"notice","islandId":3,"key":"ferry.broken","params":{"ferryId":"f2","until":30000}}`
+	if got := noticeJSON(t, out[1]); got != want {
+		t.Errorf("notice = %s, want %s", got, want)
+	}
+
+	// 船が動いたら、着いた島が話す。延びた故障（2 回目）でも出す。
+	wantNotices(t, "departed", observeAt(n, 31000, sim.FerryDeparted{FerryID: "f1", From: 1, To: 2}))
+	wantNotices(t, "sailing", observeAt(n, 32000, sim.FerryBroken{FerryID: "f1", Until: 40000}))
+	wantNotices(t, "arrived", observeAt(n, 34750, sim.FerryArrived{FerryID: "f1", IslandID: 2}))
+	wantNotices(t, "at 2", observeAt(n, 34750, sim.FerryBroken{FerryID: "f1", Until: 39750}),
+		noticeData{IslandID: 2, Key: noticeFerryBroken, Params: noticeParams{FerryID: "f1", Until: ptr(int64(39750))}})
+	wantNotices(t, "extended", observeAt(n, 36000, sim.FerryBroken{FerryID: "f1", Until: 50000}),
+		noticeData{IslandID: 2, Key: noticeFerryBroken, Params: noticeParams{FerryID: "f1", Until: ptr(int64(50000))}})
+	// 知らない船は出さない。修理は通知しない。
+	wantNotices(t, "unknown", observeAt(n, 36000, sim.FerryBroken{FerryID: "zz", Until: 50000}))
+	wantNotices(t, "repaired", observeAt(n, 50000, sim.FerryRepaired{FerryID: "f1", Until: 50000}))
+
+	// resync はスナップショットの船の居場所を使う。
+	n.resync(sim.Snapshot{T: 60000, Ferries: []sim.FerryView{
+		{ID: "f1", State: "sailing", From: 2, To: 1},
+		{ID: "f2", State: "docked", IslandID: 2},
+	}})
+	wantNotices(t, "resync sailing", observeAt(n, 60000, sim.FerryBroken{FerryID: "f1", Until: 70000}))
+	wantNotices(t, "resync docked", observeAt(n, 60000, sim.FerryBroken{FerryID: "f2", Until: 70000}),
+		noticeData{IslandID: 2, Key: noticeFerryBroken, Params: noticeParams{FerryID: "f2", Until: ptr(int64(70000))}})
+}
+
+// NT-B1: Engine で故障を起こし、ferry.broken の直後に、Engine の船の居場所の島の notice が入る。
+func TestNoticeFerryBrokenEngine(t *testing.T) {
+	t.Parallel()
+	cfg := sim.Config{
+		Islands:       3,
+		InitialLeader: 1,
+		DurationMs:    60000,
+		Raft:          sim.RaftConfig{TickMs: 500, HeartbeatTick: 2, ElectionTick: 40, MaxSizePerMsg: 4096, MaxInflightMsgs: 4},
+		Routes:        []ferry.RouteConfig{{A: 1, B: 2, TravelMs: 3750}, {A: 2, B: 3, TravelMs: 5250}},
+		Ferries:       []ferry.FerryConfig{{ID: "f1", Home: 1, Capacity: 4, SpeedPermille: 1000}},
+		Breakdowns:    []game.BreakdownDef{{WindowStart: 2000, WindowEnd: 2000, DurationMs: 10000, Ferry: "f1"}},
+		DockMs:        1500,
+		PortCap:       24,
+		PerLinkAppCap: 4,
+	}
+	e, err := sim.New(cfg, 1, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := newNoticer(&stage.Stage{Islands: make([]stage.Island, 3), Ferries: []stage.Ferry{{ID: "f1", Home: 1}}})
+	if ack := e.Apply(sim.Command{Type: sim.CmdGameStart}); !ack.OK {
+		t.Fatal(ack)
+	}
+	if ack := e.Apply(sim.Command{Type: sim.CmdFerryDepart, FerryID: "f1", To: 2}); !ack.OK {
+		t.Fatal(ack)
+	}
+	n.expand(e.DrainEvents())
+	e.RunUntil(3750) // 航行中に故障の時刻が来て、着いたときに壊れる
+	out := n.expand(e.DrainEvents())
+	i := slices.IndexFunc(out, func(ev sim.DomainEvent) bool { return ev.Type == sim.EvFerryBroken })
+	if i < 0 || i+1 >= len(out) {
+		t.Fatalf("ferry.broken がない: %+v", out)
+	}
+	f := e.Snapshot().Ferries[0]
+	want := noticeData{IslandID: f.IslandID, Key: noticeFerryBroken, Params: noticeParams{FerryID: "f1", Until: ptr(int64(13750))}}
+	if got, ok := out[i+1].Data.(noticeData); !ok || !reflect.DeepEqual(got, want) || f.IslandID != 2 {
+		t.Errorf("ferry.broken の次 = %+v, want %+v（船は島 %d）", out[i+1].Data, want, f.IslandID)
+	}
+}
 
 // N-5: 依頼。
 func TestNoticeRequests(t *testing.T) {

@@ -23,6 +23,7 @@ var (
 	ErrRouteBlocked      = errors.New("ferry: route is blocked")
 	ErrRelayNotSupported = errors.New("ferry: relay is not supported")
 	ErrNotArriving       = errors.New("ferry: ferry is not arriving now")
+	ErrBroken            = errors.New("ferry: ferry is broken")
 )
 
 // RouteConfig は航路の設定（ステージ定義の routes）。
@@ -342,6 +343,10 @@ func (t *Transport) CheckInvariants() error {
 		case Sailing:
 			if _, ok := t.route(f.From, f.To); f.At != 0 || !ok || f.From == f.To {
 				return fmt.Errorf("ferry: invariant: %s: sailing with at=%d from=%d to=%d", where, f.At, f.From, f.To)
+			}
+			// 故障中に出航していない（Break は停泊中だけなので、故障が直る前に出た船はない）。
+			if f.BrokenUntil != 0 && f.DepartAt < f.BrokenUntil {
+				return fmt.Errorf("ferry: invariant: %s: departed at %d before broken until %d", where, f.DepartAt, f.BrokenUntil)
 			}
 		default:
 			return fmt.Errorf("ferry: invariant: %s: unknown state %d", where, f.State)

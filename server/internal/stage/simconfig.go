@@ -73,6 +73,7 @@ func SimConfig(st *Stage) (sim.Config, error) {
 		},
 		Routes:        routes,
 		Storms:        storms,
+		Breakdowns:    breakdownDefs(st),
 		Ferries:       ferries,
 		DockMs:        st.Transport.DockMs,
 		PortCap:       st.Transport.PortCap,

@@ -21,7 +21,7 @@
     { "id": "f1", "name": "ごとう丸", "capacity": 4, "state": "sailing", "from": 1, "to": 2,
       "departAt": 58000, "arriveAt": 67000, "readyAt": 68500, "cargo": [31, 32] },
     { "id": "f2", "name": "なる丸", "capacity": 4, "state": "docked", "islandId": 3,
-      "departAt": 0, "arriveAt": 0, "readyAt": 61500, "cargo": [] }
+      "departAt": 0, "arriveAt": 0, "readyAt": 61500, "brokenUntil": 80000, "cargo": [] }
   ],
   "routesState": [ { "id": "1-2", "blockedUntil": null }, { "id": "2-3", "blockedUntil": 90000 } ],
   "letters": [

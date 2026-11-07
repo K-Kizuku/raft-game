@@ -140,6 +140,12 @@ func TestCheckInvariantsDetects(t *testing.T) {
 			f := &tr.ferries[1]
 			f.State, f.At, f.From, f.To = Sailing, 0, 3, 1
 		}},
+		{"departed while broken", func(tr *Transport, _ []LetterID) {
+			if _, err := tr.Depart(10, "f1", 2); err != nil {
+				panic(fmt.Sprintf("setup: %v", err))
+			}
+			tr.ferries[0].BrokenUntil = 11
+		}},
 		{"letters order", func(tr *Transport, _ []LetterID) {
 			tr.letters[0], tr.letters[1] = tr.letters[1], tr.letters[0]
 		}},

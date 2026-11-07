@@ -25,17 +25,18 @@ type Snapshot struct {
 
 // FerryView は船の状態（プロトコル §5.1 の ferries[]）。
 type FerryView struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Capacity int      `json:"capacity"`
-	State    string   `json:"state"`              // "docked" | "sailing"
-	IslandID uint64   `json:"islandId,omitempty"` // docked のときの島。sailing のときは 0
-	From     uint64   `json:"from,omitempty"`     // sailing のとき。docked のときは 0
-	To       uint64   `json:"to,omitempty"`       // sailing のとき。docked のときは 0
-	DepartAt SimTime  `json:"departAt"`           // sailing のとき。docked のときは 0
-	ArriveAt SimTime  `json:"arriveAt"`           // sailing のとき。docked のときは 0
-	ReadyAt  SimTime  `json:"readyAt"`            // docked: この時刻から出航できる。sailing: ArriveAt + DockMs
-	Cargo    []uint64 `json:"cargo"`              // 積んだ順。nil にしない（空なら []）
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Capacity    int      `json:"capacity"`
+	State       string   `json:"state"`                 // "docked" | "sailing"
+	IslandID    uint64   `json:"islandId,omitempty"`    // docked のときの島。sailing のときは 0
+	From        uint64   `json:"from,omitempty"`        // sailing のとき。docked のときは 0
+	To          uint64   `json:"to,omitempty"`          // sailing のとき。docked のときは 0
+	DepartAt    SimTime  `json:"departAt"`              // sailing のとき。docked のときは 0
+	ArriveAt    SimTime  `json:"arriveAt"`              // sailing のとき。docked のときは 0
+	ReadyAt     SimTime  `json:"readyAt"`               // docked: この時刻から出航できる。sailing: ArriveAt + DockMs
+	BrokenUntil *SimTime `json:"brokenUntil,omitempty"` // 故障中（Now() < BrokenUntil）だけ。この時刻から出航できる
+	Cargo       []uint64 `json:"cargo"`                 // 積んだ順。nil にしない（空なら []）
 }
 
 // RouteView は航路の状態（プロトコル §5.1 の routesState[]）。
@@ -127,6 +128,10 @@ func (e *Engine) ferryView(f ferry.Ferry) FerryView {
 	}
 	for i, lid := range f.Cargo {
 		v.Cargo[i] = uint64(lid)
+	}
+	if int64(e.Now()) < f.BrokenUntil {
+		until := SimTime(f.BrokenUntil)
+		v.BrokenUntil = &until
 	}
 	switch f.State {
 	case ferry.Docked:

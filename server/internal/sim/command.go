@@ -44,6 +44,7 @@ const (
 	CodeLetterNotHere    = "letter_not_here"
 	CodeNoRoute          = "no_route"
 	CodeRouteBlocked     = "route_blocked"
+	CodeFerryBroken      = "ferry_broken"
 	CodePhaseInvalid     = "phase_invalid"
 	CodeBadRequest       = "bad_request"
 )
@@ -71,6 +72,7 @@ var ferryErrCodes = []struct {
 	{ferry.ErrLetterNotHere, CodeLetterNotHere},
 	{ferry.ErrNoRoute, CodeNoRoute},
 	{ferry.ErrRouteBlocked, CodeRouteBlocked},
+	{ferry.ErrBroken, CodeFerryBroken},
 	{ferry.ErrUnknownFerry, CodeBadRequest},
 	{ferry.ErrInvalidArgument, CodeBadRequest},
 	{ferry.ErrRelayNotSupported, CodeBadRequest},

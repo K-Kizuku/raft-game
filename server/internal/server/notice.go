@@ -20,6 +20,7 @@ const (
 	noticeLeaderElected     = "leader.elected"
 	noticeLeaderSteppedDown = "leader.stepped_down"
 	noticeStormForecast     = "storm.forecast"
+	noticeFerryBroken       = "ferry.broken"
 )
 
 // 通知の判定に使う、Engine のイベントの値（sim のイベントの文字列）。
@@ -45,6 +46,8 @@ type noticeParams struct {
 	ReqID    string   `json:"reqId,omitempty"`
 	RouteIDs []string `json:"routeIds,omitempty"`
 	At       *int64   `json:"at,omitempty"`
+	FerryID  string   `json:"ferryId,omitempty"`
+	Until    *int64   `json:"until,omitempty"`
 }
 
 func (noticeData) EventType() sim.EventType { return sim.EventType(protocol.EventTypeNotice) }
@@ -58,6 +61,14 @@ type noticer struct {
 	roles          []string              // 添字 = 島 ID − 1。最後に見た node.state の role
 	silentAt       []int64               // 添字 = 島 ID − 1。island.silent を出したときの lastDeliveredAt。−1 = まだ
 	reqs           map[string]*noticeReq // 依頼 ID → 依頼元と出した通知（引くだけで、走査しない）
+	ferries        []noticeFerry         // 船の今の居場所（ferry.broken の話す島）。ステージの順
+}
+
+// noticeFerry は船 1 隻の居場所。at は停泊している島（航行中は 0）。
+// noticer は Engine を持たないので、Engine の船の状態を、ステージ・スナップショット・ferry.departed・ferry.arrived から写して持つ。
+type noticeFerry struct {
+	id string
+	at uint64
 }
 
 // noticeReq は依頼 1 件の、通知の判定の状態。
@@ -80,7 +91,29 @@ func newNoticer(st *stage.Stage) *noticer {
 		nt.roles[i] = noticeRoleFollower
 		nt.silentAt[i] = -1
 	}
+	for _, f := range st.Ferries {
+		nt.ferries = append(nt.ferries, noticeFerry{id: f.ID, at: f.Home})
+	}
 	return nt
+}
+
+// ferry は船 id の居場所を返す。知らない船なら nil。
+func (n *noticer) ferry(id string) *noticeFerry {
+	for i := range n.ferries {
+		if n.ferries[i].id == id {
+			return &n.ferries[i]
+		}
+	}
+	return nil
+}
+
+// setFerryAt は船 id の居場所を at にする（知らない船は足す）。
+func (n *noticer) setFerryAt(id string, at uint64) {
+	if f := n.ferry(id); f != nil {
+		f.at = at
+		return
+	}
+	n.ferries = append(n.ferries, noticeFerry{id: id, at: at})
 }
 
 // island は島 ID が範囲（1〜島の数）にあれば添字と true を返す。
@@ -103,6 +136,10 @@ func (n *noticer) resync(snap sim.Snapshot) {
 		if i, ok := n.island(ns.ID); ok {
 			n.roles[i] = ns.Role
 		}
+	}
+	n.ferries = n.ferries[:0]
+	for _, f := range snap.Ferries {
+		n.ferries = append(n.ferries, noticeFerry{id: f.ID, at: f.IslandID})
 	}
 	n.reqs = make(map[string]*noticeReq, len(snap.Requests))
 	for _, r := range snap.Requests {
@@ -176,6 +213,12 @@ func (n *noticer) observe(ev sim.DomainEvent) []noticeData {
 		}
 	case sim.Forecast:
 		return n.forecast(d)
+	case sim.FerryDeparted:
+		n.setFerryAt(d.FerryID, 0)
+	case sim.FerryArrived:
+		n.setFerryAt(d.FerryID, d.IslandID)
+	case sim.FerryBroken:
+		return n.ferryBroken(d)
 	case sim.RequestCreated:
 		if _, ok := n.island(d.Request.Origin); !ok {
 			return nil
@@ -215,6 +258,24 @@ func (n *noticer) forecast(d sim.Forecast) []noticeData {
 		IslandID: speaker,
 		Key:      noticeStormForecast,
 		Params:   noticeParams{RouteIDs: d.RouteIDs, At: &at},
+	}}
+}
+
+// ferryBroken は船の故障の notice。話す島は、その船が停泊している島（読めなければ出さない）。
+// 延びた故障（同じ船の 2 回目の ferry.broken）でも出す。
+func (n *noticer) ferryBroken(d sim.FerryBroken) []noticeData {
+	f := n.ferry(d.FerryID)
+	if f == nil {
+		return nil
+	}
+	if _, ok := n.island(f.at); !ok {
+		return nil
+	}
+	until := int64(d.Until)
+	return []noticeData{{
+		IslandID: f.at,
+		Key:      noticeFerryBroken,
+		Params:   noticeParams{FerryID: d.FerryID, Until: &until},
 	}}
 }
 
