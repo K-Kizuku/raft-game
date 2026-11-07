@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": [
+    "scripts/**/*.ts",
+    "cloudflare.config.ts",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "worker/cloudflare-workers.d.ts"
+  ]
+}

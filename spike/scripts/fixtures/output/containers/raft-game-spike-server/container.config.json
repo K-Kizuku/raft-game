@@ -1,0 +1,15 @@
+{
+  "name": "raft-game-spike-server",
+  "schedulingPolicy": "durable-object",
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true
+    }
+  },
+  "images": {
+    "server": {
+      "localReference": "cloudflare-build/000000000000/raft-game-spike-server-server:fixture"
+    }
+  }
+}
