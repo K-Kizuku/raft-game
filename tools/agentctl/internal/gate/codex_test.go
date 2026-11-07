@@ -891,3 +891,105 @@ func TestCodexPR194NoMajorIssuesResolvesOldP1(t *testing.T) {
 		}
 	})
 }
+
+// receipt（重大な指摘なし）より後に作られた指摘や、前後関係を確かめられない指摘は、解消とみなさない（Issue #213 のレビュー C4502464035）。
+// main の取り込み前の SHA（1111…）に 10:30 の receipt があり、取り込み後の SHA（4444…）に 11:00 の P1 があるとき、
+// receipt はその P1 を見ていないので、P1 は open のまま（古い SHA の P1 は receipt より前なので解消）。
+func TestCodexPR194ReceiptDoesNotResolveLaterFindings(t *testing.T) {
+	cfg := loadConfig(t)
+	now := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+	const mergedSHA = "4444444444444444444444444444444444444444"
+
+	for name, createdAt := range map[string]string{
+		"receipt より後（11:00）": "2026-11-05T11:00:00Z",
+		"receipt と同じ時刻":      "2026-11-05T10:30:00Z",
+		"作成日時が分からない":         "",
+		"作成日時が壊れている":         "yesterday",
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := codexPR194(t)
+			later := codexFinding(4502100001, codexBot, mergedSHA, "P1", "取り込み後に壊れた")
+			later.CreatedAt = createdAt
+			in.ReviewComments = append(in.ReviewComments, later)
+
+			cr, _ := FindCodexReview(cfg, in)
+			if len(cr.Resolved) != 1 || cr.Resolved[0].ID() != "C4501850982" {
+				t.Errorf("resolved = %+v", cr.Resolved)
+			}
+			var got *CodexFinding
+			for i := range cr.Findings {
+				if cr.Findings[i].ID() == "C4502100001" {
+					got = &cr.Findings[i]
+				}
+			}
+			if got == nil || !got.Carried || got.Severity != "high" || got.Resolution != "" {
+				t.Fatalf("findings = %+v", cr.Findings)
+			}
+
+			rep := Evaluate(cfg, in)
+			if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "C4502100001") || strings.Contains(r.Detail, "C4501850982") {
+				t.Errorf("C7 = %+v", r)
+			}
+			if !strings.Contains(notes(rep), "4502100001") || !strings.Contains(notes(rep), "より前に作られたと確かめられない") {
+				t.Errorf("notes = %v", rep.Notes)
+			}
+
+			rec := cr.Record(cfg, 12, baseSHA, nil, now)
+			if rec.Verdict != "request_changes" {
+				t.Errorf("verdict = %s", rec.Verdict)
+			}
+			for _, f := range rec.Findings {
+				switch f.ID {
+				case "C4502100001":
+					if f.Status != "open" || f.Resolution != "" {
+						t.Errorf("C4502100001 = %+v", f)
+					}
+				case "C4501850982":
+					if f.Status != "resolved" || !strings.Contains(f.Resolution, "2026-11-05T10:30:00Z") {
+						t.Errorf("C4501850982 = %+v", f)
+					}
+				}
+			}
+		})
+	}
+
+	t.Run("古い SHA の P1 でも receipt より後に作られたら open", func(t *testing.T) {
+		in := codexPR194(t)
+		in.ReviewComments[0].CreatedAt = "2026-11-05T10:31:00Z"
+		if in.ReviewComments[0].ID != 4501850982 {
+			t.Fatalf("review_comments[0] = %+v", in.ReviewComments[0])
+		}
+		cr, _ := FindCodexReview(cfg, in)
+		if len(cr.Resolved) != 0 {
+			t.Errorf("resolved = %+v", cr.Resolved)
+		}
+		mustResult(t, Evaluate(cfg, in), "C7", Fail)
+	})
+}
+
+// 設定の blocking_severities に medium を足しても、重大な指摘なしの receipt で解消とみなすのは P0・P1 だけで、
+// 古い SHA の P2 は open のまま引き継ぐ（Issue #213 のレビュー C4502464027）。
+func TestCodexPR194ReceiptClearsOnlyP0P1(t *testing.T) {
+	cfg := loadConfig(t)
+	cfg.Review.BlockingSeverities = []string{"critical", "high", "medium"}
+	in := codexPR194(t)
+
+	cr, _ := FindCodexReview(cfg, in)
+	if len(cr.Resolved) != 1 || cr.Resolved[0].ID() != "C4501850982" {
+		t.Errorf("resolved = %+v", cr.Resolved)
+	}
+	if len(cr.Findings) != 1 || cr.Findings[0].ID() != "C4501850984" || !cr.Findings[0].Carried || cr.Findings[0].Resolution != "" {
+		t.Errorf("findings = %+v", cr.Findings)
+	}
+	rep := Evaluate(cfg, in)
+	if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "C4501850984") || strings.Contains(r.Detail, "C4501850982") {
+		t.Errorf("C7 = %+v", r)
+	}
+	if !strings.Contains(notes(rep), "P0・P1 ではない") {
+		t.Errorf("notes = %v", rep.Notes)
+	}
+	rec := cr.Record(cfg, 12, baseSHA, nil, time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC))
+	if rec.Verdict != "request_changes" {
+		t.Errorf("verdict = %s", rec.Verdict)
+	}
+}

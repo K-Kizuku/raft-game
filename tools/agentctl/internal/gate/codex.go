@@ -2,6 +2,7 @@ package gate
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,12 +85,28 @@ func (c *CodexReview) CarriedCount() int {
 // codexClearance は、最新のレビューが重大な指摘なしと答えたこと（前の SHA の重大な指摘を解消とみなす根拠）。
 type codexClearance struct {
 	receiptID int64
+	// at は receipt の作成日時。解消とみなすのは、これより前に作られた指摘だけ。
+	at time.Time
+}
+
+// covers は、作成日時が created の指摘を、この receipt で解消とみなせるかを返す。
+// receipt より前に作られた指摘だけを解消とみなす。receipt と同じか後に作られた指摘と、作成日時が分からない指摘は、
+// receipt のレビューが見ていないかもしれないので解消とみなさない（安全側）。
+func (cl *codexClearance) covers(created time.Time) bool {
+	return !created.IsZero() && created.Before(cl.at)
+}
+
+// clearable は、重大度 sev の前の SHA の指摘を、重大な指摘なしの receipt で解消とみなせるかを返す。
+// 対象は P0・P1（critical・high。バッジのないものは high とみなす）だけで、設定の blocking_severities に
+// ほかの重大度（medium など）を足しても、それらは解消とみなさない（open のまま引き継ぐ）。
+func clearable(sev string) bool {
+	return slices.Contains(config.MandatoryBlockingSeverities, sev)
 }
 
 // resolution は、前の SHA の指摘 f を解消とみなした根拠（レビュー記録の resolution）を返す。
 func (cl *codexClearance) resolution(best *CodexReview, f CodexFinding) string {
-	return fmt.Sprintf("Codex（GitHub 連携）の %s のレビューが「%s」（コメント %d）と答え、%s に P0・P1 の指摘を出し直していないので、%s の指摘を解消とみなした",
-		short(best.SHA), codex.NoMajorIssuesPhrase, cl.receiptID, short(best.SHA), short(f.SHA))
+	return fmt.Sprintf("Codex（GitHub 連携）の %s のレビューが「%s」（コメント %d、%s）と答え、%s に P0・P1 の指摘を出し直していないので、それより前に作られた %s の指摘を解消とみなした",
+		short(best.SHA), codex.NoMajorIssuesPhrase, cl.receiptID, cl.at.UTC().Format(time.RFC3339), short(best.SHA), short(f.SHA))
 }
 
 // codexNoMajorIssues は、最新のレビュー（best の SHA）が重大な指摘なしと答えたかを確かめる（Issue #213）。
@@ -99,6 +116,7 @@ func (cl *codexClearance) resolution(best *CodexReview, f CodexFinding) string {
 //   - best の SHA に、信頼する Codex の作者の P0・P1（バッジのないものを含む）の行コメントがない（同じ指摘を出し直していない）
 //
 // 作成日時が分からない receipt や、最も新しい receipt が同じ日時で複数あるときも、判断しない。
+// 根拠を返しても、解消とみなすのは receipt より前に作られた P0・P1 の指摘だけ（codexClearance.covers・clearable）。
 func codexNoMajorIssues(cfg *config.Config, in Input, best *CodexReview) (*codexClearance, string) {
 	for _, rc := range in.ReviewComments {
 		if !codex.IsFinding(rc.Body) || !cfg.IsCodexBot(rc.Author) || !strings.EqualFold(rc.ReviewedSHA(), best.SHA) {
@@ -151,7 +169,7 @@ func codexNoMajorIssues(cfg *config.Config, in Input, best *CodexReview) (*codex
 	if sha := codex.ReviewedCommit(newest.body); sha == "" || !strings.HasPrefix(best.SHA, sha) {
 		return nil, fmt.Sprintf("最も新しい Codex の receipt %d の Reviewed commit が %s ではない", newest.id, short(best.SHA))
 	}
-	return &codexClearance{receiptID: newest.id}, ""
+	return &codexClearance{receiptID: newest.id, at: newest.at}, ""
 }
 
 // Blocking は、重大な指摘（設定の blocking_severities）を返す。
@@ -176,9 +194,11 @@ func (c *CodexReview) Blocking(cfg *config.Config) []CodexFinding {
 //     同じ ID（C<コメントの ID>）を最後に resolved にしていれば引き継がない
 //   - 前の SHA の重大でない指摘（P2・P3）は引き継がない
 //   - ただし true でも、最新のレビューが「Didn't find any major issues」（重大な指摘なし）と答え、その SHA に
-//     P0・P1 の指摘を出し直していなければ（codexNoMajorIssues）、前の SHA の重大な指摘は解消（Resolved。根拠を
-//     Resolution に書く）とし、重大でない指摘（P2・P3。has_unresolved_findings が残っている理由）を open のまま引き継ぐ。
-//     そう判断できないとき（receipt がない・文言が違う・SHA が違う・同じ SHA に P0・P1 がある）は、上のとおり引き継ぐ（Issue #213）
+//     P0・P1 の指摘を出し直していなければ（codexNoMajorIssues）、receipt より前に作られた前の SHA の P0・P1 は解消
+//     （Resolved。根拠を Resolution に書く）とし、重大でない指摘（P2・P3。has_unresolved_findings が残っている理由）を
+//     open のまま引き継ぐ。そう判断できないとき（receipt がない・文言が違う・SHA が違う・同じ SHA に P0・P1 がある）と、
+//     receipt と同じか後に作られた指摘・作成日時が分からない指摘・P0・P1 以外の重大な指摘（設定で足したもの）は、
+//     上のとおり引き継ぐ（Issue #213）
 //
 // 同じ SHA の再レビューで、最新の要約の has_any_findings と has_unresolved_findings がどちらも false なら、
 // 要約の更新より前に作られたその SHA の行コメントは前のレビューのもの（今回のレビューは指摘を出していない）なので、
@@ -278,16 +298,25 @@ func FindCodexReview(cfg *config.Config, in Input) (*CodexReview, []string) {
 				note("行コメント %d: 前の SHA %s の Codex の指摘は、後の記録で resolved になっている", rc.ID, short(sha))
 				continue
 			}
-			if blocking && clearance != nil {
-				f.Resolution = clearance.resolution(best, f)
-				best.Resolved = append(best.Resolved, f)
-				note("行コメント %d: 前の SHA %s の Codex の重大な指摘は、%s のレビューが重大な指摘なし（receipt %d）なので解消とみなした",
-					rc.ID, short(sha), short(best.SHA), clearance.receiptID)
-				continue
-			}
-			if blocking && !notedUnclear {
-				notedUnclear = true
-				note("前の SHA の Codex の重大な指摘を解消とみなさなかった（%s）", unclearReason)
+			if blocking {
+				created := parseTime(rc.CreatedAt)
+				switch {
+				case clearance != nil && clearable(sev) && clearance.covers(created):
+					f.Resolution = clearance.resolution(best, f)
+					best.Resolved = append(best.Resolved, f)
+					note("行コメント %d: 前の SHA %s の Codex の重大な指摘は、%s のレビューが重大な指摘なし（receipt %d）なので解消とみなした",
+						rc.ID, short(sha), short(best.SHA), clearance.receiptID)
+					continue
+				case clearance != nil && !clearable(sev):
+					note("行コメント %d: 前の SHA %s の Codex の指摘は %s（P0・P1 ではない）なので、重大な指摘なしの receipt %d では解消とみなさなかった",
+						rc.ID, short(sha), sev, clearance.receiptID)
+				case clearance != nil:
+					note("行コメント %d: 前の SHA %s の Codex の重大な指摘は、receipt %d（%s）より前に作られたと確かめられないので解消とみなさなかった",
+						rc.ID, short(sha), clearance.receiptID, clearance.at.UTC().Format(time.RFC3339))
+				case !notedUnclear:
+					notedUnclear = true
+					note("前の SHA の Codex の重大な指摘を解消とみなさなかった（%s）", unclearReason)
+				}
 			}
 		}
 		best.Findings = append(best.Findings, f)

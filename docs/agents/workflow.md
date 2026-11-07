@@ -227,7 +227,7 @@ Codex が PR に書くもの（作者は `review.codex_bot_authors`。既定は 
 - 最新の要約の `code_review.has_unresolved_findings` が `false` なら、それまでの SHA の Codex の指摘はすべて `resolved` とみなす
 - `true` のあいだは、前の SHA の Codex の P0・P1（バッジのないものを含む）を `open` のまま引き継ぐ（C7 は fail、変換した記録の `verdict` は `request_changes`）。`resolved` にできるのは、その行コメントより後の `agent-review/v1` の記録（Codex の GitHub 連携の変換ではないもの）が、同じ `id`（`C<コメントの ID>`）を `resolved` にしたときと、次の「重大な指摘なし」のときだけ
 - 前の SHA の P2・P3 は引き継がない（それだけが残っていてもマージを止めない）
-- **重大な指摘なし**（#213）: `true` でも、最新のレビューが重大な指摘なしと答えたなら、前の SHA の P0・P1 は解消とみなし、P2・P3（`has_unresolved_findings` が残っている理由）を `open` のまま引き継ぐ（重大でないので C7 は止めない）。変換した記録では、解消とみなした指摘を `resolved` にし、`resolution` に根拠（receipt のコメントの ID・レビューした SHA・元の SHA）を書く。重大な指摘なしとみなすのは、次をすべて満たすときだけ:
+- **重大な指摘なし**（#213）: `true` でも、最新のレビューが重大な指摘なしと答えたなら、前の SHA の P0・P1 のうち receipt より前に作られたものは解消とみなし、P2・P3（`has_unresolved_findings` が残っている理由）を `open` のまま引き継ぐ（重大でないので C7 は止めない）。変換した記録では、解消とみなした指摘を `resolved` にし、`resolution` に根拠（receipt のコメントの ID と作成日時・レビューした SHA・元の SHA）を書く。receipt と同じか後に作られた指摘（例: `main` の取り込み前の SHA の receipt の後に、取り込み後の SHA に出た P1）・作成日時が分からない指摘と、`blocking_severities` に足した P0・P1 以外の重大度（`medium` など）の指摘は、receipt のレビューが見ていない・対象外なので解消とみなさず、`open` のまま引き継ぐ。重大な指摘なしとみなすのは、次をすべて満たすときだけ:
   - 信頼する作者の receipt（`codex-review-receipt:v1` を持つ Issue のコメントと PR のレビュー）のうち、最も新しいものが Issue のコメントで、文言 `Didn't find any major issues` を持ち、`**Reviewed commit:**` が最新の要約の SHA を指す
   - 最新の要約の SHA に、信頼する作者の P0・P1（バッジのないものを含む）の行コメントがない（Codex が同じ指摘を再び出していない）
 - 上を満たさないとき（receipt がない・文言が英語以外や別の文言・SHA が違う・receipt の作成日時が分からない・最も新しい receipt が同じ日時で複数ある・Codex が同じ SHA に P0・P1 を出した）は、解消とみなさず、今までどおり `open` のまま引き継ぐ（安全側。notes に理由が出る）
