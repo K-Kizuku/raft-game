@@ -450,4 +450,28 @@ describe("EngineerPanel", () => {
     view.unmount();
     expect(engineerModeStore.getState().open).toBe(false);
   });
+
+  it("EP-L1 詳細を入れると「ノード一覧」の後・「手紙」の前に「Raft ログ」と「Progress」の見出し", () => {
+    loadMini(5);
+    render(<EngineerPanel />);
+    open();
+    expect(
+      within(panel()).getByText(
+        "ノードの詳細はまだ届いていません（サーバーにつながっているときだけ表示します）。",
+      ),
+    ).toBeDefined();
+    act(() => {
+      gameStore.getState().setNodeDetail(detail(1, 1));
+    });
+    const headings = within(panel())
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+    const at = (pred: (text: string) => boolean): number => headings.findIndex(pred);
+    const nodes = at((t) => t === "ノード一覧");
+    const log = at((t) => t.startsWith("Raft ログ: 1 "));
+    const progress = at((t) => t.startsWith("Progress"));
+    const letters = at((t) => t === "手紙");
+    expect(nodes).toBeGreaterThanOrEqual(0);
+    expect([nodes < log, log < progress, progress < letters]).toEqual([true, true, true]);
+  });
 });

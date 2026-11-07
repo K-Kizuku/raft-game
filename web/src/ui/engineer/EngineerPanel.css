@@ -313,3 +313,31 @@
   font-weight: bold;
   letter-spacing: 0.03em;
 }
+
+/* Raft ログ（T-711・FR-ENG-05）: 未 Commit の行は文字を薄くし、左の縁に点線（「未」の印でも分かる。NFR-10）。
+   薄い文字は --color-ink-muted（紙の上で 4.5:1 以上）。 */
+.engineer-log tr[data-committed="false"] td {
+  color: var(--color-ink-muted);
+}
+
+.engineer-log tr[data-committed="false"] td:first-child {
+  border-left: 2px dotted var(--color-ink-muted);
+}
+
+/* Commit Index の区切りの行: 上下の線と小さな文字。 */
+.engineer-log-commit td {
+  padding-block: 0.1em;
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: 0.8em;
+  font-weight: bold;
+  letter-spacing: 0.03em;
+  border-top: 1.5px solid var(--color-ink);
+  border-bottom: 1.5px solid var(--color-ink);
+}
+
+/* Progress（T-711・FR-ENG-06）: recentActive でない Follower は注意の色（郵便の赤をうすく敷く。文字は墨のまま）。 */
+.engineer-progress tr[data-inactive="true"] td {
+  background: color-mix(in srgb, var(--color-postal) 14%, var(--color-paper));
+  font-weight: bold;
+}
