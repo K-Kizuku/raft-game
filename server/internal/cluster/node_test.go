@@ -34,6 +34,7 @@ func TestNewNodeValidation(t *testing.T) {
 		{name: "duplicate Peers", mutate: func(c *NodeConfig) { c.Peers = []uint64{1, 2, 2} }, wantErr: true},
 		{name: "ID not in Peers", mutate: func(c *NodeConfig) { c.ID = 4 }, wantErr: true},
 		{name: "ID is zero", mutate: func(c *NodeConfig) { c.ID = 0; c.Peers = []uint64{0, 1, 2} }, wantErr: true},
+		{name: "Peers contains zero", mutate: func(c *NodeConfig) { c.ID = 1; c.Peers = []uint64{0, 1, 2} }, wantErr: true},
 		{name: "ElectionTick <= HeartbeatTick", mutate: func(c *NodeConfig) { c.ElectionTick = 2 }, wantErr: true},
 		{name: "MaxInflightMsgs is zero", mutate: func(c *NodeConfig) { c.MaxInflightMsgs = 0 }, wantErr: true},
 	}

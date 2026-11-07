@@ -54,6 +54,10 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	}
 	sorted := slices.Clone(cfg.Peers)
 	slices.Sort(sorted)
+	// ID 0 は raft.None なので、Bootstrap の構成変更が無視されて panic する。先に弾く。
+	if sorted[0] == raft.None {
+		return nil, fmt.Errorf("cluster: node %d: Peers contains 0", cfg.ID)
+	}
 	for i := 1; i < len(sorted); i++ {
 		if sorted[i] == sorted[i-1] {
 			return nil, fmt.Errorf("cluster: node %d: duplicate peer %d", cfg.ID, sorted[i])
@@ -91,7 +95,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	for i, id := range sorted {
 		peers[i] = raft.Peer{ID: id}
 	}
-	if err := rn.Bootstrap(peers); err != nil {
+	if err := bootstrap(rn, peers); err != nil {
 		return nil, fmt.Errorf("cluster: node %d: bootstrap: %w", cfg.ID, err)
 	}
 
@@ -108,6 +112,18 @@ func newRawNode(c *raft.Config) (rn *raft.RawNode, err error) {
 		}
 	}()
 	return raft.NewRawNode(c)
+}
+
+// bootstrap は rn.Bootstrap を呼ぶ。Bootstrap の中の構成変更の適用は、入力によっては
+// （たとえば Voter が残らないとき）エラーを返さず panic するので、newRawNode と同じく
+// その panic をエラーに変える。
+func bootstrap(rn *raft.RawNode, peers []raft.Peer) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("bootstrap panicked: %v", r)
+		}
+	}()
+	return rn.Bootstrap(peers)
 }
 
 // ID はこのノードの ID を返す。
