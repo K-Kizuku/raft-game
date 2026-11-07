@@ -11,6 +11,7 @@ import type { StageSummary } from "../types.ts";
 import { tokens } from "../../ui/theme/tokens.ts";
 import { Fireworks } from "./Fireworks.tsx";
 import { ResultEngineer } from "./ResultEngineer.tsx";
+import { ResultSeed } from "./ResultSeed.tsx";
 import {
   deliveredRows,
   formatPoints,
@@ -321,6 +322,7 @@ export function ResultScreen({
           <ResultEngineer />
         </>
       )}
+      {view !== null && <ResultSeed stageId={stage.id} />}
       <div className="result-actions">
         <button type="button" className="btn btn-primary" onClick={onRetry}>
           同じ条件でもう一度

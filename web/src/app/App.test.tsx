@@ -1079,3 +1079,195 @@ describe("App のステージの解放（T-703）", () => {
     expect(localStorage.getItem("raft-game.progress")).toBe('{"v":1,"bestStars":{"stage1":3}}');
   });
 });
+
+describe("App のシードの指定（T-705）", () => {
+  const record = parseRecord(miniRecord);
+  const SEED_INVALID = "シードの指定（?seed=）が正しくないため、新しいシードで遊びます。";
+
+  // セッションの有無にかかわらず開き、finish(seed) でそのシードのスナップショットと結果を届ける接続。
+  function seededConnector() {
+    const opened: ConnectionHandlers[] = [];
+    const status: ConnectionStatus = { state: "ready", attempt: 1, reason: null };
+    const connection: GameConnection = {
+      start() {},
+      close() {},
+      sendCommand: () => new Promise(() => {}),
+      setEngineerSubscription() {},
+      getStatus: () => status,
+    };
+    const connector: RoundConnector = {
+      modeOf: () => "mock",
+      open(_session, handlers) {
+        opened.push(handlers);
+        return { source: "mock", connection, dispose() {} };
+      },
+    };
+    const finish = (seed: number) => {
+      const handlers = opened.at(-1);
+      const snapshot = snapshotFromRecord(record, { stage: miniStage as StageView });
+      snapshot.session = { ...snapshot.session, seed };
+      act(() => {
+        handlers?.onSnapshot(snapshot, 0);
+        handlers?.onRoundResult?.(placeholderRoundResult(record));
+      });
+    };
+    return { connector, finish };
+  }
+
+  function seedNotice(): HTMLElement | null {
+    return document.querySelector<HTMLElement>(".seed-notice");
+  }
+
+  beforeEach(() => {
+    gameStore.getState().reset();
+  });
+
+  afterEach(() => {
+    gameStore.getState().reset();
+  });
+
+  it("AP-S1 ?seed=42 の紹介から出航するとシード 42 で作り、「同じ条件でもう一度」も 42", async () => {
+    window.history.replaceState(null, "", "/stages/stage1?seed=42");
+    const { connector, finish } = seededConnector();
+    const { postSession, newSeed } = renderApp({ connector });
+
+    await screen.findByRole("heading", { level: 1, name: "はじめての郵便船" });
+    expect(seedNotice()?.textContent).toBe(
+      "シード 42 で遊びます。同じシードなら、依頼と嵐が同じ時刻に起きます。",
+    );
+    expect(seedNotice()?.getAttribute("role")).toBe("status");
+
+    clickButton("出航する");
+    await waitForPath("/play");
+    expect(postSession).toHaveBeenCalledTimes(1);
+    expect(postSession).toHaveBeenCalledWith<[SessionRequest]>({
+      stageId: "stage1",
+      seed: 42,
+      demo: false,
+      turnstileToken: "tok-1",
+    });
+    expect(seedNotice()).toBeNull();
+
+    finish(42);
+    expect(window.location.pathname).toBe("/result");
+    const section = screen.getByRole("region", { name: "同じ条件で遊ぶ" });
+    expect(section.querySelector(".result-seed-value")?.textContent).toBe("42");
+    expect(section.querySelector("code")?.textContent).toBe(
+      `${window.location.origin}/stages/stage1?seed=42`,
+    );
+
+    clickButton("同じ条件でもう一度");
+    await waitForPath("/play");
+    expect(postSession).toHaveBeenCalledTimes(2);
+    expect(postSession.mock.calls[1]?.[0]).toEqual({
+      stageId: "stage1",
+      seed: 42,
+      demo: false,
+      turnstileToken: "tok-2",
+    });
+    expect(newSeed).not.toHaveBeenCalled();
+  });
+
+  it("AP-S1 サーバーなしで進んでも、「同じ条件でもう一度」は ?seed= のシード", async () => {
+    window.history.replaceState(null, "", "/stages/stage1?seed=42");
+    const postSession = failingPoster();
+    const { newSeed } = renderApp({ postSession });
+
+    await screen.findByRole("heading", { level: 1, name: "はじめての郵便船" });
+    clickButton("出航する");
+    // 作成に失敗しても、シードの知らせは出したまま。
+    expect(await screen.findByRole("alert")).toBeDefined();
+    expect(seedNotice()).not.toBeNull();
+    await goOffline();
+    clickButton("リザルトへ（仮）");
+    expect(window.location.pathname).toBe("/result");
+
+    clickButton("同じ条件でもう一度");
+    await waitFor(() => {
+      expect(postSession).toHaveBeenCalledTimes(2);
+    });
+    expect(postSession.mock.calls.map((call) => call[0].seed)).toEqual([42, 42]);
+    expect(newSeed).not.toHaveBeenCalled();
+  });
+
+  it("AP-S1 同じステージの使っていないセッションでも、シードが違えば ?seed= で作り直す", async () => {
+    const { postSession } = renderApp();
+
+    clickLink("遊ぶ");
+    await choose("はじめての郵便船");
+    await waitForPath("/stages/stage1");
+    expect(postSession).toHaveBeenCalledTimes(1);
+
+    // 履歴で一覧へ戻り、紹介の URL を ?seed= つきで開き直す（App の状態はそのまま）。
+    popTo("/stages");
+    popTo("/stages/stage1?seed=42");
+    expect(seedNotice()).not.toBeNull();
+    clickButton("出航する");
+    await waitForPath("/play");
+    expect(postSession).toHaveBeenCalledTimes(2);
+    expect(postSession.mock.calls[1]?.[0].seed).toBe(42);
+  });
+
+  it("AP-S1 同じステージの使っていないセッションが同じシードなら、作らずに使う", async () => {
+    const { postSession } = renderApp();
+
+    clickLink("遊ぶ");
+    await choose("はじめての郵便船");
+    await waitForPath("/stages/stage1");
+    expect(postSession.mock.calls[0]?.[0].seed).toBe(101);
+
+    popTo("/stages");
+    popTo("/stages/stage1?seed=101");
+    expect(seedNotice()).not.toBeNull();
+    clickButton("出航する");
+    expect(window.location.pathname).toBe("/play");
+    expect(postSession).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(NOT_CONNECTED)).toBeNull();
+  });
+
+  it.each(["abc", "-1", "1.5", "007", "", "9007199254740992"])(
+    "AP-S2 ?seed=%s は知らせを出し、新しいシードで作る",
+    async (value) => {
+      window.history.replaceState(null, "", `/stages/stage1?seed=${value}`);
+      const { postSession, newSeed } = renderApp();
+
+      await screen.findByRole("heading", { level: 1, name: "はじめての郵便船" });
+      expect(seedNotice()?.textContent).toBe(SEED_INVALID);
+
+      clickButton("出航する");
+      await waitForPath("/play");
+      expect(newSeed).toHaveBeenCalledTimes(1);
+      expect(postSession).toHaveBeenCalledWith<[SessionRequest]>({
+        stageId: "stage1",
+        seed: 101,
+        demo: false,
+        turnstileToken: "tok-1",
+      });
+    },
+  );
+
+  it("AP-S3 ?seed= が無ければ知らせを出さず、新しいシードで作る", async () => {
+    window.history.replaceState(null, "", "/stages/stage1");
+    const { postSession } = renderApp();
+
+    await screen.findByRole("heading", { level: 1, name: "はじめての郵便船" });
+    expect(seedNotice()).toBeNull();
+    clickButton("出航する");
+    await waitForPath("/play");
+    expect(postSession.mock.calls[0]?.[0].seed).toBe(101);
+  });
+
+  it("AP-S3 紹介から画面の中で移ると ?seed= は消え、ステージ選択の「選ぶ」は新しいシード", async () => {
+    window.history.replaceState(null, "", "/stages/stage1?seed=42");
+    const { postSession } = renderApp();
+
+    await screen.findByRole("heading", { level: 1, name: "はじめての郵便船" });
+    clickLink("ステージ選択へ戻る");
+    expect(window.location.search).toBe("");
+    expect(seedNotice()).toBeNull();
+    await choose("はじめての郵便船");
+    await waitForPath("/stages/stage1");
+    expect(seedNotice()).toBeNull();
+    expect(postSession.mock.calls[0]?.[0].seed).toBe(101);
+  });
+});
