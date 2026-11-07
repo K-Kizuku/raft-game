@@ -170,7 +170,7 @@ for size in $SIZES; do
     if "$@" >/dev/null 2>&1 && [ -s "$file" ]; then
       echo "$file"
     else
-      echo "$PROG: 撮れなかった: $URL$path（${w}x${h}）" >&2
+      echo "$PROG: 撮れなかった: ${URL}${path}（${w}x${h}）" >&2
       failed=1
     fi
   done
