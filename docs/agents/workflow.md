@@ -337,6 +337,25 @@ go -C tools/agentctl run . review render "$PWD/review.json"
   - `false` でも、C9（コンフリクトがない）と C4（PR の HEAD の `ci-ok` が成功）は今までどおり求める。ベースとの比較の結果がない（API の失敗）・`behind_by` が不正なときは、設定によらず C10 は fail（安全側）
   - 考え方: 1 本マージするたびに残りのすべての PR が `main` の取り込み・CI のやり直し・再レビューを待つと、全体が遅くなる。`false` では、PR どうしの組み合わせの不具合（それぞれの PR の CI は通るが、両方が入った `main` で壊れる）をマージの前には見つけない。マージ後の `main` の CI で見つけ、壊れたらすぐに原因の PR を戻す（revert する）
   - `merge.sh` は Merge Gate の判定だけに従い、遅れを理由に別に止めない
+- C5〜C8 は、[小さな PR](#小さな-pr文書だけテストだけのレビューの省略) ならレビューを省いて pass にする（Issue #243）
+
+### 小さな PR（文書だけ・テストだけ）のレビューの省略
+
+文書だけ・テストだけの小さな PR は、Codex のレビューを待たず、CI だけでマージする（2026-11-08 のオーナーの判断。Issue #243）。Merge Gate は、次を**すべて**満たす PR を「小さな PR」とし、レビューの条件（C5・C6・C7・C8）を pass にする。それ以外の条件（C1〜C4・C9〜C12）は今までどおり判定する（判定は [smallpr.go](../../tools/agentctl/internal/gate/smallpr.go)）。
+
+1. 設定 `.agents/config.json` の `review.skip_small_prs` が `true`（設定がないときは `false`。リポジトリの設定は `true`）
+2. 変更ファイルがすべて、設定 `review.skip_paths` の glob のどれかに一致する。名前を変えたファイルは、前と後の両方の名前が一致するときだけ。`skip_paths` の既定（リポジトリの設定も同じ）は次のとおり
+   - `docs/**`
+   - `**/*_test.go`・`**/*.test.ts`・`**/*.test.tsx`
+   - `**/testdata/**`・`**/fixtures/**`
+3. `docs/adr/**` のファイルを変えていない（判断の記録なので、`skip_paths` に一致してもレビューを省かない。設定では外せない）
+4. 保護されたパス（`protected_paths`）を 1 つも変えていない
+5. 追加と削除の行数の合計（PR の `additions` + `deletions`）が、設定 `review.skip_max_lines`（既定 300）以下
+
+- 判定の材料が不完全なとき（変更ファイルの一覧が取れない・`changed_files` と一覧の件数が違う＝上限に達した・追加と削除の行数が分からない）は、小さな PR にしない（安全側。今までどおりレビューを求める）
+- レビューを省いたときは、C5〜C8 の詳細に「小さな PR なのでレビューを省いた（N ファイルがすべて review.skip_paths に一致・保護されたパスの変更なし・追加と削除が M 行（上限 300 行））」と出る。Merge Gate のコメント（PR の HEAD ごとに更新する表）にもこの文が残るので、あとからレビューを省いた PR と理由が分かる
+- 小さな PR でも、C2（AC の転記とチェック）・C3・C4（`ci-ok` の成功）・C11（変更予定ファイルの範囲）などは今までどおり求める
+- `merge-train.sh` は、C6 が pass の PR にはレビュー（`review.sh`）を依頼しないので、小さな PR にもレビューを依頼しない（Merge Gate が pass になればマージする）
 
 ローカルでの判定（GitHub の状態で、またはスナップショットで）:
 

@@ -38,6 +38,7 @@
 #      round が review.max_rounds 以上で、C6 が pass でないか C12 が fail → 強制マージ待ち（上を参照）
 #      C6 が fail か、C6 が pass で C7 が fail →「止まった」
 #      C6 が pass でなく C10 が pass → review.sh をバックグラウンドで起動（PR ごとに 1 つまで）
+#      （小さな PR は Merge Gate が C5〜C8 を「レビューを省いた」として pass にするので、レビューを依頼しない。Issue #243）
 #      C6 が pass で C12 が fail、C10 が pass → 保護されたパスの確認の記録が足りないので、review.sh を
 #      HEAD ごとに 1 回だけ起動する（そのレビューのあとも C12 が fail なら「止まった」）
 #      C2 が fail で ci-ok が pass → 本文の「- [ ] AC-n: CI（`ci-ok`）が通る」の行だけを [x] にする

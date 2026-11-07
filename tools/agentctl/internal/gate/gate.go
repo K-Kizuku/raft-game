@@ -163,6 +163,18 @@ type evaluator struct {
 	codexIDs map[string]bool
 	// carry は、HEAD より前の SHA の最新のレビューを引き継ぐかどうか（carryOver）。
 	carry CarryOver
+	// small は、小さな PR（SmallPR）でレビューを省くこと。smallReason はその理由。
+	small       bool
+	smallReason string
+}
+
+// skipReview は、小さな PR なら、レビューの条件（C5〜C8）を「レビューを省いた」として pass にし、true を返す。
+func (e *evaluator) skipReview(id string) bool {
+	if !e.small {
+		return false
+	}
+	e.add(id, Pass, "小さな PR なのでレビューを省いた（%s）", e.smallReason)
+	return true
 }
 
 func (e *evaluator) note(format string, a ...any) {
@@ -184,6 +196,7 @@ func (e *evaluator) run() Report {
 	if !e.carry.OK && e.carry.SHA != "" && e.carry.SHA != e.in.PullRequest.HeadSHA {
 		e.note("レビュー（%s）を HEAD %s に引き継がない: %s", short(e.carry.SHA), short(e.in.PullRequest.HeadSHA), e.carry.Reason)
 	}
+	e.small, e.smallReason = SmallPR(e.cfg, e.in)
 
 	e.add("G0", Pass, "OK")
 	e.c1()
@@ -466,6 +479,9 @@ func (e *evaluator) c4() {
 }
 
 func (e *evaluator) c5() {
+	if e.skipReview("C5") {
+		return
+	}
 	n := len(e.records)
 	if e.codex != nil {
 		n++
@@ -494,6 +510,9 @@ func (e *evaluator) codexStale() string {
 }
 
 func (e *evaluator) c6() {
+	if e.skipReview("C6") {
+		return
+	}
 	head := e.in.PullRequest.HeadSHA
 	if e.codexLatest {
 		if s := e.codexStale(); s != "" {
@@ -531,6 +550,9 @@ func (e *evaluator) c6() {
 }
 
 func (e *evaluator) c7() {
+	if e.skipReview("C7") {
+		return
+	}
 	if e.codexLatest && !e.carry.OK {
 		if s := e.codexStale(); s != "" {
 			e.add("C7", Pending, "%s", s)
@@ -640,6 +662,9 @@ func (e *evaluator) blockingErrs(idx int, skipCodex bool, reported map[string]bo
 }
 
 func (e *evaluator) c8() {
+	if e.skipReview("C8") {
+		return
+	}
 	v, d := e.c8Eval()
 	e.add("C8", v, "%s", d)
 }

@@ -51,6 +51,14 @@ type Review struct {
 	// MaxRounds は、merge-train.sh がレビューを依頼する回数の上限（Issue #240）。この回数以上のレビューを
 	// 受けた PR にはもう依頼せず、ci-ok が pass なら「強制マージ待ち」にする。書かない（0）なら DefaultMaxRounds。
 	MaxRounds int `json:"max_rounds"`
+	// SkipSmallPRs は、小さな PR（変更ファイルがすべて SkipPaths に一致し、保護されたパスを変えず、
+	// 追加と削除の行数の合計が SkipMaxLines 以下）のレビューを省くこと（Merge Gate の C5〜C8。Issue #243）。既定は false。
+	SkipSmallPRs bool `json:"skip_small_prs"`
+	// SkipPaths は、小さな PR の変更ファイルとして認める glob。省略（null）は DefaultSkipPaths。
+	// NeverSkipPaths に一致するファイルは、ここに一致しても小さな PR にしない。
+	SkipPaths []string `json:"skip_paths,omitempty"`
+	// SkipMaxLines は、小さな PR の追加と削除の行数の合計の上限。省略（null）は DefaultSkipMaxLines。
+	SkipMaxLines *int `json:"skip_max_lines,omitempty"`
 }
 
 // DefaultMaxRounds は review.max_rounds を書かないときの値。
@@ -62,6 +70,36 @@ func (r Review) MaxReviewRounds() int {
 		return DefaultMaxRounds
 	}
 	return r.MaxRounds
+}
+
+// DefaultSkipPaths は、review.skip_paths を省略したときの glob（Issue #243）。
+var DefaultSkipPaths = []string{
+	"docs/**",
+	"**/*_test.go", "**/*.test.ts", "**/*.test.tsx",
+	"**/testdata/**", "**/fixtures/**",
+}
+
+// NeverSkipPaths は、review.skip_paths に一致しても小さな PR にしないパス（判断の記録。Issue #243）。
+// 設定で外せないよう、コードに直接書く。
+var NeverSkipPaths = []string{"docs/adr/**"}
+
+// DefaultSkipMaxLines は、review.skip_max_lines を省略したときの上限。
+const DefaultSkipMaxLines = 300
+
+// SmallPRSkipPaths は、小さな PR の変更ファイルとして認める glob を返す（省略なら DefaultSkipPaths）。
+func (r Review) SmallPRSkipPaths() []string {
+	if r.SkipPaths == nil {
+		return DefaultSkipPaths
+	}
+	return r.SkipPaths
+}
+
+// SmallPRMaxLines は、小さな PR の追加と削除の行数の合計の上限を返す（省略なら DefaultSkipMaxLines）。
+func (r Review) SmallPRMaxLines() int {
+	if r.SkipMaxLines == nil {
+		return DefaultSkipMaxLines
+	}
+	return *r.SkipMaxLines
 }
 
 // Merge はマージに関する設定（Issue #239）。
@@ -211,6 +249,15 @@ func (c *Config) Validate() error {
 	}
 	if r.MaxRounds != 0 {
 		checkRange("review.max_rounds", r.MaxRounds, 1, 10)
+	}
+
+	for _, p := range r.SkipPaths {
+		if err := issuebody.ValidatePattern(p); err != nil {
+			add("review.skip_paths の %q: %v", p, err)
+		}
+	}
+	if r.SkipMaxLines != nil && *r.SkipMaxLines < 0 {
+		add("review.skip_max_lines は 0 以上にする（%d）", *r.SkipMaxLines)
 	}
 
 	for _, p := range c.ProtectedPaths {

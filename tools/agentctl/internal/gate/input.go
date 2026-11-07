@@ -85,6 +85,10 @@ type PullRequest struct {
 	Mergeable      *bool    `json:"mergeable"` // null は未計算
 	MergeableState string   `json:"mergeable_state"`
 	ChangedFiles   int      `json:"changed_files"`
+	// Additions・Deletions は PR の追加・削除の行数の合計（GET /pulls/{n} の additions・deletions）。
+	// 小さな PR の判定（Issue #243）に使う。null（不明）なら小さな PR にしない。
+	Additions *int `json:"additions,omitempty"`
+	Deletions *int `json:"deletions,omitempty"`
 }
 
 // File は PR の変更ファイル。
