@@ -159,6 +159,8 @@ type evaluator struct {
 	codex *CodexReview
 	// codexLatest は、codex が agent-review/v1 の最新の記録より新しい（判定に codex を使う）こと。
 	codexLatest bool
+	// codexIDs は、Codex の指摘として出所を確かめられる ID（CodexFindingIDs）。
+	codexIDs map[string]bool
 }
 
 func (e *evaluator) note(format string, a ...any) {
@@ -254,6 +256,7 @@ func (e *evaluator) collectReviews() {
 // collectCodex は、Codex の GitHub 連携のレビューを集め、agent-review/v1 の最新の記録（created_at）より
 // 要約のコメントの updated_at が新しければ、そちらを最新のレビューにする。
 func (e *evaluator) collectCodex() {
+	e.codexIDs = CodexFindingIDs(e.cfg, e.in)
 	cr, notes := FindCodexReview(e.cfg, e.in)
 	e.rep.Notes = append(e.rep.Notes, notes...)
 	if cr == nil {
@@ -533,7 +536,8 @@ func (e *evaluator) c7() {
 		}
 		// Codex のレビューでは、前の agent-review/v1 の記録の重大な指摘を resolved にできない。
 		// Codex 以外の最新の記録で、それまでの重大な指摘が resolved になっていなければ fail。
-		// Codex 自身の指摘（C<コメントの ID>）は、今回の Codex のレビューで判定し直したので除く。
+		// Codex 自身の指摘（信頼する Codex の作者の行コメントに対応する C<コメントの ID>）は、今回の Codex のレビューで
+		// 判定し直したので除く。ID の形が C<数字> でも、対応する行コメントがなければ除かない。
 		if i := e.lastNonCodexRecord(); i >= 0 {
 			if errs := e.blockingErrs(i, true, map[string]bool{}); len(errs) > 0 {
 				e.add("C7", Fail, "前のレビューの重大な指摘が解決していない（Codex のレビューでは resolved にできない）: %s",
@@ -564,12 +568,6 @@ func (e *evaluator) c7() {
 	e.add("C7", Pass, "OK")
 }
 
-// codexFindingIDRe は、Codex の GitHub 連携の指摘を変換したときの ID（C<コメントの ID>）。
-var codexFindingIDRe = regexp.MustCompile(`^C[0-9]+$`)
-
-// IsCodexFindingID は、id が Codex の GitHub 連携の指摘を変換したときの ID かどうかを返す。
-func IsCodexFindingID(id string) bool { return codexFindingIDRe.MatchString(id) }
-
 // isCodexConverted は、rec が Codex の GitHub 連携のレビューを変換した記録かどうかを返す。
 func isCodexConverted(rec *review.Record) bool {
 	return rec.Reviewer == config.ReviewerPrimary && rec.ReviewerVersion == codex.ReviewerVersion
@@ -587,10 +585,10 @@ func (e *evaluator) lastNonCodexRecord() int {
 
 // blockingErrs は、e.records[idx] を最新とみなして、重大な指摘が open のもの、
 // それより前の記録の重大な指摘が resolved になっていないものを返す。
-// skipCodex なら Codex の指摘（C<コメントの ID>）を除く。reported に出した ID を記録し、重ねて出さない。
+// skipCodex なら Codex の指摘（信頼する Codex の作者の行コメントに対応する C<コメントの ID>。e.codexIDs）を除く。reported に出した ID を記録し、重ねて出さない。
 func (e *evaluator) blockingErrs(idx int, skipCodex bool, reported map[string]bool) []string {
 	skip := func(f review.Finding) bool {
-		return !e.cfg.IsBlocking(f.Severity) || reported[f.ID] || (skipCodex && IsCodexFindingID(f.ID))
+		return !e.cfg.IsBlocking(f.Severity) || reported[f.ID] || (skipCodex && e.codexIDs[f.ID])
 	}
 	l := e.records[idx]
 	var errs []string

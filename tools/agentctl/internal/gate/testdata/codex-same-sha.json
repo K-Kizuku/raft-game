@@ -1,0 +1,54 @@
+{
+  "_note": "同じ SHA（1111…）を Codex が 2 回レビューした出力の形（PR #85 の fe57252 の再レビューと同じ）。1 回目（09:05）は P1 の指摘を出し、2 回目（10:30）は指摘なし。要約のコメントは 2 回目の結果に更新され、1 回目の行コメントは残っている。",
+  "comments": [
+    {
+      "id": 2300,
+      "author": "K-Kizuku",
+      "created_at": "2026-11-05T09:00:00Z",
+      "updated_at": "2026-11-05T09:00:00Z",
+      "body": "@codex review"
+    },
+    {
+      "id": 2301,
+      "author": "chatgpt-codex-connector[bot]",
+      "created_at": "2026-11-05T09:05:00Z",
+      "updated_at": "2026-11-05T10:30:00Z",
+      "body": "<!-- codex-pull-request-review-summary -->\n### Codex Review\n\n**Reviewed commit:** `1111111`\n<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":\"1111111111111111111111111111111111111111\",\"has_any_findings\":false,\"has_unresolved_findings\":false,\"status\":\"completed\"},\"security_review\":{\"commit_sha\":null,\"has_any_findings\":null,\"has_unresolved_findings\":null,\"status\":null}} -->"
+    },
+    {
+      "id": 2302,
+      "author": "K-Kizuku",
+      "created_at": "2026-11-05T10:00:00Z",
+      "updated_at": "2026-11-05T10:00:00Z",
+      "body": "@codex review"
+    },
+    {
+      "id": 2303,
+      "author": "chatgpt-codex-connector[bot]",
+      "created_at": "2026-11-05T10:30:00Z",
+      "updated_at": "2026-11-05T10:30:00Z",
+      "body": "<!-- codex-review-receipt:v1 -->\nCodex Review: Didn't find any major issues. Keep it up!\n\n**Reviewed commit:** `1111111`\n"
+    }
+  ],
+  "reviews": [
+    {
+      "id": 3301,
+      "author": "chatgpt-codex-connector[bot]",
+      "commit_id": "1111111111111111111111111111111111111111",
+      "submitted_at": "2026-11-05T09:05:00Z",
+      "body": "<!-- codex-review-receipt:v1 -->\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `1111111`\n"
+    }
+  ],
+  "review_comments": [
+    {
+      "id": 4801,
+      "author": "chatgpt-codex-connector[bot]",
+      "commit_id": "1111111111111111111111111111111111111111",
+      "original_commit_id": "1111111111111111111111111111111111111111",
+      "path": "tools/agentctl/internal/gate/codex.go",
+      "line": 125,
+      "created_at": "2026-11-05T09:05:00Z",
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Carry unresolved findings forward**\n\nThe finding is dropped when the SHA changes.\n\nUseful? React with 👍 / 👎.\n\n<!-- codex-code-review-finding:v1 -->"
+    }
+  ]
+}

@@ -62,6 +62,17 @@ func codexFinding(id int64, author, sha, priority, title string) ReviewComment {
 		Body: body, CreatedAt: "2026-11-05T10:30:00Z"}
 }
 
+// withCodexFindings は、Codex の要約（codex-review-state）を、最新のレビューに指摘があるもの
+// （has_any_findings・has_unresolved_findings が true）にする。対象の SHA に行コメントの指摘を足すテストで使う
+// （実際の Codex は、指摘を出したレビューの要約を has_any_findings: true にする）。
+func withCodexFindings(in Input) Input {
+	for i := range in.Comments {
+		in.Comments[i].Body = strings.Replace(in.Comments[i].Body,
+			`"has_any_findings":false,"has_unresolved_findings":false`, `"has_any_findings":true,"has_unresolved_findings":true`, 1)
+	}
+	return in
+}
+
 func mustResult(t *testing.T, rep Report, id string, want Verdict) Result {
 	t.Helper()
 	r, ok := resultOf(rep, id)
@@ -102,7 +113,7 @@ func TestCodexPR80OldP2IgnoredAfterHeadChanged(t *testing.T) {
 }
 
 func TestCodexOnlyP2Passes(t *testing.T) {
-	in := codexInput(t, "codex-pr80.json", false)
+	in := withCodexFindings(codexInput(t, "codex-pr80.json", false))
 	in.ReviewComments[0].CommitID, in.ReviewComments[0].OriginalCommitID = headSHA, headSHA
 	in.ReviewComments = append(in.ReviewComments, codexFinding(4102, codexBot, headSHA, "P3", "名前"))
 	rep := Evaluate(loadConfig(t), in)
@@ -117,7 +128,7 @@ func TestCodexOnlyP2Passes(t *testing.T) {
 func TestCodexP1Fails(t *testing.T) {
 	for _, p := range []string{"P0", "P1"} {
 		t.Run(p, func(t *testing.T) {
-			in := codexInput(t, "codex-pr80.json", false)
+			in := withCodexFindings(codexInput(t, "codex-pr80.json", false))
 			in.ReviewComments = append(in.ReviewComments, codexFinding(4200, codexBot, headSHA, p, "設定がないと panic する"))
 			rep := Evaluate(loadConfig(t), in)
 			if rep.Verdict != Fail {
@@ -141,7 +152,7 @@ func TestCodexP1Fails(t *testing.T) {
 }
 
 func TestCodexMissingBadgeIsBlocking(t *testing.T) {
-	in := codexInput(t, "codex-pr84.json", false)
+	in := withCodexFindings(codexInput(t, "codex-pr84.json", false))
 	in.ReviewComments = append(in.ReviewComments, codexFinding(4300, codexBot, headSHA, "", "バッジのない指摘"))
 	rep := Evaluate(loadConfig(t), in)
 	mustResult(t, rep, "C7", Fail)
@@ -180,7 +191,7 @@ func TestCodexUntrustedAuthorIgnored(t *testing.T) {
 		}
 	})
 	t.Run("行コメント", func(t *testing.T) {
-		in := codexInput(t, "codex-pr84.json", false)
+		in := withCodexFindings(codexInput(t, "codex-pr84.json", false))
 		in.ReviewComments = append(in.ReviewComments, codexFinding(4400, "someone-else", headSHA, "P0", "偽の指摘"))
 		rep := Evaluate(loadConfig(t), in)
 		if rep.Verdict != Pass {
@@ -194,7 +205,7 @@ func TestCodexUntrustedAuthorIgnored(t *testing.T) {
 
 func TestCodexNewerAgentRecordWins(t *testing.T) {
 	// Codex の要約のコメントより新しい agent-review/v1 の記録があれば、そちらで判定する。
-	in := codexInput(t, "codex-pr80.json", true)
+	in := withCodexFindings(codexInput(t, "codex-pr80.json", true))
 	in.ReviewComments = append(in.ReviewComments, codexFinding(4500, codexBot, headSHA, "P1", "重大"))
 	rec := makeRecord(3, headSHA, "approve", resolvedF1())
 	rec.CreatedAt = "2026-11-06T00:00:00Z"
@@ -283,7 +294,7 @@ func TestCodexNewestSummaryWins(t *testing.T) {
 
 func TestCodexRecord(t *testing.T) {
 	cfg := loadConfig(t)
-	in := codexInput(t, "codex-pr80.json", true)
+	in := withCodexFindings(codexInput(t, "codex-pr80.json", true))
 	in.ReviewComments = append(in.ReviewComments,
 		codexFinding(4600, codexBot, headSHA, "P1", "重大な指摘"),
 		codexFinding(4601, codexBot, headSHA, "P2", "軽い指摘"))
@@ -295,7 +306,10 @@ func TestCodexRecord(t *testing.T) {
 	if prev == nil || prev.Round != 2 {
 		t.Fatalf("prev = %+v", prev)
 	}
-	prev.Findings = append(prev.Findings, finding("F9", "high", "open"), finding("F8", "low", "open"), finding("C4000", "high", "open"))
+	// C4101 は Codex の行コメント（古い SHA の P2）に対応する。C4000 は C<数字> の形だが、対応する Codex の行コメントがない
+	// （Codex 以外のレビュー役が付けた ID）。
+	prev.Findings = append(prev.Findings, finding("F9", "high", "open"), finding("F8", "low", "open"),
+		finding("C4101", "high", "open"), finding("C4000", "high", "open"))
 	now := time.Date(2026, 11, 6, 1, 2, 3, 0, time.UTC)
 	rec := cr.Record(cfg, 12, baseSHA, prev, now)
 	if err := rec.Validate(cfg); err != nil {
@@ -320,23 +334,23 @@ func TestCodexRecord(t *testing.T) {
 		t.Errorf("C4601 = %+v", f)
 	}
 	// 前回の Codex 以外の重大な指摘は、Codex のレビューでは resolved にせず open のまま引き継ぐ。
-	if f := byID["F9"]; f.Status != "open" || f.Resolution != "" {
-		t.Errorf("F9 = %+v", f)
+	// ID が C<数字> の形でも、対応する Codex の行コメントがなければ Codex 以外の指摘として扱う。
+	for _, id := range []string{"F9", "C4000"} {
+		if f := byID[id]; f.Status != "open" || f.Resolution != "" {
+			t.Errorf("%s = %+v", id, f)
+		}
 	}
 	if !strings.Contains(rec.Summary, "open のまま引き継いだ") {
 		t.Errorf("summary = %s", rec.Summary)
 	}
 	// 重大でない指摘と、前の Codex の指摘は、今回指摘されなければ resolved で引き継ぐ。resolved のものはそのまま。
-	for _, id := range []string{"F8", "C4000"} {
+	for _, id := range []string{"F8", "C4101"} {
 		if f := byID[id]; f.Status != "resolved" || !strings.Contains(f.Resolution, "1111111") {
 			t.Errorf("%s = %+v", id, f)
 		}
 	}
 	if f := byID["F1"]; f.Status != "resolved" || f.Resolution != "内部エラーにした" {
 		t.Errorf("F1 = %+v", f)
-	}
-	if _, ok := byID["C4101"]; ok {
-		t.Error("古い SHA の指摘を含めた")
 	}
 
 	// 変換した記録を載せると、それが最新の記録になり、同じ判定（C7 で fail）になる。
@@ -556,6 +570,151 @@ func TestCodexOldP1CarriedWhileUnresolved(t *testing.T) {
 		cr, _ := FindCodexReview(cfg, in)
 		if len(cr.Findings) != 0 {
 			t.Errorf("findings = %+v", cr.Findings)
+		}
+	})
+}
+
+// codexAfterLocalC123 は、round 1 の記録（Claude のフォールバック）が C123（high）を open で記録したあと、
+// Codex の GitHub 連携が HEAD を指摘なしでレビューした入力を返す。C123 は C<数字> の形だが、Codex の行コメントはない。
+func codexAfterLocalC123(t *testing.T) Input {
+	t.Helper()
+	in := codexInput(t, "codex-pr84.json", false)
+	rec := makeRecord(1, oldSHA, "request_changes", []review.Finding{finding("C123", "high", "open")}, fallback("service_unavailable"))
+	rec.CreatedAt = "2026-11-01T00:00:00Z"
+	in.Comments = append(in.Comments, commentOf(t, 7100, "K-Kizuku", rec))
+	return in
+}
+
+func TestCodexIDShapeIsNotProvenance(t *testing.T) {
+	cfg := loadConfig(t)
+	now := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+
+	t.Run("ローカルの記録の C123 high open → Codex の指摘なしが最新 → C7 fail", func(t *testing.T) {
+		rep := Evaluate(cfg, codexAfterLocalC123(t))
+		if rep.Verdict != Fail {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		if rep.LatestReview == nil || rep.LatestReview.CommentID != 2201 {
+			t.Errorf("latest = %+v（Codex の要約のコメントが最新）", rep.LatestReview)
+		}
+		if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "C123") {
+			t.Errorf("C7 = %+v", r)
+		}
+	})
+
+	t.Run("変換でも C123 を resolved にしない", func(t *testing.T) {
+		in := codexAfterLocalC123(t)
+		cr, _ := FindCodexReview(cfg, in)
+		prev := LatestRecord(cfg, in)
+		if cr == nil || prev == nil || cr.IsCodexFinding("C123") {
+			t.Fatalf("codex = %+v, prev = %+v", cr, prev)
+		}
+		rec := cr.Record(cfg, 12, baseSHA, prev, now)
+		if err := rec.Validate(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Verdict != "request_changes" || len(rec.Findings) != 1 || rec.Findings[0].ID != "C123" ||
+			rec.Findings[0].Status != "open" || rec.Findings[0].Resolution != "" {
+			t.Errorf("record = %+v", rec)
+		}
+		// 変換した記録を載せても、C7 は fail のまま。
+		in.Comments = append(in.Comments, commentOf(t, 7101, "K-Kizuku", rec))
+		rep := Evaluate(cfg, in)
+		if rep.LatestReview == nil || rep.LatestReview.CommentID != 7101 {
+			t.Errorf("latest = %+v", rep.LatestReview)
+		}
+		if r := mustResult(t, rep, "C7", Fail); !strings.Contains(r.Detail, "C123") {
+			t.Errorf("C7 = %+v", r)
+		}
+	})
+
+	t.Run("信頼しない作者の行コメントは出所にならない", func(t *testing.T) {
+		in := codexAfterLocalC123(t)
+		in.ReviewComments = append(in.ReviewComments, codexFinding(123, "someone-else", oldSHA, "P1", "偽の指摘"))
+		if r := mustResult(t, Evaluate(cfg, in), "C7", Fail); !strings.Contains(r.Detail, "C123") {
+			t.Errorf("C7 = %+v", r)
+		}
+		cr, _ := FindCodexReview(cfg, in)
+		if rec := cr.Record(cfg, 12, baseSHA, LatestRecord(cfg, in), now); rec.Findings[0].Status != "open" {
+			t.Errorf("record = %+v", rec)
+		}
+	})
+
+	t.Run("信頼する Codex の行コメントに対応する C123 は、Codex のレビューで判定し直す", func(t *testing.T) {
+		// 前の SHA の Codex の P1（C123）を、ローカルの記録が写した。最新の要約は未解決の指摘なし。
+		in := codexAfterLocalC123(t)
+		in.ReviewComments = append(in.ReviewComments, codexFinding(123, codexBot, oldSHA, "P1", "Codex の指摘"))
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		cr, _ := FindCodexReview(cfg, in)
+		rec := cr.Record(cfg, 12, baseSHA, LatestRecord(cfg, in), now)
+		if rec.Verdict != "approve" || rec.Findings[0].ID != "C123" || rec.Findings[0].Status != "resolved" {
+			t.Errorf("record = %+v", rec)
+		}
+	})
+}
+
+func TestCodexSameSHAReReviewWithdrawsFindings(t *testing.T) {
+	cfg := loadConfig(t)
+	now := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+
+	t.Run("最新の要約が指摘なし → 前のレビューの P1 は解消", func(t *testing.T) {
+		in := codexInput(t, "codex-same-sha.json", false)
+		rep := Evaluate(cfg, in)
+		if rep.Verdict != Pass {
+			t.Fatalf("verdict = %s; %+v", rep.Verdict, rep.Results)
+		}
+		mustResult(t, rep, "C6", Pass)
+		mustResult(t, rep, "C7", Pass)
+		if !strings.Contains(notes(rep), "4801") {
+			t.Errorf("notes = %v", rep.Notes)
+		}
+
+		cr, _ := FindCodexReview(cfg, in)
+		if cr == nil || cr.SHA != headSHA || len(cr.Findings) != 0 || !cr.IsCodexFinding("C4801") {
+			t.Fatalf("codex = %+v", cr)
+		}
+		// pr codex-record も、取り下げた指摘を open で出さない。前回の記録の open の C4801 は resolved にする。
+		if rec := cr.Record(cfg, 12, baseSHA, nil, now); rec.Verdict != "approve" || len(rec.Findings) != 0 {
+			t.Errorf("record = %+v", rec)
+		}
+		prev := makeRecord(1, headSHA, "request_changes", []review.Finding{finding("C4801", "high", "open")})
+		rec := cr.Record(cfg, 12, baseSHA, prev, now)
+		if err := rec.Validate(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Verdict != "approve" || len(rec.Findings) != 1 || rec.Findings[0].Status != "resolved" {
+			t.Errorf("record = %+v", rec)
+		}
+	})
+
+	t.Run("最新の要約に未解決の指摘がある → fail", func(t *testing.T) {
+		in := codexInput(t, "codex-same-sha.json", false)
+		for i := range in.Comments {
+			in.Comments[i].Body = strings.Replace(in.Comments[i].Body, `"has_unresolved_findings":false`, `"has_unresolved_findings":true`, 1)
+		}
+		if r := mustResult(t, Evaluate(cfg, in), "C7", Fail); !strings.Contains(r.Detail, "C4801") {
+			t.Errorf("C7 = %+v", r)
+		}
+	})
+
+	t.Run("最新の要約が has_any_findings: true → fail", func(t *testing.T) {
+		in := codexInput(t, "codex-same-sha.json", false)
+		for i := range in.Comments {
+			in.Comments[i].Body = strings.Replace(in.Comments[i].Body, `"has_any_findings":false`, `"has_any_findings":true`, 1)
+		}
+		mustResult(t, Evaluate(cfg, in), "C7", Fail)
+	})
+
+	t.Run("要約の更新より後の行コメント・作成日時が分からない行コメントは解消とみなさない", func(t *testing.T) {
+		for _, created := range []string{"2026-11-05T10:31:00Z", ""} {
+			in := codexInput(t, "codex-same-sha.json", false)
+			in.ReviewComments[0].CreatedAt = created
+			if r := mustResult(t, Evaluate(cfg, in), "C7", Fail); !strings.Contains(r.Detail, "C4801") {
+				t.Errorf("created_at %q: C7 = %+v", created, r)
+			}
 		}
 	})
 }

@@ -69,6 +69,11 @@ func fixedNow(t *testing.T) {
 func TestPRCodexRecordFromInput(t *testing.T) {
 	fixedNow(t)
 	in := codexView(t)
+	// HEAD のレビューで指摘を出したので、要約は has_any_findings: true（実際の Codex の出力と同じ）。
+	for i := range in.Comments {
+		in.Comments[i].Body = strings.Replace(in.Comments[i].Body,
+			`"has_any_findings":false,"has_unresolved_findings":false`, `"has_any_findings":true,"has_unresolved_findings":true`, 1)
+	}
 	in.ReviewComments = append(in.ReviewComments, gate.ReviewComment{
 		ID: 4700, Author: codexBot, CommitID: headSHA, OriginalCommitID: headSHA, Path: "a.go", Line: 3,
 		Body: "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  軽い指摘**\n\n説明\n\n<!-- codex-code-review-finding:v1 -->",
