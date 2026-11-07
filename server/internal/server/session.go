@@ -35,6 +35,7 @@ type attachReq struct {
 type sessionParams struct {
 	id       string
 	st       *stage.Stage
+	islands  []stage.IslandDisplay // st の島の表示用の値（Catalog.islands）。テストで直接作るときは nil でよい
 	seed     uint64
 	demo     bool
 	restored bool
@@ -53,6 +54,7 @@ type sessionParams struct {
 type session struct {
 	id, stageID string
 	st          *stage.Stage
+	islands     []stage.IslandDisplay // st の島の表示用の値。作った後は変えない
 	durationMs  sim.SimTime
 	seed        uint64
 	demo        bool
@@ -107,6 +109,7 @@ func newSession(parent context.Context, p sessionParams) *session {
 		id:         p.id,
 		stageID:    p.st.ID,
 		st:         p.st,
+		islands:    p.islands,
 		durationMs: sim.SimTime(p.st.DurationMs),
 		seed:       p.seed,
 		demo:       p.demo,

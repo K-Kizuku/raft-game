@@ -24,6 +24,7 @@ func TestStandaloneFlow(t *testing.T) {
 		snap.Session.Build != testBuild || snap.Phase != protocol.PhaseIntro {
 		t.Errorf("seq %d snapshot session %+v phase %s", env.Seq, snap.Session, snap.Phase)
 	}
+	assertSnapshotIslands(t, env.Payload) // SV-1
 	c.send(protocol.MessageTypeCmdGameStart, "c-1", struct{}{})
 	var ack protocol.Ack
 	c.expect(protocol.MessageTypeAck, &ack)
