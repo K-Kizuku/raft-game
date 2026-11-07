@@ -173,6 +173,7 @@ type StageView struct {
 	Islands   []Island       `json:"islands"`
 	Routes    []Route        `json:"routes"`
 	Resources []Resource     `json:"resources"`
+	RelayCap  int            `json:"relayCap,omitempty"`  // 島ごとの中継倉庫の上限（transport.relayCap）。0 なら省く（= 積み替えなし）
 	DemoStorm *DemoStormView `json:"demoStorm,omitempty"` // デモの嵐（ステージ定義の demo.storm）。書いていなければ省く（T-305b）
 }
 

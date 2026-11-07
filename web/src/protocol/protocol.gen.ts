@@ -76,10 +76,11 @@ export const AckCodeCapacityExceeded = "capacity_exceeded";
 export const AckCodeLetterNotHere = "letter_not_here";
 export const AckCodeNoRoute = "no_route";
 export const AckCodeRouteBlocked = "route_blocked";
+export const AckCodeRelayFull = "relay_full";
 export const AckCodePhaseInvalid = "phase_invalid";
 export const AckCodeRateLimited = "rate_limited";
 export const AckCodeBadRequest = "bad_request";
-export type AckCode = typeof AckCodeFerryNotDocked | typeof AckCodeFerryNotReady | typeof AckCodeFerryBroken | typeof AckCodeCapacityExceeded | typeof AckCodeLetterNotHere | typeof AckCodeNoRoute | typeof AckCodeRouteBlocked | typeof AckCodePhaseInvalid | typeof AckCodeRateLimited | typeof AckCodeBadRequest;
+export type AckCode = typeof AckCodeFerryNotDocked | typeof AckCodeFerryNotReady | typeof AckCodeFerryBroken | typeof AckCodeCapacityExceeded | typeof AckCodeLetterNotHere | typeof AckCodeNoRoute | typeof AckCodeRouteBlocked | typeof AckCodeRelayFull | typeof AckCodePhaseInvalid | typeof AckCodeRateLimited | typeof AckCodeBadRequest;
 /**
  * HTTPErrorCode は公開 API のエラーの本文の code（§2）。
  */
@@ -656,6 +657,7 @@ export interface StageView {
   islands: Island[];
   routes: Route[];
   resources: Resource[];
+  relayCap?: number /* int */; // 島ごとの中継倉庫の上限（transport.relayCap）。0 なら省く（= 積み替えなし）
   demoStorm?: DemoStormView; // デモの嵐（ステージ定義の demo.storm）。書いていなければ省く（T-305b）
 }
 /**

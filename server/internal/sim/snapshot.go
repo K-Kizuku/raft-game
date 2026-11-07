@@ -15,7 +15,7 @@ type Snapshot struct {
 	EndsAt   SimTime        `json:"endsAt"`       // Config.DurationMs（プロトコルでは clock.endsAt）
 	Ferries  []FerryView    `json:"ferries"`      // Config の順
 	Routes   []RouteView    `json:"routesState"`  // Config の順
-	Letters  []LetterView   `json:"letters"`      // 港と船の上にある手紙。ID の昇順
+	Letters  []LetterView   `json:"letters"`      // 港・船・中継倉庫にある手紙。ID の昇順
 	Requests []RequestState `json:"requests"`     // 発生済みの依頼。ID の順。最後に出した request.* の値。nil にしない
 	Nodes    []NodeState    `json:"nodes"`        // ID の昇順。最後に出した node.state の値
 	Islands  []IslandState  `json:"islandsState"` // 採点するとき全島を ID の順に。採点しないときは nil
@@ -70,6 +70,7 @@ func (e *Engine) Snapshot() Snapshot {
 	var ids []ferry.LetterID
 	for island := uint64(1); island <= uint64(e.cfg.Islands); island++ {
 		ids = append(ids, e.tr.Port(island)...)
+		ids = append(ids, e.tr.Relay(island)...)
 	}
 	for _, f := range ferries {
 		s.Ferries = append(s.Ferries, e.ferryView(f))
@@ -97,8 +98,10 @@ func (e *Engine) Snapshot() Snapshot {
 			v.Loc = portLoc(l.Location.Island)
 		case ferry.LocFerry:
 			v.Loc = ferryLoc(l.Location.Ferry)
+		case ferry.LocRelay:
+			v.Loc = relayLoc(l.Location.Island)
 		default:
-			panic(fmt.Sprintf("sim: snapshot: letter %d in port or ferry is at %+v", lid, l.Location))
+			panic(fmt.Sprintf("sim: snapshot: letter %d in port, ferry or relay is at %+v", lid, l.Location))
 		}
 		s.Letters = append(s.Letters, v)
 	}

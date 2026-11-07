@@ -17,11 +17,11 @@ type LetterStale struct {
 
 func (LetterStale) EventType() EventType { return EvLetterStale }
 
-// emitStale は、id のノードの Term が staleTerm[id-1] より上がっていれば、id が送信元で港と船にある
+// emitStale は、id のノードの Term が staleTerm[id-1] より上がっていれば、id が送信元で港・船・中継倉庫にある
 // Raft の手紙のうち staleTerm[id-1] <= Term < 今の Term のものについて、ID の昇順に letter.stale を出す。
 // そのあと staleTerm[id-1] を今の Term にする。handleOutput の中だけで呼ぶ。
 //
-// staleTerm[id-1] は、送信元 id の手紙を「古い」と判定した基準の Term。港と船にある id が送信元の
+// staleTerm[id-1] は、送信元 id の手紙を「古い」と判定した基準の Term。港・船・中継倉庫にある id が送信元の
 // Raft の手紙 L は、L.Term < staleTerm[id-1] のときだけ、古いと知らせ済み（letter.created の
 // raft.stale == true、または letter.stale を出した）。Term は減らず、手紙の ID は再利用しないので、
 // 各手紙は 1 回だけ古いと知らされる。
@@ -37,6 +37,17 @@ func (e *Engine) emitStale(id uint64) {
 			l, ok := e.tr.Letter(lid)
 			if !ok {
 				panic(fmt.Sprintf("sim: letter %d on ferry %q not found", lid, f.ID))
+			}
+			if l.From == id {
+				ids = append(ids, lid)
+			}
+		}
+	}
+	for island := uint64(1); island <= uint64(e.cfg.Islands); island++ {
+		for _, lid := range e.tr.Relay(island) {
+			l, ok := e.tr.Letter(lid)
+			if !ok {
+				panic(fmt.Sprintf("sim: letter %d in relay %d not found", lid, island))
 			}
 			if l.From == id {
 				ids = append(ids, lid)

@@ -16,6 +16,7 @@ func StageView(st *stage.Stage, islands []stage.IslandDisplay) protocol.StageVie
 		Islands:   make([]protocol.Island, len(st.Islands)),
 		Routes:    make([]protocol.Route, len(st.Routes)),
 		Resources: make([]protocol.Resource, len(st.Resources)),
+		RelayCap:  st.Transport.RelayCap,
 	}
 	withDisplay := len(islands) == len(st.Islands)
 	for i, is := range st.Islands {

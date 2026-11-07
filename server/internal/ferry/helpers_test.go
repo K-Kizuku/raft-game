@@ -32,6 +32,7 @@ func baseConfig() Config {
 		DockMs:        1500,
 		PortCap:       24,
 		PerLinkAppCap: 4,
+		RelayCap:      0, // 積み替えなし（runRandom の上限は港・船だけを数える）。倉庫のテストは relayConfig を使う
 	}
 }
 

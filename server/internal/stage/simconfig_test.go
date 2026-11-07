@@ -46,6 +46,7 @@ func alphaSimConfig() sim.Config {
 		DockMs:        1500,
 		PortCap:       24,
 		PerLinkAppCap: 4,
+		RelayCap:      12,
 		Resources: []ledger.ResourceDef{
 			{ID: "firework:a", Kind: "firework", Capacity: 0},
 			{ID: "stall:main", Kind: "stall", Capacity: 2},
@@ -173,17 +174,30 @@ func TestSimConfigBeta(t *testing.T) {
 	}
 }
 
-// SC-5 relayCap は結果に影響しない。
-func TestSimConfigIgnoresRelayCap(t *testing.T) {
+// SC-5 relayCap は sim.Config.RelayCap に入る（12 と 0）。ほかの値は変わらない。
+func TestSimConfigRelayCap(t *testing.T) {
 	t.Parallel()
-	data := applyEdits(t, readTestdata(t, "stages/alpha.yaml"), edit{"relayCap: 12", "relayCap: 0"})
-	st := parseStage(t, "alpha.yaml", data)
-	cfg, err := SimConfig(st)
-	if err != nil {
-		t.Fatalf("SimConfig: %v", err)
-	}
-	if want := alphaSimConfig(); !reflect.DeepEqual(cfg, want) {
-		t.Errorf("SimConfig(relayCap: 0) =\n%+v\nwant\n%+v", cfg, want)
+	for _, tc := range []struct {
+		yaml string
+		want int
+	}{
+		{"relayCap: 12", 12},
+		{"relayCap: 0", 0},
+	} {
+		data := applyEdits(t, readTestdata(t, "stages/alpha.yaml"), edit{"relayCap: 12", tc.yaml})
+		st := parseStage(t, "alpha.yaml", data)
+		cfg, err := SimConfig(st)
+		if err != nil {
+			t.Fatalf("SimConfig(%s): %v", tc.yaml, err)
+		}
+		if cfg.RelayCap != tc.want {
+			t.Errorf("SimConfig(%s).RelayCap = %d, want %d", tc.yaml, cfg.RelayCap, tc.want)
+		}
+		want := alphaSimConfig()
+		want.RelayCap = tc.want
+		if !reflect.DeepEqual(cfg, want) {
+			t.Errorf("SimConfig(%s) =\n%+v\nwant\n%+v", tc.yaml, cfg, want)
+		}
 	}
 }
 

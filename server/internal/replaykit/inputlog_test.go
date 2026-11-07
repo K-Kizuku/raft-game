@@ -157,7 +157,9 @@ func TestInputLogDecodeErrors(t *testing.T) {
 		{"entry の未知のキー", withCmd(`{"t":0,"cmd":{"type":"cmd.game.start","payload":{}},"y":1}`), "commands[0]:"},
 		{"payload の未知のキー", withCmd(`{"t":0,"cmd":{"type":"cmd.ferry.depart","payload":{"ferryId":"f1","to":2,"z":1}}}`), "commands[0].cmd.payload:"},
 		{"start の payload の未知のキー", withCmd(`{"t":0,"cmd":{"type":"cmd.game.start","payload":{"z":1}}}`), "commands[0].cmd.payload:"},
-		{"未知の type", withCmd(`{"t":0,"cmd":{"type":"cmd.relay.load","payload":{}}}`), "commands[0].cmd.type"},
+		{"未知の type", withCmd(`{"t":0,"cmd":{"type":"cmd.ferry.teleport","payload":{}}}`), "commands[0].cmd.type"},
+		{"relay.load の letterIds がない", withCmd(`{"t":0,"cmd":{"type":"cmd.relay.load","payload":{"ferryId":"f1"}}}`), "commands[0].cmd.payload.letterIds"},
+		{"relay.load の ferryId がない", withCmd(`{"t":0,"cmd":{"type":"cmd.relay.load","payload":{"letterIds":[1]}}}`), "commands[0].cmd.payload.ferryId"},
 		{"type がない", withCmd(`{"t":0,"cmd":{"payload":{}}}`), "commands[0].cmd.type"},
 		{"cmd がない", withCmd(`{"t":0}`), "commands[0].cmd"},
 		{"payload がない", withCmd(`{"t":0,"cmd":{"type":"cmd.game.start"}}`), "commands[0].cmd.payload"},
@@ -309,5 +311,39 @@ func TestInputLogDemoTriggerErrors(t *testing.T) {
 				t.Errorf("error %q に %q がない", err, c.want)
 			}
 		})
+	}
+}
+
+// CL-R1: cmd.relay.load の行を含む入力ログの往復（バイト列も）。
+func TestInputLogRelayLoad(t *testing.T) {
+	t.Parallel()
+	in := sampleLog()
+	in.Commands = append(in.Commands,
+		sim.InputEntry{T: 6000, Cmd: sim.Command{Type: sim.CmdRelayLoad, FerryID: "f2", LetterIDs: []uint64{31, 7}}},
+	)
+	data, err := EncodeInputLog(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const line = `{"t":6000,"cmd":{"type":"cmd.relay.load","payload":{"ferryId":"f2","letterIds":[31,7]}}}`
+	if !strings.HasSuffix(string(data), ",\n"+line+"\n]}\n") {
+		t.Errorf("bytes:\n%s\nwant the last line %s", data, line)
+	}
+	out, err := DecodeInputLog(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode: %v\n%s", err, data)
+	}
+	if !reflect.DeepEqual(normalized(out), normalized(in)) {
+		t.Errorf("round trip:\n got %+v\nwant %+v", out, in)
+	}
+	if out.Ignored != 0 {
+		t.Errorf("ignored = %d", out.Ignored)
+	}
+	again, err := EncodeInputLog(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again, data) {
+		t.Errorf("bytes after round trip:\n%s\nwant:\n%s", again, data)
 	}
 }

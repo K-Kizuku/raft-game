@@ -11,19 +11,19 @@ import (
 
 // エラー。fmt.Errorf("%w: …") で詳細を添えて返すので、errors.Is で判定する。
 var (
-	ErrUnknownIsland     = errors.New("ferry: unknown island")
-	ErrUnknownFerry      = errors.New("ferry: unknown ferry")
-	ErrBadMessage        = errors.New("ferry: bad message")
-	ErrInvalidArgument   = errors.New("ferry: invalid argument")
-	ErrNotDocked         = errors.New("ferry: ferry is not docked")
-	ErrNotReady          = errors.New("ferry: ferry is not ready to depart")
-	ErrCapacityExceeded  = errors.New("ferry: capacity exceeded")
-	ErrLetterNotHere     = errors.New("ferry: letter is not here")
-	ErrNoRoute           = errors.New("ferry: no route")
-	ErrRouteBlocked      = errors.New("ferry: route is blocked")
-	ErrRelayNotSupported = errors.New("ferry: relay is not supported")
-	ErrNotArriving       = errors.New("ferry: ferry is not arriving now")
-	ErrBroken            = errors.New("ferry: ferry is broken")
+	ErrUnknownIsland    = errors.New("ferry: unknown island")
+	ErrUnknownFerry     = errors.New("ferry: unknown ferry")
+	ErrBadMessage       = errors.New("ferry: bad message")
+	ErrInvalidArgument  = errors.New("ferry: invalid argument")
+	ErrNotDocked        = errors.New("ferry: ferry is not docked")
+	ErrNotReady         = errors.New("ferry: ferry is not ready to depart")
+	ErrCapacityExceeded = errors.New("ferry: capacity exceeded")
+	ErrLetterNotHere    = errors.New("ferry: letter is not here")
+	ErrNoRoute          = errors.New("ferry: no route")
+	ErrRouteBlocked     = errors.New("ferry: route is blocked")
+	ErrRelayFull        = errors.New("ferry: relay is full")
+	ErrNotArriving      = errors.New("ferry: ferry is not arriving now")
+	ErrBroken           = errors.New("ferry: ferry is broken")
 )
 
 // RouteConfig は航路の設定（ステージ定義の routes）。
@@ -49,6 +49,7 @@ type Config struct {
 	DockMs        int64 // transport.dockMs
 	PortCap       int   // transport.portCap（R5）
 	PerLinkAppCap int   // transport.perLinkAppCap（R4）
+	RelayCap      int   // transport.relayCap（島ごとの中継倉庫の上限。0 = 積み替えなし）
 }
 
 // Transport は港・船・航路・手紙の状態を持つ。1 つの goroutine から使う。
@@ -59,13 +60,15 @@ type Transport struct {
 	routeIdx map[routeKey]int
 	ferries  []Ferry
 	ferryIdx map[FerryID]int
-	letters  []Letter              // ID の昇順（狭義）。港・船にある手紙と、まだ Reclaim していない配達済み・破棄の手紙
+	letters  []Letter              // ID の昇順（狭義）。港・船・中継倉庫にある手紙と、まだ Reclaim していない配達済み・破棄の手紙
 	lastID   LetterID              // 最後に振った ID（0 = まだない）。Reclaim しても戻さない
 	ports    map[uint64][]LetterID // 島 → その島が送信元の手紙（ID の昇順）
+	relays   map[uint64][]LetterID // 島 → その島の中継倉庫の手紙（ID の昇順）
 
 	dockMs        int64
 	portCap       int
 	perLinkAppCap int
+	relayCap      int
 }
 
 // New は設定を検査して Transport を作る。
@@ -79,9 +82,11 @@ func New(cfg Config) (*Transport, error) {
 		routeIdx:      make(map[routeKey]int, len(cfg.Routes)),
 		ferryIdx:      make(map[FerryID]int, len(cfg.Ferries)),
 		ports:         make(map[uint64][]LetterID, len(cfg.Islands)),
+		relays:        make(map[uint64][]LetterID, len(cfg.Islands)),
 		dockMs:        cfg.DockMs,
 		portCap:       cfg.PortCap,
 		perLinkAppCap: cfg.PerLinkAppCap,
+		relayCap:      cfg.RelayCap,
 	}
 	for _, id := range cfg.Islands {
 		if id == 0 {
@@ -144,6 +149,9 @@ func New(cfg Config) (*Transport, error) {
 	if cfg.PerLinkAppCap < 1 {
 		return nil, fmt.Errorf("ferry: perLinkAppCap %d < 1", cfg.PerLinkAppCap)
 	}
+	if cfg.RelayCap < 0 {
+		return nil, fmt.Errorf("ferry: relayCap %d < 0", cfg.RelayCap)
+	}
 	return t, nil
 }
 
@@ -181,7 +189,7 @@ func (t *Transport) Letter(id LetterID) (Letter, bool) {
 
 // Reclaim は、配達済み・破棄した手紙（LocDelivered・LocDropped）をすべて手放し、その数を返す。
 // 手放した手紙は Letter で引けなくなる（Load・Unload では存在しない ID と同じ扱い）。ID は再利用しない。
-// 港・船にある手紙・船・航路・次に振る ID は変えない。
+// 港・船・中継倉庫にある手紙・船・航路・次に振る ID は変えない。
 //
 // 呼び出し側は、配達・破棄の結果から必要な値（Letter、Raft のポインタ）を取り出し、
 // ドメインイベントを作り終えたあとで呼ぶ。呼ばなければ終わった手紙を持ち続ける（メモリは増え続ける）。
@@ -204,6 +212,18 @@ func (t *Transport) Port(island uint64) []LetterID {
 		return []LetterID{}
 	}
 	return slices.Clone(p)
+}
+
+// Relay は島の中継倉庫にある手紙の ID（昇順）の複製を返す。島がなければ nil。
+func (t *Transport) Relay(island uint64) []LetterID {
+	if !t.isIsland[island] {
+		return nil
+	}
+	r := t.relays[island]
+	if r == nil {
+		return []LetterID{}
+	}
+	return slices.Clone(r)
 }
 
 func cloneFerry(f Ferry) Ferry {
@@ -248,7 +268,7 @@ func (t *Transport) CheckInvariants() error {
 			return fmt.Errorf("ferry: invariant: letter at %d has id %d, not above %d", i, id, t.letters[i-1].ID)
 		}
 	}
-	seen := make([]bool, len(t.letters)) // 港・船の一覧に出てきた手紙（t.letters の添字）
+	seen := make([]bool, len(t.letters)) // 港・船・中継倉庫の一覧に出てきた手紙（t.letters の添字）
 	mark := func(id LetterID, where string) error {
 		i, ok := t.index(id)
 		if !ok {
@@ -322,6 +342,31 @@ func (t *Transport) CheckInvariants() error {
 			return fmt.Errorf("ferry: invariant: %s: %d raft letters exceed portCap %d", where, raftN, t.portCap)
 		}
 	}
+	for _, island := range t.islands {
+		relay := t.relays[island]
+		where := fmt.Sprintf("relay %d", island)
+		for i, id := range relay {
+			if i > 0 && relay[i-1] >= id {
+				return fmt.Errorf("ferry: invariant: %s: ids not strictly ascending at %d", where, i)
+			}
+			if err := mark(id, where); err != nil {
+				return err
+			}
+			l := t.letter(id)
+			if l.Location != (Location{Kind: LocRelay, Island: island}) {
+				return fmt.Errorf("ferry: invariant: %s: letter %d location %+v", where, id, l.Location)
+			}
+			if l.To == island {
+				return fmt.Errorf("ferry: invariant: %s: letter %d to %d", where, id, l.To)
+			}
+			if l.From == island {
+				return fmt.Errorf("ferry: invariant: %s: letter %d from %d", where, id, l.From)
+			}
+		}
+		if len(relay) > t.relayCap {
+			return fmt.Errorf("ferry: invariant: %s: %d letters exceed relayCap %d", where, len(relay), t.relayCap)
+		}
+	}
 	for _, f := range t.ferries {
 		where := fmt.Sprintf("ferry %q", f.ID)
 		if len(f.Cargo) > f.Capacity {
@@ -355,7 +400,7 @@ func (t *Transport) CheckInvariants() error {
 	for i := range t.letters {
 		l := &t.letters[i]
 		switch l.Location.Kind {
-		case LocPort, LocFerry:
+		case LocPort, LocFerry, LocRelay:
 			if !seen[i] {
 				return fmt.Errorf("ferry: invariant: letter %d at %+v is not listed", l.ID, l.Location)
 			}

@@ -118,7 +118,7 @@ func TestMessageTypesAndAckCodes(t *testing.T) {
 	}
 	wantCodes := []protocol.AckCode{
 		"ferry_not_docked", "ferry_not_ready", "ferry_broken", "capacity_exceeded", "letter_not_here",
-		"no_route", "route_blocked", "phase_invalid", "rate_limited", "bad_request",
+		"no_route", "route_blocked", "relay_full", "phase_invalid", "rate_limited", "bad_request",
 	}
 	if got := protocol.AckCodes(); !slices.Equal(got, wantCodes) {
 		t.Errorf("AckCodes() = %v, want %v", got, wantCodes)
@@ -347,5 +347,30 @@ func TestRouteBlockedCause(t *testing.T) {
 		if string(out) != c.in {
 			t.Errorf("%s: Marshal = %s, want %s", c.name, out, c.in)
 		}
+	}
+}
+
+// PR-R1 StageView の relayCap（T-721）。0 なら省き（積み替えなし）、あれば数で入る。
+func TestStageViewRelayCapJSON(t *testing.T) {
+	t.Parallel()
+	v := protocol.StageView{Title: "t", Islands: []protocol.Island{}, Routes: []protocol.Route{}, Resources: []protocol.Resource{}}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "relayCap") {
+		t.Errorf("JSON with RelayCap 0 = %s, want no relayCap key", b)
+	}
+	v.RelayCap = 12
+	b, err = json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"resources":[],"relayCap":12`; !strings.Contains(string(b), want) {
+		t.Errorf("JSON = %s, want it to contain %s", b, want)
+	}
+	var back protocol.StageView
+	if err := decodeStrict(b, &back); err != nil || back.RelayCap != 12 {
+		t.Errorf("decode = (%+v, %v), want relayCap 12", back, err)
 	}
 }
