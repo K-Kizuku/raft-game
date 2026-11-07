@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/K-Kizuku/raft-game/server/internal/ferry"
+	"github.com/K-Kizuku/raft-game/server/internal/game"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 )
@@ -49,6 +50,28 @@ func alphaSimConfig() sim.Config {
 			{ID: "firework:a", Kind: "firework", Capacity: 0},
 			{ID: "stall:main", Kind: "stall", Capacity: 2},
 		},
+		Requests: alphaRequests(),
+	}
+}
+
+// alphaRequests は SR-1 の期待値（alpha.yaml の requests.*）。
+func alphaRequests() game.RequestConfig {
+	return game.RequestConfig{
+		StageID:            "alpha",
+		DeadlineNormalMs:   60000,
+		DeadlineCriticalMs: 90000,
+		RetryMs:            25000,
+		Script: []game.ScriptRequest{
+			{At: 5000, Island: 3, Kind: ledger.KindFireworkReserve, Resource: "firework:a"},
+			{At: 6000, Island: 2, Kind: ledger.KindStallReserve, Resource: "stall:main"},
+		},
+		Random: game.RandomConfig{
+			RateMilliPerMin: 500,
+			SlotMs:          10000,
+			Weights:         []int64{773, 155, 72},
+			Kinds:           []game.RandomKind{{Kind: ledger.KindStallReserve, Resource: "stall:main", Weight: 1}},
+		},
+		Critical: []string{"firework:a"},
 	}
 }
 
@@ -223,5 +246,88 @@ func TestSimConfigRepoData(t *testing.T) {
 		if _, err := sim.New(cfg, 20261101, sim.Options{CheckInvariants: true}); err != nil {
 			t.Errorf("%s: sim.New: %v", st.ID, err)
 		}
+	}
+}
+
+// SR-1 alpha.yaml の依頼の設定。
+func TestSimConfigRequests(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	if want := alphaRequests(); !reflect.DeepEqual(cfg.Requests, want) {
+		t.Errorf("Requests =\n%+v\nwant\n%+v", cfg.Requests, want)
+	}
+}
+
+// SR-2 依頼の設定で Engine が動き、台本の依頼が発生する。
+func TestSimConfigRequestsRun(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	e, err := sim.New(cfg, 20261101, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatalf("sim.New: %v", err)
+	}
+	if ack := e.Apply(sim.Command{Type: sim.CmdGameStart}); !ack.OK {
+		t.Fatalf("Apply(game.start) = %+v", ack)
+	}
+	e.RunUntil(180000)
+	found := false
+	for _, ev := range e.DrainEvents() {
+		c, ok := ev.Data.(sim.RequestCreated)
+		if !ok {
+			continue
+		}
+		r := c.Request
+		if r.Origin == 3 && r.CreatedAt == 5000 && r.Critical && r.Deadline == 95000 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("request.created of the script request (origin 3, createdAt 5000) is missing")
+	}
+	if got := e.Phase(); got != sim.PhaseEnded {
+		t.Errorf("Phase() = %q, want %q", got, sim.PhaseEnded)
+	}
+}
+
+// SR-3 返した Requests のスライスを書き換えても st は変わらない。
+func TestSimConfigRequestsCopies(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	island, kindWeight, weight := st.Requests.Script[0].Island, st.Requests.Random.Kinds[0].Weight, st.Islands[0].WeightPermille
+	rq := cfg.Requests
+	rq.Script[0].Island = 99
+	rq.Random.Weights[0] = 99
+	rq.Random.Kinds[0].Weight = 99
+	rq.Critical[0] = "changed"
+	if st.Requests.Script[0].Island != island {
+		t.Errorf("st.Requests.Script[0].Island が変わった: %d", st.Requests.Script[0].Island)
+	}
+	if st.Requests.Random.Kinds[0].Weight != kindWeight {
+		t.Errorf("st.Requests.Random.Kinds[0].Weight が変わった: %d", st.Requests.Random.Kinds[0].Weight)
+	}
+	if st.Islands[0].WeightPermille != weight {
+		t.Errorf("st.Islands[0].WeightPermille が変わった: %d", st.Islands[0].WeightPermille)
+	}
+	if !st.Resources[0].Critical || st.Resources[0].ID != "firework:a" {
+		t.Errorf("st.Resources[0] が変わった: %+v", st.Resources[0])
+	}
+	again, err := SimConfig(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.Requests, alphaRequests()) {
+		t.Errorf("SimConfig の結果が変わった: %+v", again.Requests)
 	}
 }
