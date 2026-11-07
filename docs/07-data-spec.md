@@ -775,6 +775,8 @@ ferries:
 | `SimConfig(st)` | 検証済みの `Stage` から `sim.New` に渡す `sim.Config` を作る。`raft.checkQuorum`・`raft.preVote` が `false` なら誤り（`cluster` は常に `true`。ADR-0007）。`relayCap`（P1）は使わない。`scoring.*`・`satisfaction.*` は `Score`（`game.ScoreConfig`）に入れる。`events` の扱いは §5.3 |
 | `Embedded()` | `-tags embeddata` で埋め込んだステージ定義（`make sync-data` で `server/internal/stage/embedded/` にコピーしたもの。`islands.json` と `stages/` を根に持つ `fs.FS`）。タグなしでは `false`（[ADR-0025](./adr/0025-stage-data-source.md)、T-302） |
 
+リポジトリのステージ（`data/stages/*.yaml`）は、外部テストのパッケージ `stage_test`（`repo_stages_test.go`・`repo_greedy*_test.go`）で、docs の値と greedy ボットの結果（Stage 1 の★1 が 90% 以上のシード。M2 の完了条件）を確かめます（T-207）。このテストだけが `sim`・`bot` を使います。シードの数は、`-race` なしで 1000、`-race`（CI）で 100 です。★1 の割合の確認は、今の値では満たせないため、ビルドタグ `balance` を付けたテスト（`repo_greedy_balance_test.go`。`go -C server test -tags balance -run Greedy ./internal/stage/...`）に分けています。タグなしのテスト（CI）は、greedy ボットで 1 ラウンドが不変条件の違反なしに最後まで動くことだけを確かめます（調整は T-501）。
+
 エラーは、ファイルごとの `*stage.Error`（ファイル名と、`Path`・説明の一覧）です。`LoadDir` は複数のファイルのエラーを `errors.Join` でまとめて返します。
 
 #### `islands.json` の読み込み
