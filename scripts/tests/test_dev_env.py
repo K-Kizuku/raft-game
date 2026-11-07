@@ -258,12 +258,29 @@ class ArgsTest(TempTree):
 
 class DevDryRunTest(TempTree):
     # D-9
-    def dev(self, wt: Path) -> subprocess.CompletedProcess:
-        env = clean_env(DEV_SLOT="3", PATH="/usr/bin:/bin")
+    def dev(self, wt: Path, backend=None) -> subprocess.CompletedProcess:
+        # clean_env は DEV_ で始まる変数を落とすので、DEV_BACKEND は明示して渡す（None は未設定）。
+        extra = {} if backend is None else {"DEV_BACKEND": backend}
+        env = clean_env(DEV_SLOT="3", PATH="/usr/bin:/bin", **extra)
         return run(["dev", "--path", str(wt), "--dry-run"], env=env)
 
     def plus_lines(self, res: subprocess.CompletedProcess) -> list:
         return [line for line in res.stdout.splitlines() if line.startswith("+ ")]
+
+    def make_tree(self, *, go: bool, web: bool) -> Path:
+        wt = self.tree("wt")
+        if web:
+            (wt / "web").mkdir()
+            (wt / "web" / "package.json").write_text("{}", encoding="utf-8")
+        if go:
+            (wt / "server" / "cmd" / "server").mkdir(parents=True)
+            (wt / "server" / "cmd" / "server" / "main.go").write_text("package main\n", encoding="utf-8")
+        return wt
+
+    def vite_line(self, res: subprocess.CompletedProcess) -> list:
+        vite = [line for line in self.plus_lines(res) if "vite" in line]
+        self.assertEqual(len(vite), 1, res.stdout)
+        return vite[0].split()
 
     def test_web_only(self) -> None:
         wt = self.tree("wt")
@@ -277,6 +294,15 @@ class DevDryRunTest(TempTree):
             self.assertIn(part, vite[0])
         self.assertIn("server/cmd/server がない", res.stdout)
         self.assertFalse(any("build -o" in line for line in self.plus_lines(res)))
+        # DV-1（T-504a）: Go がなければ worker。Vite に DEV_BACKEND と DEV_SERVER_PORT を渡す。
+        parts = vite[0].split()
+        self.assertIn("DEV_BACKEND=worker", parts)
+        self.assertIn("DEV_SERVER_PORT=18110", parts)
+        lines = res.stdout.splitlines()
+        self.assertTrue(any(l.startswith("dev: /api・/ws は Worker") for l in lines), res.stdout)
+        # 中継先の行は、最初の dev: DEV_SLOT=… の行の次。
+        self.assertTrue(lines[0].startswith("dev: DEV_SLOT=3 "), res.stdout)
+        self.assertEqual(lines[1], "dev: /api・/ws は Worker（@cloudflare/vite-plugin）が受ける（DEV_BACKEND=worker）")
 
     def test_with_go(self) -> None:
         wt = self.tree("wt")
@@ -299,6 +325,61 @@ class DevDryRunTest(TempTree):
         self.assertIn("ALLOWED_ORIGINS=http://127.0.0.1:15203,http://localhost:15203", parts)
         self.assertTrue(any("vite" in l and "--port 15203" in l for l in lines), res.stdout)
         self.assertNotIn("server/cmd/server がない", res.stdout)
+        # DV-2（T-504a）: Go があれば standalone。Vite から Go に中継する。
+        vite = self.vite_line(res)
+        for part in ("DEV_BACKEND=standalone", "DEV_SERVER_PORT=18110", "15203"):
+            self.assertIn(part, vite)
+        self.assertEqual(vite[vite.index("--port") + 1], "15203")
+        out = res.stdout.splitlines()
+        self.assertTrue(out[0].startswith("dev: DEV_SLOT=3 "), res.stdout)
+        self.assertEqual(
+            out[1],
+            "dev: /api・/ws は Vite から Go（standalone）の http://127.0.0.1:18110 に中継する（DEV_BACKEND=standalone）",
+        )
+        # 明示した standalone も同じ。
+        self.assertEqual(self.dev(wt, "standalone").stdout, res.stdout)
+
+    # DV-3
+    def test_worker_with_go(self) -> None:
+        wt = self.make_tree(go=True, web=True)
+        res = self.dev(wt, "worker")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        lines = self.plus_lines(res)
+        self.assertFalse(any("build -o" in l for l in lines), res.stdout)
+        self.assertFalse(any("MODE=standalone" in l for l in lines), res.stdout)
+        vite = self.vite_line(res)
+        self.assertIn("DEV_BACKEND=worker", vite)
+        self.assertIn("DEV_SERVER_PORT=18110", vite)
+        self.assertIn("（Go は起動しない: DEV_BACKEND=worker）", res.stdout)
+        self.assertIn("dev: /api・/ws は Worker", res.stdout)
+
+    # DV-4
+    def test_standalone_without_go(self) -> None:
+        wt = self.make_tree(go=False, web=True)
+        res = self.dev(wt, "standalone")
+        self.assertEqual(res.returncode, 1, res.stdout)
+        self.assertIn("dev-env:", res.stderr)
+        self.assertIn("server/cmd/server/main.go がない", res.stderr)
+        self.assertEqual(self.plus_lines(res), [])
+
+    # DV-5
+    def test_bad_backend(self) -> None:
+        wt = self.make_tree(go=True, web=True)
+        for value in ("bogus", "Standalone", "go", " standalone"):
+            with self.subTest(value=value):
+                res = self.dev(wt, value)
+                self.assertEqual(res.returncode, 1, res.stdout)
+                self.assertIn("dev-env:", res.stderr)
+                self.assertIn("DEV_BACKEND の値が不正", res.stderr)
+                self.assertFalse(any("build -o" in l for l in self.plus_lines(res)), res.stdout)
+
+    # DV-6
+    def test_worker_go_only(self) -> None:
+        wt = self.make_tree(go=True, web=False)
+        res = self.dev(wt, "worker")
+        self.assertEqual(res.returncode, 1, res.stdout)
+        self.assertIn("起動するものがない", res.stderr)
+        self.assertEqual(self.plus_lines(res), [])
 
     def test_nothing(self) -> None:
         res = self.dev(self.tree("wt"))
@@ -309,7 +390,8 @@ class DevDryRunTest(TempTree):
 FAKE_PNPM = textwrap.dedent(
     """\
     #!/usr/bin/env bash
-    # 偽物の pnpm。PID を書いてから、長く眠る（exec なので PID は変わらない）。
+    # 偽物の pnpm。受け取った DEV_BACKEND・DEV_SERVER_PORT と PID を書いてから、長く眠る（exec なので PID は変わらない）。
+    printf '%s %s\\n' "${DEV_BACKEND-<unset>}" "${DEV_SERVER_PORT-<unset>}" >"$FAKE_PIDS/pnpm.env"
     echo "$$" >"$FAKE_PIDS/pnpm"
     exec sleep 300
     """
@@ -345,7 +427,7 @@ def alive(pid: int) -> bool:
 
 class DevSignalTest(TempTree):
     # D-13: SIGTERM で、スクリプトと裏で動くフロントエンド・Go の両方が数秒以内に終わる。
-    def start(self, *, go: bool, web: bool) -> tuple:
+    def start(self, *, go: bool, web: bool, backend=None) -> tuple:
         wt = self.tree("wt")
         if web:
             (wt / "web").mkdir()
@@ -357,7 +439,8 @@ class DevSignalTest(TempTree):
         write_exe(bindir / "pnpm", FAKE_PNPM)
         write_exe(bindir / "go", FAKE_GO)
         pids = self.tree("pids")
-        env = clean_env(DEV_SLOT="3", PATH=f"{bindir}:/usr/bin:/bin", FAKE_PIDS=str(pids))
+        extra = {} if backend is None else {"DEV_BACKEND": backend}
+        env = clean_env(DEV_SLOT="3", PATH=f"{bindir}:/usr/bin:/bin", FAKE_PIDS=str(pids), **extra)
         proc = subprocess.Popen(
             ["bash", str(SCRIPT), "dev", "--path", str(wt)],
             env=env,
@@ -401,6 +484,33 @@ class DevSignalTest(TempTree):
 
     def test_go_only(self) -> None:
         self.check(go=True, web=False, names=["server"])
+
+    # DV-7（T-504a）: 実際の起動でも Vite（偽の pnpm）に DEV_BACKEND・DEV_SERVER_PORT が届く。
+    def received(self, *, go: bool, web: bool, backend=None, names: list) -> str:
+        proc, pids = self.start(go=go, web=web, backend=backend)
+        children = self.wait_pids(pids, names)
+        for pid in children:
+            self.addCleanup(lambda p=pid: alive(p) and os.kill(p, signal.SIGKILL))
+        text = (pids / "pnpm.env").read_text(encoding="utf-8").strip()
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=5)
+        return text
+
+    def test_backend_passed_to_vite_standalone(self) -> None:
+        self.assertEqual(self.received(go=True, web=True, names=["pnpm", "server"]), "standalone 18110")
+
+    def test_backend_passed_to_vite_worker(self) -> None:
+        self.assertEqual(self.received(go=False, web=True, names=["pnpm"]), "worker 18110")
+
+    def test_worker_does_not_start_go(self) -> None:
+        proc, pids = self.start(go=True, web=True, backend="worker")
+        [pnpm] = self.wait_pids(pids, ["pnpm"])
+        self.addCleanup(lambda: alive(pnpm) and os.kill(pnpm, signal.SIGKILL))
+        self.assertEqual((pids / "pnpm.env").read_text(encoding="utf-8").strip(), "worker 18110")
+        time.sleep(0.3)
+        self.assertFalse((pids / "server").exists())
+        proc.send_signal(signal.SIGTERM)
+        self.assertEqual(proc.wait(timeout=5), 143)
 
 
 FAKE_DOCKER = textwrap.dedent(
