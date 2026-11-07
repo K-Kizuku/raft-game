@@ -125,6 +125,8 @@ type Event struct {
 | 6 | `RequestRetry` | 依頼書を再送するかどうかの判定 |
 | 7 | `GameTimer` | 満足度の減少判定・期限切れの判定・ラウンド終了 |
 
+`WorldEvent`（Class 4）の今の中身は、台本の嵐の予報・開始・終わり（§6.4、T-204）です。同じ時刻では **予報 → 開始 → 終わり**（それぞれ台本の順）に処理します（`cmd.game.start` で、予報・開始・終わりの順に分けて積むため）。故障・漂流瓶などは P1 で足します。
+
 各イベントの処理のあとで、**全ノードの Ready を ID の昇順で処理しきる**（§5.4）。Raft の出力（手紙）は港に置かれるだけで、配達は船の到着を待つので、この処理は必ず止まります。
 
 ### 4.3 `Engine` の公開 API
@@ -156,7 +158,7 @@ func (e *Engine) TraceHash() [32]byte    // §10.2
 
 // 今の状態（再接続時などに送る全体の状態のうち Engine が持つ分）。状態を変えない。T-301 が protocol.Snapshot に変換する。
 func (e *Engine) Snapshot() Snapshot
-// 次に「プレイヤーに見せたい出来事」が起きる時刻。船の到着と依頼の発生（台本の出来事は T-204 が足す）。
+// 次に「プレイヤーに見せたい出来事」が起きる時刻。船の到着・依頼の発生・嵐の予報・開始・終わり。
 func (e *Engine) NextNotableAt() (SimTime, bool)
 
 // 入力ログ（§10.1）から Engine を作り直す（復元とリプレイ）。stageHash はステージのハッシュ。
@@ -170,7 +172,7 @@ func Replay(cfg Config, stageHash string, in ReplayLog, opt Options) (*Engine, e
 - `Snapshot` の `letters` は港と船の上の手紙だけ（ID の昇順）。`requests` は発生済みの依頼（ID の順。最後に出した `request.*` の値。`Intro` では空）。`nodes` は最後に出した `node.state` の値。`lastSeq` 以下のイベントを当てはめた状態と一致する
 - `letter.stale` は、ノードの Term が上がったとき、そのノードが送信元で港と船にある Raft の手紙のうち、新しく古くなったものを ID の昇順に 1 回だけ出す。各ノードの出力の処理の中で、役割の変化の後・手紙の前に出す
 - `cmd.ferry.autoload` は `Apply` のコマンドで、ゲームデザイン §3.4 の順に空きを埋める。入力ログには `{ferryId, to}` だけが入る（リプレイでも同じ手紙が選ばれる）
-- `NextNotableAt` は、航行中の船の到着（`DurationMs` 以下）と、まだ発生していない最初の依頼の時刻のうち小さい方。`FerryReady` を含めない。30 秒の上限と一時停止はセッションループ（§12.4）が持つ
+- `NextNotableAt` は、航行中の船の到着（`DurationMs` 以下）、まだ発生していない最初の依頼の時刻、まだ処理していない嵐の予報・開始・終わり（`DurationMs` 以下）のうち最も小さいもの。`FerryReady` を含めない。30 秒の上限と一時停止はセッションループ（§12.4）が持つ
 - 後のタスクで次を足す: `NodeDetail(id)`（エンジニアモード用）は T-407、`Result()`（終了後のみ）は T-203
 - Engine の誤り（`Process`・`PostRaft`・`Arrive`・`AdvanceTo`・`Push` のエラー、コードに対応しない `ferry` のエラー、台帳の結果の型の違い、テストモードの不変条件の違反）は panic する。正しく使えば起きない。セッションループ（T-303）が panic を回復し、そのセッションを `error`（`fatal`）で閉じる
 
@@ -422,6 +424,12 @@ type Ferry struct {
 
 - 無向グラフ。辺は `travelMs` と `blockedUntil` を持つ
 - 嵐は辺の集合を指定した時間だけ遮断する
+- 嵐の扱い（T-204）
+  - 嵐の開始で `Transport.Block` を呼ぶ。`Block` は遮断の終わりを長いほうにそろえる（`blockedUntil = max(blockedUntil, 嵐の終わり)`）。航行中の船はそのまま進み、遮断は出航の条件だけを変える（§6.3）
+  - `route.blocked` は遮断が延びた航路だけを、`route.unblocked` は遮断が本当に終わった航路だけを、1 回ずつ出す。嵐が重なっても、実際の遮断の変化だけを表す（ある嵐の終わりと別の嵐の開始が同じ時刻・同じ航路なら、開始が先に遮断を延ばすので途切れない）。`route.blocked` の `until` はこの時刻から出航できる時刻、`route.unblocked` の `until` は遮断が終わった時刻（= イベントの `t`）
+  - 予報（`forecast`）は開始の `forecastMs` 前に出す（`forecastMs` が 0 なら出さない）。航路の ID は `routesState` と同じ形（`"A-B"`、`A < B`）で、台本に書いた順に並べる
+  - 嵐はステージ定義とシードだけで決まる（`New` で全部の時刻を決める。§9.1）ので、入力ログから再現できる。デモの嵐（`demo.storm`）は T-305 が Engine のコマンドにして、非公開の入口 `raiseStorm` を呼ぶ（入力ログに残る）
+  - `stage.SimConfig` は台本の嵐（`kind: storm`）を書いた順のまま `sim.Config.Storms` に入れる。`storm` 以外のイベント（P1）を誤りにするかは保留（#32 の報告。既存のテストと食い違うため）
 - ネットワーク分断の状態（FR-ENG-08）は「遮断されていない辺だけでの連結成分」として計算する。ただし、これは「船が行き来できるか」を表すだけで、実際に通信できるかは船の運航次第です
 
 ### 6.5 中継倉庫（P1）
@@ -593,7 +601,7 @@ func Sub(seed uint64, name string) *rand.Rand {
 | 名前 | 用途 |
 |---|---|
 | `requests` | 依頼の発生時刻・種類（台本以外の部分） |
-| `events` | 台本で「この時間帯のどこか」と指定されたイベントの時刻 |
+| `events` | 台本で「この時間帯のどこか」と指定されたイベントの時刻。台本の嵐で `window` に幅があるものだけ、定義の順に 1 回ずつ `Int64N(end − start + 1)` を引く（`New` の中） |
 | `raft/<nodeID>` | ノードごとの選挙タイムアウトの乱数（パッチで注入） |
 | `drift` | 漂流瓶で、どの過去の手紙を複製するか |
 | `bot/<名前>` | ボット船長の選択（`bot/random`。`greedy` は引かない。`simcli` とテストだけで使い、ゲームの結果には入力ログを通してだけ効く） |

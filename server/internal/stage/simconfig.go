@@ -34,6 +34,8 @@ func SimConfig(st *Stage) (sim.Config, error) {
 			Message: "false は未対応（cluster は PreVote を常に有効にする。ADR-0007）",
 		})
 	}
+	storms, evIssues := stormDefs(st)
+	issues = append(issues, evIssues...)
 	if len(issues) > 0 {
 		return sim.Config{}, &Error{File: st.ID, Issues: issues}
 	}
@@ -69,6 +71,7 @@ func SimConfig(st *Stage) (sim.Config, error) {
 			MaxInflightMsgs: st.Raft.MaxInflightMsgs,
 		},
 		Routes:        routes,
+		Storms:        storms,
 		Ferries:       ferries,
 		DockMs:        st.Transport.DockMs,
 		PortCap:       st.Transport.PortCap,
