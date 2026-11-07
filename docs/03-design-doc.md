@@ -888,6 +888,83 @@ WS の接続と、ラウンドの終わりで `onRoundEnd` を呼ぶのは T-402
 
 ステージ紹介の島の紹介文と「学べること」のデータの出どころ（`/api/stages` に足すか、別の API か）は未定です（T-401 では「準備中」の表示）。
 
+### 13.7 Raft の用語の併記
+
+T-412 で決めた、設定「Raft の用語を併記する」（[FR-UI-10](./01-requirements.md)・[04-game-design.md §8](./04-game-design.md)・[Q-10](./09-assumptions-and-open-questions.md)）と、その表示の部品です。ファイルは `web/src/ui/terms/`（`preference.ts`・`glossary.ts`・`RaftTerm.tsx`）にあります。
+
+**設定の持ち方**
+
+設定は画面をまたいで使い、React の外（PixiJS のマップ）からも読むので、App の状態ではなく、ルーター（§13.6）と同じ「モジュールに 1 つの外部ストア＋`useSyncExternalStore`」で持ちます（`termsPreference`）。Provider が要らないので `App.tsx`・`main.tsx` を変えずに済み、ラウンドが消えても設定は残ります。ゲームの世界の状態ではないので、T-403 のストアには入れません。
+
+- localStorage のキーは `raft-game.settings`、値は JSON の文字列 `{"v":1,"showRaftTerms":<boolean>}`（キーの順序はこのとおり）。既定はオフ（種明かしの驚きを守る）
+- 読み込みは遅延し、最初の `getSnapshot()` で 1 回だけ読む。以降は値が変わるまで同じオブジェクトを返す
+- 保存された値が壊れている・形が違う・`v` が 1 でないときはオフとして扱い、読んだだけでは書き戻さない（利用者が切り替えたときに上書きする。知らないキーは保たない）
+- localStorage が使えない（`window` が無い・アクセスで `SecurityError`・`getItem` が投げる）ときや、`setItem` が投げる（容量の上限など）ときも、切り替えは画面にすぐ効く。そのときはスナップショットの `persistent` が `false` になり、設定画面に「このブラウザには設定を保存できませんでした。ページを閉じると元に戻ります。」を出す。例外は外に投げない
+- 別のタブとの同期はしない（各タブは開いたときの値を読む）。`reload()` は読み込みをやり直すので、後で `storage` イベントにつなげられる
+- [NFR-08](./01-requirements.md) との関係: 保存する値は真偽値 1 つだけで、サーバーには送らない。Cookie・sessionStorage は使わない。localStorage に触れるのは `preference.ts` の `openBrowserStorage` だけ
+
+**部品の API**
+
+| export | 使い方 |
+|---|---|
+| `RaftTerm`（`{ id: RaftTermId; children?: ReactNode }`） | 用語集の言葉。`children` を省くと `RAFT_TERMS[id].game` を出す。活用形などは `children` で渡す（例: `<RaftTerm id="commit">確定</RaftTerm>`） |
+| `WithRaftTerm`（`{ raft: string \| null; children: ReactNode }`） | 任意の言葉（手紙の名前など）。`raft` が `null`・`""` なら何も添えない |
+| `withRaftTerm(game, raft, show)` | 文字列が要るところ（PixiJS の文字・`aria-label`・`title`）。`show` で `raft` があれば「`game`（`raft`）」、なければ `game` |
+| `letterRaftTerm(label)` | 手紙の `label`（[06-protocol.md §5.2](./06-protocol.md)）から添える用語。知らない `label` は `null`（§8） |
+| `RAFT_TERMS`・`LETTER_RAFT_TERMS` | 下の表 |
+| `useShowRaftTerms()`・`useTermsPreference()`・`setShowRaftTerms(value)` | React から読む・切り替える |
+| `termsPreference` | 外部ストア（`getSnapshot`・`subscribe`・`setShowRaftTerms`・`reload`）。React の外から読む |
+
+オフのとき（または `raft` が `null`・`""`）は `children` だけを返し、要素を足しません（レイアウトを変えない）。オンのときは後ろに `<small class="raft-term-note" data-raft-term="…">（<span lang="en">…</span>）</small>` を添えます（例:「代表（Leader）」）。括弧は部品と `withRaftTerm` が付けるので、表の `raft` には全角の括弧を含めません。
+
+**`RAFT_TERMS`（ゲームの言葉 ⇔ Raft の用語。画面に出す文字列の正本）**
+
+| `id` | `game` | `raft` |
+|---|---|---|
+| `leader` | 代表 | Leader |
+| `follower` | 一般の島 | Follower |
+| `preCandidate` | 立候補の相談中 | PreCandidate |
+| `candidate` | 立候補中 | Candidate |
+| `term` | 代表の任期 | Term |
+| `ledger` | 共和国の台帳 | Log |
+| `entry` | 記録 | Log Entry |
+| `commit` | 共和国で確定 | Commit |
+| `apply` | 確定 | Apply |
+| `quorum` | 過半数 | Quorum |
+| `node` | 島 | Node |
+| `letter` | 手紙 | Message |
+| `heartbeat` | 定期便 | Heartbeat |
+| `vote` | 投票 | Vote |
+| `electionTimeout` | 定期便が途切れる | Election Timeout |
+| `checkQuorum` | 孤立した代表が退く | CheckQuorum |
+| `partition` | 嵐 | Network Partition |
+| `staleLetter` | 古い手紙 | 古い Term |
+
+**`LETTER_RAFT_TERMS`（手紙の `label` ⇔ `Msg*`。[04-game-design.md §2.1](./04-game-design.md)）**
+
+| `label` | 添える用語 |
+|---|---|
+| `heartbeat` | MsgHeartbeat |
+| `heartbeat_resp` | MsgHeartbeatResp |
+| `append`・`append_probe` | MsgApp |
+| `append_resp` | MsgAppResp |
+| `append_reject` | MsgAppResp・Reject |
+| `prevote` | MsgPreVote |
+| `prevote_resp` | MsgPreVoteResp |
+| `vote` | MsgVote |
+| `vote_resp` | MsgVoteResp |
+| `request`・`other` | なし（住民の依頼書は Raft の手紙ではない） |
+
+手紙のゲーム上の名前（「お元気ですか？」など）はこの表に持たず、表示する側（T-404・T-405・T-406）が §2.1 の名前を使い、`letterRaftTerm(label)` で添える用語を得ます。`LetterLabel` はローカルの型で、T-301 の生成された型ができたら置き換えます。
+
+**使い分け**
+
+- 通常画面と通知で、ゲームの言葉を出すところに使う。1 つの画面・パネルの中では、同じ言葉の**最初の 1 か所**にだけ付ける（毎回付けると読みにくい）
+- エンジニアモード（T-407）とリザルトの解説（T-408）には使わない（設定に関係なく、常に Raft の用語で書く）
+- React の外（PixiJS）では、`termsPreference.getSnapshot().showRaftTerms` を読み、`termsPreference.subscribe()` で変更を知って、`withRaftTerm` で文字列を作る
+- 各画面に併記を付けるのは、それぞれのタスク（マップ T-404・フェリー操作 T-405・HUD／島の詳細／通知 T-406・チュートリアル T-409）。今は遊び方の画面の「手紙」「確定」に付けている
+- export の名前・意味を変えるとき、`RAFT_TERMS` に項目を足すときは、この節も直す
+
 ---
 
 ## 14. テスト戦略
