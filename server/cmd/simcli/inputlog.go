@@ -69,6 +69,10 @@ type payloadTo struct {
 	To      uint64 `json:"to"`
 }
 
+type payloadEvent struct {
+	Event string `json:"event"`
+}
+
 // encodePayload は sim.Command を payload の値にする。表にない種類は内部の誤り。
 func encodePayload(c sim.Command) (any, error) {
 	switch c.Type {
@@ -82,6 +86,8 @@ func encodePayload(c sim.Command) (any, error) {
 		return payloadLetters{FerryID: c.FerryID, LetterIDs: ids}, nil
 	case sim.CmdFerryDepart, sim.CmdFerryAutoload:
 		return payloadTo{FerryID: c.FerryID, To: c.To}, nil
+	case sim.CmdDemoTrigger:
+		return payloadEvent{Event: c.Event}, nil
 	}
 	return nil, fmt.Errorf("入力ログに書けないコマンド %q（内部の誤り）", c.Type)
 }
@@ -149,6 +155,10 @@ type rawPayloadLetters struct {
 type rawPayloadTo struct {
 	FerryID *string `json:"ferryId"`
 	To      *uint64 `json:"to"`
+}
+
+type rawPayloadEvent struct {
+	Event *string `json:"event"`
 }
 
 // timePattern は t の形（0 以上の 10 進の整数。符号・小数・指数は誤り）。
@@ -274,6 +284,19 @@ func decodeEntry(msg json.RawMessage) (in sim.InputEntry, ignored bool, err erro
 		}
 		in.Cmd.FerryID = *p.FerryID
 		in.Cmd.To = *p.To
+	case sim.CmdDemoTrigger:
+		// 値が "storm" かは検査しない（Replay で bad_request → ErrReplayDiverged になる）。
+		var p rawPayloadEvent
+		if err := strictUnmarshal(cmd.Payload, &p); err != nil {
+			return in, false, fmt.Errorf(".cmd.payload: %w", err)
+		}
+		switch {
+		case p.Event == nil:
+			return in, false, errors.New(".cmd.payload.event: ない")
+		case *p.Event == "":
+			return in, false, errors.New(".cmd.payload.event: 空")
+		}
+		in.Cmd.Event = *p.Event
 	default:
 		return in, false, fmt.Errorf(".cmd.type: 未知の種類 %q", typ)
 	}

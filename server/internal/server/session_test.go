@@ -115,7 +115,7 @@ func TestSessionHandle(t *testing.T) {
 	}
 
 	notImplemented := []protocol.MessageType{
-		protocol.MessageTypeSubEngineer, protocol.MessageTypeDemoTrigger, protocol.MessageTypeCmdRelayLoad,
+		protocol.MessageTypeSubEngineer, protocol.MessageTypeCmdRelayLoad,
 	}
 	for _, typ := range notImplemented {
 		c.send(typ, "n-1", struct{}{})
@@ -123,6 +123,12 @@ func TestSessionHandle(t *testing.T) {
 		c.send(typ, "", struct{}{})
 		c.expectError(codeBadRequest, false)
 	}
+
+	// demo.trigger は T-305 が処理する（payload {} は event がないので bad_request。デモの可否より先に調べる）。
+	c.send(protocol.MessageTypeDemoTrigger, "n-1", struct{}{})
+	expectAck("n-1", false, protocol.AckCodeBadRequest, "bad payload")
+	c.send(protocol.MessageTypeDemoTrigger, "", struct{}{})
+	c.expectError(codeBadRequest, false)
 
 	for _, typ := range []protocol.MessageType{"foo", protocol.MessageTypeSnapshot, protocol.MessageTypeAck} {
 		c.send(typ, "u-1", struct{}{})
