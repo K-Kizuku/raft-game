@@ -289,6 +289,14 @@ class DevDryRunTest(TempTree):
         lines = self.plus_lines(res)
         self.assertTrue(any("build -o" in l and "./cmd/server" in l for l in lines), res.stdout)
         self.assertTrue(any("MODE=standalone" in l and "PORT=18110" in l for l in lines), res.stdout)
+        # MK-1（T-302）: Go に作業ツリーの data/ と Vite のオリジンを渡す。
+        go = [l for l in lines if "MODE=standalone" in l]
+        self.assertEqual(len(go), 1, res.stdout)
+        parts = go[0].split()
+        data = [p[len("DATA_DIR="):] for p in parts if p.startswith("DATA_DIR=")]
+        self.assertEqual(len(data), 1, go[0])
+        self.assertEqual(os.path.realpath(data[0]), os.path.realpath(wt / "data"))
+        self.assertIn("ALLOWED_ORIGINS=http://127.0.0.1:15203,http://localhost:15203", parts)
         self.assertTrue(any("vite" in l and "--port 15203" in l for l in lines), res.stdout)
         self.assertNotIn("server/cmd/server がない", res.stdout)
 
