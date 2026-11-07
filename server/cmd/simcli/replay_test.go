@@ -2,7 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -227,4 +232,184 @@ func TestReplayBadInput(t *testing.T) {
 	}
 	r = replayFile(t, missing)
 	r.wantCode(t, exitFail)
+}
+
+// replayTrace は replay --input path --trace <TempDir>/t.json を呼び、結果とトレースのパスを返す。
+func replayTrace(t *testing.T, path string, extra ...string) (cliResult, string) {
+	t.Helper()
+	trace := filepath.Join(t.TempDir(), "t.json")
+	return replayFile(t, path, append([]string{"--trace", trace}, extra...)...), trace
+}
+
+// wantNoFile は path にファイルがないことを確かめる。
+func wantNoFile(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("%s: ファイルがある（err = %v）", path, err)
+	}
+}
+
+// TR-1・TR-2: record --inputs-dir の入力ログから replay --trace で作った記録は、record の記録と bot だけが違う。
+func TestReplayTraceMatchesRecord(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "in")
+	rr, rec := recordOK(t, "--inputs-dir", dir)
+	input := inputLogPath(dir, testStage, "greedy", 1)
+	r, trace := replayTrace(t, input)
+	r.wantCode(t, exitOK)
+	line := oneResult(t, r.stdout)
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// TR-1: ヘッダーの bot だけが違い、ほかはバイト列で一致する。
+	want := strings.Replace(rr.stdout, `"bot":"greedy",`, `"bot":"",`, 1)
+	if want == rr.stdout {
+		t.Fatal(`record の記録に "bot":"greedy" がない`)
+	}
+	if string(data) != want {
+		t.Errorf("trace:\n%s\nwant:\n%s", data, want)
+	}
+	var got parsedRecord
+	if err := json.Unmarshal(data, &got); err != nil { // TR-2: 1 つの JSON の値として読める
+		t.Fatal(err)
+	}
+	if got.Bot != "" || got.StageID != rec.StageID || got.StageHash != rec.StageHash || got.Seed != rec.Seed ||
+		got.EventCount != rec.EventCount || got.TraceHash != rec.TraceHash || got.Build != rec.Build ||
+		got.DurationMs != rec.DurationMs {
+		t.Errorf("header = %+v, record = %+v", got, rec)
+	}
+	if got.TraceHash != line.TraceHash || got.EventCount != *line.Events || got.EventCount != len(got.Events) {
+		t.Errorf("header = %+v, line = %+v", got, line)
+	}
+	// TR-2: events の各行（末尾の , を除く）に改行を付けて連結した SHA-256 が traceHash。
+	lines := strings.Split(string(data), "\n")
+	start := slices.Index(lines, `"events":[`) + 1
+	end := slices.Index(lines, "]}")
+	if start <= 0 || end < start {
+		t.Fatalf("events の範囲が見つからない: %d %d", start, end)
+	}
+	h := sha256.New()
+	for _, l := range lines[start:end] {
+		h.Write([]byte(strings.TrimSuffix(l, ",")))
+		h.Write([]byte{'\n'})
+	}
+	var sum [32]byte
+	copy(sum[:], h.Sum(nil))
+	if formatHash(sum) != got.TraceHash {
+		t.Errorf("hash = %s, traceHash = %s", formatHash(sum), got.TraceHash)
+	}
+	if want := "simcli replay: トレースを " + trace + " に書いた（events=" + strconv.Itoa(got.EventCount) + "）"; !strings.Contains(r.stderr, want) {
+		t.Errorf("stderr = %s, want %s", r.stderr, want)
+	}
+	// --trace の有無で結果の行は変わらない。
+	if plain := replayFile(t, input); plain.stdout != r.stdout {
+		t.Errorf("stdout: --trace あり %s、なし %s", r.stdout, plain.stdout)
+	}
+}
+
+// 既にあるファイルは上書きする。
+func TestReplayTraceOverwrites(t *testing.T) {
+	t.Parallel()
+	l, _ := baseInputLog(t)
+	trace := filepath.Join(t.TempDir(), "t.json")
+	if err := os.WriteFile(trace, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := replayFile(t, writeLogFile(t, l), "--trace", trace)
+	r.wantCode(t, exitOK)
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(data) {
+		t.Errorf("trace = %s", data)
+	}
+}
+
+// TR-3: --trace - は使い方の誤り。--trace に空文字列は指定なしと同じ。
+func TestReplayTraceDash(t *testing.T) {
+	t.Parallel()
+	l, run := baseInputLog(t)
+	path := writeLogFile(t, l)
+	r := replayFile(t, path, "--trace", "-")
+	r.wantCode(t, exitUsage)
+	if r.stdout != "" || !strings.Contains(r.stderr, "--trace") {
+		t.Errorf("stdout = %q, stderr = %s", r.stdout, r.stderr)
+	}
+	r = replayFile(t, path, "--trace", "")
+	r.wantCode(t, exitOK)
+	if got := oneResult(t, r.stdout); got.TraceHash != run.TraceHash || strings.Contains(r.stderr, "トレースを") {
+		t.Errorf("line = %+v, stderr = %s", got, r.stderr)
+	}
+}
+
+// TR-4: --expect が違えば 1 で、トレースを書かない。
+func TestReplayTraceExpectMismatch(t *testing.T) {
+	t.Parallel()
+	l, _ := baseInputLog(t)
+	r, trace := replayTrace(t, writeLogFile(t, l), "--expect", "sha256:"+strings.Repeat("0", 64))
+	r.wantCode(t, exitFail)
+	wantNoFile(t, trace)
+}
+
+// TR-5: コマンドが失敗すれば 1 で、トレースを書かない（既にあるファイルも変えない）。
+func TestReplayTraceApplyFails(t *testing.T) {
+	t.Parallel()
+	l, _ := baseInputLog(t)
+	cmds := slices.Insert(slices.Clone(l.Commands), 1,
+		sim.InputEntry{T: 0, Cmd: sim.Command{Type: sim.CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{999999}}})
+	path := writeLogFile(t, withCommands(l, cmds))
+	r, trace := replayTrace(t, path)
+	r.wantCode(t, exitFail)
+	wantNoFile(t, trace)
+
+	if err := os.WriteFile(trace, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = replayFile(t, path, "--trace", trace)
+	r.wantCode(t, exitFail)
+	if data, err := os.ReadFile(trace); err != nil || string(data) != "old" {
+		t.Errorf("trace = %q, err = %v", data, err)
+	}
+}
+
+// TR-6: 書けない（ディレクトリがない）なら 1。結果の行は出ている。
+func TestReplayTraceUnwritable(t *testing.T) {
+	t.Parallel()
+	l, run := baseInputLog(t)
+	trace := filepath.Join(t.TempDir(), "nope", "t.json")
+	r := replayFile(t, writeLogFile(t, l), "--trace", trace)
+	r.wantCode(t, exitFail)
+	if got := oneResult(t, r.stdout); !got.OK || got.TraceHash != run.TraceHash {
+		t.Errorf("line = %+v", got)
+	}
+	if !strings.Contains(r.stderr, "simcli: トレースを書けない: ") {
+		t.Errorf("stderr = %s", r.stderr)
+	}
+	wantNoFile(t, trace)
+}
+
+// TR-7: cmd.game.start の無い入力ログでも、intro のままの記録を書く。
+func TestReplayTraceEmpty(t *testing.T) {
+	t.Parallel()
+	l, _ := baseInputLog(t)
+	r, trace := replayTrace(t, writeLogFile(t, withCommands(l, nil)))
+	r.wantCode(t, exitOK)
+	line := oneResult(t, r.stdout)
+	data, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got parsedRecord
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Events) != *line.Events || got.EventCount != *line.Events || got.TraceHash != line.TraceHash ||
+		got.Bot != "" || got.Snapshot.Phase != "intro" || got.Seed != l.Seed {
+		t.Errorf("record = %+v, line = %+v", got, line)
+	}
+	if !strings.HasSuffix(string(data), "\n"+`"events":[`+"\n]}\n") {
+		t.Errorf("trace = %s", data)
+	}
 }

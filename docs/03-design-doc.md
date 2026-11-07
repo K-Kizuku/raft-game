@@ -1237,7 +1237,7 @@ function withClock(world: World, clock: Clock, receivedAt: number): World;
 
 ```
 simcli run    --data DIR --stage ID [--bot NAME] --seeds LIST [--invariants=BOOL] [--determinism] [--inputs-dir DIR]
-simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH]
+simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH] [--trace FILE]
 simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR]
 simcli help
 ```
@@ -1259,6 +1259,7 @@ simcli help
 | `--invariants=BOOL` | すべて | テストモード（`sim.Options.CheckInvariants`、§11）。既定は `true`。結果は変わらない |
 | `--determinism` | `run` | 各シードを 2 回回し、トレースのハッシュと入力ログが一致することを確かめる（V-6） |
 | `--expect HASH` | `replay` | `traceHash` が `HASH`（`sha256:` + 64 桁の 16 進の小文字）と違えば失敗 |
+| `--trace FILE` | `replay` | 入力ログから作り直したトレースを、`record` と同じ記録の形式（下の形式）で `FILE` に書く。成功したとき（終了コードが 0 のとき）だけ書き、再生の失敗・`--expect` の不一致では書かない（既にあるファイルも変えない）。書いたら `simcli replay: トレースを <FILE> に書いた（events=<数>）` を標準エラーに出す。書けなければ `1`。`-` は使い方の誤り（標準出力は結果の行に使う）。空文字列は指定なしと同じ |
 | `--inputs-dir DIR` | `run`・`record` | 入力ログを `DIR/<stageId>-<bot>-<seed>.json` に書く（失敗したシードも書く） |
 
 終了コードは `0`（成功）・`1`（実行の失敗: ステージの読み込みの誤り・ステージがない・Engine を作れない・シードの失敗（panic・不変条件の違反・ラウンドが終わらない・決定性の不一致）・入力ログの誤り・再生の不一致・`--expect` の不一致・書き込みの失敗）・`2`（使い方の誤り: サブコマンドがない・未知のサブコマンドやフラグ・必須のフラグがない・余分な引数・`--seeds`・`--seed`・`--expect` の形式の誤り・未知のボット）です。エラーは `simcli` で始まる行で標準エラーに出し、panic のスタックトレースも標準エラーに出します。
@@ -1266,10 +1267,11 @@ simcli help
 `run`・`replay` の結果の行は JSON Lines で、キーは次の順です。実時間は出さないので、同じ引数なら標準出力は同じバイト列になります。
 
 ```json
-{"seed":7,"ok":true,"phase":"ended","t":180000,"events":5321,"commands":88,"traceHash":"sha256:4f1c…"}
+{"seed":7,"ok":true,"phase":"ended","t":180000,"events":5321,"commands":88,"traceHash":"sha256:4f1c…","stars":2,"score":1240}
 ```
 
 - `phase`・`t` は最後の `Phase()`・`Now()`、`events` は `New` から出たイベントの数、`commands` は入力ログの件数、`traceHash` は §10.2 のハッシュ
+- `stars`・`score` は、ラウンドの結果があるとき（`Result()` の `ok` が `true`）だけ付ける。`stars` は★の数（★0 でも付ける）、`score` はスコアの合計（`RoundResult.Score.Total`）。`intro` のままなど、ラウンドが終わっていないときは付けない
 - 失敗のときだけ `error`（1 行）を付ける。Engine を作れなかったときは `seed`・`ok`・`error` だけ
 
 記録の形式（`format: 1`）は、全体で 1 つの JSON の値です。
@@ -1287,6 +1289,7 @@ simcli help
 - 1 行目はヘッダー（キーはこの順）。`kind` は `"simcli.record"` に固定（ほかの JSON と取り違えないため）
 - 2 行目の `snapshot` は、ボットを動かす前（`New` の直後）の `sim.Snapshot`（T-106b）。プロトコル §5.1 の `snapshot` のうち Engine が持つ分で、完全な形は T-301 の後に決まる
 - `events` は `New` からの全イベントを 1 件 1 行（プロトコル §6 の 1 要素。最後以外は末尾に `,`）。各行の末尾の `,` を除いて改行を付けて連結した SHA-256 が `traceHash`（§10.2）で、同じステージ・シード・ボットの `run` の `traceHash` とも一致する
+- `replay --trace` も同じ形式で書き、`bot` は空文字列（ボットではなく入力ログから作ったことを表す）。入力ログのセッションのコマンド（一時停止・速度・次の出来事まで）は除かれるので、ライブのセッションのイベント列とは、`notice` などセッションが足すイベントの分だけ違う
 - 記録はイベントの平らな列です。エンベロープ（[06-protocol.md §3](./06-protocol.md)）と `events` のまとめ方（100ms ごと・`clock`）は、記録を再生するモック（T-402）が決めます
 
 ### 13.6 画面の遷移と URL

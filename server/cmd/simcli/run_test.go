@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/K-Kizuku/raft-game/server/internal/bot"
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 )
 
@@ -42,6 +43,55 @@ func checkRunLines(t *testing.T, lines []seedResult, wantSeeds []uint64) {
 		if !traceHashRE.MatchString(l.TraceHash) {
 			t.Errorf("seed %d: traceHash = %q", l.Seed, l.TraceHash)
 		}
+		if l.Stars == nil || l.Score == nil {
+			t.Errorf("seed %d: stars = %v, score = %v", l.Seed, l.Stars, l.Score)
+		}
+	}
+}
+
+// RS-1: run の結果の行の stars・score は Engine.Result() の値。同じ引数なら同じバイト列。
+func TestRunStarsScore(t *testing.T) {
+	t.Parallel()
+	st, err := loadStage(testData, testStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, botName := range []string{"random", "greedy"} {
+		t.Run(botName, func(t *testing.T) {
+			t.Parallel()
+			args := []string{"run", "--data", testData, "--stage", testStage, "--bot", botName, "--seeds", "1..3"}
+			a := runCLI(t, nil, args...)
+			b := runCLI(t, nil, args...)
+			a.wantCode(t, exitOK)
+			b.wantCode(t, exitOK)
+			if a.stdout != b.stdout {
+				t.Errorf("stdout differs:\n%s\n%s", a.stdout, b.stdout)
+			}
+			for _, l := range parseLines(t, a.stdout) {
+				e, err := newEngine(st, l.Seed, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				bt, err := bot.New(botName, l.Seed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := bot.Play(e, bt); err != nil {
+					t.Fatal(err)
+				}
+				r, ok := e.Result()
+				if !ok {
+					t.Fatalf("seed %d: Result() の ok が false", l.Seed)
+				}
+				if l.Stars == nil || *l.Stars != r.Stars || l.Score == nil || *l.Score != r.Score.Total {
+					t.Errorf("seed %d: stars = %v, score = %v, want %d %d", l.Seed, l.Stars, l.Score, r.Stars, r.Score.Total)
+				}
+				want := fmt.Sprintf(`"traceHash":%q,"stars":%d,"score":%d}`, l.TraceHash, r.Stars, r.Score.Total)
+				if !strings.Contains(a.stdout, want) {
+					t.Errorf("seed %d: 行に %s がない:\n%s", l.Seed, want, a.stdout)
+				}
+			}
+		})
 	}
 }
 
@@ -163,7 +213,8 @@ func TestRunReplayMatches(t *testing.T) {
 			}
 			g := got[0]
 			if g.Seed != want.Seed || !g.OK || g.Phase != want.Phase || *g.T != *want.T ||
-				*g.Events != *want.Events || *g.Commands != *want.Commands || g.TraceHash != want.TraceHash {
+				*g.Events != *want.Events || *g.Commands != *want.Commands || g.TraceHash != want.TraceHash ||
+				g.Stars == nil || *g.Stars != *want.Stars || g.Score == nil || *g.Score != *want.Score {
 				t.Errorf("seed %d: replay %+v != run %+v", want.Seed, g, want)
 			}
 		}
