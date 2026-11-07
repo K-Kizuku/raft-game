@@ -13,6 +13,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -36,24 +37,93 @@ DROP_KEYS = ("MAKEFLAGS", "MAKELEVEL", "MFLAGS", "MAKEOVERRIDES", "DEV_SLOT", "D
 
 FAKE_GITLEAKS = textwrap.dedent(
     """\
-    #!/bin/bash
+    import os
+    import re
+    import subprocess
+    import sys
+
     # 偽の gitleaks（scripts/tests/test_check_secrets.py）。
-    if [ "$1" = "version" ]; then
-      echo "$FAKE_GITLEAKS_VERSION"
-      exit 0
-    fi
-    last="${!#}"
-    if [ -f "$last/scripts/check-secrets.sh" ]; then
-      printf '%s\\n' "$@" >"$FAKE_LOG_DIR/real.args"
-      echo "fake gitleaks: real scan"
-      exit "${FAKE_REAL_EXIT:-0}"
-    fi
-    printf '%s\\n' "$@" >"$FAKE_LOG_DIR/self.args"
-    git -C "$last" show HEAD:selftest.txt >"$FAKE_LOG_DIR/self.content" 2>&1
-    echo "fake gitleaks: self-test"
-    exit "${FAKE_SELF_EXIT:-1}"
+    args = sys.argv[1:]
+    if args[:1] == ["version"]:
+        print(os.environ["FAKE_GITLEAKS_VERSION"])
+        sys.exit(0)
+    logs = os.environ["FAKE_LOG_DIR"]
+    last = args[-1]
+    if not os.path.isfile(os.path.join(last, "scripts", "check-secrets.sh")):
+        with open(os.path.join(logs, "self.args"), "w") as f:
+            f.write("\\n".join(args) + "\\n")
+        res = subprocess.run(["git", "-C", last, "show", "HEAD:selftest.txt"], capture_output=True, text=True)
+        with open(os.path.join(logs, "self.content"), "w") as f:
+            f.write(res.stdout + res.stderr)
+        print("fake gitleaks: self-test")
+        sys.exit(int(os.environ.get("FAKE_SELF_EXIT", "1")))
+
+    with open(os.path.join(logs, "real.args"), "w") as f:
+        f.write("\\n".join(args) + "\\n")
+    print("fake gitleaks: real scan")
+    code = int(os.environ.get("FAKE_REAL_EXIT", "0"))
+    # FAKE_SECRETS（空白区切り）を 1 行に並べたファイルで見つかったことにする。本物の gitleaks と同じく、
+    # --redact は各検出の値（Secret）だけを隠し、Match・Line・--verbose の表示には前後の文字が残る。
+    secrets = os.environ.get("FAKE_SECRETS", "").split()
+    line = "token = " + "".join(secrets)
+    findings = []
+    for i, secret in enumerate(secrets):
+        col = line.index(secret)
+        before = line[max(0, col - 20):col]
+        after = line[col + len(secret):col + len(secret) + 20]
+        findings.append({
+            "RuleID": "github-pat",
+            "Description": "GitHub Personal Access Token",
+            "File": "leak.txt",
+            "StartLine": "1",
+            "StartColumn": str(col + 1),
+            "Commit": "c0ffee" * 6 + "c0ff",
+            "Fingerprint": "c0ffee" * 6 + "c0ff:leak.txt:github-pat:1",
+            "Secret": "REDACTED",
+            "Match": secret.replace(secret, "REDACTED") + after,
+            "Line": line.replace(secret, "REDACTED"),
+            "Message": "add " + line,
+            "Author": "test",
+            "Email": "test@example.invalid",
+        })
+        if "--verbose" in args:
+            print("Finding:     ..." + before + "REDACTED" + after + "...")
+            print("Secret:      REDACTED")
+    if code == 0:
+        findings = []
+    if "--report-path" in args:
+        path = args[args.index("--report-path") + 1]
+        fmt = args[args.index("--report-format") + 1] if "--report-format" in args else "json"
+        if fmt != "template":
+            out = repr(findings)
+        else:
+            tmpl = open(args[args.index("--report-template") + 1]).read()
+            m = re.fullmatch(r"\\{\\{ range \\. \\}\\}(.*)\\{\\{ end \\}\\}\\n?", tmpl, re.S)
+            if m is None:
+                print("fake gitleaks: 知らないテンプレート: " + tmpl, file=sys.stderr)
+                sys.exit(3)
+            out = ""
+            for finding in findings:
+                body = m.group(1).replace('{{ "\\\\n" }}', "\\n")
+                body = re.sub(r"\\{\\{ \\.(\\w+) \\}\\}", lambda x: finding[x.group(1)], body)
+                if "{{" in body:
+                    print("fake gitleaks: 知らないテンプレート: " + tmpl, file=sys.stderr)
+                    sys.exit(3)
+                out += body
+        with open(path, "w") as f:
+            f.write(out)
+    if findings:
+        print("WRN leaks found: " + str(len(findings)))
+    sys.exit(code)
     """
 )
+
+
+def fake_secrets() -> List[str]:
+    """github-pat の形の偽のトークンを 3 つ（実行時に組み立てる。このファイルに検出される形を書かない）。"""
+    prefix = "ghp" + "_"
+    bodies = ["Q7wErT" * 6, "Zx9CvB" * 6, "Mn3LkJ" * 6]
+    return [prefix + b for b in bodies]
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -92,7 +162,7 @@ class CheckSecretsTest(unittest.TestCase):
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         fake = self.bin / "gitleaks"
-        fake.write_text(FAKE_GITLEAKS, encoding="utf-8")
+        fake.write_text(f"#!{sys.executable}\n" + FAKE_GITLEAKS, encoding="utf-8")
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         # go は PATH から隠し、git だけを個別に置く。
         assert GIT is not None
@@ -119,6 +189,7 @@ class CheckSecretsTest(unittest.TestCase):
         version: str = "8.30.1",
         self_exit: int = 1,
         real_exit: int = 0,
+        secrets: Optional[List[str]] = None,
         script: Optional[Path] = None,
     ) -> subprocess.CompletedProcess:
         env = {k: v for k, v in os.environ.items() if k not in DROP_KEYS}
@@ -128,6 +199,7 @@ class CheckSecretsTest(unittest.TestCase):
             FAKE_SELF_EXIT=str(self_exit),
             FAKE_REAL_EXIT=str(real_exit),
             FAKE_LOG_DIR=str(self.logs),
+            FAKE_SECRETS=" ".join(secrets or []),
             GIT_CEILING_DIRECTORIES=str(self.tmp),
         )
         return subprocess.run(
@@ -164,12 +236,16 @@ class CheckSecretsTest(unittest.TestCase):
         self.assertEqual(real[0], "git")
         self.assertIn("--redact", real)
         self.assertIn("--log-opts=HEAD", real)
-        # 見つかった場所を出す（値は --redact で REDACTED になる）。
-        self.assertIn("--verbose", real)
+        # --verbose は使わない（周辺の表示から、同じ行の別のシークレットが漏れる）。
+        self.assertNotIn("--verbose", real)
+        self.assertIn("--report-format\ntemplate", "\n".join(real))
         self.assertIn(f"--config\n{self.repo}/.gitleaks.toml", "\n".join(real))
         self.assertIn(f"--gitleaks-ignore-path\n{self.repo}/.gitleaksignore", "\n".join(real))
         self.assertEqual(real[-1], str(self.repo))
-        self.assertNotIn("--report-path", real)
+        # レポートは一時ディレクトリに作る（リポジトリの中に残さない）。
+        report = Path(real[real.index("--report-path") + 1])
+        self.assertFalse(str(report).startswith(str(self.repo) + os.sep), report)
+        self.assertFalse(report.exists(), "レポートが消えていない")
         # 自己テストは同じ設定を使い、偽のトークンをコミットしたリポジトリを検査する。
         selftest = self.args_of("self")
         self.assertIn(f"--config\n{self.repo}/.gitleaks.toml", "\n".join(selftest))
@@ -194,6 +270,32 @@ class CheckSecretsTest(unittest.TestCase):
         self.assertEqual(res.returncode, 1, out)
         self.assertIn("gitleaks:allow", out)
         self.assertIn(".gitleaksignore に足してよいのは main にあるコミットの指紋だけ", out)
+
+    def test_found_does_not_leak_neighbouring_secrets(self) -> None:
+        # 1 行に異なる偽のシークレットを 3 つ並べても、出力にどの値も（部分も）出ない（round 8 の F1）。
+        secrets = fake_secrets()
+        res = self.run_script(version=self.script_version(), real_exit=1, secrets=secrets)
+        out = res.stdout + res.stderr
+        self.assertEqual(res.returncode, 1, out)
+        self.assert_no_secret(out, secrets)
+        # 見つかった場所（ファイル・行・規則・指紋）は出す。
+        self.assertIn("leak.txt:1:", out)
+        self.assertIn("rule=github-pat", out)
+        self.assertIn("fingerprint=" + "c0ffee" * 6 + "c0ff:leak.txt:github-pat:1", out)
+
+    def test_pass_with_secrets_env_prints_nothing_of_them(self) -> None:
+        secrets = fake_secrets()
+        res = self.run_script(version=self.script_version(), secrets=secrets)
+        out = res.stdout + res.stderr
+        self.assertEqual(res.returncode, 0, out)
+        self.assert_no_secret(out, secrets)
+
+    def assert_no_secret(self, out: str, secrets: List[str]) -> None:
+        for secret in secrets:
+            body = secret.split("_", 1)[1]
+            for i in range(len(body) - 5):
+                with self.subTest(secret=i):
+                    self.assertNotIn(body[i:i + 6], out)
 
     def test_wrong_version_without_go(self) -> None:
         if shutil.which("go", path="/usr/bin:/bin"):

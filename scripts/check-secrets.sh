@@ -11,8 +11,11 @@
 # - PATH に同じ版の gitleaks があればそれを使い、なければ go install で一時ディレクトリにビルドする。
 #   ビルド済みのバイナリのダウンロードとサードパーティのアクションは使わない。
 # - HEAD から辿れる履歴だけを検査する（--log-opts=HEAD）。まだコミットしていない変更は見ない。
-# - 見つかった値はログに出さない（--redact。CI のログは公開される）。レポートのファイルは作らない。
-#   見つかった場所（コミット・ファイル・行・規則）は --verbose で出す（値は REDACTED になる）。
+# - 見つかった値はログに出さない（--redact。CI のログは公開される）。
+#   --verbose は使わない（--redact は各検出の値だけを隠し、--verbose はその前後も出すので、
+#   同じ行に並んだ別のシークレットの値が周辺の表示から漏れる）。見つかった場所は、
+#   値を含まない項目（ファイル・行・列・規則・指紋）だけのテンプレートでレポートを一時ディレクトリに作って出す。
+#   レポートは成果物として上げず、trap で消す。
 # - bash 3.2（macOS）で動く書き方にする（mapfile・連想配列・空の配列と set -u を避ける）。
 #   日本語の直前の変数は ${name} と書く（bash 3.2 は続く多バイト文字を変数名の一部として読むことがある）。
 set -euo pipefail
@@ -132,15 +135,22 @@ fi
 echo "check-secrets: 自己テスト OK（偽のトークンを検出した）"
 
 # --- 本物の検査 -------------------------------------------------------------
+# 見つかったものの一覧は、値を含まない項目だけのテンプレートで出す（.Secret・.Match・.Line・
+# .Message などを足さない。--redact でも、それらには周辺の文字や別のシークレットが残りうる）。
+report_template="$tmp/report.tmpl"
+report="$tmp/report.txt"
+printf '%s' '{{ range . }}  {{ .File }}:{{ .StartLine }}:{{ .StartColumn }}  rule={{ .RuleID }}  fingerprint={{ .Fingerprint }}{{ "\n" }}{{ end }}' >"$report_template"
 set +e
 "$gitleaks" git \
   --config "$root/.gitleaks.toml" \
   --gitleaks-ignore-path "$root/.gitleaksignore" \
   --log-opts=HEAD \
   --redact \
-  --verbose \
   --no-banner \
   --exit-code 1 \
+  --report-format template \
+  --report-template "$report_template" \
+  --report-path "$report" \
   "$root"
 rc=$?
 set -e
@@ -150,9 +160,13 @@ if [ "$rc" -eq 0 ]; then
   exit 0
 fi
 
+if [ -s "$report" ]; then
+  echo "check-secrets: 見つかった場所（<ファイル>:<行>:<列>・規則・指紋。値は出さない）:" >&2
+  cat "$report" >&2
+fi
 cat >&2 <<'EOF'
 
-check-secrets: シークレットらしいものが見つかった（値は REDACTED で隠している）。対応の手順:
+check-secrets: シークレットらしいものが見つかった（値は出さない）。対応の手順:
   - 偽陽性（テストの偽の値など）なら、その行に gitleaks:allow のコメントを付けるか、
     値を実行時に組み立てる（例: "x".repeat(32)）。
   - 途中のコミットで出たなら、そのコミットを直す（agent/issue-* なら --force-with-lease）。
