@@ -127,6 +127,75 @@ func TestDecodeEngineCommand(t *testing.T) {
 	}
 }
 
+// CV-D1 demo.trigger の読み込み。
+func TestDecodeDemoTrigger(t *testing.T) {
+	t.Parallel()
+	want := sim.Command{Type: sim.CmdDemoTrigger, Event: "storm"}
+	for _, payload := range []string{`{"event":"storm"}`, `{"event":"storm","x":1}`} {
+		got, err := simconv.DecodeEngineCommand("demo.trigger", json.RawMessage(payload))
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("DecodeEngineCommand(demo.trigger, %s) = (%+v, %v), want %+v", payload, got, err, want)
+		}
+	}
+	for _, payload := range []string{`{}`, `null`, ``, `{"event":"rush"}`, `{"event":1}`, `{"event":""}`, `{"Event":"storm"}`, `[]`} {
+		var raw json.RawMessage
+		if payload != "" {
+			raw = json.RawMessage(payload)
+		}
+		got, err := simconv.DecodeEngineCommand("demo.trigger", raw)
+		if !errors.Is(err, simconv.ErrBadPayload) {
+			t.Errorf("DecodeEngineCommand(demo.trigger, %s) = (%+v, %v), want ErrBadPayload", payload, got, err)
+		}
+	}
+}
+
+// CV-D2 demo.trigger の書き出しと往復。
+func TestEncodeDemoTrigger(t *testing.T) {
+	t.Parallel()
+	cmd := sim.Command{Type: sim.CmdDemoTrigger, Event: sim.DemoEventStorm}
+	got, err := simconv.EncodeEngineCommand(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != protocol.MessageTypeDemoTrigger || string(got.Payload) != `{"event":"storm"}` {
+		t.Errorf("EncodeEngineCommand = %s %s, want demo.trigger {\"event\":\"storm\"}", got.Type, got.Payload)
+	}
+	back, err := simconv.DecodeEngineCommand(got.Type, got.Payload)
+	if err != nil || !reflect.DeepEqual(back, cmd) {
+		t.Errorf("round trip = (%+v, %v), want %+v", back, err, cmd)
+	}
+}
+
+// CV-D3 入力ログの demo.trigger は Engine のコマンドとして読む。
+func TestInputEntriesFromLogDemoTrigger(t *testing.T) {
+	t.Parallel()
+	cmds := []protocol.InputCommand{
+		inputCmd(0, "cmd.game.start", `{}`),
+		inputCmd(0, "cmd.game.speed", `{"speed":8}`),
+		inputCmd(3000, "demo.trigger", `{"event":"storm"}`),
+		inputCmd(3000, "cmd.game.pause", `{"paused":true}`),
+		inputCmd(3000, "cmd.game.skip", `{"until":"next_notable"}`),
+		inputCmd(3000, "cmd.sync", `{}`),
+		inputCmd(5000, "demo.trigger", `{"event":"storm"}`),
+	}
+	got, err := simconv.InputEntriesFromLog(cmds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []sim.InputEntry{
+		{T: 0, Cmd: sim.Command{Type: sim.CmdGameStart}},
+		{T: 3000, Cmd: sim.Command{Type: sim.CmdDemoTrigger, Event: "storm"}},
+		{T: 5000, Cmd: sim.Command{Type: sim.CmdDemoTrigger, Event: "storm"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("InputEntriesFromLog = %+v, want %+v", got, want)
+	}
+	bad := []protocol.InputCommand{cmds[0], inputCmd(3000, "demo.trigger", `{"event":"rush"}`)}
+	if _, err := simconv.InputEntriesFromLog(bad); !errors.Is(err, simconv.ErrBadPayload) {
+		t.Errorf("InputEntriesFromLog(rush) error = %v, want ErrBadPayload", err)
+	}
+}
+
 // C-3
 func TestEncodeEngineCommand(t *testing.T) {
 	t.Parallel()
