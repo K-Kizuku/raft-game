@@ -24,6 +24,7 @@ import {
   targetNodeId,
 } from "./engineerView.ts";
 import type { FieldRow, LetterLookup } from "./engineerView.ts";
+import { NodeDetailSections } from "./NodeDetailSections.tsx";
 import { useEngineerSubscriber } from "./EngineerSubscription.tsx";
 import type { EngineerSubscriber } from "./EngineerSubscription.tsx";
 import "./EngineerPanel.css";
@@ -215,6 +216,7 @@ function EngineerBody({
           </table>
         )}
       </section>
+      <NodeDetailSections world={world} targetId={targetId} />
       <section className="engineer-section">
         <h3>手紙</h3>
         {lists.length === 0 ? (
