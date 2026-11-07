@@ -66,7 +66,8 @@ type nodeView struct {
 }
 
 // Engine は 1 ゲーム分の世界（DesignDoc §4.3）。I/O・goroutine・実時間を使わずに動く。
-// 外から動かす方法は Apply（コマンド）と RunUntil（時間）だけで、出力は DrainEvents と TraceHash だけ。
+// 外から動かす方法は Apply（コマンド）と RunUntil（時間）だけで、出力はドメインイベントの列（DrainEvents）と
+// そのハッシュ（TraceHash）。状態を変えない観察として Snapshot と NextNotableAt がある。
 // 1 つの goroutine から使う（ADR-0003）。
 //
 // Engine の誤り（Process・PostRaft・Arrive・AdvanceTo・Push のエラー、表にない ferry のエラー、
@@ -86,6 +87,7 @@ type Engine struct {
 
 	last       []nodeView // node.state を最後に出した値。添字 = ID - 1
 	leaderTerm []uint64   // Leader になったときの Term。添字 = ID - 1
+	staleTerm  []uint64   // 送信元の手紙を古いと判定した基準の Term（letter.stale）。添字 = ID - 1
 
 	seq     uint64        // 最後に振ったイベントの連番
 	pending []DomainEvent // まだ取り出していないイベント
@@ -124,6 +126,7 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		phase:      PhaseIntro,
 		last:       make([]nodeView, n),
 		leaderTerm: make([]uint64, n),
+		staleTerm:  make([]uint64, n),
 		trace:      newTraceHash(),
 	}
 	for i, id := range ids {
@@ -184,7 +187,7 @@ func (e *Engine) Apply(cmd Command) Ack {
 			return e.fail(CodePhaseInvalid, fmt.Sprintf("sim: %s in phase %s", cmd.Type, e.phase))
 		}
 		e.start()
-	case CmdFerryLoad, CmdFerryUnload, CmdFerryDepart:
+	case CmdFerryLoad, CmdFerryUnload, CmdFerryDepart, CmdFerryAutoload:
 		if e.phase != PhaseSailing {
 			return e.fail(CodePhaseInvalid, fmt.Sprintf("sim: %s in phase %s", cmd.Type, e.phase))
 		}
@@ -256,6 +259,8 @@ func (e *Engine) applyFerry(cmd Command) error {
 		})
 		// DurationMs より後でも積む（ラウンドが先に終わるので処理されない）。
 		e.push(SimTime(arriveAt), ClassFerryArrive, kindFerryArrive, id)
+	case CmdFerryAutoload:
+		return e.autoload(id, cmd.To)
 	}
 	return nil
 }
@@ -339,7 +344,8 @@ func (e *Engine) handleEvent(ev Event) {
 	case kindFerryArrive:
 		e.arrive(ev.Data.(ferry.FerryID))
 	case kindFerryReady:
-		// 何もしない（プロトコル §6 に該当のイベントがない）。T-106b の NextNotableAt とボットが使う。
+		// 何もしない（プロトコル §6 に該当のイベントがない）。NextNotableAt の対象ではない（ドキュメントの出来事の一覧にないため）。
+		// ボット（T-109）などが ReadyAt を使う。
 	case kindRoundEnd:
 		e.phase = PhaseEnded
 		e.emit(PhaseChanged{Phase: PhaseEnded})
@@ -425,6 +431,7 @@ func (e *Engine) handleOutput(id uint64, out cluster.Output) {
 	for _, rc := range out.Events {
 		e.handleRoleChange(rc)
 	}
+	e.emitStale(id)
 	for _, m := range out.Messages {
 		created, dropped, err := e.tr.PostRaft(int64(e.Now()), id, []*pb.Message{m})
 		if err != nil {
