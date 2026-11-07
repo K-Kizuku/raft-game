@@ -900,7 +900,7 @@ CREATE TABLE IF NOT EXISTS audit (
   "gameTime":    { "maxMinutes": 30, "maxAlarms": 20 },
   "turnstile":   { "enabled": true },
   "rateLimit":   { "enabled": true, "perIpPerMinute": 10 },
-  "cpuMs":       50,
+  "cpuMs":       500,
   "acceptGames": true,
   "unitCostUsd": { "lite": 0.0065, "standard-1": 0.04 }
 }
@@ -970,7 +970,7 @@ func (s *Session) run(ctx context.Context) {
 | セッション作成のレート制限 | 1 IP（IPv6 は /64）あたり 10 回/分 ＋ Turnstile | Worker（G4。Rate Limiting の束縛 `SESSION_RATE_LIMIT`、拠点ごとの近似の値。[ADR-0024](./adr/0024-worker-rate-limit-binding.md)） |
 | sessionId の有効期限 | 発行 + `gameTime.maxMinutes` + 5 分（期限は sessionId に入れて署名する） | Worker（G2・G3。期限を過ぎた sessionId は Durable Object を呼ばずに `404`） |
 | コマンドのレート制限 | 1 セッションあたり 30 回/秒。DO は 1 秒の枠で 30 通を超えた電文を捨てる（返事はしない） | Durable Object |
-| コンテナの起動を待つ上限 | `CONTAINER_START_TIMEOUT_MS`（仮に 30 秒。T-007 の結果で見直す） | Durable Object（`/healthz` が `200` を返すまで） |
+| コンテナの起動を待つ上限 | `CONTAINER_START_TIMEOUT_MS` (T-007 の設定候補は 10 秒。本体の T-605 で再確認) | Durable Object（`/healthz` が `200` を返すまで） |
 | WS の受信メッセージの最大サイズ | 16 KiB | Durable Object と Go の両方 |
 | Worker 1 回あたりの CPU 時間 | `limits.cpuMs`（値は T-007 で測って決める） | Cloudflare（G5） |
 

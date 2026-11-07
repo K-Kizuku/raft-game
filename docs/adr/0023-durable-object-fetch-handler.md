@@ -43,6 +43,12 @@ workerd は、`DurableObject` を継承しないクラスでも、`constructor(c
 - 内部の API の形は [DesignDoc §12.3.1](../03-design-doc.md) の表のとおり。受ける側（`cost-guard.ts`）も呼ぶ側（`admin/client.ts`）も、JSON を `unknown` で受けて形を確かめる
 - typecheck と `cf build` は、このクラスを `web/worker/index.ts` から export し、`cloudflare.config.ts` に `exports.durableObject({ storage: "sqlite" })` を足した作業用のコピーで通ることを、T-309 の具体化のときに確認した。本番での動作の確認は T-601・T-605 で行う
 
+## T-007 での前提の確認 (2026-11-07)
+
+[Cloudflare スパイクの測定](./0016-infrastructure-cloudflare-with-cf-cli.md) で、継承しない PlainStore の fetch から ctx.storage.sql を使えた。継承する ControlStore も成功し、継承しない SpikeSession では SQL・container・alarm の動作を確認した。cf dev でも SQL と container の必須 smoke が成功した。
+
+これは最小の独立したスパイクでの前提の確認であり、CostGuard 本体の予約・精算・管理 API のクラウド試験ではない。本体の確認は T-601 / T-605 に残す。この測定だけでは、オーナーのレビュー待ちである本 ADR の Proposed 状態を変更しない。
+
 ## 結果（この判断によって起きること）
 
 - 良いこと: コストガードの帳簿・認証・配線を、workerd なしの単体テストで確かめられる。依存が増えない
