@@ -1,0 +1,109 @@
+{
+  "name": "raft-game-dev",
+  "compatibilityDate": "2026-11-04",
+  "assets": {
+    "notFoundHandling": "single-page-application",
+    "runWorkerFirst": ["/api/*", "/ws/*"]
+  },
+  "limits": {
+    "cpuMs": 50
+  },
+  "observability": {
+    "enabled": true,
+    "redactQueryString": true,
+    "logs": {
+      "enabled": true,
+      "headSamplingRate": 1
+    }
+  },
+  "workersDev": false,
+  "previewUrls": false,
+  "env": {
+    "DEMO_CONTROLS": {
+      "type": "text",
+      "value": "1"
+    },
+    "BUILD_ID": {
+      "type": "text",
+      "value": "git:fixture"
+    },
+    "CONTAINER_INSTANCE": {
+      "type": "text",
+      "value": "lite"
+    },
+    "GAME_SESSION": {
+      "type": "durable-object",
+      "worker": "raft-game-dev",
+      "exportName": "GameSession"
+    },
+    "COST_GUARD": {
+      "type": "durable-object",
+      "worker": "raft-game-dev",
+      "exportName": "CostGuard"
+    },
+    "GUARDS": {
+      "type": "json",
+      "value": {
+        "budget": {
+          "enabled": true,
+          "monthlyUsd": 30,
+          "dailyUsd": 1
+        },
+        "gameTime": {
+          "maxMinutes": 30,
+          "maxAlarms": 20
+        },
+        "turnstile": {
+          "enabled": true
+        },
+        "rateLimit": {
+          "enabled": true,
+          "perIpPerMinute": 10
+        },
+        "cpuMs": 50,
+        "acceptGames": true,
+        "unitCostUsd": {
+          "lite": 0.0065,
+          "standard-1": 0.04
+        }
+      }
+    },
+    "SESSION_SIGNING_KEY": {
+      "type": "secret"
+    },
+    "TURNSTILE_SECRET": {
+      "type": "secret"
+    },
+    "ADMIN_TOKEN": {
+      "type": "secret"
+    },
+    "SESSION_RATE_LIMIT": {
+      "type": "rate-limit",
+      "namespace": "1003",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    "REPLAYS": {
+      "type": "r2",
+      "name": "raft-game-replays"
+    }
+  },
+  "exports": {
+    "GameSession": {
+      "type": "durable-object",
+      "storage": "sqlite",
+      "container": "raft-game-dev-server"
+    },
+    "CostGuard": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "manifest": {
+    "type": "partial",
+    "mainModule": "index.js",
+    "modules": {}
+  }
+}
