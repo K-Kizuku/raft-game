@@ -13,14 +13,14 @@ description: Orchestrator として、Issue の計画・Worker の起動・レ�
 
 ## 手順
 
-1. **復旧**: `scripts/agents/agentctl.sh recover --json`。出た行動を先に片付ける
+1. **復旧**: `scripts/agents/agentctl.sh recover --repo K-Kizuku/raft-game --json`。出た行動を先に片付ける
    - `reset-to-ready` → `agentctl.sh state <n> ready --reason …`
    - `resume-worker` → `scripts/agents/spawn-worker.sh <n> --resume`（changes-requested なら `--mode fix`）
    - `set-state …` → `agentctl.sh state <n> <状態> [--pr N]`
    - `request-review` → 手順 5
    - `merge` → 手順 7
    - `escalate`・`fix-labels` → 人に判断を求める（下の「止めて報告する条件」）
-2. **計画**: `scripts/agents/agentctl.sh plan --json`。`ready` に出た Issue を、出た順に選ぶ（`capacity` を超えない）
+2. **計画**: `scripts/agents/agentctl.sh plan --repo K-Kizuku/raft-game --json`。`ready` に出た Issue を、出た順に選ぶ（`capacity` を超えない）
 3. **Issue を補う**: 選ぶ Issue の本文に、スコープ・実装仕様・変更予定ファイル・変更禁止範囲・依存 Issue・テストケース・Acceptance Criteria が足りなければ、Issue のコメントに補足を書いてから `status:ready` にする（`agentctl.sh state <n> ready`）
 4. **Worker の起動**: `scripts/agents/spawn-worker.sh <n> --background`。`max_workers` と DEV_SLOT はスクリプトが守る。`agentctl claim` が拒否したら（終了コード 4）その Issue は飛ばす
 5. **PR を待ってレビュー**: Worker が PR を作ったら `agentctl.sh state <n> in-review --pr <PR>`、`scripts/agents/review.sh <PR>`
