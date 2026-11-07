@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-1・M-12 と M-2/M-3 の手元の基準値の測定が完了。次は H-2 のトークン準備と H-3 の検証環境への実デプロイ。クラウドの資源はまだ作成していない。
+- 状態: H-2・H-3 完了。検証用 Worker・DO・コンテナの構成をデプロイし、healthz が応答。次は H-4 の lite の測定。クラウドのコンテナ起動・性能はまだ未測定。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -19,9 +19,9 @@
 | H-1 準備 | 完了 | main d862bb78cbfea3fe0e476605b3b6d4996153f818、pnpm install --frozen-lockfile と check.sh が成功。shellcheck は未導入のため省略 |
 | M-12 ローカル動作確認 | 成功 | 必須 8 項目すべて ok、measure.ts 終了コード 0。cf dev の準備完了 6 秒。TCP の外部接続が通る点はクラウドで再確認 |
 | M-2・M-3 手元の基準値 | 取得済み | Apple M2 / Go 1.26.9。30 分の再計算 79.343 ms、8 倍速 step p99 0.289 ms。クラウドの性能とは区別する |
-| H-2 トークンの準備 | 未実施 | 次に gitignore 確認・64 桁 hex の生成・mode 600 / 新規作成専用でファイル保存する |
-| H-3 検証環境へのデプロイ / M-13 | 未実施 | 人が spike/ から実行する |
-| H-4 測定 / M-1〜M-14 | 未実施 | lite・standard-1 の測定と、外部通信の対照実験 |
+| H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
+| H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
+| H-4 測定 / M-1〜M-14 | 未実施 | 次に lite / --first 1 / --runs 10。standard-1 と外部通信の対照はその後に行う |
 | H-5 limits.cpuMs の判断 | 未実施 | Worker・Durable Object の CPU 時間と WS 中継を確認する |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
@@ -514,6 +514,71 @@ and curl -fsS --max-time 30 https://raft-game-spike.kizuku.workers.dev/spike/hea
 pnpm -C spike によって cf は spike/ で実行される。secrets-file はその作業ディレクトリ内の spike.secrets.json。最初のデプロイなので --containers-rollout immediate は付けない。Worker の公開先の予定は https://raft-game-spike.kizuku.workers.dev。
 
 このコマンドは次に案内したもので、まだ H-2・H-3 の実行結果は受け取っていない。時間・出力 URL・イメージの push・デプロイの成功と /spike/healthz の応答を記録する。healthz は DO を起動しないため、コンテナの本番での起動・WS・性能を確認したことにはしない。
+
+## 2026-11-07: 初回の実デプロイに成功 (H-2・H-3 / M-13)
+
+共有されたプロンプトの開始時刻は 15:58:56 JST。ユーザーが前節で案内したブロックを実行した。
+
+### シークレットの準備
+
+- git check-ignore は `spike/spike.secrets.json` を出力し、無視されることを確認した。
+- 64 桁の hex トークンを作り、mode 600 / flag wx でファイルを新規作成した。
+- 作成結果は `spike.secrets.json created (mode 600)`。
+- cf deploy のバインディング表示では `SPIKE_TOKEN ("(hidden)")`。
+- トークンの値は共有されていない。公開記録にも書かない。
+- H-2 完了。
+
+### ビルド・イメージ登録・デプロイ
+
+| 項目 | 実行結果 |
+|---|---|
+| 構成 | SPIKE_CPU_MS=50、cf@1.0.0-beta.28、spike/ の構成 |
+| cf build | 成功。Vite 19 ms、Docker の表示 2.2 秒 (主要レイヤーはキャッシュ済み) |
+| ローカルのイメージ ID | sha256:03d889b3fe26b5bd2ebaa766ab30caf01eaf5bfb76c49fefb17edf3d8fd107a7 |
+| 今回のビルドのタグ | cloudflare-build/b8366d8bfb35/raft-game-spike-server-server:c4818d2dac5b |
+| イメージ登録 | Image does not exist remotely のため push。Login Succeeded、2 レイヤーが Pushed |
+| レジストリの manifest digest | sha256:a5a5726ea808fe8bee6bbb4507065a514341f2bef67646cdd7f086ea68cf67d5 |
+| manifest の表示サイズ | 738 bytes。イメージ全体の大きさとは区別する |
+| イメージのローカルの大きさ | 前段で 10.5 MB と表示されたものと同じイメージ ID。今回の push ログにイメージ全体の大きさの再表示はない |
+| DO の exports reconciliation | ControlStore / PlainStore / SpikeSession を Created |
+| Worker Startup Time | 2 ms。Go コンテナの準備完了時間ではない |
+| Worker の upload | 27.32 KiB / gzip 8.83 KiB、Uploaded raft-game-spike (26.76 sec) |
+| triggers の deploy | Deployed raft-game-spike triggers (0.60 sec) |
+| 公開 URL | https://raft-game-spike.kizuku.workers.dev |
+| Version ID | b402a25d-9b2d-418d-b710-f577294a7eb9 |
+| fish の time | wall 33.77 秒、usr 1.30 秒、sys 0.27 秒 |
+| healthz | GET /spike/healthz が {"ok":true} |
+| 判定 | H-3 完了。実デプロイと入口の応答を確認 |
+
+レジストリのアカウント ID は転載しない。イメージのパスは `registry.cloudflare.com/<account-id>/cloudflare-build/b8366d8bfb35/raft-game-spike-server-server`。push と準備完了の表示は同じ digest を指していた。
+
+cf build と cf deploy は、ローカルのビルド用タグ c537d571e688 と c4818d2dac5b をそれぞれ Untagged と表示した。ローカルでの削除は、後片付け時に実際に残っているタグ・ID を確認して行う。
+
+healthz は DO を呼ばないため、コンテナの起動・WS・SQLite・負荷の測定が成功したとはまだ扱わない。
+
+### 次の手順: H-4 の lite の初回測定
+
+クラウドでの測定は初回。ローカルの s-1〜s-5 はクラウドとは別の状態なので、クラウドでは --first 1 から始める。
+
+リポジトリのルートで、デプロイに使ったファイルからトークンを環境変数に読み込んで実行する。トークンは作り直さず、画面にも表示しない。
+
+```fish
+set -gx SPIKE_TOKEN (node -p 'JSON.parse(require("node:fs").readFileSync("spike/spike.secrets.json","utf8")).SPIKE_TOKEN')
+and node spike/scripts/measure.ts \
+  --base https://raft-game-spike.kizuku.workers.dev \
+  --instance lite --runs 10 --first 1 \
+  --out spike/.cloudflare/lite.json
+printf 'measure exit status: %s\n' $status
+```
+
+- 標準的な割り当てではクラウドの s-1〜s-9 を使う。実際の使用番号は結果の sessions を正とする。
+- 測定は README の目安で約 10 分。WS 無通信 120 秒、alarm 75 秒、inactivity 60 秒、loop 各速度 20 秒などの待ち時間を含む。
+- この実行に --internet-control は付けない。enableInternet: true の対照は未使用の番号を選んで別に実行する。
+- 結果は spike/.cloudflare/lite.json。終了までのコンソール出力・終了コードと JSON を受け取って確認する。
+- 再実行は、使用済み番号と起動回数を確認してから案内する。同じ --first 1 のまま測り直しても起動回数のカウンターはリセットされない。
+- stop の失敗があれば、性能の比較より先に対象番号の停止を確認する。
+
+このコマンドは次に案内したもので、クラウド測定の実行結果はまだ受け取っていない。standard-1 と M-9 の対照は lite の結果を確認してから進める。
 
 ## 測定前に確定・確認する事項
 
