@@ -8,7 +8,8 @@ import (
 )
 
 // M2 の完了条件「greedy で Stage 1 の★1 が 90% 以上のシードで取れる」を確かめる（T-207 の GR-1 の割合の確認）。
-// 今の値では満たせないので、ビルドタグ balance を付けて必須のテスト（CI）から外している。原因は別の Issue で調べ、値の調整は T-501 で行う。
+// ビルドタグ balance を付けて必須のテスト（CI）から外している（T-207 の時点では 0/1000 だったため）。
+// 0/1000 の原因は greedy の積み込み（直行の手紙を先に選び、遠い島宛ての MsgApp が港で溢れた）で、T-207b（#203）で直した。値の調整は T-501 で行う。
 //
 //	go -C server test -tags balance -count=1 -run Greedy -v ./internal/stage/...
 func TestRepoGreedyStage1Balance(t *testing.T) {

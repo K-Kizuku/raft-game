@@ -141,7 +141,7 @@ func logGreedySummary(t *testing.T, id string, runs []greedyRun) {
 
 // GR-1 Stage 1 がどのシードでもエラー・不変条件の違反なしで最後まで動く。★の割合は比べず、集計を出すだけ。
 // ★1 が 90% 以上のシードで取れるか（M2 の完了条件）は、repo_greedy_balance_test.go（ビルドタグ balance）で確かめる。
-// 今の値では満たせないので、必須のテスト（CI）から外している（調整は T-501）。
+// T-207 の時点で満たせなかったため、必須のテスト（CI）から外している（原因は T-207b #203 で直した。調整は T-501）。
 func TestRepoGreedyStage1(t *testing.T) {
 	t.Parallel()
 	st := repoStage(t, "stage1")

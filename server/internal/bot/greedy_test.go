@@ -45,7 +45,36 @@ func TestGreedyPlan(t *testing.T) {
 		{
 			name: "G-1 direct and relay",
 			s:    snap(1000, 3, line, []sim.FerryView{docked("f1", 1, 4)}, g1Port),
-			want: []sim.Command{cmdAutoload("f1", 2), cmdLoad("f1", []uint64{2}), cmdDepart("f1", 2)},
+			want: []sim.Command{cmdLoad("f1", []uint64{2}), cmdAutoload("f1", 2), cmdDepart("f1", 2)},
+		},
+		{
+			// 直行の手紙だけで空きが埋まっても、順位が同じで ID の小さい経由の手紙を先に選ぶ（#203）。
+			name: "G-12 relay not starved by direct",
+			s: snap(1000, 3, line, []sim.FerryView{docked("f1", 1, 2)}, []sim.LetterView{
+				inPort(1, "append", 1, 3), inPort(2, "append", 1, 2), inPort(3, "append", 1, 2), inPort(4, "append_probe", 1, 3),
+			}),
+			want: []sim.Command{cmdLoad("f1", []uint64{1}), cmdAutoload("f1", 2), cmdDepart("f1", 2)},
+		},
+		{
+			name: "G-12 relay before direct by rank",
+			s: snap(1000, 3, line, []sim.FerryView{docked("f1", 1, 2)}, []sim.LetterView{
+				inPort(1, "append", 1, 2), inPort(2, "append", 1, 2), inPort(3, "request", 1, 3), inPort(4, "append", 1, 3),
+			}),
+			want: []sim.Command{cmdLoad("f1", []uint64{3}), cmdAutoload("f1", 2), cmdDepart("f1", 2)},
+		},
+		{
+			name: "G-12 direct before relay by rank",
+			s: snap(1000, 3, line, []sim.FerryView{docked("f1", 1, 2)}, []sim.LetterView{
+				inPort(1, "heartbeat", 1, 3), inPort(2, "append", 1, 2), inPort(3, "append", 1, 2),
+			}),
+			want: []sim.Command{cmdAutoload("f1", 2), cmdDepart("f1", 2)},
+		},
+		{
+			name: "G-12 relay fills all",
+			s: snap(1000, 3, line, []sim.FerryView{docked("f1", 1, 2)}, []sim.LetterView{
+				inPort(1, "append", 1, 3), inPort(2, "append", 1, 3), inPort(3, "heartbeat", 1, 2),
+			}),
+			want: []sim.Command{cmdLoad("f1", []uint64{1, 2}), cmdDepart("f1", 2)},
 		},
 		{
 			name: "G-2 heavier letter",
