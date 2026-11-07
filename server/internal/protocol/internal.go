@@ -17,6 +17,9 @@ type InternalInitPayload struct {
 type InternalRestorePayload struct {
 	InternalInitPayload `tstype:",extends"`
 	InputLog            InputLog `json:"inputLog"`
+	// Until は復元で最後に進める時刻（ゲーム内のミリ秒）。0 か省略なら入力ログの最後のコマンドの t。
+	// DO は最後に中継した clock.t を入れる。
+	Until int64 `json:"until,omitempty"`
 }
 
 // InputLog は入力ログ（DesignDoc §10.1）。
