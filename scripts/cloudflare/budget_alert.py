@@ -20,6 +20,8 @@
 - `cf` は環境変数 `CF` があれば `shlex.split` した値、なければ `<根>/web/node_modules/.bin/cf`
   を、リポジトリの根を作業ディレクトリにして呼ぶ（子の環境に `CF_SEND_TELEMETRY=false`）
 - `--check`・`--apply` は環境変数 `CLOUDFLARE_ACCOUNT_ID` が必要
+- `list` が `[1003] spend policy not found`（404）で失敗したときは、ポリシーが 0 件とみなす
+  （Issue #223）。ほかの失敗は今までどおり失敗にする
 - 終了コード: 成功 0、違反・cf の失敗・反映の後の差・確認の拒否 1、使い方の誤り 2
 - アドレスはリポジトリに書かない（引数か環境変数で渡す）
 
@@ -55,6 +57,9 @@ THRESHOLD_RE = re.compile(r"^[0-9]+$")
 # 自分のポリシーで比べるフィールド（name は探すのに使う）。
 COMPARE_FIELDS = ("action", "enabled", "product_id", "threshold_cents", "notification_email")
 SPEND_POLICIES = ("billing", "spend-policies")
+# ポリシーが 0 件のとき、`list` が空の配列ではなく 404 のこの文を返すことがある（ベータ版の API の癖。
+# T-607b / Issue #223）。`list` でこの文のときだけ 0 件とみなし、ほかの失敗（403 など）は失敗にする。
+POLICY_NOT_FOUND_RE = re.compile(r"\[1003\]\s*spend policy not found", re.IGNORECASE)
 
 
 class UsageError(Exception):
@@ -199,6 +204,11 @@ def body_json(body: Dict[str, Any]) -> str:
     return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
 
 
+def is_policy_not_found(text: str) -> bool:
+    """cf の失敗の出力が `[1003] spend policy not found` か。"""
+    return bool(POLICY_NOT_FOUND_RE.search(text))
+
+
 # ---------------------------------------------------------------------------
 # cf の呼び出し
 # ---------------------------------------------------------------------------
@@ -213,6 +223,13 @@ def cf_command() -> List[str]:
 
 def run_cf(args: Sequence[str]) -> str:
     """cf を呼び、標準出力を返す。失敗したら cf の文を標準エラーに出して Failure。"""
+    out = call_cf(args, not_found_ok=False)
+    assert out is not None
+    return out
+
+
+def call_cf(args: Sequence[str], not_found_ok: bool) -> Optional[str]:
+    """run_cf の本体。not_found_ok が真で、失敗の出力が `[1003] spend policy not found` のときは None を返す。"""
     cmd = cf_command() + list(SPEND_POLICIES) + list(args)
     env = dict(os.environ)
     env["CF_SEND_TELEMETRY"] = "false"
@@ -220,12 +237,15 @@ def run_cf(args: Sequence[str]) -> str:
         proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
     except OSError as e:
         raise Failure(f"cf を実行できない（{cmd[0]}）: {e}。pnpm install の後に実行するか、環境変数 CF を設定する")
+    label = " ".join(["cf"] + list(SPEND_POLICIES) + list(args[:1]))
+    if proc.returncode != 0 and not_found_ok and is_policy_not_found((proc.stderr or "") + "\n" + (proc.stdout or "")):
+        warn(f"{label} が [1003] spend policy not found を返した。ポリシーは 0 件とみなす")
+        return None
     if proc.stderr:
         sys.stderr.write(proc.stderr)
     if proc.returncode != 0:
         if proc.stdout:
             sys.stderr.write(proc.stdout)
-        label = " ".join(["cf"] + list(SPEND_POLICIES) + list(args[:1]))
         raise Failure(f"{label} が失敗した（終了コード {proc.returncode}）")
     return proc.stdout
 
@@ -238,7 +258,10 @@ def parse_json(text: str, what: str) -> Any:
 
 
 def list_policies() -> List[Dict[str, Any]]:
-    data = parse_json(run_cf(["list"]), "cf billing spend-policies list")
+    out = call_cf(["list"], not_found_ok=True)
+    if out is None:
+        return []
+    data = parse_json(out, "cf billing spend-policies list")
     if not isinstance(data, list):
         raise Failure("cf billing spend-policies list の出力が配列でない")
     return data
