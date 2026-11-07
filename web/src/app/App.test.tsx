@@ -2,7 +2,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
+import miniRecord from "../net/fixtures/mini-record.json";
+import miniStage from "../net/fixtures/mini-stage.json";
+import type { ConnectionHandlers, ConnectionStatus, GameConnection } from "../net/index.ts";
+import { parseRecord, snapshotFromRecord } from "../net/mock/record.ts";
+import { placeholderRoundResult } from "../net/mock/server.ts";
+import type { StageView } from "../protocol/index.ts";
+import { gameStore } from "../state/index.ts";
 import { App, type AppDeps } from "./App.tsx";
+import { createRoundConnector, type RoundConnector } from "./game/connector.ts";
 import type { SessionRequest } from "./session/api.ts";
 import {
   SESSION_ERROR_MESSAGES,
@@ -102,8 +110,28 @@ function seeds() {
   return vi.fn<AppDeps["newSeed"]>(() => ++next);
 }
 
+// セッションがあれば server、無ければ offline（テストの MODE と同じ）で、本物の WebSocket を開かない接続。
+function inertConnector(): RoundConnector {
+  const status: ConnectionStatus = { state: "idle", attempt: 0, reason: null };
+  return createRoundConnector({
+    mockEnabled: false,
+    openServer: () => ({
+      source: "server",
+      connection: {
+        start() {},
+        close() {},
+        sendCommand: () => new Promise(() => {}),
+        setEngineerSubscription() {},
+        getStatus: () => status,
+      },
+      dispose() {},
+    }),
+  });
+}
+
 type TestDeps = {
   loadStages: Mock<AppDeps["loadStages"]>;
+  connector: RoundConnector;
   postSession: PostSessionMock;
   turnstile: FakeTurnstile | null;
   newSeed: Mock<AppDeps["newSeed"]>;
@@ -113,6 +141,7 @@ type TestDeps = {
 function renderApp(overrides: Partial<TestDeps> = {}): TestDeps {
   const deps: TestDeps = {
     loadStages: stagesLoader(),
+    connector: inertConnector(),
     postSession: sessionPoster(),
     turnstile: fakeTurnstile(),
     newSeed: seeds(),
@@ -461,6 +490,57 @@ describe("App", () => {
     const h1 = heading();
     expect(h1.textContent).toBe("ステージ選択");
     expect(document.activeElement).toBe(h1);
+  });
+
+  it("AP-10 reset() は「同じ条件でもう一度」で呼び、ラウンドの終わりでは呼ばない", async () => {
+    const record = parseRecord(miniRecord);
+    const opened: { handlers: ConnectionHandlers; worldAtOpen: unknown; resultAtOpen: unknown }[] =
+      [];
+    const status: ConnectionStatus = { state: "ready", attempt: 1, reason: null };
+    const connection: GameConnection = {
+      start() {},
+      close() {},
+      sendCommand: () => new Promise(() => {}),
+      setEngineerSubscription() {},
+      getStatus: () => status,
+    };
+    // セッションの無いラウンドでも開く（開発のモックの代わり）。
+    const connector: RoundConnector = {
+      modeOf: () => "mock",
+      open(_session, handlers) {
+        const state = gameStore.getState();
+        opened.push({ handlers, worldAtOpen: state.world, resultAtOpen: state.roundResult });
+        return { source: "mock", connection, dispose() {} };
+      },
+    };
+    const finishRound = () => {
+      const handlers = opened.at(-1)?.handlers;
+      act(() => {
+        handlers?.onSnapshot(snapshotFromRecord(record, { stage: miniStage as StageView }), 0);
+        handlers?.onRoundResult?.(placeholderRoundResult(record));
+      });
+    };
+    gameStore.getState().reset();
+    renderApp({ connector });
+
+    clickLink("遊ぶ");
+    await choose("はじめての郵便船");
+    await waitForPath("/stages/stage1");
+    clickButton("出航する");
+    expect(window.location.pathname).toBe("/play");
+    expect(opened).toHaveLength(1);
+    finishRound();
+    expect(window.location.pathname).toBe("/result");
+    expect(gameStore.getState().roundResult).not.toBeNull();
+    expect(gameStore.getState().world).not.toBeNull();
+
+    clickButton("同じ条件でもう一度");
+    await waitForPath("/play");
+    expect(opened).toHaveLength(2);
+    expect(opened[1]?.worldAtOpen).toBeNull();
+    expect(opened[1]?.resultAtOpen).toBeNull();
+    expect(gameStore.getState().roundResult).toBeNull();
+    gameStore.getState().reset();
   });
 
   it("AP-9 popstate で画面が変わる", () => {

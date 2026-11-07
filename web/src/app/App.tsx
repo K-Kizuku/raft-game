@@ -10,9 +10,12 @@ import {
   type ReactElement,
 } from "react";
 
+import { gameStore } from "../state/index.ts";
 import { fetchStages } from "./api/stages.ts";
 import { CreditsScreen } from "./credits/CreditsScreen.tsx";
+import { MOCK_ENABLED, withMockStage } from "./dev/mockMode.ts";
 import { flowReducer, initialFlowState, nextStageOf } from "./flow.ts";
+import { defaultRoundConnector, type RoundConnector } from "./game/connector.ts";
 import { GameScreen } from "./game/GameScreen.tsx";
 import { HowToScreen } from "./howto/HowToScreen.tsx";
 import { ResultScreen } from "./result/ResultScreen.tsx";
@@ -43,13 +46,23 @@ export { TITLE } from "./constants.ts";
 
 export type AppDeps = {
   loadStages: (signal: AbortSignal) => Promise<StageCatalogEntry[]>;
+  connector: RoundConnector; // 既定 defaultRoundConnector
   postSession: (request: SessionRequest) => Promise<SessionHandle>; // 既定: createSession
   turnstile: TurnstileClient | null; // 既定: TURNSTILE_SITE_KEY があれば createTurnstileClient、なければ null
   newSeed: () => number; // 既定: randomSeed
   allowOffline: boolean; // 既定: import.meta.env.DEV
 };
 
-const defaultLoadStages: AppDeps["loadStages"] = (signal) => fetchStages({ signal });
+const fetchStageList: AppDeps["loadStages"] = (signal) => fetchStages({ signal });
+
+// 開発（make dev）では、一覧の末尾に記録を再生する開発用のステージを足す。
+// 本番のビルドでは MODE の比較が偽に決まり、モックの動的 import ごと消える。
+const defaultLoadStages: AppDeps["loadStages"] =
+  import.meta.env.MODE === "development" && MOCK_ENABLED
+    ? withMockStage(fetchStageList, () =>
+        import("./dev/mockRound.ts").then((m) => m.mockStageSummary()),
+      )
+    : fetchStageList;
 const defaultPostSession: AppDeps["postSession"] = (request) => createSession(request);
 const defaultNewSeed: AppDeps["newSeed"] = () => randomSeed();
 
@@ -63,6 +76,7 @@ function resolveDeps(deps: Partial<AppDeps> | undefined): AppDeps {
   }
   return {
     loadStages: deps?.loadStages ?? defaultLoadStages,
+    connector: deps?.connector ?? defaultRoundConnector,
     postSession: deps?.postSession ?? defaultPostSession,
     turnstile,
     newSeed: deps?.newSeed ?? defaultNewSeed,
@@ -122,7 +136,7 @@ export function App(props: { deps?: Partial<AppDeps> } = {}): ReactElement {
 }
 
 function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
-  const [{ loadStages, postSession, turnstile, newSeed, allowOffline }] = useState(() =>
+  const [{ loadStages, connector, postSession, turnstile, newSeed, allowOffline }] = useState(() =>
     resolveDeps(deps),
   );
   const route = useRoute();
@@ -260,6 +274,8 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
 
   function onDepart(stage: StageSummary): void {
     if (reusableSession(stage.id)) {
+      // 前のラウンドの world・roundResult を消してから、新しいラウンドを始める。
+      gameStore.getState().reset();
       dispatch({ type: "departed", stage });
       navigate({ name: "game" }, { replace: true });
       return;
@@ -267,6 +283,7 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
     const seed = newSeed();
     void startSession(stage, seed, (session) => {
       dispatch({ type: "stageSelected", selection: { stageId: stage.id, session, seed } });
+      gameStore.getState().reset();
       dispatch({ type: "departed", stage });
       navigate({ name: "game" }, { replace: true });
     });
@@ -276,6 +293,7 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
     // 1 つのセッションは 1 ラウンドだけなので、必ず作り直す。シードは前のラウンドと同じ。
     const seed = round.seed ?? newSeed();
     void startSession(round.stage, seed, (session) => {
+      gameStore.getState().reset();
       dispatch({ type: "retried", session, seed });
       navigate({ name: "game" }, { replace: true });
     });
@@ -364,6 +382,7 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
         return (
           <GameScreen
             round={round}
+            connector={connector}
             onRoundEnd={() => {
               dispatch({ type: "roundEnded" });
               navigate({ name: "result" }, { replace: true });

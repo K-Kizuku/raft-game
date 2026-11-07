@@ -1336,7 +1336,20 @@ T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.
 | （重ねて表示） | `DemoKeys`（`web/src/ui/demo/DemoKeys.tsx`） | T-411 |
 | （重ねて表示） | `TutorialOverlay`（`web/src/app/tutorial/TutorialOverlay.tsx`、`stageId` を受ける） | T-409 |
 
-WS の接続（T-402 の `createGameConnection`）とストア（T-403 の `gameStore`）を `GameScreen` につなぎ、`round.result` で `onRoundEnd` を呼ぶのは、後続のタスクです。`RoundContext.session`・`seed` を入れるのは、下の「セッションの作成（T-413）」です。
+**パネルが共有する部品**
+
+- `web/src/ui/commands/`（`GameCommandProvider`・`useGameCommand`・`GameCommandSender`）: パネルからコマンドを送る Context。Provider の外・接続していないときは `null` で、パネルは操作を無効にする。`GameScreen` が包む
+- `web/src/ui/letters/`（`LETTER_KINDS`・`letterKind`・`LetterIcon`）: 手紙の種類ごとの名前・色・形の表と DOM のアイコン（[04-game-design.md §2.1](./04-game-design.md)）。§13.3 のとおり、1 通ずつのアイコンは DOM のパネルに出し、マップは宛先別の山と数だけを描く
+
+**WS の接続とストア**
+
+`GameScreen` は `useRoundConnection`（`web/src/app/game/`）で接続を 1 本作り（作り方は `connector.ts` の `RoundConnector`）、`onSnapshot`・`onEvents` をストアの `applySnapshot`・`applyEvents` に、`onNodeDetail` を `setNodeDetail` に渡します。画面が決めるのは `cmd.game.start` を送る時期だけで、ゲーム画面で受けた `intro` のスナップショットで送ります（結果を待つ間は送らず、1 つまで。失敗したら次の `intro` で送り直す。`intro` 以外では送らない）。`round.result` を受けたら `setRoundResult` の後に `onRoundEnd` を呼びます。ストアの `reset()` は「出航する」「同じ条件でもう一度」（App が呼ぶ）と、ゲームの途中で画面を離れたとき（フックの片付け）に呼び、ラウンドの終わりからリザルトへ進むときは呼びません（リザルトが `roundResult` を読むため）。接続の状態（接続中・再接続中・あきらめた理由）は画面に出し、あきらめたときは「ステージ選択へ」を出します。パネルには `GameCommandProvider` で `sendCommand` を渡し、接続が `ready`・`syncing` の間だけ操作できます。エンジニアパネルには `EngineerSubscriptionProvider`（`web/src/ui/engineer/`）で接続の `setEngineerSubscription` を渡します。
+
+**開発用のモック**
+
+`make dev`（Vite の `MODE` が `development`）では、セッションの無いラウンドを、記録を再生するモック（`web/src/app/dev/`、[06-protocol.md §10.6](./06-protocol.md)）で遊べます。ステージの一覧の末尾に開発用のステージ（今は T-402 の手で書いた記録。`mini`）を足します（一覧に同じ `id` があるとき・一覧の読み込みに失敗したときは足さない）。`VITE_GAME_MOCK=off make dev` で止められます。モックと記録は動的 import でだけ読み、本番のビルドには入りません。モックの値（スコア・リザルト）は仮の値なので、画面の確認に使いません。開発用のステージも、選ぶと下の「セッションの作成（T-413）」を通ります。Worker の一覧に無い `id` なのでセッションは作られず（`400 bad_request`）、「サーバーなしで進む（開発用）」で `session: null` のまま進むと、モックで遊べます。
+
+`RoundContext.session`・`seed` を入れるのは、下の「セッションの作成（T-413）」です。
 
 **セッションの作成（T-413）**
 
