@@ -682,6 +682,9 @@ func (e *evaluator) c10() {
 	switch {
 	case c == nil:
 		e.add("C10", Fail, "ベースとの比較の結果がない")
+	case c.BehindBy > 0 && !e.cfg.RequireUpToDate():
+		// merge.require_up_to_date が false: 遅れていても pass（C9・C4 は別に判定する。Issue #239）
+		e.add("C10", Pass, "%s より %d コミット遅れている（merge.require_up_to_date=false のため許す）", e.cfg.DefaultBranch, c.BehindBy)
 	case c.BehindBy > 0:
 		e.add("C10", Fail, "%s より %d コミット遅れている（最新の %s を取り込む）", e.cfg.DefaultBranch, c.BehindBy, e.cfg.DefaultBranch)
 	case c.BehindBy < 0:
