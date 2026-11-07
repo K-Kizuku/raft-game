@@ -1,8 +1,8 @@
 # ADR-0028: ブラウザでのリプレイは、同じ Go のコード（`sim`）を WebAssembly にしてブラウザで再シミュレーションし、出てきた記録を web の記録の再生で流す
 
-- 状態: Proposed
+- 状態: Accepted（2026-11-08 にプロダクトオーナーが案 A を承認。#312）
 - 日付: 2026-11-08
-- 決めた人: オーナーの判断待ち（案は Claude。T-720・#301）
+- 決めた人: プロダクトオーナー（2026-11-08 に案 A を承認）、Claude（案。T-720・#301）
 - 関連: FR-LOG-03・FR-LOG-04・FR-LOG-05・FR-LOG-06、V-6、T-714（#271）・T-719（#299）、[ADR-0009](./0009-server-authoritative-simulation-over-websocket.md)・[ADR-0016](./0016-infrastructure-cloudflare-with-cf-cli.md)・[ADR-0017](./0017-persist-input-log-in-durable-object.md)・[ADR-0018](./0018-cost-guard.md)・[ADR-0025](./0025-stage-data-source.md)、[DesignDoc §10・§13.5](../03-design-doc.md#10-記録リプレイ)
 
 ## 背景
