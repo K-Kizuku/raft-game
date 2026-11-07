@@ -2,12 +2,11 @@
 // 選んだステージを onSelect で渡すだけ。Turnstile とセッションの作成は App が行う（T-413）。
 // 作成中（busy）は、すべての「<タイトル>を選ぶ」を押せなくする。
 // 各ステージに紹介文・出典区分・出典を出す（T-416）。学べることは紹介の画面だけに出す。
-// 未解放のステージは鍵つきで押せず、クリア済みのステージには最高の★を出す（T-703・DesignDoc §13.9）。
-import { useId, type ReactElement } from "react";
+// どのステージも最初から選べる。クリア済みのステージには最高の★を印として出す（T-703b・DesignDoc §13.9）。
+import type { ReactElement } from "react";
 
 import { formatDuration } from "../format.ts";
 import { useStageProgress, type StageProgress } from "../progress/progress.ts";
-import { lockStateOf, wantsUnlockAll } from "../progress/unlock.ts";
 import { Link } from "../router/Link.tsx";
 import { StageIntroText } from "../stage-intro/StageIntroText.tsx";
 import type { StageCatalogEntry, StageCatalogState, StageSummary } from "../types.ts";
@@ -38,7 +37,6 @@ function StageCatalogBody({
   busy,
 }: StageSelectScreenProps): ReactElement {
   const progress = useStageProgress();
-  const unlockAll = wantsUnlockAll();
   switch (catalog.status) {
     case "loading":
       return (
@@ -58,9 +56,7 @@ function StageCatalogBody({
             <StageCard
               key={stage.id}
               stage={stage}
-              stages={catalog.stages}
               progress={progress}
-              unlockAll={unlockAll}
               onSelect={onSelect}
               busy={busy}
             />
@@ -72,28 +68,20 @@ function StageCatalogBody({
 
 function StageCard({
   stage,
-  stages,
   progress,
-  unlockAll,
   onSelect,
   busy,
 }: {
   stage: StageCatalogEntry;
-  stages: readonly StageCatalogEntry[];
   progress: StageProgress;
-  unlockAll: boolean;
   onSelect: (stage: StageSummary) => void;
   busy: boolean;
 }): ReactElement {
-  const lockId = useId();
-  const lock = lockStateOf(stage, stages, progress, unlockAll);
+  // 保存した記録が壊れていても選べる（印を出さないだけ。progress.ts が壊れた要素を捨てる）。
   const stars = progress.bestStars[stage.id];
   return (
-    <li className="stage-select-item" data-locked={lock.locked ? "true" : undefined}>
-      <h2>
-        {lock.locked && <span aria-hidden="true">🔒</span>}
-        {stage.title}
-      </h2>
+    <li className="stage-select-item">
+      <h2>{stage.title}</h2>
       <p className="stage-select-region">{stage.region}</p>
       <StageIntroText intro={stage.intro} />
       <p className="stage-select-facts">
@@ -101,22 +89,15 @@ function StageCard({
         <span className="stage-select-fact">船 {stage.ferries} 隻</span>・
         <span className="stage-select-fact">制限時間 {formatDuration(stage.durationMs)}</span>
       </p>
-      {lock.locked ? (
-        <p className="stage-select-lock" id={lockId}>
-          「{lock.requires.title}」を★1 以上でクリアすると遊べます。
+      {stars !== undefined && (
+        <p className="stage-select-cleared" aria-label={`クリア済み、★ ${stars} / 3`}>
+          クリア済み ★{stars}
         </p>
-      ) : (
-        stars !== undefined && (
-          <p className="stage-select-cleared" aria-label={`クリア済み、★ ${stars} / 3`}>
-            クリア済み ★{stars}
-          </p>
-        )
       )}
       <button
         type="button"
         className="btn btn-primary stage-select-choose"
-        disabled={busy || lock.locked}
-        aria-describedby={lock.locked ? lockId : undefined}
+        disabled={busy}
         onClick={() => onSelect(stage)}
       >
         {stage.title}を選ぶ
