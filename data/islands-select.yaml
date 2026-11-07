@@ -1,6 +1,9 @@
 # islandsdata（server/cmd/islandsdata）の設定: 出典の情報と、使う島（データ仕様 §2.6・§3.2）。
 # 島は (prefecture, designatedArea, name) で D1 から探し、municipalities と照合する。
-# plan.region は離島振興計画書（D2）の DESIGNATED_REGION_NAME。分からない島には plan を書かない。
+# plan.region は離島振興計画書（D2）の DESIGNATED_REGION_NAME（実データの値をそのまま書く）。
+# D2 にその島を含む地域がない島（直島）には plan を書かない。
+# plan.islandName は、D2 の ISLAND_NAME に島の名前が個別に書かれていないとき、代わりに照合する名前
+# （長崎県の ISLAND_NAME は「…中通島、五島列島、…を含む長崎県の離島地域」なので、福江島・奈留島は 五島列島）。
 format: 1
 generatedAt: "2026-11-07"
 dataset: mlit-ritou-2026
@@ -15,16 +18,16 @@ islands:
   - { id: kagawa-shodoshima, prefecture: 香川県, name: 小豆島, designatedArea: 小豆島, municipalities: [小豆島町, 土庄町], plan: { region: 小豆島地域 } }
   - { id: kagawa-teshima, prefecture: 香川県, name: 豊島, designatedArea: 小豆島, municipalities: [土庄町], plan: { region: 小豆島地域 } }
   - { id: kagawa-naoshima, prefecture: 香川県, name: 直島, designatedArea: 直島諸島, municipalities: [直島町] }
-  - { id: nagasaki-fukue, prefecture: 長崎県, name: 福江島, designatedArea: 五島列島, municipalities: [五島市], plan: { region: 長崎県 } }
-  - { id: nagasaki-naru, prefecture: 長崎県, name: 奈留島, designatedArea: 五島列島, municipalities: [五島市], plan: { region: 長崎県 } }
-  - { id: nagasaki-nakadori, prefecture: 長崎県, name: 中通島, designatedArea: 五島列島, municipalities: [新上五島町], plan: { region: 長崎県 } }
+  - { id: nagasaki-fukue, prefecture: 長崎県, name: 福江島, designatedArea: 五島列島, municipalities: [五島市], plan: { region: 離島振興対策実施地域, islandName: 五島列島 } }
+  - { id: nagasaki-naru, prefecture: 長崎県, name: 奈留島, designatedArea: 五島列島, municipalities: [五島市], plan: { region: 離島振興対策実施地域, islandName: 五島列島 } }
+  - { id: nagasaki-nakadori, prefecture: 長崎県, name: 中通島, designatedArea: 五島列島, municipalities: [新上五島町], plan: { region: 離島振興対策実施地域 } }
   - { id: tokyo-oshima, prefecture: 東京都, name: 大島, designatedArea: 伊豆諸島, municipalities: [大島町], plan: { region: 伊豆諸島地域 } }
   - { id: tokyo-toshima, prefecture: 東京都, name: 利島, designatedArea: 伊豆諸島, municipalities: [利島村], plan: { region: 伊豆諸島地域 } }
   - { id: tokyo-miyakejima, prefecture: 東京都, name: 三宅島, designatedArea: 伊豆諸島, municipalities: [三宅村], plan: { region: 伊豆諸島地域 } }
   - { id: tokyo-mikurajima, prefecture: 東京都, name: 御蔵島, designatedArea: 伊豆諸島, municipalities: [御蔵島村], plan: { region: 伊豆諸島地域 } }
   - { id: tokyo-hachijojima, prefecture: 東京都, name: 八丈島, designatedArea: 伊豆諸島, municipalities: [八丈町], plan: { region: 伊豆諸島地域 } }
   - { id: tokyo-aogashima, prefecture: 東京都, name: 青ヶ島, designatedArea: 伊豆諸島, municipalities: [青ヶ島村], plan: { region: 伊豆諸島地域 } }
-  - { id: niigata-sado, prefecture: 新潟県, name: 佐渡島, designatedArea: 佐渡島, municipalities: [佐渡市] }
-  - { id: hokkaido-rishiri, prefecture: 北海道, name: 利尻島, designatedArea: 利尻島, municipalities: [利尻町, 利尻富士町] }
-  - { id: shimane-dogo, prefecture: 島根県, name: 島後, designatedArea: 隠岐島, municipalities: [隠岐の島町] }
-  - { id: nagasaki-tsushima, prefecture: 長崎県, name: 対馬島, designatedArea: 対馬島, municipalities: [対馬市] }
+  - { id: niigata-sado, prefecture: 新潟県, name: 佐渡島, designatedArea: 佐渡島, municipalities: [佐渡市], plan: { region: 新潟県離島振興対策実施地域 } }
+  - { id: hokkaido-rishiri, prefecture: 北海道, name: 利尻島, designatedArea: 利尻島, municipalities: [利尻町, 利尻富士町], plan: { region: "礼文島地域、利尻島(利尻町)地域、利尻島(利尻富士町)地域、天売・焼尻地域、奥尻島地域、小島地域" } }
+  - { id: shimane-dogo, prefecture: 島根県, name: 島後, designatedArea: 隠岐島, municipalities: [隠岐の島町], plan: { region: 隠岐島 } }
+  - { id: nagasaki-tsushima, prefecture: 長崎県, name: 対馬島, designatedArea: 対馬島, municipalities: [対馬市], plan: { region: 離島振興対策実施地域 } }
