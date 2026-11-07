@@ -1002,6 +1002,7 @@ func (s *session) step(now time.Time) {
 - 一時停止の理由は 4 つ: プレイヤー（`cmd.game.pause`）・`cmd.game.skip`・復元（`internal.restore`）・切断。切断で止めたときだけ、つなぎ直したら自動で再開します。ほかの理由で止まったセッションは、つなぎ直しても止まったまま（プレイヤーが ▶ を送る）
 - `cmd.game.skip` はデモ操作が有効なセッションだけで受け付けます。次の出来事が 30 秒より先（か、ない）なら、進めずに止めます
 - `snapshot` を送る前に、保留のイベント（`DrainEvents` の残りを含む）を捨てます。`snapshot` は `lastSeq` までのイベントをすべて含むので、捨てないと二重に送ります。`standalone` では `hello` の `snapshot` まで `events` を送りません
+- `flush` は `DrainEvents` の結果を `noticer` に通し、`notice`（[ゲームデザイン §7.3](./04-game-design.md)）を差し込んで `seq` を振り直します。`snapshot` の `lastSeq` も同じ番号にし、`snapshot` を送るときに `noticer` の状態を `Snapshot` から作り直します
 - 送信キュー（容量 256）に 64 個以上あれば `events` を積まずに保留し、次回まとめて送ります（`ack` の入る余地を残すため）。保留が 1,000 件を超えたらイベント列を捨て、キューが空いたら代わりにスナップショットを送ります
 - コマンドのレート制限（1 セッションあたり 30 回/秒、§12.5）は Go でも数えます。超えたコマンドには `rate_limited` の `ack` を返し、`cmdId` のない電文は捨てます。どちらかで弾かれたコマンドは `ok: true` の `ack` を受けないので、入力ログは食い違いません
 - `single` の自動一時停止は、Durable Object がコンテナへの接続を閉じたときに働きます（ブラウザが切れたことを、Go はその接続の切断で知る）
