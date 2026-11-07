@@ -150,12 +150,16 @@ func TestRestoreMatchesReference(t *testing.T) {
 		if ack != wantAck {
 			t.Errorf("%s: ack = %+v, want %+v", cmd.Type, ack, wantAck)
 		}
+		// コマンドの後は、イベントがなくても events を送る（T-303）。
 		evs := ref.e.DrainEvents()
-		if len(evs) == 0 {
-			continue
-		}
 		var got protocol.EventsPayload
 		c.expect(protocol.MessageTypeEvents, &got)
+		if len(evs) == 0 {
+			if len(got.Events) != 0 {
+				t.Errorf("%s: events = %s, want []", cmd.Type, mustJSON(t, got.Events))
+			}
+			continue
+		}
 		if w := mustJSON(t, evs); mustJSON(t, got.Events) != w {
 			t.Errorf("%s: events =\n%s\nwant\n%s", cmd.Type, mustJSON(t, got.Events), w)
 		}

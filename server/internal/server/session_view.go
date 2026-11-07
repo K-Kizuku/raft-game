@@ -26,7 +26,7 @@ func (s *session) buildSnapshot() protocol.Snapshot {
 	c := s.clock()
 	p.Clock.Speed = c.Speed
 	p.Clock.Paused = c.Paused
-	p.Clock.AllowedSpeeds = allowedSpeeds(s.st)
+	p.Clock.AllowedSpeeds = allowedSpeeds(s.allowed)
 	p.Stage = stageView(s.st)
 	p.Score = protocol.Score{
 		Total:           0,
@@ -37,10 +37,10 @@ func (s *session) buildSnapshot() protocol.Snapshot {
 	return p
 }
 
-// allowedSpeeds は speed.allowed（千分率）を倍率にする（500 → 0.5）。8 倍速の追加は T-305。
-func allowedSpeeds(st *stage.Stage) []float64 {
-	out := make([]float64, len(st.SpeedAllowedPermille))
-	for i, v := range st.SpeedAllowedPermille {
+// allowedSpeeds は使える速度（千分率。allowedSpeedsPermille）を倍率にする（500 → 0.5、8000 → 8）。
+func allowedSpeeds(permille []int64) []float64 {
+	out := make([]float64, len(permille))
+	for i, v := range permille {
 		out[i] = float64(v) / 1000
 	}
 	return out
