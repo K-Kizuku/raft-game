@@ -272,12 +272,19 @@ export interface FerryRepairedEvent extends EventHeader {
   until: number /* int64 */;
 }
 /**
- * RouteBlockedEvent は route.blocked（嵐）。
+ * RouteBlockCauseCancellation は route.blocked の cause の欠航の値（FR-EVT-08）。
+ */
+export const RouteBlockCauseCancellation = "cancellation";
+/**
+ * RouteBlockedEvent は route.blocked（嵐・欠航）。
+ * cause・islandId は欠航のときだけ入れる（cause は RouteBlockCauseCancellation、islandId は欠航の島）。嵐では出さない。
  */
 export interface RouteBlockedEvent extends EventHeader {
   type: typeof EventTypeRouteBlocked;
   routeIds: string[];
   until: number /* int64 */;
+  cause?: string;
+  islandId?: number /* uint64 */;
 }
 /**
  * RouteUnblockedEvent は route.unblocked（嵐が去った）。

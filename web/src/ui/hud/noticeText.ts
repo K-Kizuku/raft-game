@@ -16,6 +16,7 @@ export const NOTICE_KEYS: readonly string[] = Object.freeze([
   "storm.forecast",
   "rush.forecast",
   "ferry.broken",
+  "route.cancelled",
 ]);
 
 // 島の名前（ステージに無ければ「島 id」）。
@@ -60,7 +61,7 @@ function ferryName(world: World, ferryId: unknown): string {
   return name === undefined || name === "" ? "船" : name;
 }
 
-// 故障で出られない長さ（「20 秒」）。until から notice.t を引いて秒に切り上げる（1 以上）。until が有限の数でなければ「しばらく」。
+// 故障・欠航で出られない長さ（「20 秒」）。until から notice.t を引いて秒に切り上げる（1 以上）。until が有限の数でなければ「しばらく」。
 function brokenLength(notice: NoticeView, until: unknown): string {
   if (typeof until !== "number" || !Number.isFinite(until)) return "しばらく";
   const seconds = Math.max(1, Math.ceil((until - notice.t) / 1000));
@@ -100,7 +101,7 @@ type Words = Readonly<{
   lead: () => string; // {lead}（「n 秒後に」か「まもなく」）
   sea: () => string; // {海域}
   ferry: () => string; // {船}
-  broken: () => string; // {n} 秒（故障で出られない長さ。分からなければ「しばらく」）
+  broken: () => string; // {n} 秒（故障・欠航で出られない長さ。分からなければ「しばらく」）
 }>;
 
 type Line = (w: Words) => string;
@@ -196,6 +197,14 @@ const LINES: ReadonlyMap<string, Readonly<Record<PostmasterTone, Line>>> = new M
       casual: (w) => `${w.ferry()}が故障してしまった…${w.broken()}は港から出られないよ`,
       polite: (w) => `${w.ferry()}が故障してしまいました…${w.broken()}は港から出られません`,
       elder: (w) => `${w.ferry()}が故障してしもうた…${w.broken()}は港から出られんのう`,
+    },
+  ],
+  [
+    "route.cancelled",
+    {
+      casual: (w) => `${w.sea()}の船は欠航だって…${w.broken()}は出られないよ`,
+      polite: (w) => `${w.sea()}の船は欠航です…${w.broken()}は出られません`,
+      elder: (w) => `${w.sea()}の船は欠航じゃ…${w.broken()}は出られんのう`,
     },
   ],
 ]);

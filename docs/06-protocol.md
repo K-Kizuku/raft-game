@@ -597,7 +597,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `ferry.departed` | `ferryId`, `from`, `to`, `departAt`, `arriveAt` | 出航 |
 | `ferry.arrived` | `ferryId`, `islandId`, `readyAt` | 到着 |
 | `ferry.broken` / `ferry.repaired` | `ferryId`, `until` | 船の故障（FR-EVT-03、T-715）。`ferry.broken` の `until` はこの時刻から出航できる（故障が延びたときももう一度出す）。`ferry.repaired` の `until` は直った時刻（= このイベントの `t`） |
-| `route.blocked` / `route.unblocked` | `routeIds`, `until` | 嵐 |
+| `route.blocked` / `route.unblocked` | `routeIds`, `until`（`route.blocked` だけ `cause`, `islandId` も） | 嵐と欠航（FR-EVT-08、T-717）。`route.blocked` は遮断が始まった・延びた航路で、`until` はこの時刻から出航できる。欠航のときだけ `cause: "cancellation"` と欠航の島 `islandId` を入れる（嵐では出さない）。`route.unblocked` は嵐と欠航を区別しない |
 | `forecast` | `event`, `at`, `routeIds`, `islandIds` | 予報。`event` は `storm`（嵐）か `rush`（注文ラッシュ、T-716）。ラッシュでは `routeIds` は `[]` で、`islandIds` は依頼が発生する島（ID の昇順）。`islandIds` はラッシュのときだけ入れる（嵐では出さない） |
 | `node.state` | `id`, `role`（`follower` / `pre_candidate` / `candidate` / `leader`）, `term`, `vote`（`HardState` の Vote。0 = 投票していない）, `lead`, `commit`, `applied`, `lastIndex` | いずれかの値が変わった（同じステップ内の変化はまとめる） |
 | `node.leader_elected` | `id`, `term` | 新しい Leader が誕生した（開会式を含む） |

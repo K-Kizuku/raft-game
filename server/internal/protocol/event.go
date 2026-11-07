@@ -203,12 +203,18 @@ type FerryRepairedEvent struct {
 	Until       int64     `json:"until"`
 }
 
-// RouteBlockedEvent は route.blocked（嵐）。
+// RouteBlockCauseCancellation は route.blocked の cause の欠航の値（FR-EVT-08）。
+const RouteBlockCauseCancellation = "cancellation"
+
+// RouteBlockedEvent は route.blocked（嵐・欠航）。
+// cause・islandId は欠航のときだけ入れる（cause は RouteBlockCauseCancellation、islandId は欠航の島）。嵐では出さない。
 type RouteBlockedEvent struct {
 	EventHeader `tstype:",extends"`
 	Type        EventType `json:"type" tstype:"typeof EventTypeRouteBlocked"`
 	RouteIDs    []string  `json:"routeIds"`
 	Until       int64     `json:"until"`
+	Cause       string    `json:"cause,omitempty"`
+	IslandID    uint64    `json:"islandId,omitempty"`
 }
 
 // RouteUnblockedEvent は route.unblocked（嵐が去った）。

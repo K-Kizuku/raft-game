@@ -30,10 +30,11 @@ type Config struct {
 	DurationMs    SimTime // ラウンドの長さ（durationMs）。この時刻に航行が終わる
 	Raft          RaftConfig
 	Routes        []ferry.RouteConfig
-	Storms        []game.StormDef     // 台本の嵐（events の kind: storm、書いた順）。nil は嵐なし
-	Breakdowns    []game.BreakdownDef // 台本の船の故障（events の kind: breakdown、書いた順）。nil は故障なし
-	Rushes        []game.RushDef      // 台本の注文ラッシュ（events の kind: rush、書いた順）。nil はラッシュなし
-	Drifts        []DriftDef          // 台本の漂流瓶（events の kind: drift、書いた順）。nil は漂流瓶なし
+	Storms        []game.StormDef        // 台本の嵐（events の kind: storm、書いた順）。nil は嵐なし
+	Cancellations []game.CancellationDef // 欠航（events の kind: cancellation、書いた順）。nil は欠航なし
+	Breakdowns    []game.BreakdownDef    // 台本の船の故障（events の kind: breakdown、書いた順）。nil は故障なし
+	Rushes        []game.RushDef         // 台本の注文ラッシュ（events の kind: rush、書いた順）。nil はラッシュなし
+	Drifts        []DriftDef             // 台本の漂流瓶（events の kind: drift、書いた順）。nil は漂流瓶なし
 	Ferries       []ferry.FerryConfig
 	DockMs        int64                // transport.dockMs
 	PortCap       int                  // transport.portCap
@@ -184,6 +185,9 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	}
 	e.tr = tr
 	if err := e.initStorms(seed); err != nil {
+		return nil, err
+	}
+	if err := e.initCancellations(seed); err != nil {
 		return nil, err
 	}
 	if err := e.initBreakdowns(seed); err != nil {

@@ -73,6 +73,7 @@ func SimConfig(st *Stage) (sim.Config, error) {
 		},
 		Routes:        routes,
 		Storms:        storms,
+		Cancellations: cancellationDefs(st),
 		Breakdowns:    breakdownDefs(st),
 		Rushes:        rushDefs(st),
 		Drifts:        driftDefs(st),
