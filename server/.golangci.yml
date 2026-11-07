@@ -31,8 +31,8 @@ linters:
           msg: 浮動小数点を使わない。整数（千分率など）で計算する（§9.2）
   exclusions:
     rules:
-      # forbidigo は、sim.Engine の中で動くパッケージだけに効かせる。
+      # forbidigo は、sim.Engine の中で動くパッケージと、ボット（入力ログを通して結果に効く）だけに効かせる。
       # 範囲を狭めるときは path-except の正規表現だけを変える（DesignDoc §9.2）。
-      - path-except: '^internal/(sim|cluster|ferry|ledger|game)/'
+      - path-except: '^internal/(sim|cluster|ferry|ledger|game|bot)/'
         linters:
           - forbidigo
