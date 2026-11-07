@@ -8,6 +8,7 @@ import { formatDuration } from "../format.ts";
 import { Link } from "../router/Link.tsx";
 import { StageIntroText } from "../stage-intro/StageIntroText.tsx";
 import type { StageCatalogState, StageSummary } from "../types.ts";
+import "./StageSelectScreen.css";
 
 export type StageSelectScreenProps = {
   catalog: StageCatalogState;
@@ -34,25 +35,37 @@ function StageCatalogBody({
 }: StageSelectScreenProps): ReactElement {
   switch (catalog.status) {
     case "loading":
-      return <p role="status">読み込み中…</p>;
+      return (
+        <p role="status" className="stage-select-message">
+          読み込み中…
+        </p>
+      );
     case "error":
       return <StageCatalogError onRetry={onRetry} />;
     case "ready":
       if (catalog.stages.length === 0) {
-        return <p>遊べるステージがありません。</p>;
+        return <p className="stage-select-message">遊べるステージがありません。</p>;
       }
       return (
         <ul className="stage-select-list">
           {catalog.stages.map((stage) => (
             <li key={stage.id} className="stage-select-item">
               <h2>{stage.title}</h2>
-              <p>{stage.region}</p>
+              <p className="stage-select-region">{stage.region}</p>
               <StageIntroText intro={stage.intro} />
-              <p>
-                <span>島 {stage.islands}</span>・<span>船 {stage.ferries} 隻</span>・
-                <span>制限時間 {formatDuration(stage.durationMs)}</span>
+              <p className="stage-select-facts">
+                <span className="stage-select-fact">島 {stage.islands}</span>・
+                <span className="stage-select-fact">船 {stage.ferries} 隻</span>・
+                <span className="stage-select-fact">
+                  制限時間 {formatDuration(stage.durationMs)}
+                </span>
               </p>
-              <button type="button" disabled={busy} onClick={() => onSelect(stage)}>
+              <button
+                type="button"
+                className="btn btn-primary stage-select-choose"
+                disabled={busy}
+                onClick={() => onSelect(stage)}
+              >
                 {stage.title}を選ぶ
               </button>
             </li>
@@ -64,9 +77,9 @@ function StageCatalogBody({
 
 function StageCatalogError({ onRetry }: { onRetry: () => void }): ReactElement {
   return (
-    <div role="alert">
+    <div role="alert" className="stage-select-message stage-select-error">
       <p>ステージの一覧を読み込めませんでした。</p>
-      <button type="button" onClick={onRetry}>
+      <button type="button" className="btn" onClick={onRetry}>
         もう一度読み込む
       </button>
     </div>

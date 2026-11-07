@@ -137,3 +137,21 @@ describe("StageIntroScreen の紹介文と学べること（T-416）", () => {
     expect(onDepart).toHaveBeenCalledTimes(busy ? 0 : 1);
   });
 });
+
+describe("StageIntroScreen の見た目（T-424）", () => {
+  it("地域名の切手・便箋の紹介・学べることのカードがあり、「出航する」は主ボタン。名前と順番は変わらない", () => {
+    render(<StageIntroScreen stage={STAGE2} onDepart={() => {}} busy={false} />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("島から返事が来ない！");
+    expect(screen.getByText("五島列島").className).toBe("stage-intro-region");
+    expect(screen.getByRole("region", { name: "島の紹介" }).className).toBe("stage-intro-letter");
+    expect(screen.getByRole("region", { name: "学べること" }).className).toBe(
+      "stage-intro-learning",
+    );
+    const depart = departButton();
+    expect(depart.classList.contains("btn")).toBe(true);
+    expect(depart.classList.contains("btn-primary")).toBe(true);
+    const back = screen.getByRole("link", { name: "ステージ選択へ戻る" });
+    expect(depart.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+});

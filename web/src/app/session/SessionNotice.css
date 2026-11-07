@@ -1,0 +1,55 @@
+/* セッションの作成の状態の表示（T-424・docs/11-visual-design.md）。紙の札にする。
+   作成中は ✉、失敗は郵便の赤の縁と ⚠ の印（色だけで示さない）。
+   画面の後ろに置かれる（App.tsx）ので、長い画面でも見えるよう、画面の下に貼り付ける。
+   app.css（T-413）の .session-notice の規則より強くするため、要素名を足して詳細度を上げる。 */
+:is(p, div).session-notice {
+  /* 失敗の札の地。トークンの郵便の赤をごく薄く紙に混ぜる（トークンに無い色）。 */
+  --session-notice-danger-paper: color-mix(in srgb, var(--color-danger) 8%, var(--color-paper));
+
+  position: sticky;
+  bottom: var(--space-4);
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  max-width: none;
+  margin: var(--space-4) max(var(--space-4), calc((100% - 46rem) / 2));
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-sea-deep);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+}
+
+:is(p, div).session-notice::before {
+  flex: none;
+  font-size: var(--font-size-h3);
+  line-height: 1;
+}
+
+/* 作成中。✉ の印（読み上げない）。 */
+.session-notice.session-notice-pending::before {
+  content: "✉";
+  content: "✉" / "";
+  color: var(--color-sea-deep);
+}
+
+/* 失敗。郵便の赤（--color-danger）の縁と ⚠ の印。文字は墨の色のまま（コントラストを保つ）。 */
+.session-notice.session-notice-error {
+  background: var(--session-notice-danger-paper);
+  border-color: var(--color-danger);
+}
+
+.session-notice.session-notice-error::before {
+  content: "⚠";
+  content: "⚠" / "";
+  color: var(--color-danger);
+}
+
+.session-notice.session-notice-error p {
+  flex: 1 1 12em;
+  margin: 0;
+  color: var(--color-ink);
+}
