@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | 版 | v0.3 |
-| 更新日 | 2026-11-06 |
+| 更新日 | 2026-11-07 |
 | 状態 | レビュー済み（[判断の記録](./09-assumptions-and-open-questions.md)を反映） |
 | 対象読者 | 実装者（サーバー・フロントエンド・インフラ）、レビュアー |
 | 前提ドキュメント | [要件定義書](./01-requirements.md)、[アーキテクチャ](./02-architecture.md)、[ゲームデザイン仕様](./04-game-design.md) |
@@ -789,6 +789,69 @@ function applyEvent(w: World, ev: ServerEvent): World // 純粋関数。Vitest �
 ### 13.5 サーバーなしでの開発
 
 `simcli` でボットに 1 ラウンド遊ばせ、送られるはずのイベント列をファイルに書き出せます（`simcli record --stage stage1 --seed 1 --bot greedy > web/src/fixtures/stage1.json`）。フロントエンドはこれを再生するモックの WS クライアントで、サーバーなしで開発できます。
+
+### 13.6 画面の遷移と URL
+
+T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.md §7.1](./04-game-design.md) に従います。ルートは `web/src/app/router/routes.ts`（純粋な関数 `parsePath`・`formatRoute`）、出し分けと転送は `web/src/app/App.tsx`、選んだステージと遊んでいるラウンドは `web/src/app/flow.ts`（純粋な reducer）が持ちます。
+
+| パス | 画面 | 条件と転送 |
+|---|---|---|
+| `/` | タイトル（`TitleScreen`） | — |
+| `/howto` | 遊び方（`HowToScreen`） | — |
+| `/credits` | クレジット（`CreditsScreen`） | — |
+| `/settings` | 設定（`SettingsScreen`。中身は T-412） | — |
+| `/stages` | ステージ選択（`StageSelectScreen`） | — |
+| `/stages/<stageId>` | ステージ紹介（`StageIntroScreen`） | 一覧の読み込み中・失敗はステージ選択と同じ表示。`stageId` が一覧に無ければ「ステージが見つかりません。」 |
+| `/play` | ゲーム（`GameScreen`） | ラウンドが無ければ `/stages`、終わっていれば `/result` へ `replace` |
+| `/result` | リザルト（`ResultScreen`。中身は T-408） | ラウンドが無ければ `/stages`、終わっていなければ `/play` へ `replace` |
+| それ以外 | — | `/` へ `replace` |
+
+- `<stageId>` は `^[a-z0-9][a-z0-9-]{0,31}$` に合うものだけ。末尾の `/` は 1 つだけ許し、大文字・小文字は区別し、パーセントエンコードは解かない。セグメントが余分なものは「それ以外」
+- 転送の先はどれも転送しない画面なので、転送は繰り返されない。転送は描画の中ではなく effect の中で行う
+- ステージの一覧（`GET /api/stages`）は、ステージ選択か紹介を最初に表示したときに 1 回だけ読み込み、以降はキャッシュする。失敗したときは「もう一度読み込む」だけが読み込み直す。形が 1 件でも違えば全体を失敗にする
+- ルートが変わったら、新しい画面の `<h1>` にフォーカスを移す（最初の表示では移さない）
+
+**`push`／`replace` の規則（終わったゲームに戻らない）**
+
+| 操作 | 履歴 |
+|---|---|
+| タイトルからステージ選択・遊び方・クレジット・設定へ | `push` |
+| ステージ選択で選ぶ → ステージ紹介 | `push` |
+| ステージ紹介の「出航する」 → `/play` | `replace` |
+| ゲームの終わり → `/result` | `replace` |
+| リザルトの「同じ条件でもう一度」 → `/play` | `replace` |
+| リザルトの「次のステージ」 → 次のステージの紹介・「ステージ選択」 → `/stages` | `push` |
+
+タイトル → ステージ選択 → 紹介 → ゲーム → リザルトと進んだ後の履歴は `[/, /stages, /result]` になり、リザルトで戻ると `/stages` に戻ります。
+
+**ゲーム画面のスロット**
+
+`GameScreen` が各領域の要素（[04-game-design.md §7.2](./04-game-design.md) のレイアウト）を持ち、中に次のコンポーネントを置きます。スロットは props を取らず（`TutorialOverlay` を除く）、データはストア（T-403）から読みます（§13.3・[ADR-0010](./adr/0010-frontend-react-pixijs.md)）。後続のタスクは、ファイルのパスと export の名前を変えずに中身を書き換えます。
+
+| 領域 | コンポーネント（ファイル） | 中身を書くタスク |
+|---|---|---|
+| 状況 | `HudBar`（`web/src/ui/hud/HudBar.tsx`） | T-406 |
+| マップ | `MapView`（`web/src/game/MapView.tsx`） | T-404 |
+| 島の詳細 | `IslandPanel`（`web/src/ui/island/IslandPanel.tsx`） | T-406 |
+| フェリー操作 | `FerryPanel`（`web/src/ui/ferry/FerryPanel.tsx`） | T-405 |
+| お知らせ（マップの隅に重ねる） | `Notifications`（`web/src/ui/hud/Notifications.tsx`） | T-406 |
+| （重ねて表示） | `EngineerPanel`（`web/src/ui/engineer/EngineerPanel.tsx`） | T-407 |
+| （重ねて表示） | `DemoKeys`（`web/src/ui/demo/DemoKeys.tsx`） | T-411 |
+| （重ねて表示） | `TutorialOverlay`（`web/src/app/tutorial/TutorialOverlay.tsx`、`stageId` を受ける） | T-409 |
+
+WS の接続と、ラウンドの終わりで `onRoundEnd` を呼ぶのは T-402・T-403 が `GameScreen` に足します。セッションの作成（`StageSelection.session` を入れること）は T-413 です。
+
+**ルーターのライブラリを使わない理由**
+
+ルートは 8 つで、ネストもデータの読み込みの仕組みも要らないので、History API と `useSyncExternalStore` の小さなルーター（`web/src/app/router/`）で足ります。依存を増やさずに済みます。ルーターのライブラリが必要になったら、ADR を書いて別の PR で入れます。
+
+**セッションを URL に持たない**
+
+`/play` と `/result` は URL にセッション（ID・トークン）を持たず、App の状態だけで持ちます。トークンが履歴や共有した URL に残らないようにするためです。再読み込みするとラウンドの状態は消え、`/stages` に転送されます（仕様）。
+
+**島の紹介文**
+
+ステージ紹介の島の紹介文と「学べること」のデータの出どころ（`/api/stages` に足すか、別の API か）は未定です（T-401 では「準備中」の表示）。
 
 ---
 

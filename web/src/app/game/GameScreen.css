@@ -1,0 +1,57 @@
+/* ゲーム画面のレイアウト（ゲームデザイン §7.2）。
+   上に「状況」、中央に「マップ」、右に「島の詳細」、下に「フェリー操作」。
+   「お知らせ」はマップの隅に重ねる。 */
+.game-screen {
+  display: grid;
+  grid-template-areas:
+    "hud hud"
+    "map island"
+    "ferry ferry"
+    "offline offline";
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+  grid-template-rows: auto minmax(20rem, 1fr) auto auto;
+  gap: 0.5rem;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 0.5rem;
+}
+
+.game-hud {
+  grid-area: hud;
+}
+
+.game-map {
+  grid-area: map;
+  position: relative;
+  overflow: hidden;
+}
+
+.game-notifications {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  max-width: 50%;
+  pointer-events: none;
+}
+
+.game-island {
+  grid-area: island;
+  overflow: auto;
+}
+
+.game-ferry {
+  grid-area: ferry;
+}
+
+.game-offline {
+  grid-area: offline;
+}
+
+.game-hud,
+.game-map,
+.game-island,
+.game-ferry {
+  border: 1px solid #c8d3dc;
+  border-radius: 4px;
+  padding: 0.5rem;
+}
