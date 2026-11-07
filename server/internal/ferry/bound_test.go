@@ -15,9 +15,11 @@ var randomTypes = []pb.MessageType{
 	pb.MsgTimeoutNow, pb.MsgSnap,
 }
 
-// runRandom は乱数で操作を混ぜて ops 回行い、各操作の結果を文字列の列で返す。
-// 毎回 CheckInvariants を確かめる。
-func runRandom(t *testing.T, seed uint64, ops int) []string {
+// runRandom は乱数で操作を混ぜて ops 回行い、各操作の結果を文字列の列と Transport を返す。
+// reclaim が nil でなく reclaim(i) が真なら、操作 i のあとに Reclaim を呼び、直後に持つ手紙が
+// 港・船の手紙だけで、その数が上限（島の数 ×（PortCap + ReqID の数）+ 積載量の和）以下であることを
+// 確かめる。Reclaim の返り値は結果の列に入れない。毎回 CheckInvariants を確かめる。
+func runRandom(t *testing.T, seed uint64, ops int, reclaim func(op int) bool) ([]string, *Transport) {
 	t.Helper()
 	cfg := baseConfig()
 	cfg.PortCap = 6
@@ -26,6 +28,11 @@ func runRandom(t *testing.T, seed uint64, ops int) []string {
 	rng := rand.New(rand.NewPCG(seed, 1))
 	islands := cfg.Islands
 	ferries := []FerryID{"f1", "f2"}
+	const reqIDs = 4
+	bound := len(islands) * (cfg.PortCap + reqIDs)
+	for _, f := range cfg.Ferries {
+		bound += f.Capacity
+	}
 	var now int64
 	var out []string
 	pick := func(from uint64) uint64 {
@@ -45,7 +52,7 @@ func runRandom(t *testing.T, seed uint64, ops int) []string {
 			}
 		}
 		if rng.IntN(10) == 0 {
-			ls = append(ls, LetterID(rng.IntN(len(tr.letters)+2)))
+			ls = append(ls, LetterID(rng.IntN(int(tr.lastID)+2)))
 		}
 		return ls
 	}
@@ -67,7 +74,7 @@ func runRandom(t *testing.T, seed uint64, ops int) []string {
 			res = fmt.Sprintf("post %v %v %v", c, d, err)
 		case op < 55:
 			from := islands[rng.IntN(len(islands))]
-			id, d, err := tr.PostRequest(now, from, pick(from), RequestNote{ReqID: fmt.Sprintf("r%d", rng.IntN(4))})
+			id, d, err := tr.PostRequest(now, from, pick(from), RequestNote{ReqID: fmt.Sprintf("r%d", rng.IntN(reqIDs))})
 			res = fmt.Sprintf("req %d %v %v", id, d, err)
 		case op < 70:
 			f := ferries[rng.IntN(len(ferries))]
@@ -101,12 +108,23 @@ func runRandom(t *testing.T, seed uint64, ops int) []string {
 			err := tr.Block([][2]uint64{p}, now+int64(rng.IntN(10000)))
 			res = fmt.Sprintf("block %v %v", p, err)
 		}
+		if reclaim != nil && reclaim(i) {
+			tr.Reclaim()
+			if len(tr.letters) > bound {
+				t.Fatalf("op %d: %d letters after Reclaim, bound %d", i, len(tr.letters), bound)
+			}
+			for _, l := range tr.letters {
+				if k := l.Location.Kind; k != LocPort && k != LocFerry {
+					t.Fatalf("op %d: letter %d at %+v after Reclaim", i, l.ID, l.Location)
+				}
+			}
+		}
 		if err := tr.CheckInvariants(); err != nil {
 			t.Fatalf("op %d (%s): %v", i, res, err)
 		}
 		out = append(out, res)
 	}
-	return out
+	return out, tr
 }
 
 func TestBoundRandom(t *testing.T) {
@@ -114,21 +132,40 @@ func TestBoundRandom(t *testing.T) {
 	for _, seed := range []uint64{1, 2, 3} {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			t.Parallel()
-			runRandom(t, seed, 20000)
+			runRandom(t, seed, 20000, nil)
 		})
 	}
 }
 
 func TestDeterministic(t *testing.T) {
 	t.Parallel()
-	a := runRandom(t, 7, 20000)
-	b := runRandom(t, 7, 20000)
-	if !slices.Equal(a, b) {
-		for i := range a {
-			if a[i] != b[i] {
-				t.Fatalf("op %d differs:\n%s\n%s", i, a[i], b[i])
+	a, _ := runRandom(t, 7, 20000, nil)
+	b, _ := runRandom(t, 7, 20000, nil)
+	// C-7: Reclaim を呼ぶ時点を変えても、結果の列は同じ。
+	c, _ := runRandom(t, 7, 20000, func(int) bool { return true })
+	d, _ := runRandom(t, 7, 20000, func(i int) bool { return i%13 == 0 })
+	for _, r := range []struct {
+		name string
+		x    []string
+	}{{"b", b}, {"c (every op)", c}, {"d (i%13)", d}} {
+		name, x := r.name, r.x
+		if !slices.Equal(a, x) {
+			for i := range min(len(a), len(x)) {
+				if a[i] != x[i] {
+					t.Fatalf("%s: op %d differs:\n%s\n%s", name, i, a[i], x[i])
+				}
 			}
+			t.Fatalf("%s: results differ", name)
 		}
-		t.Fatal("results differ")
+	}
+}
+
+// C-6: 毎回 Reclaim すれば、10 万通以上を流しても持つ手紙の数は港・船の上限以下に保たれる
+// （上限と場所は runRandom の中で確かめる）。
+func TestBoundRandomReclaim(t *testing.T) {
+	t.Parallel()
+	_, tr := runRandom(t, 1, 120000, func(int) bool { return true })
+	if tr.lastID < 100000 {
+		t.Fatalf("lastID = %d, want >= 100000", tr.lastID)
 	}
 }
