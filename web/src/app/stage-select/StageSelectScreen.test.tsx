@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { stageProgress } from "../progress/progress.ts";
 import type { StageCatalogEntry, StageCatalogState } from "../types.ts";
 import { StageSelectScreen } from "./StageSelectScreen.tsx";
 
@@ -25,6 +26,7 @@ const STAGES: StageCatalogEntry[] = [
       },
     },
     learning: ["log_replication", "commit"],
+    unlock: null,
   },
   {
     id: "demo-izu",
@@ -36,11 +38,20 @@ const STAGES: StageCatalogEntry[] = [
     demo: true,
     intro: { text: "<b>伊豆</b>の島じまを結ぶ郵便船。", provenance: "creative", source: null },
     learning: ["heartbeat", "check_quorum"],
+    unlock: null,
   },
 ];
 
+beforeEach(() => {
+  localStorage.clear();
+  act(() => {
+    stageProgress.reload();
+  });
+});
+
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
 });
 
 function buttons(): HTMLButtonElement[] {
@@ -192,5 +203,101 @@ describe("StageSelectScreen の見た目（T-424）", () => {
 
     renderCatalog({ status: "ready", stages: [] });
     expect(screen.getByText("遊べるステージがありません。").className).toBe("stage-select-message");
+  });
+});
+
+describe("StageSelectScreen のステージの解放（T-703）", () => {
+  const stage2: StageCatalogEntry = {
+    id: "stage2",
+    title: "島から返事が来ない！",
+    region: "伊豆諸島",
+    islands: 5,
+    ferries: 2,
+    durationMs: 210000,
+    demo: false,
+    intro: { text: "島から返事が来ない海。", provenance: "creative", source: null },
+    learning: ["heartbeat"],
+    unlock: "stage1",
+  };
+  const stages = [STAGES[0]!, stage2];
+
+  function renderStages(onSelect = vi.fn()) {
+    render(
+      <StageSelectScreen
+        catalog={{ status: "ready", stages }}
+        onRetry={() => {}}
+        onSelect={onSelect}
+        busy={false}
+      />,
+    );
+    return onSelect;
+  }
+
+  function button(title: string): HTMLButtonElement {
+    return screen.getByRole<HTMLButtonElement>("button", { name: `${title}を選ぶ` });
+  }
+
+  it("SS-U1 未解放のステージは鍵つきで押せず、説明の文をボタンが指す", () => {
+    const onSelect = renderStages();
+
+    const [first, second] = screen.getAllByRole("listitem");
+    expect(first!.getAttribute("data-locked")).toBeNull();
+    expect(second!.getAttribute("data-locked")).toBe("true");
+    expect(within(second!).getByRole("heading", { level: 2 }).textContent).toBe(
+      "🔒島から返事が来ない！",
+    );
+    expect(second!.querySelector("h2 > span")?.getAttribute("aria-hidden")).toBe("true");
+
+    const locked = button("島から返事が来ない！");
+    expect(locked.disabled).toBe(true);
+    const lockText = second!.querySelector(".stage-select-lock");
+    expect(lockText?.textContent).toBe("「はじめての郵便船」を★1 以上でクリアすると遊べます。");
+    expect(lockText?.tagName).toBe("P");
+    expect(locked.getAttribute("aria-describedby")).toBe(lockText?.id);
+    fireEvent.click(locked);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    expect(button("はじめての郵便船").disabled).toBe(false);
+    expect(button("はじめての郵便船").getAttribute("aria-describedby")).toBeNull();
+    expect(first!.querySelector(".stage-select-lock")).toBeNull();
+    expect(screen.queryByText("クリア済み", { exact: false })).toBeNull();
+  });
+
+  it("SS-U1 前のステージをクリア済み（★2）なら★を出し、次のステージを押せる", () => {
+    act(() => {
+      stageProgress.recordResult("stage1", 2);
+    });
+    const onSelect = renderStages();
+
+    const cleared = screen.getByText("クリア済み ★2");
+    expect(cleared.className).toBe("stage-select-cleared");
+    expect(cleared.getAttribute("aria-label")).toBe("クリア済み、★ 2 / 3");
+    const [, second] = screen.getAllByRole("listitem");
+    expect(second!.getAttribute("data-locked")).toBeNull();
+    expect(second!.querySelector(".stage-select-lock")).toBeNull();
+
+    const next = button("島から返事が来ない！");
+    expect(next.disabled).toBe(false);
+    fireEvent.click(next);
+    expect(onSelect).toHaveBeenCalledWith(stage2);
+  });
+
+  it("SS-U1 表示中にクリアが記録されると鍵が外れる", () => {
+    renderStages();
+    expect(button("島から返事が来ない！").disabled).toBe(true);
+
+    act(() => {
+      stageProgress.recordResult("stage1", 1);
+    });
+    expect(button("島から返事が来ない！").disabled).toBe(false);
+    expect(screen.getByText("クリア済み ★1")).toBeDefined();
+  });
+
+  it("SS-U1 開発のときは ?unlock-all ですべて解放する（保存はしない）", () => {
+    window.history.replaceState(null, "", "/stages?unlock-all");
+    renderStages();
+
+    expect(button("島から返事が来ない！").disabled).toBe(false);
+    expect(localStorage.getItem("raft-game.progress")).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import type { StageView } from "../protocol/index.ts";
 import { gameStore } from "../state/index.ts";
 import { App, type AppDeps } from "./App.tsx";
 import { createRoundConnector, type RoundConnector } from "./game/connector.ts";
+import { stageProgress } from "./progress/progress.ts";
 import type { SessionRequest } from "./session/api.ts";
 import {
   SESSION_ERROR_MESSAGES,
@@ -40,6 +41,7 @@ const STAGES: StageCatalogEntry[] = [
       },
     },
     learning: ["log_replication", "commit"],
+    unlock: null,
   },
   {
     id: "stage2",
@@ -51,8 +53,14 @@ const STAGES: StageCatalogEntry[] = [
     demo: false,
     intro: { text: "島から返事が来ない海。", provenance: "creative", source: null },
     learning: ["heartbeat"],
+    unlock: null,
   },
 ];
+
+// stage2 を stage1 の★1 で解放する一覧（T-703）。
+const LOCKED_STAGES: StageCatalogEntry[] = STAGES.map((stage) =>
+  stage.id === "stage2" ? { ...stage, unlock: "stage1" } : stage,
+);
 
 const OFFLINE = "サーバーなしで進む（開発用）";
 const PREPARING = "ステージを準備しています…";
@@ -209,6 +217,10 @@ async function playToResult(stageTitle: string) {
 
 beforeEach(() => {
   window.history.replaceState(null, "", "/");
+  localStorage.clear();
+  act(() => {
+    stageProgress.reload();
+  });
 });
 
 afterEach(() => {
@@ -891,5 +903,179 @@ describe("App のセッションの作成（T-413）", () => {
       turnstileToken: null,
     });
     expect(turnstileHosts()).toHaveLength(1);
+  });
+});
+
+describe("App のステージの解放（T-703）", () => {
+  const UNLOCKED_NOTICE = "🎉「島から返事が来ない！」が遊べるようになりました！";
+  const record = parseRecord(miniRecord);
+
+  // セッションの無いラウンドでも開き、finish(stars) で round.result を届ける接続。
+  function resultConnector() {
+    const opened: ConnectionHandlers[] = [];
+    const status: ConnectionStatus = { state: "ready", attempt: 1, reason: null };
+    const connection: GameConnection = {
+      start() {},
+      close() {},
+      sendCommand: () => new Promise(() => {}),
+      setEngineerSubscription() {},
+      getStatus: () => status,
+    };
+    const connector: RoundConnector = {
+      modeOf: () => "mock",
+      open(_session, handlers) {
+        opened.push(handlers);
+        return { source: "mock", connection, dispose() {} };
+      },
+    };
+    const finish = (stars: number) => {
+      const handlers = opened.at(-1);
+      act(() => {
+        handlers?.onSnapshot(snapshotFromRecord(record, { stage: miniStage as StageView }), 0);
+        handlers?.onRoundResult?.({ ...placeholderRoundResult(record), stars });
+      });
+    };
+    return { connector, finish };
+  }
+
+  async function playStage1(finish: (stars: number) => void, stars: number) {
+    clickLink("遊ぶ");
+    await choose("はじめての郵便船");
+    await waitForPath("/stages/stage1");
+    clickButton("出航する");
+    expect(window.location.pathname).toBe("/play");
+    finish(stars);
+    expect(window.location.pathname).toBe("/result");
+  }
+
+  beforeEach(() => {
+    gameStore.getState().reset();
+  });
+
+  afterEach(() => {
+    gameStore.getState().reset();
+  });
+
+  it("AP-U1 未解放のステージ紹介を URL で開くと鍵の画面で、セッションを作らない", async () => {
+    window.history.replaceState(null, "", "/stages/stage2");
+    const { postSession, turnstile } = renderApp({ loadStages: stagesLoader(LOCKED_STAGES) });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "このステージはまだ遊べません。" }),
+    ).toBeDefined();
+    expect(
+      screen.getByText(
+        "「島から返事が来ない！」は、「はじめての郵便船」を★1 以上でクリアすると遊べます。",
+      ),
+    ).toBeDefined();
+    expect(screen.queryByRole("button", { name: "出航する" })).toBeNull();
+    expect(postSession).not.toHaveBeenCalled();
+    expect(turnstile?.getToken).not.toHaveBeenCalled();
+
+    clickLink("「はじめての郵便船」へ");
+    expect(window.location.pathname).toBe("/stages/stage1");
+    expect(heading().textContent).toBe("はじめての郵便船");
+    expect(postSession).not.toHaveBeenCalled();
+  });
+
+  it("AP-U1 前のステージをクリア済みなら紹介を出す", async () => {
+    stageProgress.recordResult("stage1", 1);
+    window.history.replaceState(null, "", "/stages/stage2");
+    renderApp({ loadStages: stagesLoader(LOCKED_STAGES) });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "島から返事が来ない！" }),
+    ).toBeDefined();
+    expect(screen.getByRole("button", { name: "出航する" })).toBeDefined();
+  });
+
+  it("AP-U2 ★1 で終えると保存し、解放の知らせと「次のステージ」を出す", async () => {
+    const { connector, finish } = resultConnector();
+    renderApp({ connector, loadStages: stagesLoader(LOCKED_STAGES) });
+
+    await playStage1(finish, 1);
+    expect(localStorage.getItem("raft-game.progress")).toBe('{"v":1,"bestStars":{"stage1":1}}');
+    expect(screen.getByText(UNLOCKED_NOTICE).getAttribute("role")).toBe("status");
+    expect(screen.getByRole("button", { name: "次のステージ" })).toBeDefined();
+
+    // リザルトを離れたら知らせを消す。
+    clickButton("ステージ選択");
+    expect(window.location.pathname).toBe("/stages");
+    expect(screen.queryByText(UNLOCKED_NOTICE)).toBeNull();
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "島から返事が来ない！を選ぶ" })
+        .disabled,
+    ).toBe(false);
+    expect(screen.getByText("クリア済み ★1")).toBeDefined();
+  });
+
+  it("AP-U2 「次のステージ」で離れると知らせを消す", async () => {
+    const { connector, finish } = resultConnector();
+    renderApp({ connector, loadStages: stagesLoader(LOCKED_STAGES) });
+
+    await playStage1(finish, 2);
+    expect(screen.getByText(UNLOCKED_NOTICE)).toBeDefined();
+    clickButton("次のステージ");
+    await waitForPath("/stages/stage2");
+    expect(heading().textContent).toBe("島から返事が来ない！");
+    expect(screen.queryByText(UNLOCKED_NOTICE)).toBeNull();
+  });
+
+  it("AP-U2 ★0 で終えると保存せず、知らせも「次のステージ」も出さない", async () => {
+    const { connector, finish } = resultConnector();
+    renderApp({ connector, loadStages: stagesLoader(LOCKED_STAGES) });
+
+    await playStage1(finish, 0);
+    expect(localStorage.getItem("raft-game.progress")).toBeNull();
+    expect(screen.queryByText(UNLOCKED_NOTICE)).toBeNull();
+    expect(screen.queryByRole("button", { name: "次のステージ" })).toBeNull();
+    expect(screen.getByRole("button", { name: "同じ条件でもう一度" })).toBeDefined();
+  });
+
+  it("AP-U2 結果の無いラウンド（リザルトへ（仮））は記録しない", async () => {
+    renderApp({ postSession: failingPoster(), loadStages: stagesLoader(LOCKED_STAGES) });
+
+    await playToResult("はじめての郵便船");
+    expect(localStorage.getItem("raft-game.progress")).toBeNull();
+    expect(screen.queryByText(UNLOCKED_NOTICE)).toBeNull();
+    expect(screen.queryByRole("button", { name: "次のステージ" })).toBeNull();
+  });
+
+  it("AP-U2 再読み込みしても次のステージは解放されたまま", async () => {
+    const { connector, finish } = resultConnector();
+    renderApp({ connector, loadStages: stagesLoader(LOCKED_STAGES) });
+    await playStage1(finish, 1);
+    cleanup();
+
+    // 再読み込みの代わりに、保存から読み直して描き直す。
+    act(() => {
+      stageProgress.reload();
+    });
+    window.history.replaceState(null, "", "/stages");
+    renderApp({ loadStages: stagesLoader(LOCKED_STAGES) });
+    expect(
+      (
+        await screen.findByRole<HTMLButtonElement>("button", {
+          name: "島から返事が来ない！を選ぶ",
+        })
+      ).disabled,
+    ).toBe(false);
+  });
+
+  it("AP-U3 同じステージを 2 回目にクリアしても知らせを出さない", async () => {
+    const { connector, finish } = resultConnector();
+    renderApp({ connector, loadStages: stagesLoader(LOCKED_STAGES) });
+
+    await playStage1(finish, 1);
+    expect(screen.getByText(UNLOCKED_NOTICE)).toBeDefined();
+
+    clickButton("同じ条件でもう一度");
+    await waitForPath("/play");
+    expect(screen.queryByText(UNLOCKED_NOTICE)).toBeNull();
+    finish(3);
+    expect(window.location.pathname).toBe("/result");
+    expect(screen.queryByText(UNLOCKED_NOTICE)).toBeNull();
+    expect(screen.getByRole("button", { name: "次のステージ" })).toBeDefined();
+    expect(localStorage.getItem("raft-game.progress")).toBe('{"v":1,"bestStars":{"stage1":3}}');
   });
 });

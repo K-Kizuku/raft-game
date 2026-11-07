@@ -23,6 +23,7 @@ const stage1 = {
   demo: false,
   intro: derivedIntro,
   learning: ["log_replication", "commit"],
+  unlock: null,
 };
 const stage2 = {
   id: "stage2",
@@ -34,6 +35,7 @@ const stage2 = {
   demo: false,
   intro: creativeIntro,
   learning: [],
+  unlock: "stage1",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -52,8 +54,8 @@ describe("fetchStages", () => {
     const fetchMock = fakeFetch(() =>
       jsonResponse({
         stages: [
-          { ...stage2, unlock: { after: "stage1" }, extra: 1 },
-          { ...stage1, unlock: null },
+          { ...stage2, extra: 1 },
+          { ...stage1, extra: { after: "stage1" } },
         ],
         version: 1,
       }),
@@ -62,8 +64,8 @@ describe("fetchStages", () => {
     const stages = await fetchStages({ fetch: fetchMock });
 
     expect(stages).toEqual([stage2, stage1]);
-    expect(stages[0]).not.toHaveProperty("unlock");
     expect(stages[0]).not.toHaveProperty("extra");
+    expect(stages[1]).not.toHaveProperty("extra");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [input, init] = fetchMock.mock.calls[0] ?? [];
     expect(input).toBe("/api/stages");
@@ -214,6 +216,31 @@ describe("fetchStages", () => {
   ])("ST-4 %s → 一覧全体が StagesLoadError", async (_label, broken) => {
     await expect(
       fetchStages({ fetch: fakeFetch(() => jsonResponse({ stages: [stage2, broken] })) }),
+    ).rejects.toBeInstanceOf(StagesLoadError);
+  });
+
+  // T-703 の unlock。
+  it.each<[string, string | null]>([
+    ["null", null],
+    ["ほかのステージの id", "stage1"],
+    ["一覧に無いステージの id", "demo-izu"],
+  ])("ST-U1 unlock が %s なら読める", async (_label, unlock) => {
+    const stage = await loadOne({ ...stage2, unlock });
+
+    expect(stage.unlock).toBe(unlock);
+  });
+
+  it.each<[string, unknown]>([
+    ["キーが無い", Object.fromEntries(Object.entries(stage2).filter(([k]) => k !== "unlock"))],
+    ["undefined", { ...stage2, unlock: undefined }],
+    ["数", { ...stage2, unlock: 1 }],
+    ["オブジェクト", { ...stage2, unlock: { after: "stage1" } }],
+    ["形の合わない文字列", { ...stage2, unlock: "Bad" }],
+    ["空の文字列", { ...stage2, unlock: "" }],
+    ["自分の id", { ...stage2, unlock: "stage2" }],
+  ])("ST-U1 unlock が %s → 一覧全体が StagesLoadError", async (_label, broken) => {
+    await expect(
+      fetchStages({ fetch: fakeFetch(() => jsonResponse({ stages: [stage1, broken] })) }),
     ).rejects.toBeInstanceOf(StagesLoadError);
   });
 

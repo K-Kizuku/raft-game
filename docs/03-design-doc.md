@@ -1518,6 +1518,46 @@ T-405 で決めた、ゲーム画面の下のスロット「フェリー操作�
 - チュートリアル（T-409）は、`className` の `ferry-panel`・`ferry-panel__tabs`・`ferry-panel__port`・`ferry-panel__cargo`・`ferry-panel__destinations`・`ferry-panel__autoload`・`ferry-panel__depart`・`ferry-panel__status` を指す。これらを変えない
 - 積み替え（`cmd.relay.load`、FR-FERRY-06）・寄港地の予約・キーボードショートカット（FR-UI-09）・故障の操作の制限（P1）は対象外
 
+### 13.9 ステージの解放
+
+T-703 で決めた、ステージの解放とその保存です（[FR-GAME-08](./01-requirements.md)・[04-game-design.md §5.3](./04-game-design.md)・[05-game-progression.md §1](./05-game-progression.md)）。ファイルは `web/src/app/progress/`（`progress.ts`・`unlock.ts`・`LockedStageScreen.tsx`・`UnlockNotice.tsx`）にあります。
+
+**保存の形**
+
+進み具合は §13.7 の設定と同じ「モジュールに 1 つの外部ストア＋`useSyncExternalStore`」で持ちます（`stageProgress`・`useStageProgress()`）。
+
+- localStorage のキーは `raft-game.progress`、値は JSON の文字列 `{"v":1,"bestStars":{"stage1":2}}`（キーの順はこのとおり。`bestStars` のキーは書いた順）。`bestStars` はクリアしたステージの最高の★（1〜3）で、クリアしていないステージは入れない
+- 読み込みは遅延し、最初の `getSnapshot()` で 1 回だけ読む。以降は値が変わるまで同じオブジェクトを返す
+- JSON が壊れている・`v` が 1 でない・`bestStars` がオブジェクトでないときは、何もクリアしていないものとして扱い、読んだだけでは書き戻さない（次のクリアで上書きする）。`bestStars` の各要素は、キーが `STAGE_ID_PATTERN` に合い、値が 1〜3 の整数のものだけを残す（1 つ壊れていても、ほかは残す）。要素は先頭から最大 64 個まで読む
+- localStorage が使えない・`setItem` が投げるときも、記録は画面に効き、スナップショットの `persistent` が `false` になる。例外は外に投げない（§13.7 と同じ）
+- 消すときは、`StorageLike` が `getItem`・`setItem` だけなので、`removeItem` ではなく `{"v":1,"bestStars":{}}` を書く
+- 別のタブとの同期はしない（そのタブを開き直すまで反映しない）。`reload()` を後で `storage` イベントにつなげられる
+- [NFR-08](./01-requirements.md) との関係: 保存するのはステージの ID と★の数だけで、サーバーには送らない。Cookie・sessionStorage は使わない。localStorage には §13.7 の `openBrowserStorage` を通してだけ触れる
+
+**クリアの条件と判定**
+
+- ★1 以上でクリア（`CLEAR_STARS`。[04-game-design.md §5.3](./04-game-design.md) の★の表の「★1 クリア … 次のステージが解放される」）。ステージごとに変えない画面の規則
+- ★はサーバーの `round.result.stars`（ストアの `roundResult`）をそのまま使い、クライアントで計算し直さない（[ADR-0009](./adr/0009-server-authoritative-simulation-over-websocket.md)）。結果の無いラウンド（サーバーにつながっていない「リザルトへ（仮）」）は記録しない。最高の★より低い★では変えない
+- 解放の条件は、一覧（`GET /api/stages`）の各要素の `unlock`（先に★1 以上でクリアするステージの `id`。最初から遊べるなら `null`。[06-protocol.md §2](./06-protocol.md)）。一覧の読み込み（`fetchStages`）は `unlock` を厳密に読み、`null` でも、`STAGE_ID_PATTERN` に合い自分の `id` と違う文字列でもなければ、一覧全体を失敗にする（§13.6）
+- `lockStateOf(stage, stages, progress, unlockAll)` は、`unlock` が `null`・`unlock` のステージが一覧に無い（デモの Worker の一覧・データの食い違い。遊べなくなるのを避ける）・`unlock` のステージをクリア済みのとき解放済み。それ以外は未解放で、条件のステージを返す
+- `unlock` は 1 段の条件で、前のステージの前提はたどらない（循環はサーバーが検査している）
+- 一覧が読めていないときは判定せず、今の読み込み中・失敗の表示のまま
+
+**画面**
+
+- ステージ選択: 未解放のカードは `data-locked="true"`・見出しの前に 🔒（`aria-hidden`）・「「…」を★1 以上でクリアすると遊べます。」を出し、「…を選ぶ」を `disabled` にして `aria-describedby` で説明の文を指す。クリア済みのカードには「クリア済み ★n」を出す
+- ステージ紹介: URL で直接開いた・ブラウザの戻るで来た未解放のステージは、紹介の代わりに「このステージはまだ遊べません。」（`LockedStageScreen`。条件のステージの紹介とステージ選択へのリンク）を出し、セッションを作らない（コンテナを起動しない）
+- リザルト: 「次のステージ」は、次のステージが解放されているときだけ出す（未解放なら `ResultScreen` に `nextStage={null}` を渡す）。初めてのクリアで新しいステージが開いたら、`ResultScreen` の後に解放の知らせ（`UnlockNotice`。`role="status"` の「🎉「…」が遊べるようになりました！」）を出す。2 回目以降のクリアでは出さない。リザルトを離れたら消す
+- 設定: 「ステージの進み具合」の節に、クリアしたステージの件数と「進み具合を消す」を出す。押すと同じ場所で確かめ（`window.confirm` は使わない）、「消す」で記録を消して「進み具合を消しました。」を出す。件数が 0 なら押せない。保存できないときは「このブラウザには進み具合を保存できませんでした。ページを閉じると元に戻ります。」を出す
+
+**開発用の `?unlock-all`**
+
+開発のとき（`import.meta.env.DEV`）だけ、URL に `?unlock-all` があればすべてのステージを解放済みにします（保存はしない）。本番のビルドでは `import.meta.env.DEV` が偽で、この分岐ごと取り除かれます（`?theme-preview` と同じ形）。
+
+**サーバーとの関係**
+
+解放の判定は画面だけの規則で、サーバーはセッションの作成で解放を確かめません。一般公開の Worker で URL や localStorage を変えれば未解放のステージも遊べますが、遊べて困るものは無く、コストガード（ADR-0018）は今のまま効きます。
+
 ---
 
 ## 14. テスト戦略

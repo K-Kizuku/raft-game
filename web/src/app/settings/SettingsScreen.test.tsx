@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { termsPreference } from "../../ui/terms/preference.ts";
 import { App, type AppDeps } from "../App.tsx";
+import { stageProgress } from "../progress/progress.ts";
 import { SettingsScreen } from "./SettingsScreen.tsx";
 
 const SAVE_FAILED = "このブラウザには設定を保存できませんでした。ページを閉じると元に戻ります。";
@@ -12,6 +13,7 @@ beforeEach(() => {
   localStorage.clear();
   act(() => {
     termsPreference.reload();
+    stageProgress.reload();
   });
 });
 
@@ -115,5 +117,79 @@ describe("SettingsScreen", () => {
     });
     expect(text()).toContain("手紙（Message）");
     expect(text()).toContain("確定（Commit）");
+  });
+});
+
+describe("SettingsScreen のステージの進み具合（T-703）", () => {
+  const CONFIRM = "本当に消しますか？（クリアの記録が消え、最初のステージから遊び直します）";
+  const PROGRESS_SAVE_FAILED =
+    "このブラウザには進み具合を保存できませんでした。ページを閉じると元に戻ります。";
+
+  function button(name: string): HTMLButtonElement {
+    return screen.getByRole<HTMLButtonElement>("button", { name });
+  }
+
+  it("SE-U1 件数を出し、「進み具合を消す」→「消す」で消える", () => {
+    act(() => {
+      stageProgress.recordResult("stage1", 2);
+    });
+    render(<SettingsScreen />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "ステージの進み具合" })).toBeDefined();
+    expect(screen.getByText("クリアしたステージ: 1")).toBeDefined();
+    expect(screen.queryByText(CONFIRM)).toBeNull();
+
+    fireEvent.click(button("進み具合を消す"));
+    expect(screen.getByText(CONFIRM)).toBeDefined();
+    expect(screen.queryByRole("button", { name: "進み具合を消す" })).toBeNull();
+
+    fireEvent.click(button("消す"));
+    expect(screen.getByText("クリアしたステージ: 0")).toBeDefined();
+    expect(screen.getByRole("status").textContent).toBe("進み具合を消しました。");
+    expect(screen.queryByText(CONFIRM)).toBeNull();
+    expect(button("進み具合を消す").disabled).toBe(true);
+    expect(localStorage.getItem("raft-game.progress")).toBe('{"v":1,"bestStars":{}}');
+    expect(stageProgress.getSnapshot().bestStars).toEqual({});
+  });
+
+  it("SE-U1 「やめる」では消えない", () => {
+    act(() => {
+      stageProgress.recordResult("stage1", 2);
+    });
+    render(<SettingsScreen />);
+
+    fireEvent.click(button("進み具合を消す"));
+    fireEvent.click(button("やめる"));
+    expect(screen.queryByText(CONFIRM)).toBeNull();
+    expect(screen.getByText("クリアしたステージ: 1")).toBeDefined();
+    expect(button("進み具合を消す").disabled).toBe(false);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(stageProgress.getSnapshot().bestStars).toEqual({ stage1: 2 });
+  });
+
+  it("SE-U2 0 件なら「進み具合を消す」が押せない", () => {
+    render(<SettingsScreen />);
+
+    expect(screen.getByText("クリアしたステージ: 0")).toBeDefined();
+    expect(button("進み具合を消す").disabled).toBe(true);
+    expect(screen.queryByText(PROGRESS_SAVE_FAILED)).toBeNull();
+  });
+
+  it("SE-U1 localStorage が使えなくても例外を出さずに画面の上では消え、注記を出す", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
+    act(() => {
+      stageProgress.reload();
+      stageProgress.recordResult("stage1", 1);
+    });
+    render(<SettingsScreen />);
+
+    expect(screen.getByText("クリアしたステージ: 1")).toBeDefined();
+    expect(screen.getByText(PROGRESS_SAVE_FAILED)).toBeDefined();
+    fireEvent.click(button("進み具合を消す"));
+    fireEvent.click(button("消す"));
+    expect(screen.getByText("クリアしたステージ: 0")).toBeDefined();
+    expect(screen.getByRole("status").textContent).toBe("進み具合を消しました。");
   });
 });

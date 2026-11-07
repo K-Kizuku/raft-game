@@ -1,4 +1,4 @@
-// 画面の出し分けと遷移（T-401・T-413・DesignDoc §13.6）。
+// 画面の出し分けと遷移（T-401・T-413・DesignDoc §13.6）。ステージの解放（T-703・DesignDoc §13.9）。
 import {
   lazy,
   Suspense,
@@ -18,6 +18,10 @@ import { flowReducer, initialFlowState, nextStageOf } from "./flow.ts";
 import { defaultRoundConnector, type RoundConnector } from "./game/connector.ts";
 import { GameScreen } from "./game/GameScreen.tsx";
 import { HowToScreen } from "./howto/HowToScreen.tsx";
+import { LockedStageScreen } from "./progress/LockedStageScreen.tsx";
+import { stageProgress, useStageProgress } from "./progress/progress.ts";
+import { UnlockNotice } from "./progress/UnlockNotice.tsx";
+import { lockStateOf, newlyUnlocked, wantsUnlockAll, type LockState } from "./progress/unlock.ts";
 import { ResultScreen } from "./result/ResultScreen.tsx";
 import { navigate, useRoute } from "./router/history.ts";
 import { Link } from "./router/Link.tsx";
@@ -142,6 +146,10 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
   const route = useRoute();
   const [flow, dispatch] = useReducer(flowReducer, initialFlowState);
   const [catalog, setCatalog] = useState<StageCatalogState>({ status: "loading" });
+  const progress = useStageProgress();
+  const unlockAll = wantsUnlockAll();
+  // 解放の知らせ（初めてのクリアで開いたステージ）。リザルトを離れたら消す。
+  const [unlocked, setUnlocked] = useState<StageCatalogEntry[]>([]);
 
   // Turnstile のウィジェットを描く要素。どの画面でも同じ要素（<main> の最後）。
   const hostRef = useRef<HTMLDivElement>(null);
@@ -196,6 +204,15 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
     clearError();
     offlineRef.current = null;
   }, [route, clearError]);
+
+  // リザルトを離れたら、解放の知らせを消す（描画の中で前のルートと比べる）。
+  const [shownRouteName, setShownRouteName] = useState(route.name);
+  if (shownRouteName !== route.name) {
+    setShownRouteName(route.name);
+    if (route.name !== "result" && unlocked.length > 0) {
+      setUnlocked([]);
+    }
+  }
 
   // ルートが変わったら、新しい画面の <h1> にフォーカスを移す。最初の表示では移さない。
   const mainRef = useRef<HTMLElement>(null);
@@ -312,6 +329,25 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
     });
   }
 
+  // ラウンドの結果（サーバーの round.result の★）でクリアを記録する。結果が無ければ記録しない。
+  function recordRound(stageId: string): void {
+    const result = gameStore.getState().roundResult;
+    if (result === null) {
+      return;
+    }
+    const { firstClear } = stageProgress.recordResult(stageId, result.stars);
+    if (firstClear && catalog.status === "ready") {
+      setUnlocked(newlyUnlocked(stageId, catalog.stages));
+    }
+  }
+
+  // 一覧が読めていなければ判定できないので、解放済みとして扱う（今の表示のまま）。
+  function lockOf(stage: StageCatalogEntry): LockState {
+    return catalog.status === "ready"
+      ? lockStateOf(stage, catalog.stages, progress, unlockAll)
+      : { locked: false };
+  }
+
   const onOffline = useCallback(() => {
     const next = offlineRef.current;
     offlineRef.current = null;
@@ -372,6 +408,10 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
             </div>
           );
         }
+        const lock = lockOf(stage);
+        if (lock.locked) {
+          return <LockedStageScreen stage={stage} requires={lock.requires} />;
+        }
         return <StageIntroScreen stage={stage} busy={busy} onDepart={() => onDepart(stage)} />;
       }
       case "game": {
@@ -384,6 +424,7 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
             round={round}
             connector={connector}
             onRoundEnd={() => {
+              recordRound(round.stage.id);
               dispatch({ type: "roundEnded" });
               navigate({ name: "result" }, { replace: true });
             }}
@@ -395,28 +436,43 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
         if (round === null) {
           return null;
         }
-        const nextStage =
-          catalog.status === "ready" ? nextStageOf(catalog.stages, round.stage.id) : null;
+        const nextStage = unlockedNextStage(round.stage.id);
         return (
-          <ResultScreen
-            stage={round.stage}
-            nextStage={nextStage}
-            onRetry={() => {
-              onRetry(round);
-            }}
-            onNextStage={() => {
-              if (nextStage !== null) {
-                onNextStage(nextStage);
-              }
-            }}
-            onStageSelect={() => {
-              navigate({ name: "stageSelect" });
-            }}
-          />
+          <>
+            <ResultScreen
+              stage={round.stage}
+              nextStage={nextStage}
+              onRetry={() => {
+                onRetry(round);
+              }}
+              onNextStage={() => {
+                if (nextStage !== null) {
+                  onNextStage(nextStage);
+                }
+              }}
+              onStageSelect={() => {
+                navigate({ name: "stageSelect" });
+              }}
+            />
+            <UnlockNotice stages={unlocked} />
+          </>
         );
       }
       case "notFound":
         return null;
     }
+  }
+
+  // 一覧の次のステージ。未解放なら null（「次のステージ」を出さない）。
+  function unlockedNextStage(stageId: string): StageSummary | null {
+    if (catalog.status !== "ready") {
+      return null;
+    }
+    const next = nextStageOf(catalog.stages, stageId);
+    const entry = next === null ? undefined : catalog.stages.find((s) => s.id === next.id);
+    if (entry === undefined || lockOf(entry).locked) {
+      return null;
+    }
+    return next;
   }
 }
