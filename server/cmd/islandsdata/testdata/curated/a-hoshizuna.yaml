@@ -1,0 +1,16 @@
+# テスト用の抜き出し。文章はすべて架空。
+format: 1
+excerpts:
+  - id: zz-hoshizuna-tsukikage-minutes
+    region: 星砂地域
+    field: MARITIME_TRANSPORT
+    quote: "月影~星砂(3km・10分"
+    provenance: derived
+    value: 10
+    unit: 分
+    note: 架空の航路の所要時間
+  - id: hoshizuna-climate
+    region: 星砂地域
+    field: NATURAL_CLIMATE_FEATURES
+    quote: 温暖で、雨の少ない架空の気候
+    provenance: fact

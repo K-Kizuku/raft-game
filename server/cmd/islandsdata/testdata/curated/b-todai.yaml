@@ -1,0 +1,9 @@
+# テスト用の抜き出し。文章はすべて架空。
+format: 1
+excerpts:
+  - id: aa-todai-geography
+    region: 灯台地域
+    field: GEO_LOCATION_AREA
+    quote: 灯台島は架空の島
+    provenance: fact
+    note: 架空の注記
