@@ -142,7 +142,7 @@ PR の中の変更でガードを弱められないように、次の 2 つを�
 | ファイル | `.agents/`・`.claude/worktrees/` 以外への書き込み。ただし、リポジトリの外では Claude Code のこのプロジェクトのメモリのディレクトリ `$HOME/.claude/projects/<キー>/memory/` の下にだけ書ける（`<キー>` はメインの作業ツリーの絶対パスの `/` を `-` に置き換えたもの。例: `/Users/me/work/raft-game` → `-Users-me-work-raft-game`）。別のキー・`memory/` の外（`projects/<キー>/` の直下など）・`..` を含むパス・シンボリックリンク（`<キー>`・`memory` 自身を含む）は拒否する | Orchestrator |
 | 読み取り | `.env`・`.env.*`・`*.secrets*`（`permissions.deny`） | 全員 |
 
-`settings.json` の `permissions.allow` には、確認なしで実行できる操作として `Bash(scripts/agents/merge.sh:*)`（Orchestrator が Merge Gate を通してマージするため。auto mode の判定がマージの操作を拒否した）と `Bash(curl -s http://127.0.0.1:*)`（手元で起動したサーバーへの AC の確認のため。外部への通信は許さない）を入れている（#207）。`allow` は役割を分けないので、Worker・Reviewer が `merge.sh` を実行できないことは上の表のとおり hooks（`guard-bash.sh`）が守る。
+`settings.json` の `permissions.allow` には、確認なしで実行できる操作として `Bash(scripts/agents/merge.sh:*)`（Orchestrator が Merge Gate を通してマージするため。auto mode の判定がマージの操作を拒否した）を入れている（#207）。`allow` は役割を分けないので、Worker・Reviewer が `merge.sh` を実行できないことは上の表のとおり hooks（`guard-bash.sh`）が守る。`curl` の許可は、接頭辞の一致なので外部の URL を足しても一致するため入れていない。
 
 `AGENT_ALLOW_PROTECTED=1` は、Issue の変更予定ファイルが保護されたパスと重なるときに `spawn-worker.sh` が付ける。Merge Gate の C12 で、保護されたパスの変更はレビューで「確認した・ガードを弱めない」と記録されていなければ fail になる。
 
