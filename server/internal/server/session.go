@@ -363,8 +363,10 @@ func (s *session) handleEnvelope(env protocol.Envelope) {
 	case protocol.MessageTypeCmdGamePause, protocol.MessageTypeCmdGameSpeed, protocol.MessageTypeCmdGameSkip:
 		s.handleControl(env)
 		return
+	case protocol.MessageTypeDemoTrigger:
+		s.handleDemoTrigger(env)
+		return
 	case protocol.MessageTypeSubEngineer, // T-407
-		protocol.MessageTypeDemoTrigger,  // T-305
 		protocol.MessageTypeCmdRelayLoad: // P1
 		s.reject(env, "not implemented")
 		return
@@ -383,8 +385,14 @@ func (s *session) handleEnvelope(env protocol.Envelope) {
 		s.sendError(codeBadRequest, "cmdId is required")
 		return
 	}
+	s.applyCommand(env.CmdID, cmd)
+}
+
+// applyCommand は Engine のコマンドを Apply し、ack → events → （終わったら）round.result を送る。
+// 失敗の ack もそのまま返す。
+func (s *session) applyCommand(cmdID string, cmd sim.Command) {
 	ack := s.engine.Apply(cmd)
-	s.send(protocol.MessageTypeAck, simconv.AckFromSim(env.CmdID, ack))
+	s.send(protocol.MessageTypeAck, simconv.AckFromSim(cmdID, ack))
 	s.flushNow(true)
 	s.checkEnded()
 }
