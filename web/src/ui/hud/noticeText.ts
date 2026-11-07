@@ -14,6 +14,7 @@ export const NOTICE_KEYS: readonly string[] = Object.freeze([
   "leader.elected",
   "leader.stepped_down",
   "storm.forecast",
+  "rush.forecast",
   "ferry.broken",
 ]);
 
@@ -45,7 +46,7 @@ function seaArea(world: World, routeIds: unknown): string {
   return areas.length > 0 ? areas.join("、") : "どこかの海";
 }
 
-// 嵐の予報の頭（「5 秒後に」）。at が有限の数でなければ「まもなく」。notice.t を使うので時間がたっても変わらない。
+// 予報の頭（「5 秒後に」。嵐と注文ラッシュ）。at が有限の数でなければ「まもなく」。notice.t を使うので時間がたっても変わらない。
 function stormLead(notice: NoticeView, at: unknown): string {
   if (typeof at !== "number" || !Number.isFinite(at)) return "まもなく";
   const seconds = Math.max(1, Math.ceil((at - notice.t) / 1000));
@@ -179,6 +180,14 @@ const LINES: ReadonlyMap<string, Readonly<Record<PostmasterTone, Line>>> = new M
       casual: (w) => `${w.lead()}${w.sea()}が荒れるぞ！`,
       polite: (w) => `${w.lead()}${w.sea()}が荒れます！`,
       elder: (w) => `${w.lead()}${w.sea()}が荒れるぞい！`,
+    },
+  ],
+  [
+    "rush.forecast",
+    {
+      casual: (w) => `${w.lead()}、あちこちの島から注文がどっと来るぞ！`,
+      polite: (w) => `${w.lead()}、あちこちの島から注文がどっと来ます！`,
+      elder: (w) => `${w.lead()}、あちこちの島から注文がどっと来るぞい！`,
     },
   ],
   [

@@ -17,9 +17,10 @@ const (
 
 // Forecast は forecast（嵐の予報）。
 type Forecast struct {
-	Event    string   `json:"event"`    // "storm"（P1 の rush などもこの形にする）
-	At       SimTime  `json:"at"`       // 嵐の始まる時刻
-	RouteIDs []string `json:"routeIds"` // 嵐の航路（定義の順）。nil にしない
+	Event     string   `json:"event"`               // "storm"（P1 の rush などもこの形にする）
+	At        SimTime  `json:"at"`                  // 嵐の始まる時刻
+	RouteIDs  []string `json:"routeIds"`            // 嵐の航路（定義の順）。nil にしない
+	IslandIDs []uint64 `json:"islandIds,omitempty"` // ラッシュで依頼が発生する島（ID の昇順）。嵐では入れない
 }
 
 // RouteBlocked は route.blocked（遮断が始まった・延びた）。

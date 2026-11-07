@@ -9,7 +9,8 @@ import (
 // stormDefs は st.Events の storm を、書いた順に sim.Config.Storms の形にする。嵐がなければ nil。
 // flavor（表示用。T-301）と demo.storm（T-305）は使わない。
 //
-// storm と breakdown 以外のイベント（P1）は、今は使わず Issue にもしない。Issue #32 の仕様は events[i].kind の Issue にするが、
+// breakdown は simconfig_breakdown.go、rush・drift は simconfig_rush_drift.go が写す。
+// それ以外のイベント（P1 の cancellation）は、今は使わず Issue にもしない。Issue #32 の仕様は events[i].kind の Issue にするが、
 // 既存の SC-4（beta.yaml の Issue は raft.preVote の 1 件だけ）と食い違うので、Orchestrator の判断を待つ（#32 の報告）。
 // 返す []Issue はそのための欄で、今は常に nil。
 func stormDefs(st *Stage) ([]game.StormDef, []Issue) {

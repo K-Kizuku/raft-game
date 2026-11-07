@@ -4,7 +4,7 @@ import "github.com/K-Kizuku/raft-game/server/internal/ferry"
 
 // NextNotableAt は、次に「プレイヤーに見せたい出来事」が起きる時刻を返す（DesignDoc §4.3、プロトコル §4 の cmd.game.skip）。
 // 今は船の到着と依頼の発生（まだ発生していない最初の依頼の時刻）と、嵐の予報・開始・終わり（まだ処理していないもの）と、
-// 船の故障の開始（まだ処理していないもの）・修理（これから直る故障）。
+// 船の故障の開始（まだ処理していないもの）・修理（これから直る故障）と、注文ラッシュの予報・漂流瓶（まだ処理していないもの）。
 // 航行中でないとき・該当がないときは (0, false)。状態を変えない。
 //
 // DurationMs より後に着く船は、ラウンドが先に終わって処理されないので含めない（ちょうどに着く船は含める）。
@@ -37,6 +37,12 @@ func (e *Engine) NextNotableAt() (SimTime, bool) {
 		best, found = t, true
 	}
 	if t, ok := e.nextBreakdownAt(); ok && (!found || t < best) {
+		best, found = t, true
+	}
+	if t, ok := e.nextRushAt(); ok && (!found || t < best) {
+		best, found = t, true
+	}
+	if t, ok := e.nextDriftAt(); ok && (!found || t < best) {
 		best, found = t, true
 	}
 	return best, found

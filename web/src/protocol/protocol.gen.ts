@@ -288,13 +288,15 @@ export interface RouteUnblockedEvent extends EventHeader {
   until: number /* int64 */;
 }
 /**
- * ForecastEvent は forecast（嵐の予報）。
+ * ForecastEvent は forecast（嵐・注文ラッシュの予報）。event は "storm" か "rush"。
+ * islandIds はラッシュで依頼が発生する島（ID の昇順）で、ラッシュのときだけ入れる（嵐では出さない）。
  */
 export interface ForecastEvent extends EventHeader {
   type: typeof EventTypeForecast;
   event: string;
   at: number /* int64 */;
   routeIds: string[];
+  islandIds?: number /* uint64 */[];
 }
 /**
  * NodeStateEvent は node.state（いずれかの値が変わった）。

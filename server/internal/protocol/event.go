@@ -219,13 +219,15 @@ type RouteUnblockedEvent struct {
 	Until       int64     `json:"until"`
 }
 
-// ForecastEvent は forecast（嵐の予報）。
+// ForecastEvent は forecast（嵐・注文ラッシュの予報）。event は "storm" か "rush"。
+// islandIds はラッシュで依頼が発生する島（ID の昇順）で、ラッシュのときだけ入れる（嵐では出さない）。
 type ForecastEvent struct {
 	EventHeader `tstype:",extends"`
 	Type        EventType `json:"type" tstype:"typeof EventTypeForecast"`
 	Event       string    `json:"event"`
 	At          int64     `json:"at"`
 	RouteIDs    []string  `json:"routeIds"`
+	IslandIDs   []uint64  `json:"islandIds,omitempty"`
 }
 
 // NodeStateEvent は node.state（いずれかの値が変わった）。

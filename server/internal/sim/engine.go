@@ -32,6 +32,8 @@ type Config struct {
 	Routes        []ferry.RouteConfig
 	Storms        []game.StormDef     // 台本の嵐（events の kind: storm、書いた順）。nil は嵐なし
 	Breakdowns    []game.BreakdownDef // 台本の船の故障（events の kind: breakdown、書いた順）。nil は故障なし
+	Rushes        []game.RushDef      // 台本の注文ラッシュ（events の kind: rush、書いた順）。nil はラッシュなし
+	Drifts        []DriftDef          // 台本の漂流瓶（events の kind: drift、書いた順）。nil は漂流瓶なし
 	Ferries       []ferry.FerryConfig
 	DockMs        int64                // transport.dockMs
 	PortCap       int                  // transport.portCap
@@ -91,6 +93,8 @@ type Engine struct {
 	tr         *ferry.Transport
 	storms     stormBook     // 嵐の帳簿（storm.go）
 	breakdowns breakdownBook // 船の故障の帳簿（breakdown.go）
+	rushes     rushBook      // 注文ラッシュの帳簿（rush.go）
+	drifts     driftBook     // 漂流瓶の帳簿（drift.go）
 	reqs       requestBook   // 依頼の帳簿（request.go）
 	score      scoreBook     // 採点の帳簿（score.go）
 	stats      statsBook     // 統計と「今日の出来事」の帳簿（stats.go）
@@ -188,8 +192,15 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	if err := e.initDemo(); err != nil {
 		return nil, err
 	}
+	if err := e.initDrifts(seed); err != nil {
+		return nil, err
+	}
 	e.cfg.Requests = cfg.Requests.Clone()
-	plan, err := game.PlanRequests(e.cfg.Requests, cfg.Islands, int64(cfg.DurationMs), e.cfg.Resources, Sub(seed, StreamRequests))
+	reqCfg, err := e.planRushes(seed)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := game.PlanRequests(reqCfg, cfg.Islands, int64(cfg.DurationMs), e.cfg.Resources, Sub(seed, StreamRequests))
 	if err != nil {
 		return nil, fmt.Errorf("sim: requests: %w", err)
 	}
@@ -258,6 +269,8 @@ func (e *Engine) start() {
 	e.emit(PhaseChanged{Phase: PhaseSailing})
 	e.startStorms()
 	e.startBreakdowns()
+	e.startRushes()
+	e.startDrifts()
 	e.push(e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
 	e.push(e.cfg.DurationMs, ClassGameTimer, kindRoundEnd, nil)
 	e.scheduleRequests()
@@ -391,6 +404,10 @@ func (e *Engine) handleEvent(ev Event) {
 		e.handleStorm(ev)
 	case kindBreakdownStart, kindBreakdownRepair:
 		e.handleBreakdown(ev)
+	case kindRushForecast:
+		e.rushForecast(ev.Data.(int))
+	case kindDrift:
+		e.drift(ev.Data.(int))
 	case kindFerryArrive:
 		e.arrive(ev.Data.(ferry.FerryID))
 	case kindFerryReady:
@@ -433,6 +450,7 @@ func (e *Engine) arrive(id ferry.FerryID) {
 			e.deliverRequest(l)
 			continue
 		}
+		e.noteDriftCandidate(l)
 		node := e.nodes[l.To-1]
 		// ferry が持つメッセージを Raft に触らせないよう、複製を渡す。
 		derr := node.Deliver(proto.Clone(l.Raft).(*pb.Message))
@@ -498,25 +516,31 @@ func (e *Engine) handleOutput(id uint64, out cluster.Output) {
 	}
 	e.emitStale(id)
 	for _, m := range out.Messages {
-		created, dropped, err := e.tr.PostRaft(int64(e.Now()), id, []*pb.Message{m})
-		if err != nil {
-			panic(fmt.Sprintf("sim: node %d: post: %v", id, err))
-		}
-		term := e.nodes[id-1].Status().Term
-		for _, lid := range created {
-			l, ok := e.tr.Letter(lid)
-			if !ok {
-				panic(fmt.Sprintf("sim: created letter %d not found", lid))
-			}
-			e.emit(LetterCreated{Letter: newLetterView(l, term)})
-		}
-		e.emitDrops(dropped)
+		e.postRaft(id, m)
 	}
 	for _, a := range out.Applied {
 		r := ledgerResult(a.Result)
 		e.emit(LedgerApplied{IslandID: id, Index: a.Index, ReqID: r.ReqID, Result: r.Status, Reason: r.Reason})
 		e.observeApplied(id, r)
 	}
+}
+
+// postRaft は Raft のメッセージ m を島 id の港に置き、作った手紙の letter.created と、港の規則で破棄した手紙の
+// letter.dropped を出す（handleOutput と漂流瓶）。m はそのまま ferry に渡す（書き換えない）。
+func (e *Engine) postRaft(id uint64, m *pb.Message) {
+	created, dropped, err := e.tr.PostRaft(int64(e.Now()), id, []*pb.Message{m})
+	if err != nil {
+		panic(fmt.Sprintf("sim: node %d: post: %v", id, err))
+	}
+	term := e.nodes[id-1].Status().Term
+	for _, lid := range created {
+		l, ok := e.tr.Letter(lid)
+		if !ok {
+			panic(fmt.Sprintf("sim: created letter %d not found", lid))
+		}
+		e.emit(LetterCreated{Letter: newLetterView(l, term)})
+	}
+	e.emitDrops(dropped)
 }
 
 // handleRoleChange は役割の変化を node.leader_elected・node.stepped_down にする。

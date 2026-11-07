@@ -20,6 +20,7 @@ const (
 	noticeLeaderElected     = "leader.elected"
 	noticeLeaderSteppedDown = "leader.stepped_down"
 	noticeStormForecast     = "storm.forecast"
+	noticeRushForecast      = "rush.forecast"
 	noticeFerryBroken       = "ferry.broken"
 )
 
@@ -29,6 +30,7 @@ const (
 	noticeRoleCandidate     = "candidate"
 	noticeReasonCheckQuorum = "check_quorum"
 	noticeForecastStorm     = "storm"
+	noticeForecastRush      = "rush"
 	noticeStatusSucceeded   = "succeeded"
 	noticeStatusRejected    = "rejected"
 )
@@ -238,9 +240,14 @@ func (n *noticer) observe(ev sim.DomainEvent) []noticeData {
 	return nil
 }
 
-// forecast は嵐の予報の notice。話す島は、読める航路の ID（"A-B"）の A のうち最小のもの。
+// forecast は予報の notice。event が storm なら嵐の予報、rush なら注文ラッシュの予報（rushForecast）。ほかは出さない。
+// 嵐の予報で話す島は、読める航路の ID（"A-B"）の A のうち最小のもの。
 func (n *noticer) forecast(d sim.Forecast) []noticeData {
-	if d.Event != noticeForecastStorm {
+	switch d.Event {
+	case noticeForecastStorm:
+	case noticeForecastRush:
+		return n.rushForecast(d)
+	default:
 		return nil
 	}
 	var speaker uint64
@@ -258,6 +265,25 @@ func (n *noticer) forecast(d sim.Forecast) []noticeData {
 		IslandID: speaker,
 		Key:      noticeStormForecast,
 		Params:   noticeParams{RouteIDs: d.RouteIDs, At: &at},
+	}}
+}
+
+// rushForecast は注文ラッシュの予報の notice。話す島は、islandIds のうち範囲にある最小の島（無ければ出さない）。
+func (n *noticer) rushForecast(d sim.Forecast) []noticeData {
+	var speaker uint64
+	for _, id := range d.IslandIDs {
+		if _, ok := n.island(id); ok && (speaker == 0 || id < speaker) {
+			speaker = id
+		}
+	}
+	if speaker == 0 {
+		return nil
+	}
+	at := int64(d.At)
+	return []noticeData{{
+		IslandID: speaker,
+		Key:      noticeRushForecast,
+		Params:   noticeParams{At: &at},
 	}}
 }
 

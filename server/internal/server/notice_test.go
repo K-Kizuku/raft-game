@@ -13,7 +13,7 @@ import (
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
-// noticeKeys は §7.3 の 10 個のキー。
+// noticeKeys は §7.3 の 11 個のキー。
 var noticeKeys = map[string]bool{
 	noticeRequestCreated:    true,
 	noticeRequestSucceeded:  true,
@@ -24,6 +24,7 @@ var noticeKeys = map[string]bool{
 	noticeLeaderElected:     true,
 	noticeLeaderSteppedDown: true,
 	noticeStormForecast:     true,
+	noticeRushForecast:      true,
 	noticeFerryBroken:       true,
 }
 
@@ -149,6 +150,7 @@ func TestNoticeForecast(t *testing.T) {
 		{Event: "storm", At: 15000, RouteIDs: []string{"x-y"}},
 		{Event: "storm", At: 15000, RouteIDs: []string{"0-1", "3-4", "1", "-1-2", "+1-2"}},
 		{Event: "rush", At: 15000, RouteIDs: []string{"1-2"}},
+		{Event: "flood", At: 15000, RouteIDs: []string{"1-2"}, IslandIDs: []uint64{1}},
 	} {
 		wantNotices(t, mustJSON(t, f), observeAt(n, 5000, f))
 	}
@@ -158,6 +160,29 @@ func TestNoticeForecast(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// NT-R1: rush.forecast。話すのは islandIds のうち最小の島で、params は at だけ。
+func TestNoticeRushForecast(t *testing.T) {
+	t.Parallel()
+	n := testNoticer(30000)
+	out := n.expand([]sim.DomainEvent{domainEvent(1, 55000, sim.Forecast{Event: "rush", At: 60000, RouteIDs: []string{}, IslandIDs: []uint64{3, 1}})})
+	if len(out) != 2 {
+		t.Fatalf("out = %+v", out)
+	}
+	want := `{"seq":2,"t":55000,"type":"notice","islandId":1,"key":"rush.forecast","params":{"at":60000}}`
+	if got := noticeJSON(t, out[1]); got != want {
+		t.Errorf("notice = %s, want %s", got, want)
+	}
+	// 範囲の外の島は話す島にしない。読める島が無ければ出さない。
+	wantNotices(t, "out of range", observeAt(n, 55000, sim.Forecast{Event: "rush", At: 60000, RouteIDs: []string{}, IslandIDs: []uint64{0, 9, 2}}),
+		noticeData{IslandID: 2, Key: noticeRushForecast, Params: noticeParams{At: ptr(int64(60000))}})
+	for _, ids := range [][]uint64{nil, {}, {0, 4}} {
+		wantNotices(t, mustJSON(t, ids), observeAt(n, 55000, sim.Forecast{Event: "rush", At: 60000, RouteIDs: []string{}, IslandIDs: ids}))
+	}
+	// 嵐の予報は今のまま（islandIds があっても航路で話す島を決める）。
+	wantNotices(t, "storm", observeAt(n, 5000, sim.Forecast{Event: "storm", At: 15000, RouteIDs: []string{"2-3"}}),
+		noticeData{IslandID: 2, Key: noticeStormForecast, Params: noticeParams{RouteIDs: []string{"2-3"}, At: ptr(int64(15000))}})
+}
 
 // ferryNoticer は島が 3 つ、船が f1（島 1）・f2（島 3）の noticer。
 func ferryNoticer() *noticer {
