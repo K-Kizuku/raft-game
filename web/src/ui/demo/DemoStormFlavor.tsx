@@ -7,6 +7,7 @@ import type { ReactElement } from "react";
 import { useGameStore } from "../../state/index.ts";
 import { ProvenanceLabel } from "../provenance/ProvenanceLabel.tsx";
 import { activeDemoStormFlavor } from "./demoStorm.ts";
+import "./DemoStormFlavor.css";
 
 export function DemoStormFlavor(): ReactElement | null {
   const flavor = useGameStore((s) => activeDemoStormFlavor(s.world));

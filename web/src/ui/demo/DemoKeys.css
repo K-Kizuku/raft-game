@@ -1,98 +1,75 @@
 /* デモ操作のキーの一覧（T-411・ゲームデザイン §7.6）。発表者のための小さな一覧で、マウスでは押さない。
    エンジニアパネルの切り替え（右下）・お知らせ（マップの右上）と重ならないよう、左下の隅に重ねる。
-   背景は #111827（不透明度 0.92）、文字は白と #E5E7EB（コントラスト比 4.5:1 以上。NFR-10）。 */
+   見た目（T-425a・docs/11-visual-design.md）: 画面の隅の控えめな紙の札（切り取り線の縁）。キーは紙の小さな札。
+   文字は墨（--color-ink）・補足は --color-ink-muted で、紙の上で 4.5:1 以上（NFR-10）。
+   嵐の紹介の文（.demo-storm-flavor）は DemoStormFlavor.css。 */
 .demo-keys {
   position: fixed;
-  left: 1rem;
-  bottom: 1rem;
+  left: var(--space-4);
+  bottom: var(--space-4);
   z-index: 20;
   box-sizing: border-box;
   max-width: calc(100vw - 2rem);
-  padding: 0.4rem 0.6rem;
-  color: #ffffff;
-  background: rgb(17 24 39 / 0.92);
-  border: 1px solid #374151;
-  border-radius: 6px;
-  font-size: 0.8rem;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-paper) 94%, transparent);
+  border: 1.5px dashed var(--color-ink-muted);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font-size: calc(var(--font-size-body) * 0.8);
+  line-height: 1.5;
   pointer-events: none;
 }
 
 .demo-keys-list {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
-  color: #e5e7eb;
+  color: var(--color-ink);
 }
 
 .demo-keys-list[aria-disabled="true"] {
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .demo-keys kbd {
   display: inline-block;
-  min-width: 1.2em;
-  padding: 0 0.3rem;
-  color: #ffffff;
-  background: #1f2937;
-  border: 1px solid #6b7280;
-  border-radius: 3px;
+  min-width: 1.4em;
+  margin-right: var(--space-1);
+  padding: 0 var(--space-1);
+  color: var(--color-ink);
+  background: var(--color-paper-deep);
+  border: 1.5px solid var(--color-ink);
+  border-bottom-width: 3px;
+  border-radius: var(--radius-s);
   font: inherit;
+  font-family: var(--font-number);
   font-weight: bold;
   text-align: center;
 }
 
 .demo-keys-fast {
-  margin: 0.3rem 0 0;
-  color: #fde68a;
+  display: inline-block;
+  margin: var(--space-2) 0 0;
+  padding: 0 var(--space-2);
+  color: var(--color-ink);
+  background: var(--color-gold);
+  border-radius: var(--radius-s);
+  font-family: var(--font-number);
+  font-variant-numeric: tabular-nums;
   font-weight: bold;
 }
 
 .demo-keys-status {
-  margin: 0.3rem 0 0;
-  color: #fde68a;
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-2);
+  color: var(--color-ink);
+  border-left: 3px solid var(--color-postal);
 }
 
 .demo-keys-status:empty {
   display: none;
-}
-
-/* デモの嵐の紹介の文（T-305b）。ゲーム画面の上の中央に重ねる帯。地図の操作を妨げないよう、マウスでは押せない。
-   色はデモ操作のキーの一覧と同じ（背景 #111827・文字は白と #E5E7EB）。 */
-.demo-storm-flavor {
-  position: fixed;
-  top: 1rem;
-  left: 50%;
-  z-index: 20;
-  box-sizing: border-box;
-  max-width: calc(100vw - 2rem);
-  padding: 0.5rem 0.9rem;
-  color: #ffffff;
-  background: rgb(17 24 39 / 0.92);
-  border: 1px solid #374151;
-  border-radius: 6px;
-  text-align: center;
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-
-.demo-storm-flavor-text {
-  margin: 0;
-  color: #fde68a;
-  font-weight: bold;
-}
-
-.demo-storm-flavor-quote {
-  margin: 0.25rem 0 0;
-  color: #e5e7eb;
-  font-size: 0.8rem;
-}
-
-.demo-storm-flavor .provenance-label {
-  display: block;
-  margin-top: 0.25rem;
-  color: #e5e7eb;
-  font-size: 0.7rem;
 }

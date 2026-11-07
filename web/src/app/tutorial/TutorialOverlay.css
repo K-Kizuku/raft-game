@@ -1,45 +1,101 @@
 /* Stage 1 のチュートリアルの吹き出し（T-409）。画像は使わず、文字と CSS だけで作る。
-   置き場所はマップの左上（通知はマップの右上・島のボタンの列はマップの左下・フェリー操作パネルは下）。 */
+   置き場所はマップの左上（通知はマップの右上・島のボタンの列はマップの左下・フェリー操作パネルは下）。
+   見た目（T-425a・docs/11-visual-design.md）: 郵便局長が話す紙の吹き出し（丸い角・しっぽ）。郵便局長の絵（#131）が
+   届くまでは、郵便の赤の丸に頭文字「局」で代える（aria-hidden の飾り）。強調の輪は郵便の赤の点線。
+   しっぽと郵便局長の丸を吹き出しの外に出すため、吹き出しは overflow を切らず、長い文は文の部分だけを巻き取る。 */
 .tutorial {
   position: fixed;
   top: 4rem;
-  left: 1rem;
+  left: var(--space-4);
   z-index: 25;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
-  width: min(24rem, 90vw);
+  width: min(26em, 90vw);
   max-height: 40vh;
-  overflow-y: auto;
-  padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
-  border: 2px solid var(--color-postal, #c0392b);
-  border-radius: var(--radius-m, 0.5rem);
-  background: var(--color-paper, #fffdf5);
-  color: var(--color-ink, #1f2a37);
-  box-shadow: var(--shadow-paper, 0 0.25rem 0.75rem rgb(0 0 0 / 20%));
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--font-size-body);
   animation: tutorial-appear 240ms ease-out;
 }
 
+/* しっぽ（左下。下の郵便局長の丸へ向ける）。 */
+.tutorial::after {
+  position: absolute;
+  bottom: -10px;
+  left: calc(var(--space-5) + 0.5rem);
+  width: 16px;
+  height: 16px;
+  content: "";
+  background: var(--color-paper);
+  border-right: 2px solid var(--color-ink);
+  border-bottom: 2px solid var(--color-ink);
+  transform: rotate(45deg);
+}
+
+/* 郵便局長の丸（飾り）。吹き出しの左下の外に置き、マップの操作は妨げない。 */
+.tutorial__speaker {
+  position: absolute;
+  top: calc(100% + 14px);
+  left: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25em;
+  height: 2.25em;
+  color: var(--color-paper);
+  background: var(--color-postal);
+  border: 2px solid var(--color-paper);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px var(--color-ink),
+    var(--shadow-paper);
+  font-size: 0.9em;
+  font-weight: bold;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .tutorial__text {
-  margin: 0 0 var(--space-3, 0.75rem);
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 0 var(--space-3);
+  overflow-y: auto;
   line-height: 1.6;
 }
 
 .tutorial__actions {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
-  gap: var(--space-2, 0.5rem);
+  gap: var(--space-2);
   justify-content: flex-end;
 }
 
+.tutorial__actions .btn {
+  min-height: 2.5rem;
+  padding: var(--space-1) var(--space-3);
+  font-size: 0.9em;
+}
+
 .tutorial--collapsed {
-  display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: var(--space-2, 0.5rem);
-  overflow: hidden;
-  padding: var(--space-1, 0.25rem) var(--space-2, 0.5rem);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-radius: var(--radius-m);
+}
+
+.tutorial--collapsed .tutorial__speaker {
+  width: 1.9em;
+  height: 1.9em;
 }
 
 .tutorial--collapsed .tutorial__text {
-  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -52,14 +108,19 @@
   flex-wrap: nowrap;
 }
 
-/* 強調の輪。操作を邪魔しない。 */
+.tutorial--collapsed .tutorial__actions .btn {
+  min-height: 2rem;
+  padding: 0 var(--space-2);
+}
+
+/* 強調の輪。郵便の赤の点線の輪で、操作を邪魔しない。 */
 .tutorial-highlight {
   position: fixed;
   z-index: 24;
   box-sizing: border-box;
-  border: 3px solid var(--color-gold, #c9a227);
-  border-radius: var(--radius-s, 0.25rem);
-  box-shadow: 0 0 0 4px rgb(201 162 39 / 35%);
+  border: 3px dotted var(--color-postal);
+  border-radius: var(--radius-m);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-postal) 25%, transparent);
   pointer-events: none;
   animation: tutorial-pulse 1.6s ease-in-out infinite;
 }
@@ -79,11 +140,11 @@
 @keyframes tutorial-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 2px rgb(201 162 39 / 35%);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-postal) 30%, transparent);
   }
 
   50% {
-    box-shadow: 0 0 0 6px rgb(201 162 39 / 20%);
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-postal) 15%, transparent);
   }
 }
 

@@ -124,6 +124,12 @@ function useEngineerSubscription(
   );
 }
 
+// 島の色の丸（飾り）。色はステージ定義のもの。無ければ CSS の既定（--color-land）。
+function islandDotStyle(world: World, id: number): { backgroundColor: string } | undefined {
+  const color = world.stage.islands[id]?.color;
+  return color === undefined ? undefined : { backgroundColor: color };
+}
+
 function idText(id: number | null): string {
   return id === null || id === 0 ? NONE : String(id);
 }
@@ -173,15 +179,21 @@ function EngineerBody({
                   <td>
                     <button
                       type="button"
+                      className="engineer-node"
                       aria-pressed={row.target}
                       onClick={() => {
                         gameStore.getState().selectIsland(row.id);
                       }}
                     >
+                      <span
+                        className="engineer-node-dot"
+                        aria-hidden="true"
+                        style={islandDotStyle(world, row.id)}
+                      />
                       {row.id} {row.name}
                     </button>
                   </td>
-                  <td>{row.roleLabel}</td>
+                  <td className={`engineer-role engineer-role--${row.role}`}>{row.roleLabel}</td>
                   <td>{row.term}</td>
                   <td>{idText(row.vote)}</td>
                   <td>{idText(row.lead)}</td>
@@ -355,7 +367,7 @@ function Fields({ fields }: { fields: readonly FieldRow[] }): ReactElement {
       {fields.map((field) => (
         <div key={field.name}>
           <dt>{field.name}</dt>
-          <dd>{field.value}</dd>
+          <dd className={field.name === "Type" ? "engineer-msg-type" : undefined}>{field.value}</dd>
         </div>
       ))}
     </dl>
