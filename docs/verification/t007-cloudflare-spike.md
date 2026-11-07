@@ -4,7 +4,7 @@
 - 測定コードの準備: [Issue #134 (T-007a)](https://github.com/K-Kizuku/raft-game/issues/134)
 - 記録用ブランチ: `agent/issue-15`
 - 開始日: 2026-11-07 (JST)
-- 状態: H-4 の lite・standard-1・M-9 の対照実験を実施済み。H-5 の設定取得は CLI の引数エラー、CPU 集計は結果が空で未取得。次はインストール済み CLI のヘルプを確認する。後片付け・最終 ADR/PR は未完了。
+- 状態: H-4 の lite・standard-1・M-9 の対照実験を実施済み。H-5 の設定取得は CLI の引数エラー、CPU 集計は結果が空で未取得。インストール済み CLI のヘルプで worker-id の指定を確認済み。次はデプロイ済み設定とログ項目の取得。後片付け・最終 ADR/PR は未完了。
 - 実行: Kizuku が手元の端末でコマンドを実行し、AI が共有された出力の確認・次の手順の案内・記録を担当する。
 - 最終成果: 実測結果と後片付けの確認を記録し、[ADR-0016](../adr/0016-infrastructure-cloudflare-with-cf-cli.md) に測定結果・判断を反映した PR を作る。
 
@@ -22,7 +22,7 @@
 | H-2 トークンの準備 | 完了 | gitignore を確認し、64 桁 hex を mode 600 / 新規作成専用で保存。デプロイ時は hidden と表示 |
 | H-3 検証環境へのデプロイ / M-13 | 完了 | 所要 33.77 秒。raft-game-spike.kizuku.workers.dev/spike/healthz が ok: true |
 | H-4 測定 / M-1〜M-14 | 実施済み | lite (s-1〜s-9)、standard-1 (s-16〜s-24)、M-9 の対照 (s-10) が終了コード 0。JSON の抜粋を受領。inactivity と資源表示の制約は結果に記録 |
-| H-5 limits.cpuMs の判断 | 途中 | DO の CPU 超過リセットを確認済み。設定取得は worker-id 不足で失敗、通常要求の集計は空。CLI のヘルプと実際のログ項目を確認して再取得する |
+| H-5 limits.cpuMs の判断 | 途中 | CPU 集計は空で未取得。CLI のヘルプで versions get の --worker-id と workers get の位置引数を確認済み。デプロイ済み設定とログ項目を取得する |
 | H-6 後片付け・費用確認 | 未実施 | 停止・資源の削除・翌日の請求確認まで記録する |
 | H-7 ADR の更新 | 未実施 | 実測値・制約・判断を記載する |
 | H-8 後続への引き継ぎ | 未実施 | 対象 Issue と ADR に測定結果を伝える |
@@ -889,6 +889,57 @@ pnpm -C spike exec cf o11y telemetry keys --help
 ```
 
 その出力で、バージョンの取得に必要な worker-id の指定、設定取得用コマンド、実際に記録されているログ項目の調べ方を確定する。H-5 は途中のままとし、資源の削除と最終 ADR/PR は未完了として維持する。
+
+## 2026-11-07: インストール済み CLI のヘルプを確認
+
+cf@1.0.0-beta.28 の 3 コマンドのヘルプを受領した。
+
+| コマンド | 実際の引数 |
+|---|---|
+| workers versions get | version-id が位置引数、--worker-id が必須。Worker の ID または名前を指定できる |
+| workers get | worker-id が必須の位置引数。ID または名前を指定できる |
+| o11y telemetry keys | --from、--to、--limit、--filters、--body を提供。今回はネストした検索条件も指定するため --body を使う |
+
+測定コミット d862bb78cbfea3fe0e476605b3b6d4996153f818 の spike/cloudflare.config.ts では、Worker の observability.enabled=true、logs.enabled=true、headSamplingRate=1 を指定している。設定ファイル上の指定であり、デプロイ後の実効設定はまだ未取得。
+
+[Cloudflare の keys API](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/keys/) は、ログ項目の key・type・lastSeenAt を返す。needle で Worker 名を含むイベントを探し、keyNeedle で CPU や要求を分類する項目名に絞る。前回の CPU フィルターと経路の除外条件を流用せず、利用できる項目から確かめる。
+
+### 次に案内するコマンド
+
+デプロイ済みのバージョンと Worker のメタデータを、既存の gitignore 対象である .cloudflare 内に保存する。後続の解析は cf が成功した場合だけ行い、公開する出力は CPU 上限・observability とトップレベルの項目名に限定する。シークレットファイルや環境変数の値は表示しない。
+
+```fish
+pnpm -C spike exec cf workers versions get b402a25d-9b2d-418d-b710-f577294a7eb9 \
+  --worker-id raft-game-spike > spike/.cloudflare/deployed-version.json
+and pnpm -C spike exec cf workers get raft-game-spike \
+  > spike/.cloudflare/deployed-worker.json
+and node -e '
+const fs = require("node:fs");
+for (const name of ["version", "worker"]) {
+  const x = JSON.parse(fs.readFileSync("spike/.cloudflare/deployed-" + name + ".json", "utf8"));
+  const settings = {};
+  function scan(v, p = "") {
+    if (!v || typeof v !== "object") return;
+    for (const [k, value] of Object.entries(v)) {
+      const path = p ? p + "." + k : k;
+      if (["limits", "cpu_ms", "cpuMs", "observability"].includes(k)) settings[path] = value;
+      else scan(value, path);
+    }
+  }
+  scan(x);
+  console.log(JSON.stringify({target: name, settings, topLevelKeys: Object.keys(x)}, null, 2));
+}
+'
+```
+
+次に、lite・standard-1・M-9 対照を含む測定時間帯のログ項目を取得する。
+
+```fish
+pnpm -C spike exec cf o11y telemetry keys \
+  --body '{"from":1794035511730,"to":1794038049020,"limit":1000,"needle":{"value":"raft-game-spike","matchCase":false},"keyNeedle":{"value":"cpu|wall|service|script|class|request|trigger|origin|outcome|execution|worker","isRegex":true,"matchCase":false}}'
+```
+
+どちらも読み取り。Node 部分の JavaScript と keys の JSON は構文を確認した。実際の API 結果はまだ受領しておらず、上限と CPU p99/最大値は未確定のまま。
 
 ## 測定前に確定・確認する事項
 
