@@ -2,24 +2,63 @@ import { describe, expect, it } from "vitest";
 
 import worker from "./index.ts";
 
-function get(path: string): Promise<Response> {
-  return worker.fetch(new Request(`https://raft.example${path}`));
+const ORIGIN = "https://raft.example";
+
+function fetchWorker(path: string, init: RequestInit = {}): Promise<Response> {
+  return worker.fetch(new Request(`${ORIGIN}${path}`, init), {});
 }
 
-describe("worker", () => {
-  it('GET /api/healthz は 200 と {"ok":true} を返す', async () => {
-    const res = await get("/api/healthz");
+// D-1: 既定の配線（部品なし）では、全体が拒否する側に倒れる。
+describe("worker（既定の配線）", () => {
+  it('GET /api/healthz は 200 と {"status":"ok","build":"dev"} を返す', async () => {
+    const res = await fetchWorker("/api/healthz");
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/^application\/json/);
-    expect(await res.text()).toBe('{"ok":true}');
+    expect(await res.text()).toBe('{"status":"ok","build":"dev"}');
+  });
+
+  it('GET /api/stages は {"stages":[]} を返す', async () => {
+    const res = await fetchWorker("/api/stages");
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"stages":[]}');
+  });
+
+  it("POST /api/sessions は 503 sessions_disabled を返す", async () => {
+    const res = await fetchWorker("/api/sessions", {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/json" },
+      body: '{"stageId":"stage1"}',
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "sessions_disabled" });
+  });
+
+  it("GET /ws/sessions/{id} は 404 を返す", async () => {
+    const res = await fetchWorker("/ws/sessions/s_abc.def", {
+      headers: { origin: ORIGIN, upgrade: "websocket" },
+    });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: "not_found" });
+  });
+
+  it("GET /api/admin/guards は 404 を返す", async () => {
+    const res = await fetchWorker("/api/admin/guards");
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: "not_found" });
   });
 
   it("知らない /api/x は 404 の JSON を返す", async () => {
-    const res = await get("/api/x");
+    const res = await fetchWorker("/api/x");
 
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toMatch(/^application\/json/);
-    expect(await res.json()).toEqual({ ok: false, error: "not_found" });
+    const body: unknown = await res.json();
+    expect(body).toMatchObject({ code: "not_found" });
+    expect(body).toHaveProperty("message");
   });
 });
