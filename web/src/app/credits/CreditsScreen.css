@@ -1,5 +1,5 @@
 /* クレジット（T-424a）。紙のカードの中に、出典・ソフトウェア・素材を区切った一覧で並べる。
-   出典区分のラベル（ui/provenance）は、帳簿の札のような小さな丸い札にする。色はトークンだけを使う。 */
+   出典区分のラベル（ui/provenance）は、その行の上に添える。色はトークンだけを使う。 */
 
 .app-credits {
   /* 一覧の行の区切り（帳簿の点線） */
@@ -45,31 +45,13 @@
   border-top: none;
 }
 
-/* 出典区分のラベル */
-.app-credits .provenance-label {
+/* 出典区分のラベル。見た目（区分ごとの札の形）は ui/provenance のものを使い、ここでは置き場所だけを決める。 */
+.app-credits .credits-section .provenance-label {
   display: table;
-  margin-top: var(--space-3);
-  padding: 0 var(--space-3);
-  color: var(--color-ink);
-  background: var(--color-sea-light);
-  border: 2px solid var(--color-sea-deep);
-  border-radius: 999px;
-  font-size: 0.85em;
-  font-weight: bold;
-  line-height: 1.8;
-}
-
-.app-credits .provenance-label[data-provenance="derived"] {
-  background: var(--color-land);
-  border-color: color-mix(in srgb, var(--color-land) 50%, var(--color-ink));
-}
-
-.app-credits .provenance-label[data-provenance="creative"] {
-  background: color-mix(in srgb, var(--color-gold) 55%, var(--color-paper));
-  border-color: color-mix(in srgb, var(--color-gold) 60%, var(--color-ink));
+  margin: var(--space-3) 0 0 var(--space-1);
 }
 
 /* 区分の見出しの直後のラベルは、上の余白を詰める */
-.app-credits .credits-section-title + .provenance-label {
+.app-credits .credits-section .credits-section-title + .provenance-label {
   margin-top: var(--space-1);
 }
