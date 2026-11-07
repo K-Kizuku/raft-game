@@ -17,6 +17,7 @@ import { estimateSimTime } from "../../state/index.ts";
 import type { GameStore } from "../../state/index.ts";
 import { dashSegments } from "../model/dash.ts";
 import { hitTest } from "../model/hitTest.ts";
+import { buildRaftTags } from "../model/raftLabels.ts";
 import { buildMapScene } from "../model/scene.ts";
 import type { FerrySprite, IslandNode, LetterPile, MapScene, RouteLine } from "../model/scene.ts";
 import { MAP_STYLE } from "../model/style.ts";
@@ -33,8 +34,10 @@ import { MAP_ART_STYLE } from "../model/art/style.ts";
 import { drawEnvelope } from "./envelope.ts";
 import { createLetterEffectsLayer } from "./letterEffects.ts";
 import { createPartitionLayer } from "./partition.ts";
+import { createRaftOverlay } from "./raftOverlay.ts";
 
-export type MapDeps = Readonly<{ store: GameStore; now: () => number }>; // now は performance.now
+// now は performance.now。engineer はエンジニアモードを開いているか（T-712。省略なら常に偽）。
+export type MapDeps = Readonly<{ store: GameStore; now: () => number; engineer?: () => boolean }>;
 export type MapHandle = Readonly<{ destroy(): void }>;
 
 const S = MAP_STYLE;
@@ -620,6 +623,7 @@ type Layers = Readonly<{
   islands: Container;
   piles: Container;
   ferries: Container;
+  overlay: Container; // エンジニアモードのメッセージ種別の札（T-712、./raftOverlay.ts）
   effects: Container;
 }>;
 
@@ -684,7 +688,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   }
   host.appendChild(app.canvas);
 
-  // 下から sea・routes・storms・partition・islands・piles・ferries・effects。海は地の色（background）の上に、
+  // 下から sea・routes・storms・partition・islands・piles・ferries・overlay・effects。overlay はエンジニアモードの札。海は地の色（background）の上に、
   // にじみと波の記号を描く。effects は手紙の処分・差し替えのアニメーション（T-410、./letterEffects.ts）を描く。
   const layers: Layers = {
     sea: new Container(),
@@ -694,6 +698,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     islands: new Container(),
     piles: new Container(),
     ferries: new Container(),
+    overlay: new Container(),
     effects: new Container(),
   };
   app.stage.addChild(
@@ -704,6 +709,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     layers.islands,
     layers.piles,
     layers.ferries,
+    layers.overlay,
     layers.effects,
   );
   // 動きを減らす設定。マップの動き（波・雨・船の揺れ）は設定の変化に追従する。
@@ -715,6 +721,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   motionQuery?.addEventListener?.("change", onMotionChange);
   const effects = createLetterEffectsLayer(layers.effects, { reducedMotion });
   const partition = createPartitionLayer(layers.partition);
+  const overlay = createRaftOverlay(layers.overlay);
 
   const sea = createSea(layers);
   const routeViews = new Map<string, RouteView>();
@@ -779,6 +786,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       },
       (v) => v.root.destroy({ children: true }),
     );
+    overlay.update(deps.engineer?.() === true ? buildRaftTags(world, scene) : null);
     effects.update(world, scene, now, shown);
   };
 
@@ -825,6 +833,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       ferryViews.clear();
       effects.destroy();
       partition.destroy();
+      overlay.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };

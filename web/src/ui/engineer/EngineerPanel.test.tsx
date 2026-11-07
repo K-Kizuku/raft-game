@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Letter, NodeDetail, ServerEvent, Snapshot } from "../../protocol/index.ts";
 import { gameStore } from "../../state/index.ts";
+import { engineerModeStore } from "../../state/engineerMode.ts";
 import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
 // 用語の設定は、設定画面のチェックボックスで切り替える（パネルは設定を使わない。EP-7）。
 import { SettingsScreen } from "../../app/settings/SettingsScreen.tsx";
@@ -434,5 +435,19 @@ describe("EngineerPanel", () => {
     expect(rowCells(2)[1]).toBe("Follower");
     expect(panel().textContent).not.toContain("代表");
     expect(panel().textContent).not.toContain("一般の島");
+  });
+
+  it("EP-M1 開閉を engineerModeStore に写し、アンマウントで閉じた状態に戻す", () => {
+    engineerModeStore.getState().setOpen(false);
+    const view = render(<EngineerPanel />);
+    expect(engineerModeStore.getState().open).toBe(false);
+    open();
+    expect(engineerModeStore.getState().open).toBe(true);
+    open();
+    expect(engineerModeStore.getState().open).toBe(false);
+    open();
+    expect(engineerModeStore.getState().open).toBe(true);
+    view.unmount();
+    expect(engineerModeStore.getState().open).toBe(false);
   });
 });
