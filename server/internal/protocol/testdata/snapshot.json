@@ -1,6 +1,7 @@
 {
   "protocol": 1,
-  "session": { "id": "s_abc.def", "stageId": "stage2", "seed": 20261101, "demo": false, "restored": false },
+  "session": { "id": "s_abc.def", "stageId": "stage2", "seed": 20261101, "demo": false, "restored": false,
+    "stageHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "build": "git:3f2c1ab" },
   "phase": "sailing",
   "clock": { "t": 61200, "speed": 1, "paused": false, "endsAt": 210000, "allowedSpeeds": [0.5, 1, 2, 4] },
   "stage": {

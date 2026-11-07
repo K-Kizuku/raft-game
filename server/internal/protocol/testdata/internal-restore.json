@@ -13,5 +13,6 @@
       {"t": 0,    "cmd": {"type": "cmd.game.start",   "payload": {}}},
       {"t": 1200, "cmd": {"type": "cmd.ferry.depart", "payload": {"ferryId": "f1", "to": 2}}}
     ]
-  }
+  },
+  "until": 2500
 }
