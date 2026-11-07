@@ -2,7 +2,7 @@
   "version": 1,
   "default_branch": "main",
   "branch_prefix": "agent/issue-",
-  "max_workers": 5,
+  "max_workers": 8,
   "retry_limit": 3,
   "required_checks": ["ci-ok"],
   "review": {
