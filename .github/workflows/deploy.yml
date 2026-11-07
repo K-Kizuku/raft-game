@@ -2,6 +2,7 @@
 # 正本はこのファイル（.github/workflow-sources/deploy.yml）。人が scripts/github/install-workflows.sh で
 # .github/workflows/ に取り込む（AI は .github/workflows/ を変更できない）。
 #
+# - cf build の前に scripts/build-replay-wasm.sh でリプレイの WASM を web/public/wasm/ に作る（T-720b）
 # - PR: production・demo の両方を cf build → check-build-output.ts → cf deploy --prebuilt --dry-run（Secrets を参照しない）
 # - main への push: production にデプロイ
 # - 手動の実行（main だけ）: demo（既定）か production にデプロイ
@@ -98,6 +99,16 @@ jobs:
           set -euo pipefail
           sha="${HEAD_SHA:-$GITHUB_SHA}"
           echo "BUILD_ID=git:${sha:0:7}" >> "$GITHUB_ENV"
+      # リプレイの WASM（ADR-0028・T-720b）を web/public/wasm/ に作る。Vite の静的ファイルとして cf build の出力に入る。
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - name: Build replay wasm
+        env:
+          GOTOOLCHAIN: auto
+          BUILD_ID: ${{ env.BUILD_ID }}
+        run: bash scripts/build-replay-wasm.sh
       # サイトキーが空でも dry-run は続ける（PR・フォークでは Variables がないことがある）。
       - name: cf build
         env:
@@ -154,6 +165,16 @@ jobs:
         run: |
           set -euo pipefail
           echo "BUILD_ID=git:${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+      # リプレイの WASM（ADR-0028・T-720b）を web/public/wasm/ に作る。Vite の静的ファイルとして cf build の出力に入る。
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - name: Build replay wasm
+        env:
+          GOTOOLCHAIN: auto
+          BUILD_ID: ${{ env.BUILD_ID }}
+        run: bash scripts/build-replay-wasm.sh
       # サイトキーが空のままデプロイすると、POST /api/sessions が必ず 403 turnstile_failed になる。
       - name: cf build
         env:
