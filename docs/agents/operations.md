@@ -61,6 +61,24 @@ hooks（`.claude/hooks/*.sh`）と `scripts/` の shell のスクリプトは、
 
 `agentctl` は `GITHUB_TOKEN` か `GH_TOKEN` からトークンを読む。どちらもないときは、[agentctl.sh](../../scripts/agents/agentctl.sh) と [lib.sh](../../scripts/agents/lib.sh) の `agentctl` が `gh auth token` の値を `GH_TOKEN` に入れて渡す（#107）。トークンは標準出力・ログに出さない。`gh` がない・未ログインなら何もせず、`agentctl` が「トークンがない」で止まる（先に `gh auth login` する）。
 
+### GitHub の API の上限
+
+GitHub の REST API は、認証済みで 1 時間に 5,000 回まで。オーナーの `gh` のトークンを Orchestrator・Worker・見張りのスクリプト・レビューで共有するので、並行して動かすとすぐに達する（2026-11-07 に 30 分で 2 回達した。#135）。上限に達している間は、`agentctl gate`・`review.sh`・Worker の `gh` が 403 で失敗する。残りの回数と戻る時刻（`reset`、UNIX 時刻）は `gh api rate_limit --jq .resources.core` で見られる（この呼び出しは回数に数えない）。
+
+呼び出しの多い所の 1 つが、[review.sh](../../scripts/agents/review.sh) の Codex の GitHub 連携（`--via github`）の結果の待ち。`@codex review` を依頼したあと、次の間隔で PR のコメントを読み直す。間隔は環境変数で変えられる（秒、0 以上の整数）。
+
+| 環境変数 | 既定 | 意味 |
+|---|---|---|
+| `AGENT_CODEX_GITHUB_FIRST_WAIT` | 60 | 依頼したあと、最初に読むまで待つ秒数（`AGENT_CODEX_GITHUB_TIMEOUT` を超えない） |
+| `AGENT_CODEX_GITHUB_POLL` | 30 | その後に読み直す間隔。Codex の結果が出てから気づくまでの遅れは、最大でこの秒数 |
+| `AGENT_CODEX_GITHUB_TIMEOUT` | 900 | 待ちの全体の上限。超えたら `service_unavailable` として、ローカルの Codex CLI → Claude Code の経路に切り替える |
+| `AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT` | 60 | API の上限に達したとき、戻る時刻が読めない場合に待つ秒数 |
+
+- 待っている間に API の上限（`agentctl` のエラーの「（レート制限）」・`rate limit`）に達したら、`gh api rate_limit` の `reset` の時刻まで待ってから読み直す。失敗（`retry_limit` 回で切り替える連携の不調）としては数えない
+- `gh api rate_limit` が読めない、または `remaining` が 0 でない（二次的な上限など、`reset` が当てにならない）ときは、`AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT` 秒待つ
+- 上限が戻るのが待ちの全体の上限（`AGENT_CODEX_GITHUB_TIMEOUT`）より後なら、待たずにタイムアウトと同じ理由（`service_unavailable`）で終わる
+- 呼び出しを減らしたいときは、`AGENT_CODEX_GITHUB_POLL` を大きくする（例: `AGENT_CODEX_GITHUB_POLL=60 scripts/agents/review.sh 12`）
+
 ### ブートストラップ（ワークフローを取り込む前）
 
 ワークフローを取り込むまでは、GitHub で CI と Merge Gate が動かず、ステータス `ci-ok`・`merge-gate` が付かない。その間の PR は次のように扱う（#8・#73 が実例）。
