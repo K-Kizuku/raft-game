@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/K-Kizuku/raft-game/server/internal/ferry"
+	"github.com/K-Kizuku/raft-game/server/internal/game"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 )
@@ -11,7 +12,8 @@ import (
 // SimConfig は検証済みのステージ st から、sim.New に渡す設定を作る。
 // st は変えない。返す値は st とスライスを共有しない（呼び出し側が書き換えてもよい）。
 // sim.Config で表せない値（raft.checkQuorum・raft.preVote が false）は *Error を返す。
-// 依頼・イベント・スコアなど、sim.Config にまだ欄がない値は使わない（後のタスクが足す）。
+// イベント・スコアなど、sim.Config にまだ欄がない値は使わない（後のタスクが足す）。
+// 依頼の重みは islands[].WeightPermille（データ仕様 §4.1 で計算済み）を使い、populationExponent は使わない。
 func SimConfig(st *Stage) (sim.Config, error) {
 	if st == nil {
 		return sim.Config{}, errors.New("stage: SimConfig: nil stage")
@@ -72,5 +74,43 @@ func SimConfig(st *Stage) (sim.Config, error) {
 		PortCap:       st.Transport.PortCap,
 		PerLinkAppCap: st.Transport.PerLinkAppCap,
 		Resources:     resources,
+		Requests:      requestConfig(st),
 	}, nil
+}
+
+// requestConfig は st の requests.* から依頼の設定を作る。スライスは新しく作る。
+func requestConfig(st *Stage) game.RequestConfig {
+	rq := st.Requests
+	script := make([]game.ScriptRequest, len(rq.Script))
+	for i, s := range rq.Script {
+		script[i] = game.ScriptRequest{At: s.At, Island: s.Island, Kind: s.Kind, Resource: s.Resource}
+	}
+	weights := make([]int64, len(st.Islands))
+	for i, is := range st.Islands {
+		weights[i] = is.WeightPermille
+	}
+	kinds := make([]game.RandomKind, len(rq.Random.Kinds))
+	for i, k := range rq.Random.Kinds {
+		kinds[i] = game.RandomKind{Kind: k.Kind, Resource: k.Resource, Weight: k.Weight}
+	}
+	var critical []string
+	for _, r := range st.Resources {
+		if r.Critical {
+			critical = append(critical, r.ID)
+		}
+	}
+	return game.RequestConfig{
+		StageID:            st.ID,
+		DeadlineNormalMs:   rq.DeadlineNormalMs,
+		DeadlineCriticalMs: rq.DeadlineCriticalMs,
+		RetryMs:            rq.RetryMs,
+		Script:             script,
+		Random: game.RandomConfig{
+			RateMilliPerMin: rq.Random.RateMilliPerMin,
+			SlotMs:          rq.Random.SlotMs,
+			Weights:         weights,
+			Kinds:           kinds,
+		},
+		Critical: critical,
+	}
 }

@@ -11,12 +11,13 @@ func TestSnapshotIntro(t *testing.T) { // SN-1
 	t.Parallel()
 	e := newEngine(t, testConfig(), Options{CheckInvariants: true})
 	want := Snapshot{
-		Phase:   PhaseIntro,
-		EndsAt:  120000,
-		Ferries: []FerryView{{ID: "f1", Capacity: 4, State: "docked", IslandID: 1, Cargo: []uint64{}}},
-		Routes:  []RouteView{{ID: "1-2"}, {ID: "2-3"}},
-		Letters: []LetterView{},
-		Nodes:   []NodeState{{ID: 1, Role: "follower"}, {ID: 2, Role: "follower"}, {ID: 3, Role: "follower"}},
+		Phase:    PhaseIntro,
+		EndsAt:   120000,
+		Ferries:  []FerryView{{ID: "f1", Capacity: 4, State: "docked", IslandID: 1, Cargo: []uint64{}}},
+		Routes:   []RouteView{{ID: "1-2"}, {ID: "2-3"}},
+		Letters:  []LetterView{},
+		Requests: []RequestState{},
+		Nodes:    []NodeState{{ID: 1, Role: "follower"}, {ID: 2, Role: "follower"}, {ID: 3, Role: "follower"}},
 	}
 	if got := e.Snapshot(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Snapshot =\n %+v\nwant\n %+v", got, want)
