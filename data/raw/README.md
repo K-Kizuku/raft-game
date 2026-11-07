@@ -12,8 +12,8 @@
 | ライセンス | 政府標準利用規約（第 2.0 版） |
 | 利用規約 | https://www.mlit.go.jp/links/terms-of-use.html |
 | ホームページ | https://www.mlit.go.jp/links/ |
-| 取得日 | 未記入（提供データを置く人が書く） |
-| 取得元 | 未記入（提供データを置く人が書く） |
+| 取得日 | 2026-11-07 |
+| 取得元 | オーナーが共有した Google Drive 上の写し（Project LINKS の公開データ） |
 
 利用規約は、出典を記載すれば複製・再配布を認めているので、元のファイルをそのままコミットします（[判断の記録 A-21](../../docs/09-assumptions-and-open-questions.md#a-21)）。
 
@@ -29,6 +29,25 @@
 
 - ETL が読むのは D1 と D2 の CSV だけです。D2'・D3・D4 は、今後の拡張（P2）のために置きます
 - D2 と D4 は、どちらもファイル名が `01_zentaijouhou.csv` なので、データセットごとにディレクトリを分けます
+
+## SHA-256
+
+置いたファイルのバイト列のハッシュです。`data/raw/` で `sha256sum -c` に渡せる形にしてあります。
+
+```text
+d1f027c1e88f495c058dd969ab8748e33e47f6097452331b556a48d9638e7bca  ritou-list/01_ritoushinkoutaisakujisshichiikiichiran.csv
+b7f8f75279b027c9bdc3086762a868c54912da32e53ed574024765e78a3fd483  ritou-list/99_ritoushinkoutaisakujissichiikiichiran_dataspecificationdocument.xlsx
+bba4cb39f64a9ded171adfad3f31cd8e3f6eb0b4597d4eb674eebf4791aba912  shinkou-keikaku/01_zentaijouhou.csv
+b010707e2ca5be405074ac664af938c33d1012cedda8b57a34f65d2f28350d16  shinkou-keikaku/02_shozokushichouson.csv
+d796df22fe3f935d6804f1d41df47fbf33318c4a829e6b0d07bdac328e863530  shinkou-keikaku/99_ritousinkoukeikakusho_dataspecificationdocument.xlsx
+826af6e4331249872d4bc0c3ac6c0b37fede71f4f453087b4cf4c8ed51f5ff16  kasseika-koufukin/01_ritoukasseikakoufukintoujigyoukeikakusho.csv
+95c5ad7a1a07dfc1b90dc57cf003f3d44f45752d7b6f50aae8b43e099428e8ca  kasseika-koufukin/99_ritoukasseikakouhukinntoujigyoukeikakusho_dataspecificationdocument.xlsx
+b8b34d33f5cf021e43140e8a530f595b6d9c4fe5c0e949c96891c47d0540e6de  kouiki-kasseika/01_zentaijouhou.csv
+b51eebbffbec4e6a7a21505cc14ed42e788cc40ebd960becf249f9db57ab0a3c  kouiki-kasseika/02_zenkeikakunoseikamokuhyou.csv
+01868b310beb413aca5fc5d2ab1fdc0d5359b422d60bf5af5a74bea07a02b44c  kouiki-kasseika/03_kikanjigyou.csv
+c8aa1bd719683c66fed4620cfb411a95378b308d4de3e1773895032b7941f8cf  kouiki-kasseika/04_koufukinnoshikoujoukyou.csv
+ee80531a28ccc6f25f1ef4b562dd31dd15083c06ff433b0f70c255c876cd3226  kouiki-kasseika/99_ritoukouikikasseikajigyou_dataspecificationdocument.xlsx
+```
 
 ## 加工の有無
 
