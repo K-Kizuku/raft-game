@@ -30,6 +30,21 @@ export function HowToScreen(): ReactElement {
           させると得点になります。
         </li>
       </ul>
+      <h2>キーボード操作</h2>
+      <dl>
+        <dt>
+          <kbd>Space</kbd>
+        </dt>
+        <dd>一時停止・再開（ボタンにフォーカスがあるときは、そのボタンを押します）</dd>
+        <dt>
+          <kbd>1</kbd>〜<kbd>4</kbd>
+        </dt>
+        <dd>船を選ぶ（フェリー操作パネルの左から順）</dd>
+        <dt>
+          <kbd>E</kbd>
+        </dt>
+        <dd>エンジニアモードを開く・閉じる</dd>
+      </dl>
       <p className="howto-note">くわしい遊び方は準備中です。</p>
       <Link className="btn app-back" to={{ name: "title" }}>
         <ArtIcon kind="back" />
