@@ -24,8 +24,8 @@ var (
 
 // DecodeEngineCommand は、Engine が受けるコマンドの電文を sim.Command にする。
 //
-// 対象は cmd.game.start・cmd.ferry.load・cmd.ferry.unload・cmd.ferry.autoload・cmd.ferry.depart。
-// それ以外の typ は ErrNotEngineCommand。payload の形が不正なら ErrBadPayload。
+// 対象は cmd.game.start・cmd.ferry.load・cmd.ferry.unload・cmd.ferry.autoload・cmd.ferry.depart・demo.trigger。
+// それ以外の typ は ErrNotEngineCommand。payload の形が不正なら ErrBadPayload（demo.trigger の event は "storm" だけ）。
 // payload が空・null なら {} として扱い、知らないキーは無視する（§8）。
 // 島の範囲・手紙の重複・船があるかなどは検査しない（Engine.Apply が §4.1 のコードで返す）。
 func DecodeEngineCommand(typ protocol.MessageType, payload json.RawMessage) (sim.Command, error) {
@@ -83,12 +83,27 @@ func DecodeEngineCommand(typ protocol.MessageType, payload json.RawMessage) (sim
 			t = sim.CmdFerryDepart
 		}
 		return sim.Command{Type: t, FerryID: p.FerryID, To: p.To}, nil
+
+	case protocol.MessageTypeDemoTrigger:
+		m, err := decodeObject(typ, payload)
+		if err != nil {
+			return sim.Command{}, err
+		}
+		var p protocol.DemoTriggerPayload
+		if err := field(typ, m, "event", &p.Event); err != nil {
+			return sim.Command{}, err
+		}
+		if p.Event != sim.DemoEventStorm {
+			return sim.Command{}, fmt.Errorf("%w: %s: event must be %q", ErrBadPayload, typ, sim.DemoEventStorm)
+		}
+		return sim.Command{Type: sim.CmdDemoTrigger, Event: p.Event}, nil
 	}
 	return sim.Command{}, fmt.Errorf("%w: %q", ErrNotEngineCommand, typ)
 }
 
 // EncodeEngineCommand は、sim.Command を電文の type と payload にする（入力ログ・ボット・テスト用）。
-// DecodeEngineCommand の逆。Engine の受けるコマンドでなければ ErrNotEngineCommand。
+// DecodeEngineCommand の逆。対象は DecodeEngineCommand と同じ（demo.trigger を含む）。
+// Engine の受けるコマンドでなければ ErrNotEngineCommand。
 func EncodeEngineCommand(c sim.Command) (protocol.ClientCommand, error) {
 	var (
 		typ     protocol.MessageType
@@ -113,6 +128,8 @@ func EncodeEngineCommand(c sim.Command) (protocol.ClientCommand, error) {
 			typ = protocol.MessageTypeCmdFerryDepart
 		}
 		payload = protocol.FerryToPayload{FerryID: c.FerryID, To: c.To}
+	case sim.CmdDemoTrigger:
+		typ, payload = protocol.MessageTypeDemoTrigger, protocol.DemoTriggerPayload{Event: c.Event}
 	default:
 		return protocol.ClientCommand{}, fmt.Errorf("%w: %q", ErrNotEngineCommand, c.Type)
 	}
@@ -133,7 +150,7 @@ var replayIgnored = []protocol.MessageType{
 
 // InputEntriesFromLog は、入力ログのコマンドを sim.InputEntry の列にする（T-302 が sim.ReplayLog を作るのに使う）。
 //
-// cmd.game.pause・cmd.game.speed・cmd.game.skip・cmd.sync は読み飛ばす。それ以外で Engine のコマンドに
+// cmd.game.pause・cmd.game.speed・cmd.game.skip・cmd.sync は読み飛ばす（demo.trigger は Engine のコマンドとして読む）。それ以外で Engine のコマンドに
 // できないものがあれば、そこで止めて位置を含むエラーを返す（黙って読み飛ばさない）。
 // 時刻の順・t の範囲は検査しない（sim.Replay が検査する）。結果は空でも nil でない。
 func InputEntriesFromLog(cmds []protocol.InputCommand) ([]sim.InputEntry, error) {
