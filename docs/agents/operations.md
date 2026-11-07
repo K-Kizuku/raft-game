@@ -53,7 +53,8 @@ hooks（`.claude/hooks/*.sh`）と `scripts/` の shell のスクリプトは、
 
 - bash 3.2 と UTF-8 のロケール（`LANG=ja_JP.UTF-8` など）では、`"$t）"` のように変数の直後に ASCII 以外の文字があると、そのバイトまで変数名として読まれ、`set -u` で `t�: unbound variable` になる。変数の直後に ASCII 以外の文字が続くときは `${t}` と書く。[test_shell_scripts.py](../../scripts/tests/test_shell_scripts.py) が、Git が追跡する `*.sh` を検査する
 - hooks は fail-closed にしている。想定外のエラーで止まっても、終了コード 2 と `[guard] 拒否（内部エラー）: …` を出す（Claude Code は終了コード 2 だけを拒否として扱い、1 などでは操作を通してしまう）。拒否・許可は `deny`・`allow` で終える。bash 3.2 では、`set -u` などで止まったときの EXIT の trap の `$?` が 0 になることがあるので、終了コードではなく `deny`・`allow` を通ったかで見分ける
-  - 判定に使うデータを作るコマンド（`tr`・`jq`・`sed`・`grep`・`git` など）の失敗は `set -e` に頼らず、親のシェルで明示的に検査して `internal_error` で拒否する。プロセス置換 `< <(…)` の失敗は親に伝わらず、コマンド置換の中や `if` の中の関数では `set -e` が効かないので、いったん変数に受けてから `<<<` で読む。一致の判定は `printf … | grep -q` ではなく `re_match`（`.claude/hooks/lib.sh`）を使い、grep のエラーを「一致しない」と区別する
+  - 判定に使うデータを作るコマンド（`tr`・`jq`・`sed`・`grep`・`git` など）の失敗は `set -e` に頼らず、親のシェルで明示的に検査して `internal_error` で拒否する。プロセス置換 `< <(…)` の失敗は親に伝わらず、コマンド置換の中や `if` の中の関数では `set -e` が効かないので、いったん変数に受けて（`x="$(…)" || internal_error …`）から、`split_lines`・`split_fields`（`.claude/hooks/lib.sh`）で配列に分けて読む。here-string（`<<<`）とヒアドキュメント（`<<`）は使わない（一時ファイルを作れない環境ではリダイレクトが失敗し、検査を飛ばしたまま許可に着く）。一致の判定は `printf … | grep -q` ではなく `re_match`（`.claude/hooks/lib.sh`）を使い、grep のエラーを「一致しない」と区別する
+  - `git` の終了コード 128 は、Git の外のときだけでなく、git の設定の読み込みの失敗（`GIT_CONFIG_COUNT` が不正など）でも返る。終了コードだけで「Git の外」と扱わず、`git_not_repo`（`.claude/hooks/lib.sh`）で見分ける。それ以外の失敗は内部エラーで拒否する
 - 手元で bash 3.2 のときの動きを確かめるには、`/bin/bash` へのシンボリックリンクを置いたディレクトリを PATH の先頭に入れ、`LC_ALL=ja_JP.UTF-8` でテスト（下の「テスト」）を実行する
 
 ### GitHub のトークン
