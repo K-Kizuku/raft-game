@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- favicon-32.png の元（T-430）。web/public/favicon.svg を 32×32 で、透明な地に描く。
+     scripts/render-brand-images.sh が、ヘッドレスの Chrome でこの画面を撮る。 -->
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>favicon-32</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+      }
+
+      img {
+        display: block;
+        width: 32px;
+        height: 32px;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="../public/favicon.svg" alt="" />
+  </body>
+</html>
