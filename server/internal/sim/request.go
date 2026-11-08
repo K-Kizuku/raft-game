@@ -119,6 +119,9 @@ func (e *Engine) spawnRequest(i int) {
 	for _, isl := range e.islands {
 		isl.MarkCreated(r.req.ID)
 	}
+	if e.remote != nil {
+		e.remote.NoteCreated(r.req.ID)
+	}
 }
 
 // observeApplied は、島 id の台帳への適用の結果 r を観察する（ADR-0015）。
@@ -135,6 +138,9 @@ func (e *Engine) observeApplied(id uint64, r ledger.Result) {
 		// 依頼元で結果が出たので、どの島の窓口もこの依頼を route しない（今の Engine の route の判定と同じ）。
 		for _, isl := range e.islands {
 			isl.MarkResolved(r.ReqID)
+		}
+		if e.remote != nil {
+			e.remote.NoteResolved(r.ReqID)
 		}
 	}
 }
