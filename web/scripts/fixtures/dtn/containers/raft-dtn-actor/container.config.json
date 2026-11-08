@@ -1,0 +1,15 @@
+{
+  "name": "raft-dtn-actor",
+  "schedulingPolicy": "durable-object",
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true
+    }
+  },
+  "images": {
+    "dtnactor": {
+      "localReference": "cloudflare-build/000000000000/raft-dtn-actor-dtnactor:fixture"
+    }
+  }
+}

@@ -57,8 +57,22 @@ export interface GuardsConfig {
   readonly rateLimit: { readonly enabled: boolean; readonly perIpPerMinute: number };
   readonly cpuMs: number;
   readonly acceptGames: boolean;
-  readonly unitCostUsd: { readonly lite: number; readonly "standard-1": number };
+  readonly unitCostUsd: UnitCostUsd;
 }
+
+// lite・standard-1 は「1 ゲーム = コンテナ 1 つ＋ Durable Object 1 つ」の 30 分の単価（今の {sessionId, instance} の予約）。
+// container.<instance>・do は内訳つきの予約（{sessionId, units}。DTN-12・docs/dtn/environment.md §3）の種類ごとの単価。
+// 内訳の単価は書かなくてよい。書いていない種類を内訳で予約すると、CostGuard は拒否する（sessions_disabled）。
+export interface UnitCostUsd {
+  readonly lite: number;
+  readonly "standard-1": number;
+  readonly "container.lite"?: number;
+  readonly "container.standard-1"?: number;
+  readonly do?: number;
+}
+
+export const UNIT_PART_KEYS = ["container.lite", "container.standard-1", "do"] as const;
+export type UnitPartKey = (typeof UNIT_PART_KEYS)[number];
 
 const CONFIG_KEYS = [
   "budget",
@@ -72,6 +86,18 @@ const CONFIG_KEYS = [
 
 function exactObject(value: unknown, keys: readonly string[]): JsonObject | null {
   return isPlainObject(value) && hasExactKeys(value, keys) ? value : null;
+}
+
+// keys をすべて持ち、ほかのキーは optional のどれかであるオブジェクト。
+function objectWith(
+  value: unknown,
+  keys: readonly string[],
+  optional: readonly string[],
+): JsonObject | null {
+  if (!isPlainObject(value) || !hasKeys(value, keys)) return null;
+  return Object.keys(value).every((key) => keys.includes(key) || optional.includes(key))
+    ? value
+    : null;
 }
 
 // 不正（未設定・JSON でない・規則に合わない・未知のキーや signature がある）なら null。
@@ -91,7 +117,7 @@ export function parseGuardsConfig(raw: unknown): GuardsConfig | null {
   const gameTime = exactObject(top["gameTime"], ["maxMinutes", "maxAlarms"]);
   const turnstile = exactObject(top["turnstile"], ["enabled"]);
   const rateLimit = exactObject(top["rateLimit"], ["enabled", "perIpPerMinute"]);
-  const unitCostUsd = exactObject(top["unitCostUsd"], ["lite", "standard-1"]);
+  const unitCostUsd = objectWith(top["unitCostUsd"], ["lite", "standard-1"], UNIT_PART_KEYS);
   if (
     budget === null ||
     gameTime === null ||
@@ -130,6 +156,13 @@ export function parseGuardsConfig(raw: unknown): GuardsConfig | null {
   ) {
     return null;
   }
+  const parts: Partial<Record<UnitPartKey, number>> = {};
+  for (const key of UNIT_PART_KEYS) {
+    if (!Object.hasOwn(unitCostUsd, key)) continue;
+    const value = unitCostUsd[key];
+    if (!isUnitCostUsd(value)) return null;
+    parts[key] = value;
+  }
 
   return {
     budget: { enabled: budgetEnabled, monthlyUsd, dailyUsd },
@@ -138,7 +171,7 @@ export function parseGuardsConfig(raw: unknown): GuardsConfig | null {
     rateLimit: { enabled: rateLimitEnabled, perIpPerMinute },
     cpuMs,
     acceptGames,
-    unitCostUsd: { lite, "standard-1": standard1 },
+    unitCostUsd: { lite, "standard-1": standard1, ...parts },
   };
 }
 
@@ -289,6 +322,7 @@ export interface EffectiveGuards {
   readonly cpuMs: number;
   readonly acceptGames: boolean;
   readonly unitMicro: Readonly<Record<ContainerInstance, number>>;
+  readonly unitPartMicro: Readonly<Partial<Record<UnitPartKey, number>>>; // 内訳の単価（書いたものだけ）
 }
 
 const MAX_BUDGET_MICRO = 1000 * MICRO_PER_USD;
@@ -333,7 +367,17 @@ export function overlayGuards(
       lite: usdToMicro(config.unitCostUsd.lite),
       "standard-1": usdToMicro(config.unitCostUsd["standard-1"]),
     },
+    unitPartMicro: partMicro(config.unitCostUsd),
   };
+}
+
+function partMicro(unitCostUsd: UnitCostUsd): Partial<Record<UnitPartKey, number>> {
+  const out: Partial<Record<UnitPartKey, number>> = {};
+  for (const key of UNIT_PART_KEYS) {
+    const value = unitCostUsd[key];
+    if (value !== undefined) out[key] = usdToMicro(value);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

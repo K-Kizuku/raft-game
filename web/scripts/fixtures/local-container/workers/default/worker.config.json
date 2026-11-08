@@ -1,5 +1,5 @@
 {
-  "name": "raft-game-dev",
+  "name": "raft-game-dtn-dev",
   "compatibilityDate": "2026-11-04",
   "assets": {
     "notFoundHandling": "single-page-application",
@@ -31,14 +31,19 @@
       "type": "text",
       "value": "lite"
     },
-    "GAME_SESSION": {
+    "DTN_SESSION": {
       "type": "durable-object",
-      "worker": "raft-game-dev",
-      "exportName": "GameSession"
+      "worker": "raft-game-dtn-dev",
+      "exportName": "DtnSession"
+    },
+    "ACTOR_HOST": {
+      "type": "durable-object",
+      "worker": "raft-game-dtn-dev",
+      "exportName": "ActorHost"
     },
     "COST_GUARD": {
       "type": "durable-object",
-      "worker": "raft-game-dev",
+      "worker": "raft-game-dtn-dev",
       "exportName": "CostGuard"
     },
     "GUARDS": {
@@ -46,11 +51,11 @@
       "value": {
         "budget": {
           "enabled": true,
-          "monthlyUsd": 30,
+          "monthlyUsd": 10,
           "dailyUsd": 1
         },
         "gameTime": {
-          "maxMinutes": 30,
+          "maxMinutes": 15,
           "maxAlarms": 20
         },
         "turnstile": {
@@ -64,7 +69,10 @@
         "acceptGames": true,
         "unitCostUsd": {
           "lite": 0.0065,
-          "standard-1": 0.04
+          "standard-1": 0.04,
+          "container.lite": 0.0036,
+          "container.standard-1": 0.037,
+          "do": 0.0028
         }
       }
     },
@@ -77,24 +85,28 @@
     "ADMIN_TOKEN": {
       "type": "secret"
     },
+    "DTN_CONTACT_KEY": {
+      "type": "secret"
+    },
     "SESSION_RATE_LIMIT": {
       "type": "rate-limit",
-      "namespace": "1003",
+      "namespace": "1005",
       "simple": {
         "limit": 10,
         "period": 60
       }
-    },
-    "REPLAYS": {
-      "type": "r2",
-      "name": "raft-game-replays"
     }
   },
   "exports": {
-    "GameSession": {
+    "DtnSession": {
       "type": "durable-object",
       "storage": "sqlite",
-      "container": "raft-game-dev-server"
+      "container": "raft-dtn-dev-coordinator"
+    },
+    "ActorHost": {
+      "type": "durable-object",
+      "storage": "sqlite",
+      "container": "raft-dtn-dev-actor"
     },
     "CostGuard": {
       "type": "durable-object",

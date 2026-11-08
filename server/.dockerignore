@@ -1,4 +1,4 @@
-# server/Dockerfile のビルドの文脈（server/）から、ビルドに要るものだけを残す（許可リストの形。T-306）。
+# server/Dockerfile・server/Dockerfile.dtnactor のビルドの文脈（server/）から、ビルドに要るものだけを残す（許可リストの形。T-306・DTN-12）。
 # まず全部を除き、要るものだけを戻す。
 *
 
@@ -6,10 +6,11 @@
 !go.mod
 !go.sum
 
-# コマンドはゲームサーバーだけ（cmd/islandsdata などの ETL は入れない）
+# コマンドはゲームサーバーと DTN の Actor だけ（cmd/islandsdata などの ETL は入れない）
 !cmd/
 cmd/*
 !cmd/server/
+!cmd/dtnactor/
 
 # internal/stage/embedded/（make sync-data のコピー先）もここで戻る。
 # go:embed all:embedded が失敗するので、internal/stage の下を除く行を書かない。

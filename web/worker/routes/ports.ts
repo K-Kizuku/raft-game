@@ -4,6 +4,7 @@
 // VerifiedSessionId しか受け取らない。VerifiedSessionId を作れるのは issueSession と
 // verifySessionId の戻り値だけ（ルーターの中で型の主張をしない）。
 
+import type { DtnPorts } from "../dtn/ports.ts";
 import type { Env } from "./env.ts";
 import type { StageSummary } from "./stages.ts";
 
@@ -66,4 +67,5 @@ export interface WorkerDeps {
   readonly security?: SecurityPorts;
   readonly costGuard?: CostGuardPorts;
   readonly session?: SessionPorts;
+  readonly dtn?: DtnPorts; // DTN-12。DTN の環境の Worker だけ（DTN_SESSION がなければ undefined）
 }

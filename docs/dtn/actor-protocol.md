@@ -219,3 +219,23 @@ Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けの
 - `stateDigest` は `{id, state, at, from, to, departAt, arriveAt, readyAt, cargo, digests, createdAt}` の RFC 8785 の正準の JSON の SHA-256。`state` は `"docked"`・`"sailing"`、使わない欄は 0、`cargo`（手紙の ID）・`digests`・`createdAt` は Cargo の順の配列
 - `inspect` の `data` は `{id, capacity, state, at, from, to, departAt, arriveAt, readyAt, cargo: [{letterId, createdAt, digest, size}], stateDigest}`
 - Cargo の bytes は積んだときのまま持つ。`bundle.export` は毎回その bytes から、Bundle Age を `t − createdAt` にした bytes を作る
+
+### 7.6 Session Front（DtnSession）と Coordinator の枠（DTN-12）
+
+`web/worker/dtn/session/core.ts`。§1 の `{"ch": "ctl" | "browser", "msg": …}` の `msg` は `{kind, payload}`。DTN-05 はこの形に合わせる。
+
+| 向き | kind | payload |
+|---|---|---|
+| Session Front → Coordinator | `init` | `{stage, stageHash: null, seed, sessionId, coordEpoch, demo, actors: [{actor, epoch}]}`（`stageHash` は Coordinator が埋め込みのステージ定義から決める） |
+| Session Front → Coordinator | `dispatch.result` | `{id, results: [応答…]}`（`calls` と同じ順） |
+| Session Front → Coordinator | `restore.begin`・`restore.chunk`・`restore.end` | §3.3 ＋ `begin` に `sessionId`・`coordEpoch`・`actors` |
+| Coordinator → Session Front | `dispatch` | `{id, calls: [{actor, envelope}]}`（`id` は Coordinator が振る。1〜256 件） |
+| Coordinator → Session Front | `ready` | `{}`（全 Actor の `init` がそろった。Session Front は `ready` にする） |
+| Coordinator → Session Front | `end` | `{reason, result?}`（`reason` は `round_ended`・`dtn_actor_lost`・`dtn_restore_failed`・`dtn_limit`・`dtn_internal`。ほかは `dtn_internal`） |
+| Coordinator → Session Front | `journal` | `{entry}`（Handoff の台帳の段階・`Now` など。Session Front は journal に足すだけで中身を見ない） |
+| Coordinator → Session Front | `stats` | 計測の入口の bot の結果（`GET /api/admin/dtn/probe/{sessionId}` の `bot`） |
+
+- Session Front は `dispatch` の各要求について: 宛先がこのセッションの Actor か（違えば `unknown_actor`）・`sessionId` が自分のものか（違えば `session_mismatch`）を確かめ、`coordEpoch` を今の値で上書きし、`payload.contact` があれば Contact に署名する（このセッションの島と船の組だけ。違えば `contact_mismatch`）。同じ Actor への要求は `eventSeq` の順に 1 つずつ、Actor の間は並行に送る。Host の応答が失われたら同じ要求を 3 回まで送り直し、届かなければその要求の結果を `not_ready` にする
+- Coordinator の journal（persistence-and-recovery.md §4.2）は `{type: "dispatch", id, calls: [{actor, eventSeq, kind, reqDigest}]}`・`{type: "dispatch.result", id, results}`・`{type: "note", entry}` の列。`restore.*` の `entries` はこの列をそのまま送る
+- Container の準備: `PORT=8080` で起動し、`GET /healthz` に 500 未満の応答（`dtnactor` は `/ws` だけを開くので 404 でよい）が返ってから `/ws` に Upgrade でつなぐ
+- Host だけで処理する種類の結果（`transfer.prepare` の ACK・`transfer.status` など）は、応答の `result` に入れる（`host.status` は persistence-and-recovery.md §7.2 の `outputs` の形）

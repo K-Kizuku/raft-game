@@ -1,23 +1,23 @@
-// インフラの構成の正本（ADR-0016・T-601）。モード（cf build --mode …）で一般公開とデモ、ローカルを切り替える。
-// 構成の説明は docs/03-design-doc.md §12.6。ビルドの出力は web/scripts/check-build-output.ts で検査する。
+// インフラの構成の正本（ADR-0016・T-601）。dtn/main では DTN の環境だけを作る（DTN-12・docs/dtn/environment.md §1・
+// ADR-D002）。ビルドの出力は web/scripts/check-build-output.ts で検査する。
 //
-// - production（--mode なしも）: 一般公開。raft.kizuku-hackathon.work
-// - demo: デモ。raft-demo.kizuku-hackathon.work。CostGuard・GUARDS・ADMIN_TOKEN を持たず、一般公開の CostGuard を使う
-// - development: make dev・vite・cf dev。コンテナ（GameSession）を含めない（Docker なしで動く）
-// - local-container: cf dev --mode local-container。コンテナまで手元で動かす（Docker と make sync-data が要る）
+// - dtn（--mode なしも）: DTN の環境。raft-dtn.kizuku-hackathon.work
+// - development: make dev・vite・cf dev。Container（DtnSession・ActorHost）を含めない（Docker なしで動く）
+// - local-container: cf dev --mode local-container。Container まで手元で動かす（Docker と make sync-data が要る）
+//
+// 失敗しても安全な側に倒す: production・demo のモードはない。どのモードでも Worker の名前は DTN 用
+// （raft-game-dtn・raft-game-dtn-dev）なので、dtn/main から誤って cf deploy しても prod・demo を上書きしない。
 import { bindings, defineConfig, defineContainer, exports } from "cf/config";
 import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 
-const PRODUCTION_HOST = "raft.kizuku-hackathon.work";
-const DEMO_HOST = "raft-demo.kizuku-hackathon.work";
-// 一般公開・デモの両方の Worker で、両方のホスト名のオリジンを許す（#130 の決定・T-601b）
-const ALLOWED_ORIGINS = `https://${PRODUCTION_HOST},https://${DEMO_HOST}`;
+const DTN_HOST = "raft-dtn.kizuku-hackathon.work";
+// DTN の環境のホスト名だけ（prod・demo のオリジンを許さない）
+const ALLOWED_ORIGINS = `https://${DTN_HOST}`;
 const COMPATIBILITY_DATE = "2026-11-04";
-// T-007（#15）の測定で見直す。GUARDS.cpuMs（表示用）と同じ値にする
+// GUARDS.cpuMs（表示用）と同じ値にする
 const CPU_MS = 50;
-// T-007（#15）の測定で見直す（R-02）。"lite" か "standard-1"
-const PRODUCTION_INSTANCE = "lite";
-const DEMO_INSTANCE = "standard-1";
+// Container の大きさは、すべて lite から始める（environment.md §2。DTN-12 の測定で見直す）
+const INSTANCE = "lite";
 // SESSION_RATE_LIMIT の simple.limit と GUARDS.rateLimit.perIpPerMinute に使う（ADR-0024）
 const SESSION_RATE_LIMIT_PER_MINUTE = 10;
 
@@ -37,70 +37,43 @@ function parseBuildId(raw: string | undefined): string {
   return raw;
 }
 
-type Mode = "production" | "demo" | "development" | "local-container";
+type Mode = "dtn" | "development" | "local-container";
 
 function parseMode(mode: string | undefined): Mode {
-  // --mode なしで評価する cf のコマンドは一般公開の構成を見る（デプロイのワークフローは必ず --mode を付ける）
-  if (mode === undefined) return "production";
-  if (
-    mode === "production" ||
-    mode === "demo" ||
-    mode === "development" ||
-    mode === "local-container"
-  )
-    return mode;
+  // --mode なしで評価する cf のコマンドは DTN の環境の構成を見る（デプロイのワークフローは必ず --mode dtn を付ける）
+  if (mode === undefined) return "dtn";
+  if (mode === "dtn" || mode === "development" || mode === "local-container") return mode;
   throw new Error(
-    `cloudflare.config.ts: 知らないモード: ${mode}（production・demo・development・local-container のどれか）`,
+    `cloudflare.config.ts: 知らないモード: ${mode}（dtn・development・local-container のどれか。dtn/main に production・demo はない）`,
   );
 }
 
 interface ModeValues {
   workerName: string;
   host: string | undefined; // domains。undefined（ローカル）なら ALLOWED_ORIGINS も書かない
-  containerName: string | undefined; // undefined ならコンテナ（GameSession）なし
-  ownCostGuard: boolean; // false なら一般公開の Worker の CostGuard を参照し、GUARDS・ADMIN_TOKEN を置かない
-  demoControls: "0" | "1";
-  instance: "lite" | "standard-1";
-  rateLimitNamespace: string; // アカウントの中で一意（ADR-0024）。仮の値。#130 で決め直す
+  // Container のアプリケーションの名前（DO のクラスごとに 1 つ）。undefined なら Container も DtnSession・ActorHost もない
+  containers: { coordinator: string; actor: string } | undefined;
+  rateLimitNamespace: string; // アカウントの中で一意（ADR-0024）。prod 1001・demo 1002・dev 1003 と重ならない
 }
 
 const MODES: Record<Mode, ModeValues> = {
-  production: {
-    workerName: "raft-game",
-    host: PRODUCTION_HOST,
-    containerName: "raft-game-server",
-    ownCostGuard: true,
-    demoControls: "0",
-    instance: PRODUCTION_INSTANCE,
-    rateLimitNamespace: "1001",
-  },
-  demo: {
-    workerName: "raft-game-demo",
-    host: DEMO_HOST,
-    // Containers のアプリケーションは 1 つの Durable Object のクラスに結び付くので、一般公開と分ける
-    containerName: "raft-game-demo-server",
-    ownCostGuard: false,
-    demoControls: "1",
-    instance: DEMO_INSTANCE,
-    rateLimitNamespace: "1002",
+  dtn: {
+    workerName: "raft-game-dtn",
+    host: DTN_HOST,
+    containers: { coordinator: "raft-dtn-coordinator", actor: "raft-dtn-actor" },
+    rateLimitNamespace: "1004",
   },
   development: {
-    workerName: "raft-game-dev",
+    workerName: "raft-game-dtn-dev",
     host: undefined,
-    containerName: undefined,
-    ownCostGuard: true,
-    demoControls: "1",
-    instance: "lite",
-    rateLimitNamespace: "1003",
+    containers: undefined,
+    rateLimitNamespace: "1005",
   },
   "local-container": {
-    workerName: "raft-game-dev",
+    workerName: "raft-game-dtn-dev",
     host: undefined,
-    containerName: "raft-game-dev-server",
-    ownCostGuard: true,
-    demoControls: "1",
-    instance: "lite",
-    rateLimitNamespace: "1003",
+    containers: { coordinator: "raft-dtn-dev-coordinator", actor: "raft-dtn-dev-actor" },
+    rateLimitNamespace: "1005",
   },
 };
 
@@ -109,24 +82,24 @@ export default defineConfig((ctx) => {
   const m = MODES[parseMode(ctx.mode)];
   const buildId = parseBuildId(buildEnv["BUILD_ID"]);
 
-  const container =
-    m.containerName === undefined
-      ? undefined
-      : defineContainer({
-          name: m.containerName,
-          schedulingPolicy: "durable-object",
-          images: {
-            // GameSession の ctx.container.images.server が使う（T-308）。cf build の前に make sync-data が要る（T-306）
-            server: {
-              dockerfile: "../server/Dockerfile",
-              buildContext: "../server",
-              buildVars: { BUILD_ID: buildId },
-            },
-          },
-          observability: { enabled: true, logs: { enabled: true } },
-        });
-
-  const costGuardWorker = m.ownCostGuard ? m.workerName : MODES.production.workerName;
+  // 2 つのアプリケーションは同じ Dockerfile（dtnactor。ROLE で役割を変える）。image の共有は Q-IMAGE で測る
+  const dtnContainer = (name: string) =>
+    defineContainer({
+      name,
+      schedulingPolicy: "durable-object",
+      images: {
+        // DtnSession・ActorHost の ctx.container.images.dtnactor が使う。cf build の前に make sync-data が要る
+        dtnactor: {
+          dockerfile: "../server/Dockerfile.dtnactor",
+          buildContext: "../server",
+          buildVars: { BUILD_ID: buildId },
+        },
+      },
+      observability: { enabled: true, logs: { enabled: true } },
+    });
+  const coordinator =
+    m.containers === undefined ? undefined : dtnContainer(m.containers.coordinator);
+  const actor = m.containers === undefined ? undefined : dtnContainer(m.containers.actor);
 
   return {
     worker: {
@@ -144,45 +117,58 @@ export default defineConfig((ctx) => {
       limits: { cpuMs: CPU_MS },
       env: {
         ALLOWED_ORIGINS: m.host === undefined ? undefined : bindings.text(ALLOWED_ORIGINS),
-        DEMO_CONTROLS: bindings.text(m.demoControls),
+        // 全ステージ（demo-goto・demo-izu も）を選べるようにする。デモの操作も誰でも使える（environment.md §1）
+        DEMO_CONTROLS: bindings.text("1"),
         BUILD_ID: bindings.text(buildId),
-        CONTAINER_INSTANCE: bindings.text(m.instance),
-        GAME_SESSION:
-          container === undefined
+        CONTAINER_INSTANCE: bindings.text(INSTANCE),
+        DTN_SESSION:
+          coordinator === undefined
             ? undefined
-            : bindings.durableObject({ worker: m.workerName, exportName: "GameSession" }),
-        COST_GUARD: bindings.durableObject({ worker: costGuardWorker, exportName: "CostGuard" }),
-        // CostGuard は自分の Worker の env から GUARDS を読むので、CostGuard を持たない Worker には置かない。
+            : bindings.durableObject({ worker: m.workerName, exportName: "DtnSession" }),
+        ACTOR_HOST:
+          actor === undefined
+            ? undefined
+            : bindings.durableObject({ worker: m.workerName, exportName: "ActorHost" }),
+        // DTN の環境の専用の CostGuard（prod・demo の CostGuard とは別の Worker の別のインスタンス）
+        COST_GUARD: bindings.durableObject({ worker: m.workerName, exportName: "CostGuard" }),
         // signature のキーを書かない（書くと CostGuard が設定ごと不正にする。G3）
-        GUARDS: m.ownCostGuard
-          ? bindings.json({
-              budget: { enabled: true, monthlyUsd: 30, dailyUsd: 1 },
-              gameTime: { maxMinutes: 30, maxAlarms: 20 },
-              turnstile: { enabled: true },
-              rateLimit: { enabled: true, perIpPerMinute: SESSION_RATE_LIMIT_PER_MINUTE },
-              cpuMs: CPU_MS,
-              acceptGames: true,
-              unitCostUsd: { lite: 0.0065, "standard-1": 0.04 },
-            })
-          : undefined,
-        // シークレットの値は cf deploy --secrets-file（T-603）とローカルの web/.dev.vars で渡す
+        GUARDS: bindings.json({
+          budget: { enabled: true, monthlyUsd: 10, dailyUsd: 1 },
+          gameTime: { maxMinutes: 15, maxAlarms: 20 },
+          turnstile: { enabled: true },
+          rateLimit: { enabled: true, perIpPerMinute: SESSION_RATE_LIMIT_PER_MINUTE },
+          cpuMs: CPU_MS,
+          acceptGames: true,
+          // lite・standard-1 は今の {sessionId, instance} の予約（コンテナ 1 つ＋ DO 1 つ）。
+          // container.*・do は内訳つきの予約（environment.md §3。ADR-0018 の単価）
+          unitCostUsd: {
+            lite: 0.0065,
+            "standard-1": 0.04,
+            "container.lite": 0.0036,
+            "container.standard-1": 0.037,
+            do: 0.0028,
+          },
+        }),
+        // シークレットの値は cf deploy --secrets-file とローカルの web/.dev.vars で渡す（prod・demo と別の値）
         SESSION_SIGNING_KEY: bindings.secret(),
         TURNSTILE_SECRET: bindings.secret(),
-        // 共有の CostGuard を切り替える入り口を一般公開の Worker の 1 つに絞る（デモの管理用 API は 404）
-        ADMIN_TOKEN: m.ownCostGuard ? bindings.secret() : undefined,
+        ADMIN_TOKEN: bindings.secret(),
+        DTN_CONTACT_KEY: bindings.secret(),
         SESSION_RATE_LIMIT: bindings.rateLimit({
           namespace: m.rateLimitNamespace,
           simple: { limit: SESSION_RATE_LIMIT_PER_MINUTE, period: 60 },
         }),
-        REPLAYS: bindings.r2({ name: "raft-game-replays" }), // P1。まだ誰も読まない
       },
-      // キー（GameSession・CostGuard）を変えない。Durable Object のクラスの改名・削除は前の版に戻せない（ADR-0016）
+      // キー（DtnSession・ActorHost・CostGuard）を変えない。Durable Object のクラスの改名・削除は前の版に戻せない（ADR-0016）
+      // GameSession は置かない（index.ts は export するが、ここに宣言しないので Durable Object にならない）
       exports: {
-        ...(container === undefined
+        ...(coordinator === undefined
           ? {}
-          : { GameSession: exports.durableObject({ storage: "sqlite", container }) }),
-        // デモ用の Worker の index.ts も CostGuard を export するが、ここに宣言しないので Durable Object にならない
-        ...(m.ownCostGuard ? { CostGuard: exports.durableObject({ storage: "sqlite" }) } : {}),
+          : { DtnSession: exports.durableObject({ storage: "sqlite", container: coordinator }) }),
+        ...(actor === undefined
+          ? {}
+          : { ActorHost: exports.durableObject({ storage: "sqlite", container: actor }) }),
+        CostGuard: exports.durableObject({ storage: "sqlite" }),
       },
       observability: {
         enabled: true,
@@ -190,6 +176,6 @@ export default defineConfig((ctx) => {
         logs: { enabled: true, headSamplingRate: 1 },
       },
     },
-    containers: container === undefined ? [] : [container],
+    containers: coordinator === undefined || actor === undefined ? [] : [coordinator, actor],
   };
 });

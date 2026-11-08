@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/K-Kizuku/raft-game/server/internal/protocol"
 	"github.com/K-Kizuku/raft-game/server/internal/stage"
 )
 
@@ -40,7 +39,7 @@ func TestRepoCatalog(t *testing.T) {
 
 	var c struct {
 		Format int
-		Stages []protocol.StageSummary
+		Stages []catalogStage
 	}
 	dec := json.NewDecoder(bytes.NewReader(committed))
 	dec.DisallowUnknownFields()
@@ -64,5 +63,36 @@ func TestRepoCatalog(t *testing.T) {
 		if s.Intro.Text == "" {
 			t.Errorf("stages[%d]（%s）.intro.text が空", i, s.ID)
 		}
+	}
+}
+
+// REPO-2: dtn の Actor の名前と対象外のイベント（DTN-12）。stage3 は欠航を定義しているので対象外（#365 まで）。
+func TestRepoCatalogDTN(t *testing.T) {
+	t.Parallel()
+	stages, err := stage.LoadDir(os.DirFS(repoData), "islands.json", "stages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]dtnInfo{}
+	for _, st := range stages {
+		info := dtnOf(st)
+		if len(info.Actors) != len(st.Islands)+len(st.Ferries) {
+			t.Errorf("%s: actors = %v", st.ID, info.Actors)
+		}
+		byID[st.ID] = info
+	}
+	if got := strings.Join(byID["stage1"].Actors, ","); got != "island:1,island:2,island:3,ferry:f1" {
+		t.Errorf("stage1.actors = %s", got)
+	}
+	if got := strings.Join(byID["stage3"].UnsupportedEvents, ","); got != "cancellation" {
+		t.Errorf("stage3.unsupportedEvents = %s", got)
+	}
+	for _, id := range []string{"stage1", "stage2", "demo-goto", "demo-izu"} {
+		if u := byID[id].UnsupportedEvents; len(u) != 0 {
+			t.Errorf("%s.unsupportedEvents = %v, want []", id, u)
+		}
+	}
+	if got := strings.Join(byID["demo-izu"].EventKinds, ","); got != "demo.storm" {
+		t.Errorf("demo-izu.eventKinds = %s", got)
 	}
 }

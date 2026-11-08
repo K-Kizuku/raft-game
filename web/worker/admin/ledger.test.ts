@@ -64,6 +64,7 @@ describe("L-1 予約額", () => {
         status: "reserved",
         started_at: T0,
         ended_at: null,
+        units: null,
       },
       {
         session_id: "b",
@@ -74,6 +75,7 @@ describe("L-1 予約額", () => {
         status: "reserved",
         started_at: T0,
         ended_at: null,
+        units: null,
       },
     ]);
   });

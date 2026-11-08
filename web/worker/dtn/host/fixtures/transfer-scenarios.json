@@ -1,0 +1,1477 @@
+{
+  "format": 1,
+  "about": "ActorHost の Handoff・Contact・復元の場面（DTN-12。TS だけ）。共通の契約は server/internal/dtn/host/testdata/contract（contract.test.ts）。Go の Host が transfer.*・contact.* を実装したら（DTN-08・09）、同じ形の fixture に移す",
+  "sessionId": "s_contract",
+  "contactKey": "contract-test-contact-key-0123456789abcdef",
+  "scenarios": [
+    {
+      "name": "handoff-source",
+      "actor": "island:1",
+      "steps": [
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 1,
+            "kind": "init",
+            "payload": {
+              "stage": "stage1",
+              "stageHash": "sha256:00",
+              "seed": 7,
+              "actor": "island:1"
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "node.state",
+                  "data": {
+                    "id": 1,
+                    "role": "follower"
+                  }
+                }
+              ],
+              "cursor": {
+                "horizon": [0, 0],
+                "stateDigest": "sha256:aa"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 2,
+            "kind": "advance",
+            "payload": {
+              "horizon": [1000, 1]
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 500,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "letter.created",
+                  "data": {
+                    "letter": {
+                      "id": 1000000001,
+                      "kind": "raft",
+                      "from": 1,
+                      "to": 2,
+                      "createdAt": 500
+                    },
+                    "digest": "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+                    "size": 3,
+                    "msgTerm": 1,
+                    "letterId": 1000000001
+                  },
+                  "bundle": "AQID"
+                }
+              ],
+              "cursor": {
+                "horizon": [1000, 1],
+                "stateDigest": "sha256:bb"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1,
+            "noBundleBytes": true
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 3,
+            "kind": "contact.open",
+            "payload": {
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              }
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "ok"
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 4,
+            "kind": "transfer.prepare",
+            "payload": {
+              "transferId": "x4",
+              "t": 12600,
+              "to": "ferry:f1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "letterIds": [1000000001]
+            }
+          },
+          "container": [
+            {
+              "expectKind": "bundle.export",
+              "expectPayload": {
+                "t": 12600,
+                "letterIds": [1000000001]
+              },
+              "outputs": [
+                {
+                  "t": 12600,
+                  "class": 8,
+                  "seq": 1,
+                  "type": "bundle.exported",
+                  "data": {
+                    "letterId": 1000000001,
+                    "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472",
+                    "size": 3
+                  },
+                  "bundle": "BAUG"
+                }
+              ]
+            }
+          ],
+          "peer": [
+            {
+              "status": 200,
+              "body": {
+                "v": 1,
+                "actor": "ferry:f1",
+                "epoch": 1,
+                "eventSeq": 4,
+                "status": "ok",
+                "outputs": [],
+                "error": null,
+                "result": {
+                  "transferId": "x4",
+                  "digests": [
+                    {
+                      "letterId": 1000000001,
+                      "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                    }
+                  ]
+                }
+              },
+              "expectPayload": {
+                "transferId": "x4",
+                "from": "island:1",
+                "bundles": [
+                  {
+                    "letterId": 1000000001,
+                    "bundle": "BAUG",
+                    "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                  }
+                ]
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "result": {
+              "transferId": "x4",
+              "digests": [
+                {
+                  "letterId": 1000000001,
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "db",
+          "expect": {
+            "bundles": [
+              {
+                "letterId": 1000000001,
+                "state": "prepared",
+                "place": "port",
+                "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472",
+                "transferId": "x4"
+              }
+            ],
+            "transfers": [
+              {
+                "transferId": "x4",
+                "role": "source",
+                "state": "prepared"
+              }
+            ]
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 4,
+            "kind": "transfer.prepare",
+            "payload": {
+              "transferId": "x4",
+              "t": 12600,
+              "to": "ferry:f1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "letterIds": [1000000001]
+            }
+          },
+          "container": [],
+          "peer": [],
+          "expect": {
+            "status": "ok",
+            "containerRequests": 0
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 0,
+            "kind": "transfer.status",
+            "payload": {
+              "transferId": "x4"
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "ok",
+            "result": {
+              "state": "prepared",
+              "role": "source"
+            }
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 5,
+            "kind": "transfer.gc",
+            "payload": {
+              "transferId": "x4",
+              "then": {
+                "kind": "port.remove",
+                "payload": {
+                  "letterIds": [1000000001]
+                }
+              }
+            }
+          },
+          "container": [
+            {
+              "expectKind": "port.remove"
+            }
+          ],
+          "expect": {
+            "status": "ok"
+          }
+        },
+        {
+          "op": "db",
+          "expect": {
+            "bundles": [
+              {
+                "letterId": 1000000001,
+                "state": "gone",
+                "place": "moved",
+                "bundle": null
+              }
+            ],
+            "transfers": [
+              {
+                "transferId": "x4",
+                "state": "collected"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "handoff-dest",
+      "actor": "ferry:f1",
+      "steps": [
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 1,
+            "kind": "init",
+            "payload": {
+              "stage": "stage1",
+              "stageHash": "sha256:00",
+              "seed": 7,
+              "actor": "ferry:f1"
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "ferry.state",
+                  "data": {
+                    "state": "docked",
+                    "at": 1,
+                    "readyAt": 0,
+                    "cargo": []
+                  }
+                }
+              ]
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 2,
+            "kind": "contact.open",
+            "payload": {
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              }
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "ok"
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "BAUG",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "ok",
+            "result": {
+              "transferId": "x4",
+              "digests": [
+                {
+                  "letterId": 1000000001,
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "BAUG",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "ok",
+            "result": {
+              "transferId": "x4"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "AQID",
+                  "digest": "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "error",
+            "code": "conflict"
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x9",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "AQID",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "error",
+            "code": "invalid"
+          }
+        },
+        {
+          "op": "db",
+          "expect": {
+            "bundles": [
+              {
+                "letterId": 1000000001,
+                "state": "pending",
+                "place": "cargo",
+                "transferId": "x4"
+              }
+            ],
+            "transfers": [
+              {
+                "transferId": "x4",
+                "role": "dest",
+                "state": "pending"
+              }
+            ]
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 5,
+            "kind": "transfer.activate",
+            "payload": {
+              "transferId": "x4",
+              "then": {
+                "kind": "cargo.add",
+                "payload": {
+                  "t": 12700,
+                  "letters": [
+                    {
+                      "letterId": 1000000001,
+                      "createdAt": 500,
+                      "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "container": [
+            {
+              "expectKind": "cargo.add",
+              "expectPayload": {
+                "t": 12700,
+                "letters": [
+                  {
+                    "letterId": 1000000001,
+                    "createdAt": 500,
+                    "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472",
+                    "bundle": "BAUG"
+                  }
+                ]
+              },
+              "outputs": [
+                {
+                  "t": 12700,
+                  "class": 8,
+                  "seq": 2,
+                  "type": "ferry.state",
+                  "data": {
+                    "state": "docked",
+                    "readyAt": 0,
+                    "cargo": [1000000001]
+                  }
+                }
+              ]
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "db",
+          "expect": {
+            "bundles": [
+              {
+                "letterId": 1000000001,
+                "state": "held",
+                "place": "cargo",
+                "bundle": "BAUG"
+              }
+            ],
+            "transfers": [
+              {
+                "transferId": "x4",
+                "state": "activated"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "contact-checks",
+      "actor": "ferry:f1",
+      "steps": [
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 1,
+            "kind": "init",
+            "payload": {
+              "stage": "stage1",
+              "stageHash": "sha256:00",
+              "seed": 7,
+              "actor": "ferry:f1"
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "ferry.state",
+                  "data": {
+                    "state": "docked",
+                    "at": 1,
+                    "readyAt": 0,
+                    "cargo": []
+                  }
+                }
+              ]
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "AAAA"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "BAUG",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "error",
+            "code": "contact_mismatch"
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f2",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "BAUG",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "error",
+            "code": "contact_mismatch"
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_other",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "BAUG",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "error",
+            "code": "contact_mismatch"
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 2,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "BAUG",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "error",
+            "code": "stale_epoch"
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 2,
+            "kind": "contact.close",
+            "payload": {
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              }
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "ok"
+          }
+        },
+        {
+          "op": "accept",
+          "request": {
+            "eventSeq": 4,
+            "epoch": 1,
+            "kind": "transfer.accept",
+            "payload": {
+              "transferId": "x4",
+              "from": "island:1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "bundles": [
+                {
+                  "letterId": 1000000001,
+                  "bundle": "BAUG",
+                  "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": "error",
+            "code": "contact_closed"
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 3,
+            "kind": "contact.open",
+            "payload": {
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              }
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "error",
+            "code": "contact_closed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "handoff-abort",
+      "actor": "island:1",
+      "steps": [
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 1,
+            "kind": "init",
+            "payload": {
+              "stage": "stage1",
+              "stageHash": "sha256:00",
+              "seed": 7,
+              "actor": "island:1"
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "node.state",
+                  "data": {
+                    "id": 1,
+                    "role": "follower"
+                  }
+                }
+              ],
+              "cursor": {
+                "horizon": [0, 0],
+                "stateDigest": "sha256:aa"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 2,
+            "kind": "advance",
+            "payload": {
+              "horizon": [1000, 1]
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 500,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "letter.created",
+                  "data": {
+                    "letter": {
+                      "id": 1000000001,
+                      "kind": "raft",
+                      "from": 1,
+                      "to": 2,
+                      "createdAt": 500
+                    },
+                    "digest": "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+                    "size": 3,
+                    "msgTerm": 1,
+                    "letterId": 1000000001
+                  },
+                  "bundle": "AQID"
+                }
+              ],
+              "cursor": {
+                "horizon": [1000, 1],
+                "stateDigest": "sha256:bb"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1,
+            "noBundleBytes": true
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 3,
+            "kind": "contact.open",
+            "payload": {
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              }
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "ok"
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 4,
+            "kind": "transfer.prepare",
+            "payload": {
+              "transferId": "x4",
+              "t": 12600,
+              "to": "ferry:f1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "letterIds": [1000000001]
+            }
+          },
+          "container": [
+            {
+              "expectKind": "bundle.export",
+              "expectPayload": {
+                "t": 12600,
+                "letterIds": [1000000001]
+              },
+              "outputs": [
+                {
+                  "t": 12600,
+                  "class": 8,
+                  "seq": 1,
+                  "type": "bundle.exported",
+                  "data": {
+                    "letterId": 1000000001,
+                    "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472",
+                    "size": 3
+                  },
+                  "bundle": "BAUG"
+                }
+              ]
+            }
+          ],
+          "peer": [
+            {
+              "status": 200,
+              "body": {
+                "v": 1,
+                "actor": "ferry:f1",
+                "epoch": 1,
+                "eventSeq": 4,
+                "status": "error",
+                "outputs": [],
+                "error": {
+                  "code": "contact_closed",
+                  "message": "contact_closed"
+                }
+              }
+            }
+          ],
+          "expect": {
+            "status": "error",
+            "code": "contact_closed"
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 5,
+            "kind": "transfer.abort",
+            "payload": {
+              "transferId": "x4"
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "ok"
+          }
+        },
+        {
+          "op": "db",
+          "expect": {
+            "bundles": [
+              {
+                "letterId": 1000000001,
+                "state": "held",
+                "transferId": null
+              }
+            ],
+            "transfers": [
+              {
+                "transferId": "x4",
+                "state": "aborted"
+              }
+            ]
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 6,
+            "kind": "transfer.prepare",
+            "payload": {
+              "transferId": "x6",
+              "t": 12600,
+              "to": "ferry:f1",
+              "contact": {
+                "contactId": "k10",
+                "sessionId": "s_contract",
+                "island": 1,
+                "ferry": "f1",
+                "islandEpoch": 1,
+                "ferryEpoch": 1,
+                "openedAt": 12500,
+                "sig": "$sign"
+              },
+              "letterIds": [1000000001]
+            }
+          },
+          "container": [
+            {
+              "expectKind": "bundle.export",
+              "expectPayload": {
+                "t": 12600,
+                "letterIds": [1000000001]
+              },
+              "outputs": [
+                {
+                  "t": 12600,
+                  "class": 8,
+                  "seq": 1,
+                  "type": "bundle.exported",
+                  "data": {
+                    "letterId": 1000000001,
+                    "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472",
+                    "size": 3
+                  },
+                  "bundle": "BAUG"
+                }
+              ]
+            }
+          ],
+          "peer": [
+            {
+              "status": 200,
+              "body": {
+                "v": 1,
+                "actor": "ferry:f1",
+                "epoch": 1,
+                "eventSeq": 6,
+                "status": "ok",
+                "outputs": [],
+                "error": null,
+                "result": {
+                  "transferId": "x6",
+                  "digests": [
+                    {
+                      "letterId": 1000000001,
+                      "digest": "sha256:787c798e39a5bc1910355bae6d0cd87a36b2e10fd0202a83e3bb6b005da83472"
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok"
+          }
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "actor": "island:1",
+      "steps": [
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 1,
+            "kind": "init",
+            "payload": {
+              "stage": "stage1",
+              "stageHash": "sha256:00",
+              "seed": 7,
+              "actor": "island:1"
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "node.state",
+                  "data": {
+                    "id": 1,
+                    "role": "follower"
+                  }
+                }
+              ],
+              "cursor": {
+                "horizon": [0, 0],
+                "stateDigest": "sha256:aa"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 2,
+            "kind": "advance",
+            "payload": {
+              "horizon": [1000, 1]
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 500,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "letter.created",
+                  "data": {
+                    "letter": {
+                      "id": 1000000001,
+                      "kind": "raft",
+                      "from": 1,
+                      "to": 2,
+                      "createdAt": 500
+                    },
+                    "digest": "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+                    "size": 3,
+                    "msgTerm": 1,
+                    "letterId": 1000000001
+                  },
+                  "bundle": "AQID"
+                }
+              ],
+              "cursor": {
+                "horizon": [1000, 1],
+                "stateDigest": "sha256:bb"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "crash",
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "node.state",
+                  "data": {
+                    "id": 1,
+                    "role": "follower"
+                  }
+                }
+              ],
+              "cursor": {
+                "horizon": [0, 0],
+                "stateDigest": "sha256:aa"
+              },
+              "expectKind": "init",
+              "expectReplay": true
+            },
+            {
+              "outputs": [
+                {
+                  "t": 500,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "letter.created",
+                  "data": {
+                    "letter": {
+                      "id": 1000000001,
+                      "kind": "raft",
+                      "from": 1,
+                      "to": 2,
+                      "createdAt": 500
+                    },
+                    "digest": "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+                    "size": 3,
+                    "msgTerm": 1,
+                    "letterId": 1000000001
+                  },
+                  "bundle": "AQID"
+                }
+              ],
+              "cursor": {
+                "horizon": [1000, 1],
+                "stateDigest": "sha256:bb"
+              },
+              "expectKind": "advance",
+              "expectReplay": true
+            }
+          ],
+          "expect": {
+            "state": "running",
+            "epoch": 2,
+            "permits": 1
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 0,
+            "kind": "host.status",
+            "payload": {},
+            "epoch": 0
+          },
+          "container": [],
+          "expect": {
+            "status": "ok",
+            "result": {
+              "epoch": 2,
+              "starts": 2
+            }
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 3,
+            "kind": "advance",
+            "payload": {
+              "horizon": [2000, 1]
+            },
+            "epoch": 2
+          },
+          "container": [{}],
+          "expect": {
+            "status": "ok"
+          }
+        }
+      ]
+    },
+    {
+      "name": "restore-failed",
+      "actor": "island:1",
+      "steps": [
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 1,
+            "kind": "init",
+            "payload": {
+              "stage": "stage1",
+              "stageHash": "sha256:00",
+              "seed": 7,
+              "actor": "island:1"
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "node.state",
+                  "data": {
+                    "id": 1,
+                    "role": "follower"
+                  }
+                }
+              ],
+              "cursor": {
+                "horizon": [0, 0],
+                "stateDigest": "sha256:aa"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "crash",
+          "container": [
+            {
+              "expectKind": "init",
+              "expectReplay": true,
+              "outputs": []
+            }
+          ],
+          "expect": {
+            "state": "failed",
+            "epoch": 2
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 2,
+            "kind": "advance",
+            "payload": {
+              "horizon": [1000, 1]
+            },
+            "epoch": 2
+          },
+          "container": [],
+          "expect": {
+            "status": "error",
+            "code": "restore_failed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "restore-denied",
+      "actor": "island:1",
+      "steps": [
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 1,
+            "kind": "init",
+            "payload": {
+              "stage": "stage1",
+              "stageHash": "sha256:00",
+              "seed": 7,
+              "actor": "island:1"
+            }
+          },
+          "container": [
+            {
+              "outputs": [
+                {
+                  "t": 0,
+                  "class": 3,
+                  "seq": 1,
+                  "type": "node.state",
+                  "data": {
+                    "id": 1,
+                    "role": "follower"
+                  }
+                }
+              ],
+              "cursor": {
+                "horizon": [0, 0],
+                "stateDigest": "sha256:aa"
+              }
+            }
+          ],
+          "expect": {
+            "status": "ok",
+            "outputs": 1
+          }
+        },
+        {
+          "op": "crash",
+          "permit": false,
+          "container": [],
+          "expect": {
+            "state": "failed",
+            "epoch": 1
+          }
+        },
+        {
+          "op": "host",
+          "request": {
+            "eventSeq": 2,
+            "kind": "advance",
+            "payload": {
+              "horizon": [1000, 1]
+            }
+          },
+          "container": [],
+          "expect": {
+            "status": "error",
+            "code": "not_ready"
+          }
+        }
+      ]
+    }
+  ]
+}

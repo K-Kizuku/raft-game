@@ -1,75 +1,80 @@
-// cf build の出力（.cloudflare/output/v0/）が、モードごとの決まりに合うことを確かめる（T-601 / #65）。
-// T-603 のデプロイのワークフローでも、cf deploy の前に使う。
+// cf build の出力（.cloudflare/output/v0/）が、モードごとの決まりに合うことを確かめる（T-601 / #65・DTN-12 / #169）。
+// dtn/main では DTN の環境だけを作る（docs/dtn/environment.md §1）。DTN のデプロイのワークフロー（H3）でも、
+// cf deploy の前に使う。
 //
-//   node web/scripts/check-build-output.ts --mode <production|demo|development|local-container> <.cloudflare/output/v0>
+//   node web/scripts/check-build-output.ts --mode <dtn|development|local-container> <.cloudflare/output/v0>
 //
 // 成功: {"ok":true,"mode":"<モード>","worker":"<名前>","images":[<localReference>…]} を標準出力に出して 0。
 // 失敗: 理由を 1 行ずつ（項目名で始める）標準エラーに出して 1。引数の誤り・出力を読めない → 2。
 //
 // 期待する値は、このファイルの中に表として持つ（cloudflare.config.ts を import しない。
-// 設定の誤りを、設定とは別に書いた表で見つけるため）。表は docs/03-design-doc.md §12.6 と同じ。
+// 設定の誤りを、設定とは別に書いた表で見つけるため）。表は docs/dtn/environment.md §1 と同じ。
+// 出力に prod・demo の Worker の名前・ホスト名・GameSession が 1 つでもあれば失敗にする（失敗しても安全な側）。
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const MODES = ["production", "demo", "development", "local-container"] as const;
+export const MODES = ["dtn", "development", "local-container"] as const;
 export type Mode = (typeof MODES)[number];
 
 interface Expected {
   worker: string;
   host: string | undefined; // domains。undefined（ローカル）なら ALLOWED_ORIGINS も書かない
-  container: string | undefined; // GameSession のコンテナ（undefined ならコンテナも GameSession もない）
-  ownCostGuard: boolean; // false なら一般公開の CostGuard を参照し、GUARDS・ADMIN_TOKEN を持たない
-  demoControls: string;
-  instance: string;
+  // DtnSession・ActorHost の Container（undefined なら Container も DtnSession・ActorHost もない）
+  containers: { coordinator: string; actor: string } | undefined;
   rateLimitNamespace: string;
 }
 
-const PRODUCTION_WORKER = "raft-game";
-// host のあるモード（一般公開・デモ）の ALLOWED_ORIGINS。両方とも両方のホスト名のオリジン（#130 の決定・T-601b）
-export const ALLOWED_ORIGINS =
-  "https://raft.kizuku-hackathon.work,https://raft-demo.kizuku-hackathon.work";
+const DTN_HOST = "raft-dtn.kizuku-hackathon.work";
+export const ALLOWED_ORIGINS = `https://${DTN_HOST}`;
 
 export const EXPECTED: Record<Mode, Expected> = {
-  production: {
-    worker: PRODUCTION_WORKER,
-    host: "raft.kizuku-hackathon.work",
-    container: "raft-game-server",
-    ownCostGuard: true,
-    demoControls: "0",
-    instance: "lite",
-    rateLimitNamespace: "1001",
-  },
-  demo: {
-    worker: "raft-game-demo",
-    host: "raft-demo.kizuku-hackathon.work",
-    container: "raft-game-demo-server",
-    ownCostGuard: false,
-    demoControls: "1",
-    instance: "standard-1",
-    rateLimitNamespace: "1002",
+  dtn: {
+    worker: "raft-game-dtn",
+    host: DTN_HOST,
+    containers: { coordinator: "raft-dtn-coordinator", actor: "raft-dtn-actor" },
+    rateLimitNamespace: "1004",
   },
   development: {
-    worker: "raft-game-dev",
+    worker: "raft-game-dtn-dev",
     host: undefined,
-    container: undefined,
-    ownCostGuard: true,
-    demoControls: "1",
-    instance: "lite",
-    rateLimitNamespace: "1003",
+    containers: undefined,
+    rateLimitNamespace: "1005",
   },
   "local-container": {
-    worker: "raft-game-dev",
+    worker: "raft-game-dtn-dev",
     host: undefined,
-    container: "raft-game-dev-server",
-    ownCostGuard: true,
-    demoControls: "1",
-    instance: "lite",
-    rateLimitNamespace: "1003",
+    containers: { coordinator: "raft-dtn-dev-coordinator", actor: "raft-dtn-dev-actor" },
+    rateLimitNamespace: "1005",
   },
 };
 
-const SECRETS = ["SESSION_SIGNING_KEY", "TURNSTILE_SECRET", "ADMIN_TOKEN"] as const;
+// prod・demo（main）の名前（出力のどこにも現れてはいけない）。JSON の文字列としてそのまま一致するもの
+export const FORBIDDEN_NAMES = [
+  "raft-game",
+  "raft-game-demo",
+  "raft-game-dev",
+  "raft-game-server",
+  "raft-game-demo-server",
+  "raft-game-dev-server",
+  "raft-game-replays",
+  "GameSession",
+  "GAME_SESSION",
+] as const;
+// prod・demo のホスト名（部分一致でも誤り）
+export const FORBIDDEN_HOSTS = [
+  "raft.kizuku-hackathon.work",
+  "raft-demo.kizuku-hackathon.work",
+] as const;
+// prod 1001・demo 1002・main の dev 1003（ADR-0024）
+const FORBIDDEN_RATE_LIMIT_NAMESPACES = ["1001", "1002", "1003"];
+
+const SECRETS = [
+  "SESSION_SIGNING_KEY",
+  "TURNSTILE_SECRET",
+  "ADMIN_TOKEN",
+  "DTN_CONTACT_KEY",
+] as const;
 const RUN_WORKER_FIRST = ["/api/*", "/ws/*"];
 const RATE_LIMIT = { limit: 10, period: 60 };
 const BUILD_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -82,7 +87,6 @@ const GUARDS_KEYS = [
   "turnstile",
   "unitCostUsd",
 ];
-const R2_NAME = "raft-game-replays";
 
 /** モードの env のキーの集合（上の表から作る） */
 export function expectedEnvKeys(mode: Mode): string[] {
@@ -92,14 +96,15 @@ export function expectedEnvKeys(mode: Mode): string[] {
     "BUILD_ID",
     "CONTAINER_INSTANCE",
     "COST_GUARD",
+    "GUARDS",
     "SESSION_SIGNING_KEY",
     "TURNSTILE_SECRET",
+    "ADMIN_TOKEN",
+    "DTN_CONTACT_KEY",
     "SESSION_RATE_LIMIT",
-    "REPLAYS",
   ];
   if (e.host !== undefined) keys.push("ALLOWED_ORIGINS");
-  if (e.container !== undefined) keys.push("GAME_SESSION");
-  if (e.ownCostGuard) keys.push("GUARDS", "ADMIN_TOKEN");
+  if (e.containers !== undefined) keys.push("DTN_SESSION", "ACTOR_HOST");
   return keys.sort();
 }
 
@@ -168,9 +173,9 @@ function checkDomains(w: Obj, e: Expected, errors: string[]): void {
   if (!ok) errors.push(`domains: ${show(domains)}（["${e.host}"] のちょうど 1 つであること）`);
 }
 
-function checkGuards(env: Obj, mode: Mode, errors: string[]): Obj | undefined {
+function checkGuards(env: Obj, errors: string[]): Obj | undefined {
   const b = env["GUARDS"];
-  if (!EXPECTED[mode].ownCostGuard || b === undefined) return undefined; // 有無は env のキーの集合で見る
+  if (b === undefined) return undefined; // 有無は env のキーの集合で見る
   if (!isObj(b) || b["type"] !== "json" || !isObj(b["value"])) {
     errors.push('env.GUARDS: type "json" でオブジェクトの値を持つこと');
     return undefined;
@@ -192,16 +197,28 @@ function checkGuards(env: Obj, mode: Mode, errors: string[]): Obj | undefined {
   for (const p of ["budget.enabled", "turnstile.enabled", "rateLimit.enabled", "acceptGames"]) {
     if (at(p) !== true) errors.push(`env.GUARDS.${p}: ${show(at(p))}（true であること）`);
   }
+  // DTN の専用の上限（environment.md §1・§2: 1 日 1 USD・1 か月 10 USD・G2 は 15 分）
   const limits: [string, number][] = [
-    ["budget.monthlyUsd", 30],
+    ["budget.monthlyUsd", 10],
     ["budget.dailyUsd", 1],
-    ["gameTime.maxMinutes", 30],
+    ["gameTime.maxMinutes", 15],
     ["gameTime.maxAlarms", 20],
   ];
   for (const [p, max] of limits) {
     const v = at(p);
     if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > max) {
-      errors.push(`env.GUARDS.${p}: ${show(v)}（0 より大きく ${max} 以下であること。ADR-0018）`);
+      errors.push(
+        `env.GUARDS.${p}: ${show(v)}（0 より大きく ${max} 以下であること。environment.md）`,
+      );
+    }
+  }
+  // 内訳つきの予約の単価（environment.md §3）
+  for (const p of ["unitCostUsd.container.lite", "unitCostUsd.do"]) {
+    const unit = isObj(g["unitCostUsd"])
+      ? g["unitCostUsd"][p.slice("unitCostUsd.".length)]
+      : undefined;
+    if (typeof unit !== "number" || !Number.isFinite(unit) || unit <= 0) {
+      errors.push(`env.GUARDS.${p}: ${show(unit)}（0 より大きい数であること）`);
     }
   }
   return g;
@@ -237,12 +254,49 @@ function checkDurableObject(
   }
 }
 
+// JSON の中の文字列（キーと値）をすべて集める。
+function strings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const item of value) strings(item, out);
+  else if (isObj(value)) {
+    for (const [key, item] of Object.entries(value)) {
+      out.push(key);
+      strings(item, out);
+    }
+  }
+  return out;
+}
+
+/** prod・demo の Worker の名前・ホスト名・GameSession が出力にないか（DTN-12 §1.3） */
+export function checkForbidden(out: BuildOutput): string[] {
+  const errors: string[] = [];
+  const all = [
+    ...strings(out.worker).map((s) => ["worker.config.json", s] as const),
+    ...out.containers.flatMap((c) =>
+      strings(c.config).map((s) => ["container.config.json", s] as const),
+    ),
+  ];
+  for (const [file, s] of all) {
+    if ((FORBIDDEN_NAMES as readonly string[]).includes(s)) {
+      errors.push(`forbidden: ${file} に prod・demo の名前 ${JSON.stringify(s)} がある`);
+    }
+    for (const host of FORBIDDEN_HOSTS) {
+      if (s.includes(host))
+        errors.push(`forbidden: ${file} に prod・demo のホスト名 ${host} がある`);
+    }
+  }
+  return errors;
+}
+
 /** 違反の一覧（空なら成功）。各行は項目名で始まる */
 export function checkOutput(out: BuildOutput, mode: Mode): string[] {
   const e = EXPECTED[mode];
   const errors: string[] = [];
   const w = out.worker;
   if (!isObj(w)) return ["worker.config.json: オブジェクトでない"];
+
+  // 0. prod・demo の名前・ホスト名・GameSession がない
+  errors.push(...checkForbidden(out));
 
   // 1. name
   if (w["name"] !== e.worker) errors.push(`name: ${show(w["name"])}（${e.worker} であること）`);
@@ -261,7 +315,7 @@ export function checkOutput(out: BuildOutput, mode: Mode): string[] {
     errors.push(`previewUrls: ${show(w["previewUrls"])}（false であること）`);
 
   const env = isObj(w["env"]) ? w["env"] : {};
-  const guards = checkGuards(env, mode, errors);
+  const guards = checkGuards(env, errors);
 
   // 4. limits.cpuMs
   const limits = w["limits"];
@@ -312,9 +366,9 @@ export function checkOutput(out: BuildOutput, mode: Mode): string[] {
       errors.push(`env.${k}: 値を持たないこと（--secrets-file で渡す）`);
   }
 
-  // 9. 文字列
-  checkText(env, "DEMO_CONTROLS", e.demoControls, errors);
-  checkText(env, "CONTAINER_INSTANCE", e.instance, errors);
+  // 9. 文字列（DEMO_CONTROLS は全モードで 1。Container はすべて lite）
+  checkText(env, "DEMO_CONTROLS", "1", errors);
+  checkText(env, "CONTAINER_INSTANCE", "lite", errors);
   if (e.host !== undefined) checkText(env, "ALLOWED_ORIGINS", ALLOWED_ORIGINS, errors);
   const buildId = env["BUILD_ID"];
   if (buildId !== undefined) {
@@ -329,14 +383,19 @@ export function checkOutput(out: BuildOutput, mode: Mode): string[] {
     }
   }
 
-  // 10. SESSION_RATE_LIMIT
+  // 10. SESSION_RATE_LIMIT（namespace は prod・demo・main の dev と重ならない。ADR-0024）
   const rl = env["SESSION_RATE_LIMIT"];
   if (rl !== undefined) {
     if (!isObj(rl) || rl["type"] !== "rate-limit") {
       errors.push('env.SESSION_RATE_LIMIT: type "rate-limit" であること');
     } else {
       const ns = rl["namespace"];
-      if (typeof ns !== "string" || !/^[1-9][0-9]*$/.test(ns) || ns !== e.rateLimitNamespace) {
+      if (
+        typeof ns !== "string" ||
+        !/^[1-9][0-9]*$/.test(ns) ||
+        ns !== e.rateLimitNamespace ||
+        FORBIDDEN_RATE_LIMIT_NAMESPACES.includes(ns)
+      ) {
         errors.push(
           `env.SESSION_RATE_LIMIT.namespace: ${show(ns)}（正の整数の文字列で ${JSON.stringify(e.rateLimitNamespace)} であること）`,
         );
@@ -359,34 +418,22 @@ export function checkOutput(out: BuildOutput, mode: Mode): string[] {
     }
   }
 
-  // 12. Durable Object のバインディング
-  checkDurableObject(env, "GAME_SESSION", e.worker, "GameSession", errors);
-  checkDurableObject(
-    env,
-    "COST_GUARD",
-    e.ownCostGuard ? e.worker : PRODUCTION_WORKER,
-    "CostGuard",
-    errors,
-  );
+  // 11. Durable Object のバインディング（すべて自分の Worker。prod の CostGuard を参照しない）
+  checkDurableObject(env, "DTN_SESSION", e.worker, "DtnSession", errors);
+  checkDurableObject(env, "ACTOR_HOST", e.worker, "ActorHost", errors);
+  checkDurableObject(env, "COST_GUARD", e.worker, "CostGuard", errors);
 
-  // 15. REPLAYS
-  const r2 = env["REPLAYS"];
-  if (r2 !== undefined && (!isObj(r2) || r2["type"] !== "r2" || r2["name"] !== R2_NAME)) {
-    errors.push(
-      `env.REPLAYS: ${show(isObj(r2) ? r2["name"] : r2)}（type "r2" で ${R2_NAME} であること）`,
-    );
-  }
-
-  // 13. exports
+  // 12. exports
   const ex = isObj(w["exports"]) ? w["exports"] : {};
-  const wantExports = [
-    ...(e.container !== undefined ? ["GameSession"] : []),
-    ...(e.ownCostGuard ? ["CostGuard"] : []),
-  ];
-  for (const k of Object.keys(ex).sort()) {
-    if (!wantExports.includes(k)) errors.push(`exports.${k}: このモードでは宣言しない`);
+  const wantExports: Record<string, string | undefined> = { CostGuard: undefined };
+  if (e.containers !== undefined) {
+    wantExports["DtnSession"] = e.containers.coordinator;
+    wantExports["ActorHost"] = e.containers.actor;
   }
-  for (const k of wantExports) {
+  for (const k of Object.keys(ex).sort()) {
+    if (!Object.hasOwn(wantExports, k)) errors.push(`exports.${k}: このモードでは宣言しない`);
+  }
+  for (const k of Object.keys(wantExports)) {
     if (!Object.hasOwn(ex, k)) errors.push(`exports.${k}: ない`);
   }
   const containerNames = out.containers.map((c) =>
@@ -398,46 +445,48 @@ export function checkOutput(out: BuildOutput, mode: Mode): string[] {
       errors.push(`exports.${k}: type "durable-object"・storage "sqlite" であること`);
       continue;
     }
-    if (k === "GameSession" && e.container !== undefined) {
-      if (x["container"] !== e.container) {
+    const wantContainer = wantExports[k];
+    if (wantContainer !== undefined) {
+      if (x["container"] !== wantContainer) {
         errors.push(
-          `exports.GameSession.container: ${show(x["container"])}（${e.container} であること）`,
+          `exports.${k}.container: ${show(x["container"])}（${wantContainer} であること）`,
         );
-      } else if (!containerNames.includes(e.container)) {
-        errors.push(
-          `exports.GameSession.container: ${e.container} の container.config.json がない`,
-        );
+      } else if (!containerNames.includes(wantContainer)) {
+        errors.push(`exports.${k}.container: ${wantContainer} の container.config.json がない`);
       }
     } else if (Object.hasOwn(x, "container")) {
       errors.push(`exports.${k}.container: コンテナを付けないこと`);
     }
   }
 
-  // 14. コンテナ
-  if (e.container === undefined) {
+  // 13. コンテナ（DO のクラスごとに 1 つ。どちらも image は dtnactor だけ）
+  if (e.containers === undefined) {
     if (out.containers.length > 0) {
       errors.push(
         `containers: ${JSON.stringify(containerNames)}（このモードではコンテナを持たない）`,
       );
     }
   } else {
-    if (out.containers.length !== 1) {
+    const wantNames = [e.containers.actor, e.containers.coordinator].sort();
+    if (JSON.stringify([...containerNames].sort()) !== JSON.stringify(wantNames)) {
       errors.push(
-        `containers: ${JSON.stringify(containerNames)}（${e.container} のちょうど 1 つであること）`,
+        `containers: ${JSON.stringify(containerNames)}（${wantNames.join("・")} のちょうど 2 つであること）`,
       );
     }
     for (const c of out.containers) {
       const cfg = isObj(c.config) ? c.config : {};
-      if (cfg["name"] !== e.container)
-        errors.push(`containers.name: ${show(cfg["name"])}（${e.container} であること）`);
+      if (!wantNames.includes(String(cfg["name"])))
+        errors.push(
+          `containers.name: ${show(cfg["name"])}（${wantNames.join("・")} のどれかであること）`,
+        );
       if (cfg["schedulingPolicy"] !== "durable-object") {
         errors.push(
           `containers.schedulingPolicy: ${show(cfg["schedulingPolicy"])}（durable-object であること）`,
         );
       }
       const images = isObj(cfg["images"]) ? Object.keys(cfg["images"]) : [];
-      if (JSON.stringify(images) !== JSON.stringify(["server"])) {
-        errors.push(`containers.images: ${JSON.stringify(images)}（server だけであること）`);
+      if (JSON.stringify(images) !== JSON.stringify(["dtnactor"])) {
+        errors.push(`containers.images: ${JSON.stringify(images)}（dtnactor だけであること）`);
       }
     }
   }

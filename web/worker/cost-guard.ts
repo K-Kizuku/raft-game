@@ -5,6 +5,7 @@
 // CostGuardCore。アラームを使わない（alarm() を持たず、アラームを設定しない）。ログを出さない。
 //
 //   POST /reserve {sessionId, instance}    → 200 {result}
+//   POST /reserve {sessionId, units}       → 200 {result}（内訳つき。DTN-12・docs/dtn/environment.md §3）
 //   POST /cancel  {sessionId}              → 200 {}
 //   POST /settle  {sessionId, runSeconds}  → 200 {}
 //   GET  /view                             → 200 GuardsView | 503 guards_invalid
@@ -13,7 +14,12 @@
 import type { DurableObjectStateLike } from "./admin/cf-types.ts";
 import { SESSION_ID_PATTERN } from "./admin/client.ts";
 import { isPlainObject, parseGuardsConfig, type ContainerInstance } from "./admin/guards.ts";
-import { CostGuardCore, ensureSchema, isValidRunSeconds } from "./admin/ledger.ts";
+import {
+  CostGuardCore,
+  ensureSchema,
+  isValidRunSeconds,
+  parseReserveUnits,
+} from "./admin/ledger.ts";
 import type { Env } from "./routes/env.ts";
 import { errorResponse, json, readJsonBody } from "./routes/http.ts";
 
@@ -79,10 +85,19 @@ export class CostGuard {
     }
   }
 
+  // instance と units のどちらか一方だけを受ける。
   private reserve(body: Body): Response {
     const sessionId = body["sessionId"];
+    if (!isSessionId(sessionId)) return badRequest();
+    const hasUnits = Object.hasOwn(body, "units");
+    if (hasUnits === Object.hasOwn(body, "instance")) return badRequest();
+    if (hasUnits) {
+      const units = parseReserveUnits(body["units"]);
+      if (units === null) return badRequest();
+      return json({ result: this.#core.reserveUnits(sessionId, units) }, 200);
+    }
     const instance = body["instance"];
-    if (!isSessionId(sessionId) || !isContainerInstance(instance)) return badRequest();
+    if (!isContainerInstance(instance)) return badRequest();
     return json({ result: this.#core.reserve(sessionId, instance) }, 200);
   }
 

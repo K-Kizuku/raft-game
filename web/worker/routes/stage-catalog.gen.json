@@ -20,7 +20,21 @@
         }
       },
       "learning": [],
-      "demo": true
+      "demo": true,
+      "dtn": {
+        "actors": [
+          "island:1",
+          "island:2",
+          "island:3",
+          "ferry:f1",
+          "ferry:f2",
+          "ferry:f3"
+        ],
+        "eventKinds": [
+          "demo.storm"
+        ],
+        "unsupportedEvents": []
+      }
     },
     {
       "id": "demo-izu",
@@ -41,7 +55,27 @@
         }
       },
       "learning": [],
-      "demo": true
+      "demo": true,
+      "dtn": {
+        "actors": [
+          "island:1",
+          "island:2",
+          "island:3",
+          "island:4",
+          "island:5",
+          "island:6",
+          "ferry:f1",
+          "ferry:f2",
+          "ferry:f3",
+          "ferry:f4",
+          "ferry:f5",
+          "ferry:f6"
+        ],
+        "eventKinds": [
+          "demo.storm"
+        ],
+        "unsupportedEvents": []
+      }
     },
     {
       "id": "stage1",
@@ -67,7 +101,17 @@
         "quorum",
         "prevote"
       ],
-      "demo": false
+      "demo": false,
+      "dtn": {
+        "actors": [
+          "island:1",
+          "island:2",
+          "island:3",
+          "ferry:f1"
+        ],
+        "eventKinds": [],
+        "unsupportedEvents": []
+      }
     },
     {
       "id": "stage2",
@@ -94,7 +138,20 @@
         "check_quorum",
         "state_machine_replication"
       ],
-      "demo": false
+      "demo": false,
+      "dtn": {
+        "actors": [
+          "island:1",
+          "island:2",
+          "island:3",
+          "ferry:f1",
+          "ferry:f2"
+        ],
+        "eventKinds": [
+          "storm"
+        ],
+        "unsupportedEvents": []
+      }
     },
     {
       "id": "stage3",
@@ -120,7 +177,30 @@
         "leader_election",
         "check_quorum"
       ],
-      "demo": false
+      "demo": false,
+      "dtn": {
+        "actors": [
+          "island:1",
+          "island:2",
+          "island:3",
+          "island:4",
+          "island:5",
+          "island:6",
+          "ferry:f1",
+          "ferry:f2",
+          "ferry:f3",
+          "ferry:f4",
+          "ferry:f5",
+          "ferry:f6"
+        ],
+        "eventKinds": [
+          "storm",
+          "cancellation"
+        ],
+        "unsupportedEvents": [
+          "cancellation"
+        ]
+      }
     }
   ]
 }

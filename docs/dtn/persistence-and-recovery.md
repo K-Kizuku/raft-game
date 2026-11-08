@@ -196,3 +196,17 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
 - `rows` の形: 表ごとに主キーの順の行の配列（`meta` だけは `{k: v}` で v は TEXT）。列の名前は §2 の SQL のまま。`journal.payload`・`journal.response`・`transfers.letter_ids`・`digests`・`ack`・`contacts.body` は JSON の値として、`bundles.bundle` は base64（パディングあり）で、NULL は `null` で比べる
 - `destroyed: true` は保存がすべて消えたこと（Go はファイルが無い、DO は `deleteAll` の後）
 - 実装ごとに長さの違う値（`storedBytes`・応答の JSON の bytes）は fixture で比べない
+
+### 7.4 Cloudflare の ActorHost（DTN-12。`web/worker/dtn/host/`）
+
+Go の `host.Host` と同じ契約で、§7.3 の fixture を `web/worker/dtn/host/contract.test.ts` がリポジトリから直接読んで通す（写さない）。Go と違うところ:
+
+- `bundles.bundle` は base64 の TEXT で入れる（`ctx.storage.sql` の型の都合。fixture の比べ方は §7.3 のまま）。`storedBytes` の bundles の分は `size`（bytes の長さ）で数える
+- Container の起動は `POST /start {sessionId, actor, deadlineAt, maxAlarms, initialEpoch?}`。新しい保存の `meta.epoch` は `initialEpoch`（既定 1）。`meta` には DO の分（`deadlineAt`・`maxAlarms`・`alarmCount`・`starts`・`containerUp`・`restoreMs`・`shutdownPending`）を足す
+- Container を失ったら（§7.2）、自分で復元する（§4.1）: DtnSession の `POST /restore-permit {actor, starts}` が 200 なら、古い Container を `destroy()` → `epoch` を 1 増やして起動 → applied の行を `replay: true` で再生して `resp_digest` を照合（違えば以後 `restore_failed`）。許可されなければ以後 `not_ready`（Go の DTN-07 と同じ見え方。契約テストは許可を断って動かす）。intent の行は再生せず、同じ `eventSeq` の送り直しで §3.1 の 4 から続ける
+- DO が作り直されたとき（メモリの接続が無い）は、最初の要求で動いている Container につなぎ直す（`epoch` は変えない）。動いていなければ失ったとみなす
+- `host.status` の `data` に `starts`・`journalRows`・`storedBytes`・`restoreMs` を足す（計測の入口が使う）
+- `transfer.*`・`contact.*` は DTN-12 で実装した（Go は DTN-08・09 まで `internal`）。その場面のテストは TS だけ（`web/worker/dtn/host/fixtures/transfer-scenarios.json`）。Go が実装したら §7.3 の形の fixture に移す。`transfer.accept` は journal に入れず `transferId` で冪等にし、ロックを取らない（送り元がロックを持ったまま呼ぶので、向きが逆の転送と行き詰まらないように）
+- `transfer.activate` の journal の `payload` には、Container に送る bytes を埋めた `then` を入れる（再生はこれだけを使う）
+- `shutdown` は要求（`/host` の `kind: "shutdown"`）でも `POST /shutdown {sessionId}`（DtnSession の片付け）でも受ける。`destroy()` が失敗したら保存を残し、30 秒後のアラームで再試行する（`maxAlarms` の中）。自分の期限（`deadlineAt`）のアラームでも止めて消す
+- 要求の読み込みは Go と同じ厳密な JSON（重複したキー・小数・安全でない整数は `invalid`。`web/worker/dtn/codec.ts` の `parseStrictJson`。DTN-02 の canonical の fixture も `codec.test.ts` で通す）

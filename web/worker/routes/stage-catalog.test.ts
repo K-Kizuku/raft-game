@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseStageCatalog, STAGE_CATALOG } from "./stage-catalog.ts";
+import { parseDtnCatalog, parseStageCatalog, STAGE_CATALOG } from "./stage-catalog.ts";
 import catalogJson from "./stage-catalog.gen.json";
 
 type Mutable = Record<string, unknown>;
@@ -60,7 +60,13 @@ describe("CAT-1 コミットした生成物", () => {
     expect(parsed.map((s) => s.id)).toEqual(ids);
     expect(STAGE_CATALOG).toHaveLength(catalogJson.stages.length);
     expect(STAGE_CATALOG.map((s) => s.id)).toEqual(ids);
-    expect(STAGE_CATALOG).toEqual(catalogJson.stages);
+    // dtn（DTN-12）は StageSummary に入れない（ブラウザに返さない）
+    const withoutDtn = catalogJson.stages.map((stage) => {
+      const copy: Record<string, unknown> = { ...stage };
+      delete copy["dtn"];
+      return copy;
+    });
+    expect(STAGE_CATALOG).toEqual(withoutDtn);
   });
 
   it("正しい形の一覧は通る", () => {
@@ -233,5 +239,24 @@ describe("CAT-3 入力と記憶を共有しない", () => {
     input.stages.push({ ...s0, id: "stage9" });
 
     expect(parsed).toEqual(before);
+  });
+});
+
+describe("CAT-DTN dtn の欄（DTN-12）", () => {
+  it("コミットした生成物の dtn を読める。stage3 は欠航で対象外、ほかは対象", () => {
+    const dtn = parseDtnCatalog(catalogJson);
+    expect(dtn.get("stage1")?.actors).toEqual(["island:1", "island:2", "island:3", "ferry:f1"]);
+    expect(dtn.get("stage3")?.unsupportedEvents).toEqual(["cancellation"]);
+    expect(dtn.get("demo-izu")?.actors).toHaveLength(12);
+    expect(dtn.get("demo-izu")?.unsupportedEvents).toEqual([]);
+  });
+
+  it("dtn がない・数が合わないなら誤り", () => {
+    expect(() => parseDtnCatalog(validCatalog())).toThrow(/stages\[0\]\.dtn/);
+    const c = validCatalog();
+    for (const s of c.stages) {
+      s["dtn"] = { actors: ["island:1"], eventKinds: [], unsupportedEvents: [] };
+    }
+    expect(() => parseDtnCatalog(c)).toThrow(/島・船の数と合わない/);
   });
 });

@@ -24,6 +24,10 @@ const STAGE_KEYS = [
   "learning",
   "demo",
 ] as const;
+// DTN の環境が使う欄（DTN-12・docs/dtn/environment.md §1）。StageSummary には入れない（ブラウザに返さない）。
+const OPTIONAL_STAGE_KEYS = ["dtn"] as const;
+const DTN_KEYS = ["actors", "eventKinds", "unsupportedEvents"] as const;
+const DTN_ACTOR = /^(island:[1-9][0-9]{0,2}|ferry:[A-Za-z0-9_-]{1,32})$/;
 const INTRO_KEYS = ["text", "provenance", "source"] as const;
 const SOURCE_KEYS = ["dataset", "region", "field", "quote"] as const;
 const PROVENANCES: readonly Provenance[] = ["fact", "derived", "creative"];
@@ -35,14 +39,21 @@ function fail(path: string, message: string): never {
   throw new Error(`stage-catalog.gen.json: ${path}: ${message}`);
 }
 
-// キーがちょうど keys のオブジェクトか確かめる。
-function exactObject(value: unknown, keys: readonly string[], path: string): JsonObject {
+// キーがちょうど keys（と optional のうちあるもの）のオブジェクトか確かめる。
+function exactObject(
+  value: unknown,
+  keys: readonly string[],
+  path: string,
+  optional: readonly string[] = [],
+): JsonObject {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail(path, "オブジェクトでない");
   }
   const obj = value as JsonObject;
   for (const key of Object.keys(obj)) {
-    if (!keys.includes(key)) fail(path, `知らないキー ${JSON.stringify(key)}`);
+    if (!keys.includes(key) && !optional.includes(key)) {
+      fail(path, `知らないキー ${JSON.stringify(key)}`);
+    }
   }
   for (const key of keys) {
     if (!Object.hasOwn(obj, key)) fail(path, `キー ${JSON.stringify(key)} がない`);
@@ -108,7 +119,7 @@ function parseLearning(value: unknown, path: string): readonly string[] {
 }
 
 function parseStage(value: unknown, path: string): StageSummary {
-  const obj = exactObject(value, STAGE_KEYS, path);
+  const obj = exactObject(value, STAGE_KEYS, path, OPTIONAL_STAGE_KEYS);
   const unlock = obj["unlock"];
   const demo = obj["demo"];
   if (typeof demo !== "boolean") fail(`${path}.demo`, "真偽値でない");
@@ -145,3 +156,51 @@ export function parseStageCatalog(value: unknown): readonly StageSummary[] {
 }
 
 export const STAGE_CATALOG: readonly StageSummary[] = parseStageCatalog(catalogJson);
+
+// ---------------------------------------------------------------------------
+// DTN（DTN-12）
+
+export interface DtnStageInfo {
+  readonly stageId: string;
+  readonly actors: readonly string[]; // "island:<id>"…・"ferry:<id>"…（目録の順）
+  readonly eventKinds: readonly string[];
+  readonly unsupportedEvents: readonly string[]; // 空でなければ dtn_unsupported_stage
+}
+
+function stringList(value: unknown, path: string, pattern?: RegExp): readonly string[] {
+  if (!Array.isArray(value)) fail(path, "配列でない");
+  const items: readonly unknown[] = value;
+  const seen = new Set<string>();
+  return Object.freeze(
+    items.map((item, i) => {
+      if (typeof item !== "string" || item === "") fail(`${path}[${i}]`, "空でない文字列でない");
+      if (pattern !== undefined && !pattern.test(item)) fail(`${path}[${i}]`, "形式が違う");
+      if (seen.has(item)) fail(`${path}[${i}]`, `重複している（${item}）`);
+      seen.add(item);
+      return item;
+    }),
+  );
+}
+
+// 生成物の各ステージの dtn を確かめて、ステージの id から引ける表にする。dtn がないステージがあれば Error。
+export function parseDtnCatalog(value: unknown): ReadonlyMap<string, DtnStageInfo> {
+  const stages = parseStageCatalog(value);
+  const raw = (value as JsonObject)["stages"] as readonly JsonObject[];
+  const out = new Map<string, DtnStageInfo>();
+  stages.forEach((stage, i) => {
+    const path = `stages[${i}].dtn`;
+    const obj = exactObject(raw[i]?.["dtn"], DTN_KEYS, path);
+    const actors = stringList(obj["actors"], `${path}.actors`, DTN_ACTOR);
+    const islands = actors.filter((a) => a.startsWith("island:")).length;
+    if (islands !== stage.islands || actors.length - islands !== stage.ferries) {
+      fail(`${path}.actors`, "島・船の数と合わない");
+    }
+    const eventKinds = stringList(obj["eventKinds"], `${path}.eventKinds`);
+    const unsupportedEvents = stringList(obj["unsupportedEvents"], `${path}.unsupportedEvents`);
+    if (unsupportedEvents.some((kind) => !eventKinds.includes(kind))) {
+      fail(`${path}.unsupportedEvents`, "eventKinds にない種類がある");
+    }
+    out.set(stage.id, Object.freeze({ stageId: stage.id, actors, eventKinds, unsupportedEvents }));
+  });
+  return out;
+}

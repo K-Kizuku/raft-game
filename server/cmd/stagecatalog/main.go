@@ -28,8 +28,62 @@ const catalogFormat = 1
 
 // catalog は生成物の形。
 type catalog struct {
-	Format int                     `json:"format"`
-	Stages []protocol.StageSummary `json:"stages"`
+	Format int            `json:"format"`
+	Stages []catalogStage `json:"stages"`
+}
+
+// catalogStage は 1 つのステージ。GET /api/stages の形（protocol.StageSummary）に、DTN の環境が使う
+// dtn を足したもの（docs/dtn/environment.md §1・DTN-12）。Worker は dtn をブラウザに返さない。
+type catalogStage struct {
+	protocol.StageSummary
+	DTN dtnInfo `json:"dtn"`
+}
+
+// dtnInfo は分散モード（DTN）の Actor の名前と、定義したイベントの種類。
+//
+//   - actors: "island:<ノード ID>"（1..N の順）・"ferry:<船の ID>"（ferries の順）
+//   - eventKinds: events の種類（最初に出た順・重複なし）。demo.storm があれば最後に "demo.storm"
+//   - unsupportedEvents: eventKinds のうち分散モードが対応しないもの（docs/dtn/simulation-time.md §6）。
+//     空でないステージは、DTN の環境で起動を断る（dtn_unsupported_stage）
+type dtnInfo struct {
+	Actors            []string `json:"actors"`
+	EventKinds        []string `json:"eventKinds"`
+	UnsupportedEvents []string `json:"unsupportedEvents"`
+}
+
+// dtnSupportedEvents は分散モードが対応するイベントの種類（嵐とデモの嵐）。DTN-17 で増やす。
+var dtnSupportedEvents = map[string]bool{
+	string(stage.EventStorm): true,
+	"demo.storm":             true,
+}
+
+// dtnOf はステージの dtnInfo を作る。同じステージからは必ず同じ値になる（map の走査順に依存しない）。
+func dtnOf(st *stage.Stage) dtnInfo {
+	info := dtnInfo{Actors: []string{}, EventKinds: []string{}, UnsupportedEvents: []string{}}
+	for _, is := range st.Islands {
+		info.Actors = append(info.Actors, fmt.Sprintf("island:%d", is.NodeID))
+	}
+	for _, f := range st.Ferries {
+		info.Actors = append(info.Actors, "ferry:"+f.ID)
+	}
+	seen := map[string]bool{}
+	add := func(kind string) {
+		if seen[kind] {
+			return
+		}
+		seen[kind] = true
+		info.EventKinds = append(info.EventKinds, kind)
+		if !dtnSupportedEvents[kind] {
+			info.UnsupportedEvents = append(info.UnsupportedEvents, kind)
+		}
+	}
+	for _, ev := range st.Events {
+		add(string(ev.Kind))
+	}
+	if st.Demo != nil && st.Demo.Storm != nil {
+		add("demo.storm")
+	}
+	return info
 }
 
 func main() {
@@ -113,7 +167,12 @@ func encode(stages []*stage.Stage) ([]byte, error) {
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(catalog{Format: catalogFormat, Stages: stageconv.Summaries(stages)}); err != nil {
+	summaries := stageconv.Summaries(stages)
+	entries := make([]catalogStage, len(stages))
+	for i, st := range stages {
+		entries[i] = catalogStage{StageSummary: summaries[i], DTN: dtnOf(st)}
+	}
+	if err := enc.Encode(catalog{Format: catalogFormat, Stages: entries}); err != nil {
 		return nil, fmt.Errorf("JSON にできない: %w", err)
 	}
 	return buf.Bytes(), nil
