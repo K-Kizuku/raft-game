@@ -215,7 +215,7 @@ func TestDeliveryDoesNotModifyMessages(t *testing.T) { // D-4
 func TestRequestDelivery(t *testing.T) { // D-5
 	t.Parallel()
 	e := startedEngine(t)
-	id, _, err := e.tr.PostRequest(int64(e.Now()), 1, 2, ferry.RequestNote{ReqID: "r-0001"})
+	id, _, err := e.postRequestForTest(int64(e.Now()), 1, 2, ferry.RequestNote{ReqID: "r-0001"})
 	if err != nil {
 		t.Fatal(err)
 	}

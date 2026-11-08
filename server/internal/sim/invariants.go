@@ -8,6 +8,7 @@ import (
 	"go.etcd.io/raft/v3"
 
 	"github.com/K-Kizuku/raft-game/server/internal/cluster"
+	"github.com/K-Kizuku/raft-game/server/internal/ferry"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 )
 
@@ -23,7 +24,7 @@ type invariantState struct {
 type progress struct{ term, commit, applied uint64 }
 
 // checkInvariants はテストモードの検査（§11 の I-1〜I-7）。違反したら、最初の 1 つで panic する。
-// 1 ステップの後処理の最後（Reclaim の後）に呼ぶ。Raft・台帳・Transport・イベントを読むだけで、何も変えない
+// 1 ステップの後処理の最後（Reclaim の後）に呼ぶ。Raft・台帳・港・手紙の写し・イベントを読むだけで、何も変えない
 // （e.inv だけを更新する）。
 func (e *Engine) checkInvariants() {
 	n := len(e.nodes)
@@ -91,6 +92,14 @@ func (e *Engine) findViolation(sts []cluster.Status, logs [][]cluster.LogEntry, 
 	}
 	if err := e.tr.CheckInvariants(); err != nil {
 		return fmt.Errorf("I-7: %w", err)
+	}
+	for _, isl := range e.islands {
+		if err := isl.Port().CheckInvariants(); err != nil {
+			return fmt.Errorf("I-7: %w", err)
+		}
+		if err := ferry.CheckPortMirror(e.tr, isl.Port()); err != nil {
+			return fmt.Errorf("I-7: %w", err)
+		}
 	}
 	return nil
 }

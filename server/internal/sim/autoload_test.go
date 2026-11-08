@@ -132,7 +132,7 @@ func autoloadEngine(t *testing.T, cfg Config) *Engine {
 	mustPropose(t, e, 1, reserve("s-0001"))
 	mustPropose(t, e, 1, reserve("s-0002"))
 	e.RunUntil(1000)
-	id, _, err := e.tr.PostRequest(1000, 1, 2, ferry.RequestNote{ReqID: "r-0001"})
+	id, _, err := e.postRequestForTest(1000, 1, 2, ferry.RequestNote{ReqID: "r-0001"})
 	if err != nil || id != 7 {
 		t.Fatalf("PostRequest = %d, %v; want 7", id, err)
 	}

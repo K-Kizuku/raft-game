@@ -33,6 +33,6 @@ linters:
     rules:
       # forbidigo は、sim.Engine の中で動くパッケージと、ボット（入力ログを通して結果に効く）だけに効かせる。
       # 範囲を狭めるときは path-except の正規表現だけを変える（DesignDoc §9.2）。
-      - path-except: '^internal/(sim|cluster|ferry|ledger|game|bot|replaykit)/'
+      - path-except: '^internal/(sim|islandcore|coordcore|cluster|ferry|ledger|game|bot|replaykit)/'
         linters:
           - forbidigo

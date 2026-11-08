@@ -1,8 +1,9 @@
-package sim
+package coordcore
 
 import (
 	"cmp"
 	"errors"
+	"math/rand/v2"
 	"reflect"
 	"slices"
 	"testing"
@@ -93,7 +94,7 @@ func TestSchedulerOrder(t *testing.T) {
 // S-2
 func TestSchedulerRandom1000(t *testing.T) {
 	t.Parallel()
-	r := Sub(1, "test")
+	r := rand.New(rand.NewPCG(1, 0x7465737400)) // 固定の乱数列（sim.Sub は sim にあるので使わない）
 	var s Scheduler
 	pushed := make([]key, 0, 1000)
 	for range 1000 {
@@ -296,7 +297,7 @@ func TestSchedulerDeterminism(t *testing.T) {
 		Errs   []bool
 	}
 	run := func() trace {
-		r := Sub(42, "test/sched")
+		r := rand.New(rand.NewPCG(42, 0x5eed))
 		var s Scheduler
 		var tr trace
 		for i := range 2000 {

@@ -427,8 +427,8 @@ func detEvent(cfg Config, seed uint64) detAdvancer {
 	return func(e *Engine, to SimTime) {
 		for e.Phase() == PhaseSailing && e.Now() < to {
 			next := to
-			if ev, ok := e.sched.Peek(); ok && e.Now() < ev.At && ev.At < to {
-				next = ev.At
+			if at, ok := e.nextEventAt(); ok && e.Now() < at && at < to {
+				next = at
 			}
 			e.RunUntil(next)
 		}

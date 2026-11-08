@@ -429,19 +429,3 @@ func TestRunUntilPast(t *testing.T) { // T-5
 		t.Errorf("RunUntil(past) produced %d events", len(evs))
 	}
 }
-
-func TestStepDownReason(t *testing.T) { // T-6
-	t.Parallel()
-	tests := []struct {
-		leaderTerm, term uint64
-		want             string
-	}{
-		{2, 2, "check_quorum"},
-		{2, 3, "higher_term"},
-	}
-	for _, tt := range tests {
-		if got := stepDownReason(tt.leaderTerm, tt.term); got != tt.want {
-			t.Errorf("stepDownReason(%d, %d) = %q, want %q", tt.leaderTerm, tt.term, got, tt.want)
-		}
-	}
-}

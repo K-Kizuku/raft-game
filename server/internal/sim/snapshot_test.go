@@ -309,8 +309,8 @@ func snapshotRun(t *testing.T, seed uint64) ([]DomainEvent, [32]byte, int) {
 		}
 		for i, n := range e.nodes {
 			// cmd.game.start の前は、開会式の Term をまだ反映していない（後処理を通っていないため）。
-			if e.Phase() != PhaseIntro && e.staleTerm[i] != n.Status().Term {
-				t.Fatalf("t=%d: staleTerm[%d] = %d, Term = %d", e.Now(), i, e.staleTerm[i], n.Status().Term)
+			if e.Phase() != PhaseIntro && e.staleTerms()[i] != n.Status().Term {
+				t.Fatalf("t=%d: staleTerm[%d] = %d, Term = %d", e.Now(), i, e.staleTerms()[i], n.Status().Term)
 			}
 		}
 	}

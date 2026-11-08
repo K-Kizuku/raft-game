@@ -120,18 +120,9 @@ func (e *Engine) NodeDetail(id uint64) (NodeDetail, bool) {
 	}
 
 	if st.Role != raft.StateLeader {
-		d.TicksSinceLeaderContact = int((e.Now() - e.contactAt[id-1]) / e.cfg.Raft.TickMs)
+		d.TicksSinceLeaderContact = int((e.Now() - SimTime(e.islands[id-1].ContactAt())) / e.cfg.Raft.TickMs)
 	}
 	return d, true
-}
-
-// noteLeaderContact は、島 to のノードに島 from からの Raft の手紙を配達して Process した直後に呼ぶ。
-// from がそのノードの知っている Leader なら、その時刻を覚える（NodeDetail の選挙の推定。観察だけで、
-// イベント・乱数・判定に使わない）。arrive の中で決定的に呼ばれるので、Replay でも同じ値になる。
-func (e *Engine) noteLeaderContact(to, from uint64) {
-	if lead := e.nodes[to-1].Status().Lead; lead != 0 && lead == from {
-		e.contactAt[to-1] = e.Now()
-	}
 }
 
 // progressStateString は Progress の状態の文字列（プロトコル §5.4 の progress[].state）。

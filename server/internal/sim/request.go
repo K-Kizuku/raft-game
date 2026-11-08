@@ -1,13 +1,11 @@
 package sim
 
 import (
-	"errors"
 	"fmt"
-
-	"go.etcd.io/raft/v3"
 
 	"github.com/K-Kizuku/raft-game/server/internal/ferry"
 	"github.com/K-Kizuku/raft-game/server/internal/game"
+	"github.com/K-Kizuku/raft-game/server/internal/islandcore"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 )
 
@@ -58,7 +56,6 @@ type requestBook struct {
 	list    []requestEntry // plan の順（= ID の順）
 	byID    map[string]int // reqId → 添字。検索だけに使い、走査しない
 	next    int            // まだ発生していない最初の添字（NextNotableAt が使う）
-	waits   []routeWait    // 次の RaftTick でやり直す route（入れた順）
 	retryMs SimTime
 }
 
@@ -68,7 +65,6 @@ type requestEntry struct {
 	created bool
 	track   game.Track
 	letter  ferry.LetterID // 今の依頼書（track.Outcome == OutcomeLetter のとき）。0 = なし
-	gen     uint64         // 再送のタイマーの世代
 	expired bool           // T-203 が使う。今は常に false
 	last    requestView    // 最後に出した status・expired・result
 }
@@ -90,19 +86,6 @@ func (v requestView) equal(w requestView) bool {
 	return *v.result == *w.result
 }
 
-// routeWait は、代表が分からずに待っている route（次の RaftTick でやり直す）。
-type routeWait struct {
-	req    int    // 帳簿の添字
-	island uint64 // route する島
-	hops   int    // その島で依頼書を書くときの hops
-}
-
-// retryTimer は kindRequestRetry の Data。
-type retryTimer struct {
-	req int
-	gen uint64
-}
-
 // newRequestBook は計画した依頼の列から帳簿を作る。
 func newRequestBook(plan []game.Request, retryMs int64) requestBook {
 	b := requestBook{
@@ -117,123 +100,25 @@ func newRequestBook(plan []game.Request, retryMs int64) requestBook {
 	return b
 }
 
-// scheduleRequests は依頼の発生をスケジューラに積む（cmd.game.start）。積む順が同じ時刻の処理の順になる。
+// scheduleRequests は依頼の発生を、依頼元の島の待ち行列に計画の順に積む（cmd.game.start）。
+// 積む順（全島で 1 本の Seq）が同じ時刻の処理の順になる。
 func (e *Engine) scheduleRequests() {
 	for i, r := range e.reqs.list {
-		e.push(SimTime(r.req.CreatedAt), ClassRequestSpawn, kindRequestSpawn, i)
+		e.islands[r.req.Origin-1].ScheduleSpawn(i)
 	}
 }
 
-// spawnRequest は依頼 i の発生（kindRequestSpawn）。
+// spawnRequest は依頼 i の発生（島の RequestSpawn）のうち、帳簿と request.created の部分。
+// 窓口の route は依頼元の島が行う（handleIslandEvent）。ほかの島に発生を知らせる（依頼書を受けたときの判定）。
 func (e *Engine) spawnRequest(i int) {
 	r := &e.reqs.list[i]
 	r.created = true
 	e.reqs.next++
 	r.last = requestView{status: game.StatusReceived, expired: r.expired}
 	e.emit(RequestCreated{Request: r.state()})
-	e.route(i, r.req.Origin, 0)
-}
-
-// retryRequest は再送の判定（kindRequestRetry、FR-REQ-09）。
-func (e *Engine) retryRequest(t retryTimer) {
-	r := &e.reqs.list[t.req]
-	if t.gen != r.gen || r.track.Result != nil {
-		return
+	for _, isl := range e.islands {
+		isl.MarkCreated(r.req.ID)
 	}
-	e.route(t.req, r.req.Origin, 0)
-}
-
-// retryWaits は待っている route を入れた順にやり直す（kindRaftTick の最後）。
-func (e *Engine) retryWaits() {
-	ws := e.reqs.waits
-	e.reqs.waits = nil
-	for _, w := range ws {
-		e.route(w.req, w.island, w.hops)
-	}
-}
-
-// route は island の役場が依頼 i を代表の島へ届ける（DesignDoc §8.1）。
-// 役場が読むのはノードの役割と知っている Leader だけで、Leader を決めない。
-// hops は、island で依頼書を書くときの hops（転送された回数）。
-func (e *Engine) route(i int, island uint64, hops int) {
-	r := &e.reqs.list[i]
-	if r.track.Result != nil {
-		return
-	}
-	st := e.nodes[island-1].Status()
-	d := game.Decide(st.Role == raft.StateLeader, st.Lead, island)
-	switch d.Action {
-	case game.ActPropose:
-		data, err := ledger.Encode(r.req.Command())
-		if err != nil {
-			panic(fmt.Sprintf("sim: request %s: encode: %v", r.req.ID, err))
-		}
-		err = e.propose(island, data)
-		switch {
-		case err == nil:
-			e.noteProposed(i)
-			r.track.Outcome = game.OutcomeProposed
-			r.letter = 0
-			if island == r.req.Origin {
-				e.armRetry(i)
-			}
-		case errors.Is(err, raft.ErrProposalDropped):
-			e.waitRoute(i, island, hops)
-		default:
-			panic(fmt.Sprintf("sim: request %s: propose at %d: %v", r.req.ID, island, err))
-		}
-	case game.ActLetter:
-		lid, dropped, err := e.tr.PostRequest(int64(e.Now()), island, d.To, ferry.RequestNote{ReqID: r.req.ID, Hops: hops})
-		if err != nil {
-			panic(fmt.Sprintf("sim: request %s: post at %d: %v", r.req.ID, island, err))
-		}
-		l, ok := e.tr.Letter(lid)
-		if !ok {
-			panic(fmt.Sprintf("sim: created letter %d not found", lid))
-		}
-		e.emit(LetterCreated{Letter: newLetterView(l, 0)})
-		e.emitDrops(dropped)
-		r.track.Outcome = game.OutcomeLetter
-		r.letter = lid
-		if island == r.req.Origin {
-			e.armRetry(i)
-		}
-	case game.ActWait:
-		e.waitRoute(i, island, hops)
-	default:
-		panic(fmt.Sprintf("sim: unknown route action %d", d.Action))
-	}
-}
-
-// waitRoute は、代表が分からないので待つ。同じ (依頼, 島) の待ちは 1 つだけ。再送のタイマーは積まない。
-func (e *Engine) waitRoute(i int, island uint64, hops int) {
-	r := &e.reqs.list[i]
-	r.track.Outcome = game.OutcomeWaiting
-	r.letter = 0
-	for _, w := range e.reqs.waits {
-		if w.req == i && w.island == island {
-			return
-		}
-	}
-	e.reqs.waits = append(e.reqs.waits, routeWait{req: i, island: island, hops: hops})
-}
-
-// armRetry は、依頼元が送ったので、再送のタイマーを積み直す（古いタイマーは世代で無効にする）。
-// DurationMs より後でも積む（ラウンドが先に終わるので処理されない）。
-func (e *Engine) armRetry(i int) {
-	r := &e.reqs.list[i]
-	r.gen++
-	e.push(e.Now()+e.reqs.retryMs, ClassRequestRetry, kindRequestRetry, retryTimer{req: i, gen: r.gen})
-}
-
-// deliverRequest は依頼書 l が宛先に届いたとき、届いた島の役場に渡す（DesignDoc §8.1）。
-// 帳簿にない reqId（テストが直接作った依頼書など）・まだ発生していない依頼は何もしない。
-func (e *Engine) deliverRequest(l ferry.Letter) {
-	i, ok := e.reqs.byID[l.Req.ReqID]
-	if !ok || !e.reqs.list[i].created {
-		return
-	}
-	e.route(i, l.To, l.Req.Hops+1)
 }
 
 // observeApplied は、島 id の台帳への適用の結果 r を観察する（ADR-0015）。
@@ -247,7 +132,37 @@ func (e *Engine) observeApplied(id uint64, r ledger.Result) {
 	entry.track.Committed = true
 	if id == entry.req.Origin && entry.track.Result == nil {
 		entry.track.Result = &game.Result{Status: r.Status, Reason: r.Reason}
+		// 依頼元で結果が出たので、どの島の窓口もこの依頼を route しない（今の Engine の route の判定と同じ）。
+		for _, isl := range e.islands {
+			isl.MarkResolved(r.ReqID)
+		}
 	}
+}
+
+// observeRouted は、島の窓口の判断（request.routed）を依頼の帳簿に写す。
+func (e *Engine) observeRouted(d islandcore.RequestRoutedOut) {
+	r := &e.reqs.list[d.Req]
+	switch d.Action {
+	case islandcore.ActionProposed:
+		e.noteProposed(d.Req)
+		r.track.Outcome = game.OutcomeProposed
+		r.letter = 0
+	case islandcore.ActionForwarded:
+		r.track.Outcome = game.OutcomeLetter
+		r.letter = d.LetterID
+	case islandcore.ActionWaiting:
+		r.track.Outcome = game.OutcomeWaiting
+		r.letter = 0
+	default:
+		panic(fmt.Sprintf("sim: request %s: unknown route action %q", d.ReqID, d.Action))
+	}
+}
+
+// route は、島 island の窓口に依頼 i を今の時刻で route させる（テストが使う）。
+func (e *Engine) route(i int, island uint64, hops int) {
+	isl := e.islands[island-1]
+	isl.Route(int64(e.Now()), i, hops)
+	e.drain(isl)
 }
 
 // refreshRequests は、発生済みの依頼の状態を判定し、変わったものを ID の順に request.updated にする

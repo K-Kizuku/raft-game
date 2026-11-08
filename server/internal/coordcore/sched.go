@@ -1,4 +1,4 @@
-package sim
+package coordcore
 
 import (
 	"container/heap"
@@ -152,3 +152,6 @@ func (h *eventHeap) Pop() any {
 	*h = old[:n-1]
 	return ev
 }
+
+// Events は残っているイベントの複製を返す（順は決まっていない。テスト・観察用）。
+func (s *Scheduler) Events() []Event { return append([]Event(nil), s.q...) }

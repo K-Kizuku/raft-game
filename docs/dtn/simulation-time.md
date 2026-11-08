@@ -57,6 +57,13 @@
 
 意味は今と同じ。どれも Coordinator だけの状態で、Actor には伝えない（Actor は上限の分だけ進む）。「次の出来事まで」（`cmd.game.skip`、デモだけ）の `NextNotableAt` は Coordinator が計算する。
 
+### 2.5 参照モデルでの呼び方（DTN-00）
+
+- `sim.Engine` は、Coordinator のスケジューラと全島の待ち行列から `(At, Class, Seq)` の順にイベントを取り出す。参照モデルでは、島のイベントと待っている依頼の Seq を全島で 1 本の連番（`islandcore.Config.NextSeq`）にして、組み替えの前の 1 本のスケジューラと同じ順にしている。分散版の島は島の中の連番を使う
+- `RaftTick` は全島で同じ時刻にあるので、参照モデルは今までどおり「全ノードの Tick → 全島の待っている依頼の再試行（入れた順）→ 全ノードの Process → 全ノードの `node.state`」の順にまとめて処理する（`islandcore` の `HandleTick`・`TakeWaits`・`RetryWait`・`Process`・`ReportState`）。分散版の島は `AdvanceTo` で、イベントごとに `Handle` → `Process` → `ReportState` を行う
+- `islandcore.Core.Deliver` は、最後に `Process` と `ReportState` まで行う。到着で入力があるのはその島だけなので、参照モデルの後処理（全ノードの `Process`・`node.state`）と同じ並びになる
+- `letter.created` の `digest`・`size` は、DTN-06 の Codec ができるまでゼロ値
+
 ## 3. 島の出力をまとめる順序
 
 島の出力（手紙を作った・捨てた・Term が変わった・役割が変わった・台帳に適用した、など）には、`(t, class, 島の中の Seq)` が付く。CoordinatorCore は、1 回の上限の間に集めた全島の出力を、次の順に並べて処理する。

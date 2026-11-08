@@ -108,13 +108,13 @@ func TestDepart(t *testing.T) { // A-3
 		FerryDeparted{FerryID: "f1", From: 1, To: 2, DepartAt: 0, ArriveAt: 3750},
 	})
 	found := false
-	for _, ev := range e.sched.q {
+	for _, ev := range e.coord.Sched.Events() {
 		if ev.Kind == kindFerryArrive && ev.At == 3750 && ev.Class == ClassFerryArrive && ev.Data == ferry.FerryID("f1") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("no arrival at 3750 in the scheduler: %+v", e.sched.q)
+		t.Errorf("no arrival at 3750 in the scheduler: %+v", e.coord.Sched.Events())
 	}
 }
 

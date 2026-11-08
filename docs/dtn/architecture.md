@@ -41,6 +41,12 @@
 | 開幕式（`cluster.Opening`） | 各島・Coordinator | 各自が手元で再計算する（[simulation-time.md §4](./simulation-time.md#4-開幕式)） |
 | 漂流瓶・故障・ラッシュ・欠航 | 対象外 | [simulation-time.md §6](./simulation-time.md#6-対象外のイベント) |
 
+DTN-00（#363）で実装したときの細部:
+
+- 港の手紙の中身と規則 R1〜R6 は `ferry.Port`（島が持つ）、航路・船・積み荷と手紙の所在の写しは `ferry.Fleet`（Coordinator が持つ）に分けた。`Fleet.Load`・`Unload`・`RelayLoad`・`Arrive` は写しで検査して所在を変え、島への反映（`Take`・`Unload`・`TakeRelay`・`Deliver`）は呼び出し側が行う。島の出力 `letter.created`・`letter.dropped` は `Fleet.Track`・`MarkDropped` で写す。`ferry.Transport` は両方をつないだ単一プロセス用のもので、`sim` は使わない
+- `coordcore` に置いたのは、仮想時計とスケジューラ・`ferry.Fleet`・古い手紙の検出（`StaleLetters`）・自動の積み込みの選択（`SelectAutoload`）。依頼の帳簿の表示（`request.*`）・スコア・統計・嵐などの台本のイベントは、ドメインイベントの型が `sim` にあるため `sim.Engine` に残した。DTN-05 は、`sim.Engine` の Coordinator の部分を使うか、これらを `coordcore` に移すかを決める
+- 依頼元でない島の窓口は、依頼元の台帳で結果が出た依頼を route しない（今の Engine の判定）。参照モデルは、結果が出た時点で全島に `MarkResolved` を、依頼の発生の時点で全島に `MarkCreated` を呼ぶ。分散版でこれを Coordinator から島に伝えるか（伝えないと、結果が出た後に届いた依頼書を島が Propose し直し、台帳に `duplicate` が増える）は DTN-03・DTN-05 で決める
+
 ## 3. コードの置き場所（`dtn/main`）
 
 | パッケージ | Issue | 内容 |

@@ -30,14 +30,14 @@ func makeRouteKey(a, b uint64) routeKey {
 }
 
 // route は a と b を結ぶ航路の添字を返す。
-func (t *Transport) route(a, b uint64) (int, bool) {
+func (t *Fleet) route(a, b uint64) (int, bool) {
 	i, ok := t.routeIdx[makeRouteKey(a, b)]
 	return i, ok
 }
 
 // Block は各組（向きを問わない）の航路の BlockedUntil を max(BlockedUntil, until) にする。
 // 組の航路がなければ ErrNoRoute で、何も変えない。
-func (t *Transport) Block(routes [][2]uint64, until int64) error {
+func (t *Fleet) Block(routes [][2]uint64, until int64) error {
 	idx := make([]int, 0, len(routes))
 	for _, p := range routes {
 		i, ok := t.route(p[0], p[1])
@@ -55,7 +55,7 @@ func (t *Transport) Block(routes [][2]uint64, until int64) error {
 }
 
 // IsBlocked は now に a-b の航路が遮断されているか（now < BlockedUntil）を返す。
-func (t *Transport) IsBlocked(a, b uint64, now int64) (bool, error) {
+func (t *Fleet) IsBlocked(a, b uint64, now int64) (bool, error) {
 	i, ok := t.route(a, b)
 	if !ok {
 		return false, fmt.Errorf("%w: %d-%d", ErrNoRoute, a, b)
@@ -65,7 +65,7 @@ func (t *Transport) IsBlocked(a, b uint64, now int64) (bool, error) {
 
 // Components は now に遮断されていない航路だけでの連結成分を返す。
 // 各成分は島の ID の昇順、成分の並びは先頭の島の ID の昇順。
-func (t *Transport) Components(now int64) [][]uint64 {
+func (t *Fleet) Components(now int64) [][]uint64 {
 	islands := slices.Clone(t.islands)
 	slices.Sort(islands)
 	pos := make(map[uint64]int, len(islands))
@@ -112,7 +112,7 @@ func (t *Transport) Components(now int64) [][]uint64 {
 }
 
 // HasRoute は a と b を直接結ぶ航路があるか（遮断中でも true）を返す。
-func (t *Transport) HasRoute(a, b uint64) bool {
+func (t *Fleet) HasRoute(a, b uint64) bool {
 	_, ok := t.route(a, b)
 	return ok
 }
@@ -120,7 +120,7 @@ func (t *Transport) HasRoute(a, b uint64) bool {
 // NextHop は、航路（遮断中のものを含む）と所要時間（TravelMs）での from から to への最短の経路で、
 // from の次に寄る島を返す（ゲームデザイン §3.4 の経由の手紙）。最短の経路が複数あるときは、次の島の ID の
 // 小さい方。from と to が同じ・どちらかがステージにない・経路がないときは (0, false)。
-func (t *Transport) NextHop(from, to uint64) (uint64, bool) {
+func (t *Fleet) NextHop(from, to uint64) (uint64, bool) {
 	if from == to {
 		return 0, false
 	}
@@ -160,7 +160,7 @@ func (t *Transport) NextHop(from, to uint64) (uint64, bool) {
 
 // distancesTo は、各島から to までの最短の所要時間を返す（Dijkstra 法。遮断中の航路も使う）。
 // 経路のない島は含めない。to がステージになければ (nil, false)。map は引くだけで、走査しない。
-func (t *Transport) distancesTo(to uint64) (map[uint64]int64, bool) {
+func (t *Fleet) distancesTo(to uint64) (map[uint64]int64, bool) {
 	if !slices.Contains(t.islands, to) {
 		return nil, false
 	}

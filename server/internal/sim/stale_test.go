@@ -114,8 +114,8 @@ func TestLetterStaleOnce(t *testing.T) { // ST-2
 	if l := created[0].Letter; l.ID != 4 || l.To != 3 || l.Raft.Term != 4 || l.Raft.Stale {
 		t.Errorf("letter.created = %+v (raft %+v), want id 4 to 3 term 4 not stale", l, l.Raft)
 	}
-	if e.staleTerm[0] != 4 {
-		t.Errorf("staleTerm[0] = %d, want 4", e.staleTerm[0])
+	if e.staleTerms()[0] != 4 {
+		t.Errorf("staleTerm[0] = %d, want 4", e.staleTerms()[0])
 	}
 }
 
@@ -171,7 +171,7 @@ func TestLetterStaleSenderOnly(t *testing.T) { // ST-3
 func TestLetterStaleRequest(t *testing.T) { // ST-4
 	t.Parallel()
 	e := startedEngine(t)
-	id, _, err := e.tr.PostRequest(0, 1, 2, ferry.RequestNote{ReqID: "r-0001"})
+	id, _, err := e.postRequestForTest(0, 1, 2, ferry.RequestNote{ReqID: "r-0001"})
 	if err != nil || id != 1 {
 		t.Fatalf("PostRequest = %d, %v; want 1", id, err)
 	}
@@ -223,7 +223,7 @@ func TestLetterStaleNoTermChange(t *testing.T) { // ST-6
 	if got := ofType[SteppedDown](evs); len(got) != 1 {
 		t.Errorf("stepped_down = %+v, want 1 (check_quorum)", got)
 	}
-	if want := []uint64{2, 2, 2}; !reflect.DeepEqual(e.staleTerm, want) {
-		t.Errorf("staleTerm = %v, want %v", e.staleTerm, want)
+	if want := []uint64{2, 2, 2}; !reflect.DeepEqual(e.staleTerms(), want) {
+		t.Errorf("staleTerm = %v, want %v", e.staleTerms(), want)
 	}
 }

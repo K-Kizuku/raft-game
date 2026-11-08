@@ -10,6 +10,7 @@ import (
 
 	"github.com/K-Kizuku/raft-game/server/internal/ferry"
 	"github.com/K-Kizuku/raft-game/server/internal/game"
+	"github.com/K-Kizuku/raft-game/server/internal/islandcore"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 )
 
@@ -399,7 +400,7 @@ func TestRequestForward(t *testing.T) { // E-5
 	e := reqStarted(t, reqTestConfig(stallReq(0, 3)))
 	e.RunUntil(0)
 	e.DrainEvents()
-	id, _, err := e.tr.PostRequest(0, 1, 2, ferry.RequestNote{ReqID: "t-0001", Hops: 0})
+	id, _, err := e.postRequestForTest(0, 1, 2, ferry.RequestNote{ReqID: "t-0001", Hops: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,12 +457,14 @@ func TestRequestNoLeader(t *testing.T) { // E-6
 	if got := requestLetters(e.DrainEvents()); len(got) != 0 {
 		t.Errorf("request letters until 60000: %+v", got)
 	}
-	if want := []routeWait{{req: 0, island: 1, hops: 0}}; !reflect.DeepEqual(e.reqs.waits, want) {
-		t.Errorf("waits = %+v, want %+v", e.reqs.waits, want)
+	if ws := e.islands[0].Waits(); len(ws) != 1 || ws[0].Req != 0 || ws[0].Hops != 0 {
+		t.Errorf("waits of island 1 = %+v, want request 0 with hops 0", ws)
 	}
-	for _, ev := range e.sched.q {
-		if ev.Kind == kindRequestRetry {
-			t.Errorf("retry timer is scheduled: %+v", ev)
+	for _, isl := range e.islands {
+		for _, ev := range isl.Events() {
+			if ev.Kind == islandcore.KindRequestRetry {
+				t.Errorf("retry timer is scheduled on island %d: %+v", isl.ID(), ev)
+			}
 		}
 	}
 }
@@ -471,8 +474,8 @@ func TestRequestWaitRetried(t *testing.T) { // E-7
 	e := reqStarted(t, reqTestConfig(stallReq(0, 2)))
 	e.RunUntil(0)
 	e.DrainEvents()
-	gen := e.reqs.list[0].gen
-	e.reqs.waits = append(e.reqs.waits, routeWait{req: 0, island: 3, hops: 2})
+	gen := e.islands[0].RetryGen(0)
+	e.islands[2].AddWait(0, 2)
 	e.RunUntil(500)
 	got := requestLetters(e.DrainEvents())
 	if len(got) != 1 {
@@ -481,11 +484,13 @@ func TestRequestWaitRetried(t *testing.T) { // E-7
 	if want := reqLetter(got[0].ID, 3, 1, 500, "t-0001", 2); !reflect.DeepEqual(got[0], want) {
 		t.Errorf("letter = %+v, want %+v", got[0], want)
 	}
-	if len(e.reqs.waits) != 0 {
-		t.Errorf("waits = %+v, want empty", e.reqs.waits)
+	for _, isl := range e.islands {
+		if ws := isl.Waits(); len(ws) != 0 {
+			t.Errorf("waits of island %d = %+v, want empty", isl.ID(), ws)
+		}
 	}
-	if e.reqs.list[0].gen != gen {
-		t.Errorf("gen = %d, want %d (not re-armed by island 3)", e.reqs.list[0].gen, gen)
+	if g := e.islands[0].RetryGen(0); g != gen {
+		t.Errorf("gen = %d, want %d (not re-armed by island 3)", g, gen)
 	}
 }
 
