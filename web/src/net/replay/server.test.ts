@@ -142,6 +142,87 @@ describe("createRecordServer（replay）", () => {
     expect(c.eventSeqs()).toEqual(Array.from({ length: 30 }, (_, i) => i + 1));
     expect(c.got.at(-1)?.type).toBe("round.result");
   });
+
+  type ClockWire = { t: number; speed: number; paused: boolean; endsAt: number };
+  const lastClock = (c: ReturnType<typeof rawClient>): ClockWire | undefined =>
+    c.of("events").at(-1)?.payload["clock"] as ClockWire | undefined;
+
+  it("RP-7: 一時停止で時計が止まり、止まった時計を送る。もう一度押すと再開する", () => {
+    const t = setup({ ackPolicy: readOnlyAckPolicy });
+    const c = rawClient(t.server);
+    t.timers.advance(0);
+    c.send("hello", { client: "test", resume: false });
+    c.cmd("cmd.game.start");
+    t.timers.advance(1500);
+    expect(t.server.simTime()).toBe(1500);
+
+    c.cmd("cmd.game.pause", { paused: true });
+    t.timers.advance(0);
+    expect(lastClock(c)).toEqual({ t: 1500, speed: 1, paused: true, endsAt: 60000 });
+    expect(c.of("events").at(-1)?.payload["events"]).toEqual([]);
+    expect(c.acks().at(-1)).toEqual({ cmdId: "c-2", ok: true, t: 1500 });
+    const sentWhilePaused = c.got.length;
+    t.timers.advance(5000);
+    expect(t.server.simTime()).toBe(1500);
+    expect(c.got.length).toBe(sentWhilePaused);
+
+    c.cmd("cmd.game.pause", { paused: false });
+    t.timers.advance(0);
+    expect(lastClock(c)).toEqual({ t: 1500, speed: 1, paused: false, endsAt: 60000 });
+    t.timers.advance(500);
+    expect(t.server.simTime()).toBe(2000);
+    expect(lastClock(c)?.paused).toBe(false);
+  });
+
+  it("RP-8: 「次の出来事まで」で次の ferry.arrived の時刻まで進んで止まり、止まった時計を送る", () => {
+    const t = setup({ ackPolicy: readOnlyAckPolicy });
+    const c = rawClient(t.server);
+    t.timers.advance(0);
+    c.send("hello", { client: "test", resume: false });
+    c.cmd("cmd.game.start");
+    t.timers.advance(1000);
+    c.cmd("cmd.game.skip", { until: "next_notable" });
+    t.timers.advance(0);
+    expect(t.server.simTime()).toBe(7000);
+    expect(lastClock(c)).toEqual({ t: 7000, speed: 1, paused: true, endsAt: 60000 });
+    expect(c.eventSeqs().at(-1)).toBe(14);
+    t.timers.advance(3000);
+    expect(t.server.simTime()).toBe(7000);
+
+    // 次の ferry.arrived が無ければ進まないが、止まった時計は送る。
+    c.cmd("cmd.game.pause", { paused: false });
+    t.timers.advance(1000);
+    c.cmd("cmd.game.skip", { until: "next_notable" });
+    t.timers.advance(0);
+    expect(t.server.simTime()).toBe(8000);
+    expect(lastClock(c)).toEqual({ t: 8000, speed: 1, paused: true, endsAt: 60000 });
+    expect(c.of("events").at(-1)?.payload["events"]).toEqual([]);
+  });
+
+  it("RP-9: 終わったあとの一時停止・「次の出来事まで」は何もしない", () => {
+    const t = setup({ ackPolicy: readOnlyAckPolicy });
+    const c = rawClient(t.server);
+    t.timers.advance(0);
+    c.send("hello", { client: "test", resume: false });
+    c.cmd("cmd.game.start");
+    t.timers.advance(60000);
+    expect(c.got.at(-1)?.type).toBe("round.result");
+    const eventsBefore = c.of("events").length;
+    const timeBefore = t.server.simTime();
+
+    c.cmd("cmd.game.pause", { paused: true });
+    c.cmd("cmd.game.skip", { until: "next_notable" });
+    t.timers.advance(1000);
+    expect(c.of("events").length).toBe(eventsBefore);
+    expect(t.server.simTime()).toBe(timeBefore);
+    expect(lastClock(c)?.paused).toBe(false);
+    expect(
+      c
+        .acks()
+        .slice(-2)
+        .map((a) => a["ok"]),
+    ).toEqual([true, true]);
+  });
 });
 
 describe("net/index.ts", () => {

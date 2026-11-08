@@ -700,7 +700,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 
 ### 10.4 ブラウザでのリプレイ
 
-FR-LOG-04（入力ログを読み込むとリプレイできる）は、同じ Go のコード（`sim`・`stage`）を WebAssembly にしてブラウザで再シミュレーションし、出てきた記録を web の記録の再生で流す（[ADR-0028](./adr/0028-browser-replay.md)。状態は Proposed。比べた 3 案・計測の数字・子 Issue の案は ADR）。ライブのゲームはサーバーで実行するまま（ADR-0009）。
+FR-LOG-04（入力ログを読み込むとリプレイできる）は、同じ Go のコード（`sim`・`stage`）を WebAssembly にしてブラウザで再シミュレーションし、出てきた記録を web の記録の再生で流す（[ADR-0028](./adr/0028-browser-replay.md)。状態は Accepted。比べた 3 案・計測の数字・子 Issue の案は ADR）。ライブのゲームはサーバーで実行するまま（ADR-0009）。
 
 1. 利用者が入力ログ（§10.1。FR-LOG-03 でダウンロードしたもの）をリプレイの画面で選ぶ（R2 の共有では URL から取得する）
 2. ブラウザが WASM と `wasm_exec.js` を静的ファイルとして読む（リプレイの画面を開いたときだけ。brotli で約 2.0 MB）

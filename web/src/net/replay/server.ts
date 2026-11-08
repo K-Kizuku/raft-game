@@ -235,7 +235,17 @@ export function createRecordServer(
     }
   }
 
+  // sendClock は空のイベントと今の時計を送る（一時停止・再開・「次の出来事まで」を画面に知らせる）。
+  function sendClock(): void {
+    sendToClient("events", { clock: clock(), events: [] });
+    quietTicks = 0;
+  }
+
+  // skip は次の ferry.arrived（30 秒以内）まで進めて止まる。終わったあとは何もしない。
   function skip(): void {
+    if (finished) {
+      return;
+    }
     for (let i = sentCount; i < events.length; i++) {
       const event = events[i];
       if (event !== undefined && event.type === "ferry.arrived") {
@@ -246,7 +256,9 @@ export function createRecordServer(
       }
     }
     paused = true;
-    flush();
+    if (!flush() && !finished) {
+      sendClock();
+    }
   }
 
   function handleClientMessage(conn: MockConn, data: string): void {
@@ -305,8 +317,14 @@ export function createRecordServer(
         sendAck(msg.cmdId, { ok: true });
         return;
       case "cmd.game.pause":
-        paused = payload["paused"] === true;
+        // 終わったあとは何もしない（時計を変えない）。
+        if (!finished) {
+          paused = payload["paused"] === true;
+        }
         sendAck(msg.cmdId, { ok: true });
+        if (!finished) {
+          sendClock();
+        }
         return;
       case "cmd.game.speed": {
         const next = payload["speed"];

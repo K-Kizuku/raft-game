@@ -15,7 +15,10 @@ import {
 import { parseRecord, snapshotFromRecord } from "../../net/mock/record.ts";
 import type { Ack, Phase, Snapshot, StageView } from "../../protocol/index.ts";
 import { gameStore } from "../../state/index.ts";
+import { parseReplayResponse } from "../../replay/response.ts";
+import { successResponse } from "../../replay/testing/responses.ts";
 import { createMockRound } from "../dev/mockRound.ts";
+import { createReplayConnector } from "../replay/replayConnector.ts";
 import { stage1Snapshot } from "../tutorial/testing/stage1World.ts";
 import type { RoundContext } from "../types.ts";
 import {
@@ -252,6 +255,71 @@ describe("GameScreen", () => {
       expect(m.sent.map((x) => x.type)).not.toContain("cmd.game.pause");
       // 船の操作のパネルは出す（操作は記録の再生が ack の失敗にする）。
       expect(screen.getByRole("region", { name: "フェリー操作" })).toBeDefined();
+    });
+
+    it("server では「次の出来事まで」のボタンを出さない", () => {
+      const m = manualConnector("server");
+      render(<GameScreen round={withSession} onRoundEnd={() => {}} connector={m.connector} />);
+      m.setStatus("ready");
+      m.load(demoSnapshot());
+      expect(screen.queryByRole("button", { name: "次の出来事まで" })).toBeNull();
+    });
+
+    it("リプレイでは「次の出来事まで」で cmd.game.skip を送る（航海中だけ押せる）", () => {
+      const m = manualConnector("replay");
+      render(<GameScreen round={stage1Round} onRoundEnd={() => {}} connector={m.connector} />);
+      m.setStatus("ready");
+      m.snapshot("intro");
+      const button = () =>
+        screen.getByRole("button", { name: "次の出来事まで" }) as HTMLButtonElement;
+      expect(button().disabled).toBe(true);
+      m.snapshot("sailing");
+      expect(button().disabled).toBe(false);
+      fireEvent.click(button());
+      expect(m.sent.map((x) => ({ type: x.type, payload: x.payload }))).toContainEqual({
+        type: "cmd.game.skip",
+        payload: { until: "next_notable" },
+      });
+    });
+
+    it("記録の再生で一時停止・再開が HUD と時計に反映され、「次の出来事まで」で次の出来事まで進む", async () => {
+      const parsed = parseReplayResponse(JSON.stringify(successResponse()));
+      if (!parsed.ok) throw new Error("fixture");
+      const timers = createManualTimers();
+      const connector = createReplayConnector(parsed, { timers });
+      render(<GameScreen round={stage1Round} onRoundEnd={() => {}} connector={connector} />);
+      const step = async (ms: number) => {
+        await act(async () => {
+          timers.advance(ms);
+        });
+      };
+      const clock = () => gameStore.getState().world?.clock;
+      await step(0);
+      await step(0);
+      await step(1500);
+      expect(gameStore.getState().world?.phase).toBe("sailing");
+      expect(clock()?.paused).toBe(false);
+
+      fireEvent.click(screen.getByRole("button", { name: "⏸ 一時停止" }));
+      await step(0);
+      expect(clock()?.paused).toBe(true);
+      const pausedAt = clock()?.simTime;
+      expect(screen.getByRole("button", { name: "▶ 再開" })).toBeDefined();
+      await step(3000);
+      expect(clock()?.simTime).toBe(pausedAt);
+      expect(clock()?.paused).toBe(true);
+
+      fireEvent.click(screen.getByRole("button", { name: "▶ 再開" }));
+      await step(0);
+      expect(clock()?.paused).toBe(false);
+      expect(screen.getByRole("button", { name: "⏸ 一時停止" })).toBeDefined();
+
+      fireEvent.click(screen.getByRole("button", { name: "次の出来事まで" }));
+      await step(0);
+      // mini-record の次の ferry.arrived は t=7000。
+      expect(clock()?.simTime).toBe(7000);
+      expect(clock()?.paused).toBe(true);
+      expect(screen.getByRole("button", { name: "▶ 再開" })).toBeDefined();
     });
   });
 });
