@@ -2286,55 +2286,54 @@ kill_reviews
 train_reset
 mkprs "111:agent/issue-311"
 mkgate 111 pending pass pending pending pass pass
-setround 111 2
+setround 111 1
 train 1
 wait_reviews
-check "train（2 往復まで）: round 2 で C6 が pass でなければ review.sh を呼ばない" test ! -s "$FAKE_LOG/review.log"
-check "train（2 往復まで）: ci-ok が pass なら強制マージ待ちの記録を作る" \
-  jq -e '.pr == 111 and .issue == 311 and .round == 2 and .max_rounds == 2 and .head_sha == "h111" and .ci_ok == "pass"
+check "train（1 往復まで）: round 1 で C6 が pass でなければ review.sh を呼ばない" test ! -s "$FAKE_LOG/review.log"
+check "train（1 往復まで）: ci-ok が pass なら強制マージ待ちの記録を作る" \
+  jq -e '.pr == 111 and .issue == 311 and .round == 1 and .max_rounds == 1 and .head_sha == "h111" and .ci_ok == "pass"
     and (.failed | index("C6=pending")) != null and (.recorded_at | length) > 0' "$trepo/.agents/run/train/force-merge-111.json"
-check "train（2 往復まで）: 強制マージ待ちをログに出す" grep -q "PR #111: 強制マージ待ち（Issue #311）" "$tmp/err"
-check "train（2 往復まで）: 止まった扱いにしない" test ! -e "$trepo/.agents/run/train/stopped-111"
+check "train（1 往復まで）: 強制マージ待ちをログに出す" grep -q "PR #111: 強制マージ待ち（Issue #311）" "$tmp/err"
+check "train（1 往復まで）: 止まった扱いにしない" test ! -e "$trepo/.agents/run/train/stopped-111"
 train 1
 wait_reviews
-check "train（2 往復まで）: 次の周もレビューを依頼しない" test ! -s "$FAKE_LOG/review.log"
-check "train（2 往復まで）: 記録が同じ HEAD なら、強制マージ待ちのままと出す" grep -q "PR #111: 強制マージ待ちのまま" "$tmp/err"
-# round 3 で C6 が fail（request_changes）でも、止まった扱いにせず強制マージ待ちにする
+check "train（1 往復まで）: 次の周もレビューを依頼しない" test ! -s "$FAKE_LOG/review.log"
+check "train（1 往復まで）: 記録が同じ HEAD なら、強制マージ待ちのままと出す" grep -q "PR #111: 強制マージ待ちのまま" "$tmp/err"
+# round 2（上限より多い）で C6 が fail（request_changes）でも、止まった扱いにせず強制マージ待ちにする
 train_reset
 mkprs "112:agent/issue-312"
 mkgate 112 fail pass fail pass pass pass
-setround 112 3
+setround 112 2
 train 1
-check "train（2 往復まで）: round 3 で C6 が fail でも強制マージ待ちにする" \
+check "train（1 往復まで）: round 2 で C6 が fail でも強制マージ待ちにする" \
   test -s "$trepo/.agents/run/train/force-merge-112.json" -a ! -e "$trepo/.agents/run/train/stopped-112"
-# round 2 で C6 が pass、C12 が fail でも review.sh を呼ばない
+# round 1 で C6 が pass、C12 が fail でも review.sh を呼ばない
 train_reset
 mkprs "113:agent/issue-313"
 mkgate 113 fail pass pass pass pass pass false fail
-setround 113 2
+setround 113 1
 train 1
 wait_reviews
-check "train（2 往復まで）: round 2 で C12 が fail でも review.sh を呼ばない" \
+check "train（1 往復まで）: round 1 で C12 が fail でも review.sh を呼ばない" \
   test ! -s "$FAKE_LOG/review.log" -a -s "$trepo/.agents/run/train/force-merge-113.json"
 # ci-ok が pass でなければ記録を作らない（レビューも依頼しない）
 train_reset
 mkprs "114:agent/issue-314"
 mkgate 114 pending pass pending pending pass pass
-setround 114 2
+setround 114 1
 printf '%s\n' '[{"name":"ci-ok","bucket":"pending"}]' >"$TRAIN_DIR/checks-114.json"
 train 1
 wait_reviews
-check "train（2 往復まで）: ci-ok が pass でなければ強制マージ待ちの記録を作らない" \
+check "train（1 往復まで）: ci-ok が pass でなければ強制マージ待ちの記録を作らない" \
   test ! -e "$trepo/.agents/run/train/force-merge-114.json" -a ! -s "$FAKE_LOG/review.log"
-check "train（2 往復まで）: ci-ok を待つことを出す" grep -q "PR #114: レビューを 2 回受けた（上限 2）ので、もうレビューを依頼しない。ci-ok が pass になるのを待つ（pending）" "$tmp/err"
-# round 1 なら（上限より少ない）これまでどおり review.sh を呼ぶ
+check "train（1 往復まで）: ci-ok を待つことを出す" grep -q "PR #114: レビューを 1 回受けた（上限 1）ので、もうレビューを依頼しない。ci-ok が pass になるのを待つ（pending）" "$tmp/err"
+# まだレビューを受けていなければ（round 0。上限より少ない）これまでどおり review.sh を呼ぶ
 train_reset
 mkprs "115:agent/issue-315"
 mkgate 115 pending pass pending pending pass pass
-setround 115 1
 train 1
 wait_reviews
-check "train（2 往復まで）: round 1 なら review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "115" -a ! -e "$trepo/.agents/run/train/force-merge-115.json"
+check "train（1 往復まで）: round 0 なら review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "115" -a ! -e "$trepo/.agents/run/train/force-merge-115.json"
 # 上限は .agents/config.json の review.max_rounds から読む
 train_reset
 mkprs "116:agent/issue-316"
@@ -2343,21 +2342,21 @@ setround 116 2
 jq -n '{review:{max_rounds:3}}' >"$tmp/config-rounds.json"
 train 1 AGENT_CONFIG="$tmp/config-rounds.json"
 wait_reviews
-check "train（2 往復まで）: review.max_rounds が 3 なら round 2 でも review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "116"
+check "train（1 往復まで）: review.max_rounds が 3 なら round 2 でも review.sh を呼ぶ" test "$(cat "$FAKE_LOG/review.log")" = "116"
 train_reset
 mkprs "117:agent/issue-317"
 mkgate 117 pending pass pending pending pass pass
-setround 117 1
-jq -n '{review:{max_rounds:1}}' >"$tmp/config-rounds.json"
+setround 117 2
+jq -n '{review:{max_rounds:2}}' >"$tmp/config-rounds.json"
 train 1 AGENT_CONFIG="$tmp/config-rounds.json"
 wait_reviews
-check "train（2 往復まで）: review.max_rounds が 1 なら round 1 で強制マージ待ちにする" \
+check "train（1 往復まで）: review.max_rounds が 2 なら round 2 で強制マージ待ちにする" \
   test ! -s "$FAKE_LOG/review.log" -a -s "$trepo/.agents/run/train/force-merge-117.json"
 # 強制マージ待ちの PR がマージされたら（オーナーの強制マージのあと、gate の closed）記録を消す
 mkgate 117 fail pass pending pending pass pass true
 echo 1 >"$TRAIN_DIR/comments-117"
 train 1 AGENT_CONFIG="$tmp/config-rounds.json"
-check "train（2 往復まで）: 列から外したら強制マージ待ちの記録を消す" test ! -e "$trepo/.agents/run/train/force-merge-117.json"
+check "train（1 往復まで）: 列から外したら強制マージ待ちの記録を消す" test ! -e "$trepo/.agents/run/train/force-merge-117.json"
 
 # ---- merge-train を止めても、起動した review.sh は止まらない（#240）----
 train_reset
