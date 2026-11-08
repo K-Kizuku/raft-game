@@ -8,6 +8,7 @@
 //   2〜4 の例外は 500 internal_error（ログにクエリ文字列を出さない）
 
 import { handleAdminGuards } from "./admin.ts";
+import { handleDtnProbeCreate, handleDtnProbeGet } from "./dtn-probe.ts";
 import type { Env } from "./env.ts";
 import { handleHealthz } from "./health.ts";
 import { errorResponse } from "./http.ts";
@@ -42,7 +43,19 @@ const FIXED_ROUTES: ReadonlyMap<string, Route> = new Map<string, Route>([
     "/api/admin/guards",
     { methods: ["GET", "PATCH"], originRequired: false, handle: handleAdminGuards },
   ],
+  [
+    "/api/admin/dtn/probe",
+    { methods: ["POST"], originRequired: false, handle: handleDtnProbeCreate },
+  ],
 ]);
+
+// 管理者の試運転の結果（DTN-12）。
+const DTN_PROBE_ROUTE: Route = {
+  methods: ["GET"],
+  originRequired: false,
+  handle: handleDtnProbeGet,
+};
+const DTN_PROBE_PATH = /^\/api\/admin\/dtn\/probe\/([^/]+)$/;
 
 const WS_SESSION_ROUTE: Route = { methods: ["GET"], originRequired: true, handle: handleWebSocket };
 const WS_SESSION_PATH = /^\/ws\/sessions\/([^/]+)$/;
@@ -59,6 +72,8 @@ function matchRoute(pathname: string): { route: Route; param: string } | null {
   if (id !== undefined) return { route: WS_SESSION_ROUTE, param: id };
   const logId = INPUT_LOG_PATH.exec(pathname)?.[1];
   if (logId !== undefined) return { route: INPUT_LOG_ROUTE, param: logId };
+  const probeId = DTN_PROBE_PATH.exec(pathname)?.[1];
+  if (probeId !== undefined) return { route: DTN_PROBE_ROUTE, param: probeId };
   return null;
 }
 
