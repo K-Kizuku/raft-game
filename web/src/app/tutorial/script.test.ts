@@ -14,7 +14,8 @@ const EXPECTED_TEXT: Readonly<Record<TutorialStepId, string>> = {
   T1: "あなたは離島Raft共和国の郵便船の船長です。島どうしの手紙を運んで、しまじまフェスを成功させましょう",
   T2: "小豆島の港に手紙が出ました。船『せとうち丸』に積んでみましょう（ドラッグ）",
   T3: "行き先に豊島を選んで、出航！ 行き先は、下の「行き先」のボタンか、マップで隣の島を押して選べます。隣でない島あての手紙は、隣の島を経由して運びます（おまかせなら、経由の手紙も一緒に積みます）",
-  T4: "豊島が返事を書きました。小豆島へ持ち帰りましょう",
+  T4a: "確定させるには、代表の小豆島が出す『この内容を記録して！』をみんなに届けて、『記録したよ！』の返事を代表まで運び返す必要があります",
+  T4: "豊島が返事を書きました。小豆島へ持ち帰りましょう。通り道の島（豊島）にも返事の手紙がたまります。寄った港では、おまかせで積んでから出航しましょう",
   T5: "確定！ 3 つの島のうち 2 つが記録すれば、正式に決まります",
   T6: "直島から依頼書（★）が出ています。依頼書は代表（👑）の島へ届けましょう。直島へは豊島を経由して行けます",
   T7: "共和国では決まったけど、直島はまだ知りません。結果を届けるまでが仕事です",
@@ -23,12 +24,13 @@ const EXPECTED_TEXT: Readonly<Record<TutorialStepId, string>> = {
 };
 
 describe("TUTORIAL_SCRIPTS", () => {
-  it("SC-1 T1〜T9 の順で、進み方と任意の段が表のとおり", () => {
+  it("SC-1 T1〜T3・T4a・T4〜T9 の順で、進み方と任意の段が表のとおり", () => {
     const script = stage1();
     expect(script.steps.map((s) => s.id)).toEqual([
       "T1",
       "T2",
       "T3",
+      "T4a",
       "T4",
       "T5",
       "T6",
@@ -36,7 +38,7 @@ describe("TUTORIAL_SCRIPTS", () => {
       "T8",
       "T9",
     ]);
-    const click = new Set(["T1", "T5", "T8", "T9"]);
+    const click = new Set(["T1", "T4a", "T5", "T8", "T9"]);
     for (const step of script.steps) {
       expect(step.advance, step.id).toBe(click.has(step.id) ? "click" : "action");
       expect(step.optional, step.id).toBe(step.id === "T8" || step.id === "T9");
@@ -56,7 +58,9 @@ describe("TUTORIAL_SCRIPTS", () => {
 
   it("SC-3 1 つの吹き出しの中で同じ用語が 2 回出ない", () => {
     for (const step of stage1().steps) {
-      const terms = step.text.flatMap((part) => (typeof part === "string" ? [] : [part.term]));
+      const terms = step.text.flatMap((part) =>
+        typeof part === "string" ? [] : ["term" in part ? part.term : `letter:${part.letter}`],
+      );
       expect(new Set(terms).size, step.id).toBe(terms.length);
     }
   });
@@ -66,7 +70,9 @@ describe("TUTORIAL_SCRIPTS", () => {
       stage1().steps.map((step) => [
         step.id,
         step.text.flatMap((part) =>
-          typeof part === "string" ? [] : [`${part.text}:${part.term}`],
+          typeof part === "string"
+            ? []
+            : [`${part.text}:${"term" in part ? part.term : `letter.${part.letter}`}`],
         ),
       ]),
     );
@@ -74,6 +80,7 @@ describe("TUTORIAL_SCRIPTS", () => {
       T1: [],
       T2: ["手紙:letter"],
       T3: [],
+      T4a: ["代表:leader", "この内容を記録して！:letter.append", "記録したよ！:letter.append_resp"],
       T4: [],
       T5: ["確定:apply", "記録:entry"],
       T6: ["代表:leader"],

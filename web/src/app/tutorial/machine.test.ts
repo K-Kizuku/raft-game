@@ -227,6 +227,8 @@ describe("advance・pressPrimary", () => {
     s = withFacts(s, { departed: true });
     expect(shown(s)).toBeNull();
     s = withFacts(s, { atRelay: true });
+    expect(shown(s)).toBe("T4a");
+    s = pressPrimary(s, script);
     expect(shown(s)).toBe("T4");
     s = withFacts(s, { repliedFromRelay: true });
     expect(shown(s)).toBeNull();
@@ -242,20 +244,39 @@ describe("advance・pressPrimary", () => {
     expect(shown(s)).toBe("T7");
     s = withFacts(s, { farSettled: true });
     expect(shown(s)).toBeNull();
-    expect(s.next).toBe(7);
+    expect(s.next).toBe(8);
   });
 
   it("MA-4 終わる条件がすでに成り立つ action の段は出さない", () => {
     let s = afterT1();
     s = withFacts(s, { requestSeen: true, loaded: true, departed: true });
     expect(shown(s)).toBeNull();
-    expect(s.next).toBe(3); // T4
+    expect(s.next).toBe(3); // T4a
     s = withFacts(s, { atRelay: true, repliedFromRelay: true, firstSuccess: true });
+    // T4a は「次へ」で進む段なので、T4 が終わっていても出す。
+    expect(shown(s)).toBe("T4a");
+    s = pressPrimary(s, script);
     expect(shown(s)).toBe("T5");
     s = pressPrimary(s, script);
     s = withFacts(s, { farRequest: true, farProposed: true, farSettled: true });
     expect(shown(s)).toBeNull();
-    expect(s.next).toBe(7);
+    expect(s.next).toBe(8);
+  });
+
+  it("T4a は豊島に初めて着いたときに出て、着いたのを見逃しても返事を運び出したら出る", () => {
+    let s = afterT1();
+    s = withFacts(s, { requestSeen: true, loaded: true, departed: true });
+    expect(shown(s)).toBeNull();
+    s = withFacts(s, { atRelay: true });
+    expect(shown(s)).toBe("T4a");
+
+    s = afterT1();
+    s = withFacts(s, { requestSeen: true, loaded: true, departed: true });
+    s = withFacts(s, { repliedFromRelay: true });
+    expect(shown(s)).toBe("T4a");
+    s = pressPrimary(s, script);
+    expect(shown(s)).toBeNull();
+    expect(s.next).toBe(5); // T5
   });
 
   it("firstSuccess が T4 より先なら、T4 の後に T5 がすぐ出る", () => {
@@ -263,6 +284,8 @@ describe("advance・pressPrimary", () => {
     s = withFacts(s, { requestSeen: true, loaded: true, departed: true, firstSuccess: true });
     expect(shown(s)).toBeNull();
     s = withFacts(s, { atRelay: true });
+    expect(shown(s)).toBe("T4a");
+    s = pressPrimary(s, script);
     expect(shown(s)).toBe("T4");
     s = withFacts(s, { repliedFromRelay: true });
     expect(shown(s)).toBe("T5");

@@ -25,7 +25,7 @@ export type TutorialFacts = Readonly<{
 
 export type TutorialState = Readonly<{
   facts: TutorialFacts;
-  next: number; // 次の本筋の段（steps の T1〜T7 の添字。7 なら本筋は終わり）
+  next: number; // 次の本筋の段（MAIN_STEPS の添字。MAIN_STEPS.length なら本筋は終わり）
   current: Readonly<{ id: TutorialStepId; expanded: boolean }> | null;
   // 任意の段（T8・T9）の下に、畳んだ本筋の段（steps[next]）が残っているか。
   // 任意の段の「次へ」で、その段（畳まれたまま）に戻る。
@@ -42,7 +42,7 @@ type ObserveInput = Readonly<{
   t8AfterMs: number; // 台本の t8AfterMs
 }>;
 
-const MAIN_STEPS: readonly TutorialStepId[] = ["T1", "T2", "T3", "T4", "T5", "T6", "T7"];
+const MAIN_STEPS: readonly TutorialStepId[] = ["T1", "T2", "T3", "T4a", "T4", "T5", "T6", "T7"];
 const OPTIONAL_STEPS = ["T8", "T9"] as const;
 type OptionalStepId = (typeof OPTIONAL_STEPS)[number];
 
@@ -173,6 +173,9 @@ function canShow(id: TutorialStepId, facts: TutorialFacts): boolean {
       return facts.requestSeen;
     case "T3":
       return true; // T2 が終わった（next が T3 になった）
+    case "T4a":
+      // 豊島に初めて着いたとき（着いたのを見逃しても、豊島から返事を運び出したら出す）。
+      return facts.atRelay || facts.repliedFromRelay;
     case "T4":
       return facts.atRelay;
     case "T5":
