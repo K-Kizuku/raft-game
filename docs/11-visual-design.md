@@ -89,6 +89,7 @@
 - 封筒・切手・消印・★を、確定・成功・依頼の印に使う。★と確定は封筒の金、依頼は郵便の赤
 - 画像を追加するときは 1 つ 20KB 以下を目安にし、なるべく SVG か CSS で描く。紙の質感は CSS のグラデーションで出す（画像を使わない）
 - 郵便局長の絵・タイトルの絵は人が作る（#131）。それまでは島の色の丸と頭文字で代える
+- **favicon と OGP の画像（T-430）**: `web/public/` の `favicon.svg`（丸い海の枠に封筒。色はトークンと同じ 16 進）・`favicon-32.png`・`apple-touch-icon.png`（180×180）・`og-image.png`（1200×630。タイトルの絵の部品を並べ直したもの）。`web/index.html` が link・OGP の meta で指す。PNG は、元の HTML（`web/brand/`。ビルドに入れない）から `scripts/render-brand-images.sh`（ヘッドレスの Chrome）で作り直す。タイトルの絵の部品を変えたら `web/brand/og-image.html` も合わせて直す
 
 ## 8. 画面ごとの雰囲気
 

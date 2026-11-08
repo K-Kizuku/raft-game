@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- apple-touch-icon.png（180×180）の元（T-430）。iOS は透明な部分を黒く塗るので、紙の色（--color-paper）の地に
+     web/public/favicon.svg を置く（角は iOS が丸める）。scripts/render-brand-images.sh が撮る。 -->
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>apple-touch-icon</title>
+    <link rel="stylesheet" href="../src/ui/theme/tokens.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+        width: 180px;
+        height: 180px;
+        overflow: hidden;
+        background: var(--color-paper);
+      }
+
+      img {
+        display: block;
+        width: 152px;
+        height: 152px;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="../public/favicon.svg" alt="" />
+  </body>
+</html>
