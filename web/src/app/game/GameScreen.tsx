@@ -16,6 +16,7 @@ import { IslandPanel } from "../../ui/island/IslandPanel.tsx";
 import { OpeningCeremony } from "../../ui/opening/index.ts";
 import { GameShortcuts } from "../../ui/shortcuts/GameShortcuts.tsx";
 import { Link } from "../router/Link.tsx";
+import { ReplaySkipButton } from "../replay/ReplaySkipButton.tsx";
 import { TutorialOverlay } from "../tutorial/TutorialOverlay.tsx";
 import type { RoundContext } from "../types.ts";
 import { connectionNotice, mockNotice, replayNotice } from "./connectionText.ts";
@@ -38,7 +39,8 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
   const notice = connectionNotice(view);
   const mock = mockNotice(view);
   const replay = replayNotice(view);
-  // リプレイ（ADR-0028 R4）では、チュートリアル（自動の一時停止を送る）とデモの操作を出さない。
+  // リプレイ（ADR-0028 R4）では、チュートリアル（自動の一時停止を送る）とデモの操作を出さず、
+  // 「次の出来事まで」のボタンを出す（T-720f）。
   const replaying =
     view.kind !== "offline" && view.kind !== "unavailable" && view.source === "replay";
 
@@ -57,7 +59,7 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
             <section aria-label="お知らせ" aria-live="polite" className="game-notifications">
               <Notifications />
             </section>
-            {(notice !== null || mock !== null || replay !== null) && (
+            {(notice !== null || mock !== null || replay !== null || replaying) && (
               <div className="game-connection">
                 {notice !== null && (
                   <div
@@ -72,6 +74,7 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
                 )}
                 {mock !== null && <p className="game-connection-mock">{mock}</p>}
                 {replay !== null && <p className="game-connection-mock">{replay}</p>}
+                {replaying && <ReplaySkipButton />}
               </div>
             )}
           </section>
