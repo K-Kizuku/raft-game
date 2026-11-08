@@ -9,7 +9,8 @@ import type { World } from "../../state/index.ts";
 import { useGameCommand } from "../../ui/commands/GameCommands.tsx";
 import { useSimNow } from "../../ui/hud/useSimNow.ts";
 import { useOpeningCeremonyActive } from "../../ui/opening/index.ts";
-import { RaftTerm } from "../../ui/terms/RaftTerm.tsx";
+import { letterRaftTerm } from "../../ui/terms/glossary.ts";
+import { RaftTerm, WithRaftTerm } from "../../ui/terms/RaftTerm.tsx";
 import {
   advance,
   expand,
@@ -75,6 +76,10 @@ function StepText({ parts }: { parts: readonly TextPart[] }): ReactElement {
       {parts.map((part, i) =>
         typeof part === "string" ? (
           <span key={i}>{part}</span>
+        ) : "letter" in part ? (
+          <WithRaftTerm key={i} raft={letterRaftTerm(part.letter)}>
+            {part.text}
+          </WithRaftTerm>
         ) : (
           <RaftTerm key={i} id={part.term}>
             {part.text}

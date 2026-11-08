@@ -2,12 +2,17 @@
 // 文言はクライアントの画面の文言で、ステージ定義（data/stages）に置かない。
 // ここの数（t8AfterMs など）はチュートリアルの見せ方の値で、ゲームの結果に影響しない。
 // チュートリアルの数はこのファイルにまとめ、ほかのファイルに書かない。
-import type { RaftTermId } from "../../ui/terms/glossary.ts";
+import type { LetterLabel, RaftTermId } from "../../ui/terms/glossary.ts";
 
-export type TutorialStepId = "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7" | "T8" | "T9";
+// T4a は T4 の前に出す段（T-409b #343。T4 以降の ID を付け直さないための名前）。
+export type TutorialStepId = "T1" | "T2" | "T3" | "T4a" | "T4" | "T5" | "T6" | "T7" | "T8" | "T9";
 
 // 文言の一部。用語を添える言葉は { term, text }（1 つの吹き出しの中で最初の 1 か所だけ。DesignDoc §13.7）。
-export type TextPart = string | Readonly<{ term: RaftTermId; text: string }>;
+// 手紙の名前は { letter, text } で、Msg* を添える（letterRaftTerm）。
+export type TextPart =
+  | string
+  | Readonly<{ term: RaftTermId; text: string }>
+  | Readonly<{ letter: LetterLabel; text: string }>;
 
 // 強調する UI。selector は DOM のクラス名、island はマップの島のボタン。
 export type TargetSpec =
@@ -27,7 +32,7 @@ export type TutorialScript = Readonly<{
   ferryName: string;
   t8AfterMs: number; // T8 を出してよいゲーム内時刻
   autoPause: boolean;
-  steps: readonly TutorialStep[]; // T1〜T9 の順
+  steps: readonly TutorialStep[]; // T1〜T3・T4a・T4〜T9 の順
 }>;
 
 function selector(sel: string, fallback?: string): TargetSpec {
@@ -76,11 +81,28 @@ export const STAGE1_TUTORIAL: TutorialScript = {
       targets: [selector(".ferry-panel__destinations"), selector(".ferry-panel__depart")],
     },
     {
+      id: "T4a",
+      text: [
+        "確定させるには、",
+        { term: "leader", text: "代表" },
+        "の小豆島が出す『",
+        { letter: "append", text: "この内容を記録して！" },
+        "』をみんなに届けて、『",
+        { letter: "append_resp", text: "記録したよ！" },
+        "』の返事を代表まで運び返す必要があります",
+      ],
+      advance: "click",
+      optional: false,
+      targets: [island("leader"), island("relay")],
+    },
+    {
       id: "T4",
-      text: ["豊島が返事を書きました。小豆島へ持ち帰りましょう"],
+      text: [
+        "豊島が返事を書きました。小豆島へ持ち帰りましょう。通り道の島（豊島）にも返事の手紙がたまります。寄った港では、おまかせで積んでから出航しましょう",
+      ],
       advance: "action",
       optional: false,
-      targets: [island("relay")],
+      targets: [island("relay"), selector(".ferry-panel__autoload")],
     },
     {
       id: "T5",

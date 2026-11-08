@@ -106,7 +106,9 @@ const withCargo = withLetters(withFerry(withRequest, stage1Ferry({ cargo: [5] })
 const sailing = withLetters(withFerry(withRequest, sailingFerry(LEADER, RELAY, [5])), [
   ferryLetter(5, LEADER, RELAY),
 ]);
-// 豊島から返事を積んで帰る途中・最初の確定・直島の依頼（T2〜T4 を飛ばして T5 → T6）。
+// 豊島に着いた船（T4a → T4）。
+const atRelay = withFerry(withRequest, stage1Ferry({ islandId: RELAY }));
+// 豊島から返事を積んで帰る途中・最初の確定・直島の依頼（T2〜T4 を飛ばして T4a → T5 → T6）。
 const farRequested = withRequests(
   withLetters(withFerry(base, sailingFerry(RELAY, LEADER, [7])), [ferryLetter(7, RELAY, LEADER)]),
   [stage1Request("r1", LEADER, "succeeded"), stage1Request("r2", FAR)],
@@ -121,12 +123,14 @@ function passT1(): void {
   sync();
 }
 
-// T5 の「次へ」で T6 を出す。
+// T4a・T5 の「次へ」で T6 を出す。
 function toT6(): void {
   passT1();
   load(farRequested);
-  expect(stepId()).toBe("T5");
+  expect(stepId()).toBe("T4a");
   sync();
+  click("次へ");
+  expect(stepId()).toBe("T5");
   click("次へ");
   expect(stepId()).toBe("T6");
 }
@@ -331,6 +335,53 @@ describe("TutorialOverlay", () => {
     expect(bubble()?.querySelector(".raft-term-note")).toBeNull();
   });
 
+  it("豊島に初めて着いたら T4a（返事を代表まで運び返す）を出して止め、「次へ」で T4（通り道の島でも積む）", () => {
+    renderOverlay();
+    passT1();
+    load(withRequest);
+    expect(stepId()).toBe("T2");
+    sync();
+    load(withCargo);
+    load(sailing);
+    expect(bubble()).toBeNull();
+    sync();
+    const before = pauseCalls().length;
+
+    load(atRelay);
+    expect(stepId()).toBe("T4a");
+    expect(bubble()?.textContent).toContain(
+      "確定させるには、代表の小豆島が出す『この内容を記録して！』をみんなに届けて、『記録したよ！』の返事を代表まで運び返す必要があります",
+    );
+    expect(bubble()?.querySelector(".raft-term-note")).toBeNull();
+    expect(pauseCalls().slice(before)).toEqual([{ paused: true }]);
+    sync();
+
+    click("次へ");
+    expect(stepId()).toBe("T4");
+    expect(bubble()?.textContent).toContain(
+      "通り道の島（豊島）にも返事の手紙がたまります。寄った港では、おまかせで積んでから出航しましょう",
+    );
+    expect(screen.getByRole("button", { name: "わかった" })).toBeTruthy();
+    expect(pauseCalls().slice(before)).toEqual([{ paused: true }]);
+  });
+
+  it("用語を併記する設定では、T4a に代表（Leader）・この内容を記録して！（MsgApp）・記録したよ！（MsgAppResp）が出る", () => {
+    renderOverlay();
+    passT1();
+    load(withCargo);
+    load(sailing);
+    load(atRelay);
+    expect(stepId()).toBe("T4a");
+    act(() => {
+      setShowRaftTerms(true);
+    });
+    const text = bubble()?.textContent ?? "";
+    expect(text).toContain("代表（Leader）の小豆島");
+    expect(text).toContain("『この内容を記録して！（MsgApp）』");
+    expect(text).toContain("『記録したよ！（MsgAppResp）』");
+    expect(bubble()?.querySelectorAll(".raft-term-note")).toHaveLength(3);
+  });
+
   it("TO-11 広がった吹き出しの間だけ、強調の輪を重ねる", () => {
     const port = document.createElement("ul");
     port.className = "ferry-panel__port";
@@ -385,6 +436,8 @@ describe("TutorialOverlay", () => {
 
     sync();
     load(farRequested);
+    expect(stepId()).toBe("T4a");
+    click("次へ");
     expect(stepId()).toBe("T5");
     screen.getByRole("button", { name: "次へ" }).focus();
     click("次へ");
