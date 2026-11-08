@@ -35,6 +35,7 @@ import { bobOffset, rainOffset, seedOf, waveOffset } from "../model/art/motion.t
 import { seaBlobs, waveMarks } from "../model/art/sea.ts";
 import type { SeaTone } from "../model/art/sea.ts";
 import { MAP_ART_STYLE } from "../model/art/style.ts";
+import { createCommitEffectsLayer } from "./commitEffects.ts";
 import { drawEnvelope } from "./envelope.ts";
 import { createLetterEffectsLayer } from "./letterEffects.ts";
 import { createPartitionLayer } from "./partition.ts";
@@ -652,6 +653,7 @@ type Layers = Readonly<{
   piles: Container;
   ferries: Container;
   overlay: Container; // エンジニアモードのメッセージ種別の札（T-712、./raftOverlay.ts）
+  celebrations: Container; // 依頼の確定の光る線と紙吹雪（T-435、./commitEffects.ts）
   effects: Container;
 }>;
 
@@ -716,8 +718,9 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   }
   host.appendChild(app.canvas);
 
-  // 下から sea・routes・storms・partition・islands・piles・ferries・overlay・effects。overlay はエンジニアモードの札。海は地の色（background）の上に、
-  // にじみと波の記号を描く。effects は手紙の処分・差し替えのアニメーション（T-410、./letterEffects.ts）を描く。
+  // 下から sea・routes・storms・partition・islands・piles・ferries・overlay・celebrations・effects。overlay はエンジニアモードの札。海は地の色（background）の上に、
+  // にじみと波の記号を描く。celebrations は依頼の確定の光る線と紙吹雪（T-435、./commitEffects.ts）、
+  // effects は手紙の処分・差し替えのアニメーション（T-410、./letterEffects.ts）を描く。
   const layers: Layers = {
     sea: new Container(),
     routes: new Container(),
@@ -727,6 +730,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     piles: new Container(),
     ferries: new Container(),
     overlay: new Container(),
+    celebrations: new Container(),
     effects: new Container(),
   };
   app.stage.addChild(
@@ -738,6 +742,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     layers.piles,
     layers.ferries,
     layers.overlay,
+    layers.celebrations,
     layers.effects,
   );
   // 動きを減らす設定。マップの動き（波・雨・船の揺れ）は設定の変化に追従する。
@@ -748,6 +753,10 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   };
   motionQuery?.addEventListener?.("change", onMotionChange);
   const effects = createLetterEffectsLayer(layers.effects, { reducedMotion });
+  // 確定の演出は、動きを減らす設定の変化にも追従する（毎フレーム読む）。
+  const celebrations = createCommitEffectsLayer(layers.celebrations, {
+    reducedMotion: () => reducedMotion,
+  });
   const partition = createPartitionLayer(layers.partition);
   const overlay = createRaftOverlay(layers.overlay);
 
@@ -819,6 +828,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       (v) => v.root.destroy({ children: true }),
     );
     overlay.update(deps.engineer?.() === true ? buildRaftTags(world, scene) : null);
+    celebrations.update(world, scene, now);
     effects.update(world, scene, now, shown);
   };
 
@@ -864,6 +874,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       pileViews.clear();
       ferryViews.clear();
       effects.destroy();
+      celebrations.destroy();
       partition.destroy();
       overlay.destroy();
       app.destroy({ removeView: true }, { children: true });
