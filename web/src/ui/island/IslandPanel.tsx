@@ -11,6 +11,7 @@ import { formatRemaining } from "../hud/format.ts";
 import { islandName } from "../hud/noticeText.ts";
 import { useSimNow } from "../hud/useSimNow.ts";
 import { LetterIcon } from "../letters/LetterIcon.tsx";
+import { RequestStepper } from "../requests/RequestStepper.tsx";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
 import { IslandList } from "./IslandList.tsx";
 import { isFinished, islandRequests, requestStatusView } from "./requestView.ts";
@@ -169,6 +170,9 @@ function IslandDetail({ world, islandId }: { world: World; islandId: number }): 
                     </span>
                   )}
                   {request.expired && <span className="island-request-expired">⌛期限切れ</span>}
+                  <div className="island-request-progress">
+                    <RequestStepper status={request.status} />
+                  </div>
                 </li>
               );
             })}
