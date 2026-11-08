@@ -450,7 +450,7 @@ travelMs = round10(65 + 1.1 × d)      # d = 配置の 2 島の間の距離。10
 | 利島–御蔵島 | 206 | 290 | 御蔵島–青ヶ島 | 318 | 410 |
 | | | | 八丈島–青ヶ島 | 134 | 210 |
 
-- 上の値は demo-izu のものです。Stage 3（`stage3.yaml`）は、同じ原則で後のタスク（#300）で決めます
+- Stage 3（`stage3.yaml`）も上の表と同じ値です（T-718 #300。`novice`・`steady`・`greedy` の★の分布で確かめた。進行表 §5）。航行時間を長くする（例: 1 秒 ＋ 距離 × 15 ms）と、6 島の代表が選挙タイムアウトのあいだに過半数の返事をそろえにくくなり、★の分布が大きく下がりました
 
 ## 5. ステージ定義 `data/stages/*.yaml`
 
@@ -790,15 +790,17 @@ demo:
 計画書の伊豆諸島の `PORTS` の項目にある船名を使います（`fact`）。
 
 ```yaml
-ferries:
-  - { id: f1, name: 橘丸,           home: tokyo-oshima,      capacity: 4, speed: 1.0, provenance: fact }
-  - { id: f2, name: 新さるびあ丸,   home: tokyo-oshima,      capacity: 3, speed: 1.2, provenance: fact }
-  - { id: f3, name: くろしお丸,     home: tokyo-miyakejima,  capacity: 3, speed: 1.0, provenance: fact }
-  - { id: f4, name: あおがしま丸,   home: tokyo-hachijojima, capacity: 3, speed: 1.0, provenance: fact }
+ferries:                        # Stage 3・demo-izu（各島に 1 隻）
+  - { id: f1, name: 橘丸,               home: tokyo-oshima,      capacity: 4, speed: 1.0, provenance: fact }
+  - { id: f2, name: くろしお丸,         home: tokyo-miyakejima,  capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f3, name: あおがしま丸,       home: tokyo-hachijojima, capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f4, name: フェリーあぜりあ,   home: tokyo-mikurajima,  capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f5, name: 新さるびあ丸,       home: tokyo-toshima,     capacity: 3, speed: 1.0, provenance: fact }
+  - { id: f6, name: セブンアイランド結, home: tokyo-aogashima,   capacity: 3, speed: 1.0, provenance: fact }
 ```
 
 - 積載量・速度・母港は `creative` です
-- demo-izu は、6 つの船名をすべて使い、各島に 1 隻を置きます（橘丸＝大島、新さるびあ丸＝利島、くろしお丸＝三宅島、フェリーあぜりあ＝御蔵島、あおがしま丸＝八丈島、セブンアイランド結＝青ヶ島。T-501e。進行表 §8）
+- Stage 3 と demo-izu は、6 つの船名をすべて使い、各島に 1 隻を置きます（橘丸＝大島、新さるびあ丸＝利島、くろしお丸＝三宅島、フェリーあぜりあ＝御蔵島、あおがしま丸＝八丈島、セブンアイランド結＝青ヶ島。demo-izu は T-501e・進行表 §8、Stage 3 は T-718・進行表 §5）
 - ステージ紹介とクレジットに「計画書に記載された船名を使用しており、運航会社とは関係ありません」と書きます
 
 ### 5.6 読み込み（`internal/stage`）

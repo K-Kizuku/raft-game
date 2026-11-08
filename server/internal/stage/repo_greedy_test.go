@@ -158,11 +158,12 @@ func TestRepoGreedyStage1(t *testing.T) {
 	}
 }
 
-// GR-2 stage2・demo-goto・demo-izu がエラー・不変条件の違反なしで終わる。★の割合は比べず、集計を出すだけ。
+// GR-2 stage2・stage3・demo-goto・demo-izu がエラー・不変条件の違反なしで終わる。★の割合は比べず、集計を出すだけ。
+// Stage 3 の★の割合は repo_greedy_balance_test.go（ビルドタグ balance）で確かめる（T-718）。
 func TestRepoGreedyOthers(t *testing.T) {
 	t.Parallel()
 	for _, name := range repoBots {
-		for _, id := range []string{"stage2", "demo-goto", "demo-izu"} {
+		for _, id := range []string{"stage2", "stage3", "demo-goto", "demo-izu"} {
 			t.Run(name+"/"+id, func(t *testing.T) {
 				t.Parallel()
 				st := repoStage(t, id)
@@ -177,7 +178,7 @@ func TestRepoGreedyOthers(t *testing.T) {
 func TestRepoGreedyDeterministic(t *testing.T) {
 	t.Parallel()
 	for _, name := range repoBots {
-		for _, id := range []string{"stage1", "stage2", "demo-izu"} {
+		for _, id := range []string{"stage1", "stage2", "stage3", "demo-izu"} {
 			t.Run(name+"/"+id, func(t *testing.T) {
 				t.Parallel()
 				st := repoStage(t, id)
@@ -191,5 +192,38 @@ func TestRepoGreedyDeterministic(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// GR-5 Stage 3 のラウンドで、嵐（北の 2 島と南の 4 島を結ぶ航路）と欠航（利島・御蔵島・青ヶ島）が起きる（T-718 #300）。
+// steady・seed 1 のイベントに、cause のない route.blocked（嵐）と、cause: "cancellation" の route.blocked があり、
+// 欠航の islandId が利島（2）・御蔵島（4）・青ヶ島（6）のどれか。
+func TestRepoGreedyStage3Blocked(t *testing.T) {
+	t.Parallel()
+	st := repoStage(t, "stage3")
+	_, events := playGreedy(t, "steady", st, 1)
+	storms, cancellations := 0, 0
+	for _, ev := range events {
+		d, ok := ev.Data.(sim.RouteBlocked)
+		if !ok {
+			continue
+		}
+		switch d.Cause {
+		case "":
+			storms++
+		case sim.BlockCauseCancellation:
+			cancellations++
+			if !slices.Contains([]uint64{2, 4, 6}, d.IslandID) {
+				t.Errorf("T=%d: 欠航の islandId = %d, want 2・4・6 のどれか（%+v）", ev.T, d.IslandID, d)
+			}
+		default:
+			t.Errorf("T=%d: route.blocked の cause = %q, want 空か %q", ev.T, d.Cause, sim.BlockCauseCancellation)
+		}
+	}
+	if storms == 0 {
+		t.Error("嵐の route.blocked がない")
+	}
+	if cancellations == 0 {
+		t.Error("欠航（cause: cancellation）の route.blocked がない")
 	}
 }

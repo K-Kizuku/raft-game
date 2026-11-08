@@ -1,6 +1,7 @@
 package stage_test
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
@@ -94,6 +95,39 @@ const (
 )
 
 var (
+	izuRefs    = []string{"tokyo-oshima", "tokyo-toshima", "tokyo-miyakejima", "tokyo-mikurajima", "tokyo-hachijojima", "tokyo-aogashima"}
+	izuWeights = []int64{318, 68, 180, 68, 317, 49}
+	// 6 島のすべての組（フルメッシュ。ゲームデザイン §3.5）。65 + 1.1 × 配置の距離、10 ms 単位（データ仕様 §4.5）。
+	// demo-izu（T-501e）と Stage 3（T-718）で同じ。
+	izuRoutes = []wantRoute{
+		{1, 2, 220, stage.Creative},
+		{1, 3, 260, stage.Creative},
+		{1, 4, 380, stage.Creative},
+		{1, 5, 580, stage.Creative},
+		{1, 6, 730, stage.Creative},
+		{2, 3, 210, stage.Creative},
+		{2, 4, 290, stage.Creative},
+		{2, 5, 480, stage.Creative},
+		{2, 6, 620, stage.Creative},
+		{3, 4, 190, stage.Creative},
+		{3, 5, 390, stage.Creative},
+		{3, 6, 540, stage.Creative},
+		{4, 5, 270, stage.Creative},
+		{4, 6, 410, stage.Creative},
+		{5, 6, 210, stage.Creative},
+	}
+	// 計画書の 6 つの船名をすべて使い、各島に 1 隻（demo-izu は T-501e、Stage 3 は T-718）。
+	izuFerries = []wantFerry{
+		{"f1", "橘丸", 1, 4, 1000, stage.Fact},
+		{"f2", "くろしお丸", 3, 3, 1000, stage.Fact},
+		{"f3", "あおがしま丸", 5, 3, 1000, stage.Fact},
+		{"f4", "フェリーあぜりあ", 4, 3, 1000, stage.Fact},
+		{"f5", "新さるびあ丸", 2, 3, 1000, stage.Fact},
+		{"f6", "セブンアイランド結", 6, 3, 1000, stage.Fact},
+	}
+)
+
+var (
 	gotoRefs    = []string{"nagasaki-fukue", "nagasaki-naru", "nagasaki-nakadori"}
 	gotoWeights = []int64{511, 126, 363}
 	gotoFerries = []wantFerry{
@@ -150,37 +184,32 @@ var wantStages = []wantStage{
 		rateMilliPerMin: 500, targetSuccesses: 2, targetScore3: 1400, // 目標は novice で決める（T-501g #332）
 	},
 	{
+		// 航路・船は demo-izu と同じ。electionTick・目標は novice・greedy で決める（T-718 #300。進行表 §1・§5）。
+		id: "stage3", title: "嵐の離島共和国", durationMs: 240000, unlock: "stage2", tutorial: "",
+		refs: izuRefs, weights: izuWeights, electionTick: 50,
+		routes:        izuRoutes,
+		ferries:       izuFerries,
+		critical:      []string{fwA, fwB},
+		stallCapacity: 3,
+		script: []stage.ScriptRequest{
+			sr(10000, 2, stall, stMn),
+			sr(20000, 1, fw, fwA),
+			sr(35000, 3, stall, stMn),
+			sr(50000, 5, fw, fwA),
+			sr(125000, 5, fw, fwB),
+			sr(140000, 4, stall, stMn),
+			sr(160000, 1, stall, stMn),
+			sr(180000, 6, stall, stMn),
+		},
+		rateMilliPerMin: 500, targetSuccesses: 3, targetScore3: 480,
+	},
+	{
 		id: "demo-izu", title: "嵐の離島共和国（デモ・伊豆版）", durationMs: 120000, unlock: "", tutorial: "",
-		refs:         []string{"tokyo-oshima", "tokyo-toshima", "tokyo-miyakejima", "tokyo-mikurajima", "tokyo-hachijojima", "tokyo-aogashima"},
-		weights:      []int64{318, 68, 180, 68, 317, 49},
-		electionTick: 28, // T-501e で 16 から 28 に
-		// 6 島のすべての組（フルメッシュ。ゲームデザイン §3.5）。65 + 1.1 × 配置の距離、10 ms 単位（データ仕様 §4.5）。
-		routes: []wantRoute{
-			{1, 2, 220, stage.Creative},
-			{1, 3, 260, stage.Creative},
-			{1, 4, 380, stage.Creative},
-			{1, 5, 580, stage.Creative},
-			{1, 6, 730, stage.Creative},
-			{2, 3, 210, stage.Creative},
-			{2, 4, 290, stage.Creative},
-			{2, 5, 480, stage.Creative},
-			{2, 6, 620, stage.Creative},
-			{3, 4, 190, stage.Creative},
-			{3, 5, 390, stage.Creative},
-			{3, 6, 540, stage.Creative},
-			{4, 5, 270, stage.Creative},
-			{4, 6, 410, stage.Creative},
-			{5, 6, 210, stage.Creative},
-		},
-		// 計画書の 6 つの船名をすべて使い、各島に 1 隻（T-501e）。
-		ferries: []wantFerry{
-			{"f1", "橘丸", 1, 4, 1000, stage.Fact},
-			{"f2", "くろしお丸", 3, 3, 1000, stage.Fact},
-			{"f3", "あおがしま丸", 5, 3, 1000, stage.Fact},
-			{"f4", "フェリーあぜりあ", 4, 3, 1000, stage.Fact},
-			{"f5", "新さるびあ丸", 2, 3, 1000, stage.Fact},
-			{"f6", "セブンアイランド結", 6, 3, 1000, stage.Fact},
-		},
+		refs:          izuRefs,
+		weights:       izuWeights,
+		electionTick:  28, // T-501e で 16 から 28 に
+		routes:        izuRoutes,
+		ferries:       izuFerries,
 		critical:      []string{fwA, fwB},
 		stallCapacity: 3,
 		script: []stage.ScriptRequest{
@@ -213,11 +242,11 @@ var wantStages = []wantStage{
 	},
 }
 
-// ST-1 リポジトリのステージが読める。ID の列が demo-goto・demo-izu・stage1・stage2 をこの順で含む。
+// ST-1 リポジトリのステージが読める。ID の列が demo-goto・demo-izu・stage1・stage2・stage3 をこの順で含む。
 func TestRepoStagesLoad(t *testing.T) {
 	t.Parallel()
 	stages := loadRepoStages(t)
-	want := []string{"demo-goto", "demo-izu", "stage1", "stage2"}
+	want := []string{"demo-goto", "demo-izu", "stage1", "stage2", "stage3"}
 	var got []string
 	for _, st := range stages {
 		if slices.Contains(want, st.ID) {
@@ -330,7 +359,7 @@ func TestRepoStagesValues(t *testing.T) {
 					st.Scoring.TargetSuccesses, st.Scoring.TargetScore3, w.targetSuccesses, w.targetScore3)
 			}
 
-			// 4 つのステージに共通する値（データ仕様 §5.2、ゲームデザイン §4.2・§4.3・§5.1・§5.2）。
+			// すべてのステージに共通する値（データ仕様 §5.2、ゲームデザイン §4.2・§4.3・§5.1・§5.2）。
 			rq := st.Requests
 			if rq.DeadlineNormalMs != 60000 || rq.DeadlineCriticalMs != 90000 || rq.RetryMs != 25000 {
 				t.Errorf("Requests = (%d, %d, %d), want (60000, 90000, 25000)", rq.DeadlineNormalMs, rq.DeadlineCriticalMs, rq.RetryMs)
@@ -416,6 +445,30 @@ func TestRepoStagesSources(t *testing.T) {
 		}
 		checkSource(t, "events[0].flavor", st.Events[0].Flavor.Source, regionGoto, "NATURAL_CLIMATE_FEATURES", quoteNagasakiTyphoon)
 	})
+	t.Run("stage3", func(t *testing.T) {
+		t.Parallel()
+		st := get(t, "stage3")
+		checkSource(t, "intro", st.Intro.Source, regionIzu, "MARITIME_TRANSPORT", quoteIzuCancellation)
+		// 航路は creative（T-718。demo-izu と同じ）。ヘリコミューターの引用は、つながりの根拠に使わない（データ仕様 §4.5）。
+		if len(st.Routes) != 15 {
+			t.Fatalf("航路の数 = %d, want 15", len(st.Routes))
+		}
+		for i, rt := range st.Routes {
+			if rt.Source != nil {
+				t.Errorf("routes[%d]: Source = %+v, want nil（creative）", i, *rt.Source)
+			}
+		}
+		if len(st.Events) != 4 || st.Events[0].Kind != stage.EventStorm || st.Events[0].Flavor == nil {
+			t.Fatalf("Events = %+v, want flavor のある嵐 1 つと欠航 3 つ", st.Events)
+		}
+		checkSource(t, "events[0].flavor", st.Events[0].Flavor.Source, regionIzu, "DISASTER_LAND_CONSERVATION", quoteIzuTyphoon2013)
+		for i, ev := range st.Events[1:] {
+			if ev.Provenance != stage.Derived {
+				t.Errorf("events[%d]: Provenance = %q, want derived", i+1, ev.Provenance)
+			}
+			checkSource(t, fmt.Sprintf("events[%d]", i+1), ev.Source, regionIzu, "MARITIME_TRANSPORT", quoteIzuCancellation)
+		}
+	})
 	t.Run("demo-izu", func(t *testing.T) {
 		t.Parallel()
 		st := get(t, "demo-izu")
@@ -450,11 +503,11 @@ func TestRepoStagesSources(t *testing.T) {
 	})
 }
 
-// ST-4 警告。4 つのステージとも、なし（demo-goto は T-501b で electionTick を 32 に、demo-izu は T-501e で
-// 航路をフルメッシュにして electionTick を 28 にし、警告が消えた。データ仕様 §5.4）。
+// ST-4 警告。5 つのステージとも、なし（demo-goto は T-501b で electionTick を 32 に、demo-izu は T-501e で
+// 航路をフルメッシュにして electionTick を 28 にし、警告が消えた。stage3 は T-718 で作った。データ仕様 §5.4）。
 func TestRepoStagesWarnings(t *testing.T) {
 	t.Parallel()
-	for _, id := range []string{"stage1", "stage2", "demo-goto", "demo-izu"} {
+	for _, id := range []string{"stage1", "stage2", "stage3", "demo-goto", "demo-izu"} {
 		if st := repoStage(t, id); len(st.Warnings) != 0 {
 			t.Errorf("%s: Warnings = %+v, want なし", id, st.Warnings)
 		}
@@ -488,12 +541,34 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 		t.Errorf("stage2: Events[0] = %+v, want storm・When {60000 60000}・40000・[[1 2] [1 3]]・10000", ev)
 	}
 
+	// stage3: 北（大島・利島）と南の 4 島を結ぶ 8 本を止める嵐と、利島・御蔵島・青ヶ島の欠航（進行表 §5・データ仕様 §4.4）。
+	st3 := get(t, "stage3")
+	if len(st3.Events) != 4 {
+		t.Fatalf("stage3: Events = %+v, want 嵐 1 つと欠航 3 つ", st3.Events)
+	}
+	ev = st3.Events[0]
+	wantStormRoutes := [][2]uint64{{1, 3}, {1, 4}, {1, 5}, {1, 6}, {2, 3}, {2, 4}, {2, 5}, {2, 6}}
+	if ev.Kind != stage.EventStorm || ev.When != (stage.Window{Start: 70000, End: 70000}) || ev.DurationMs != 50000 ||
+		!reflect.DeepEqual(ev.Routes, wantStormRoutes) || ev.ForecastMs != 10000 {
+		t.Errorf("stage3: Events[0] = %+v, want storm・When {70000 70000}・50000・%v・10000", ev, wantStormRoutes)
+	}
+	for i, w := range []struct {
+		island      uint64
+		probability int64
+	}{{2, 170}, {4, 410}, {6, 410}} { // 欠航率 × 10（利島 17%・御蔵島 41%・青ヶ島 41%）
+		ev := st3.Events[i+1]
+		if ev.Kind != stage.EventCancellation || ev.Island != w.island || ev.ProbabilityPermille != w.probability ||
+			ev.SlotMs != 30000 || ev.DurationMs != 10000 {
+			t.Errorf("stage3: Events[%d] = %+v, want cancellation・島 %d・%d‰・30000・10000", i+1, ev, w.island, w.probability)
+		}
+	}
+
 	for _, id := range []string{"stage1", "demo-izu", "demo-goto"} {
 		if st := get(t, id); len(st.Events) != 0 {
 			t.Errorf("%s: Events = %+v, want 空", id, st.Events)
 		}
 	}
-	for _, id := range []string{"stage1", "stage2"} {
+	for _, id := range []string{"stage1", "stage2", "stage3"} {
 		if st := get(t, id); st.Demo != nil {
 			t.Errorf("%s: Demo = %+v, want nil", id, st.Demo)
 		}
@@ -530,12 +605,18 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 			t.Errorf("%s: SimConfig: %v", w.id, err)
 			continue
 		}
-		wantStorms := 0
-		if w.id == "stage2" {
+		wantStorms, wantCancellations := 0, 0
+		switch w.id {
+		case "stage2":
 			wantStorms = 1 // デモの嵐は T-305 が変換する
+		case "stage3":
+			wantStorms, wantCancellations = 1, 3
 		}
 		if len(cfg.Storms) != wantStorms {
 			t.Errorf("%s: len(cfg.Storms) = %d, want %d", w.id, len(cfg.Storms), wantStorms)
+		}
+		if len(cfg.Cancellations) != wantCancellations {
+			t.Errorf("%s: len(cfg.Cancellations) = %d, want %d", w.id, len(cfg.Cancellations), wantCancellations)
 		}
 		if cfg.Score.TargetSuccesses != w.targetSuccesses {
 			t.Errorf("%s: cfg.Score.TargetSuccesses = %d, want %d", w.id, cfg.Score.TargetSuccesses, w.targetSuccesses)
@@ -543,12 +624,43 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 	}
 }
 
-// ST-6 demo-izu の航路の形（T-501e。ゲームデザイン §3.5・データ仕様 §4.5）。
+// ST-6 demo-izu・stage3 の航路の形（T-501e・T-718。ゲームデザイン §3.5・データ仕様 §4.5）。
 // 6 島のすべての組に航路が 1 本ずつあり、travelMs は「65 + 1.1 × 配置（layout）の距離」を 10 ms 単位に丸めた値で、
 // 一番短い航路と一番長い航路の比が 4 倍以内。小数を使わないよう、距離は 2 乗のまま整数で比べる。
 func TestRepoStagesDemoIzuFullMesh(t *testing.T) {
 	t.Parallel()
-	st := repoStage(t, "demo-izu")
+	for _, id := range []string{"demo-izu", "stage3"} {
+		t.Run(id, func(t *testing.T) {
+			t.Parallel()
+			checkIzuFullMesh(t, repoStage(t, id))
+		})
+	}
+}
+
+// ST-7 stage3 の島（順序・配置・色）が demo-izu と同じ（T-718。郵便局長は repo_postmaster_test.go が確かめる）。
+// 人口の重み・航路・船の名前は wantStages の共通の値（izuWeights・izuRoutes・izuFerries）で確かめる。
+func TestRepoStagesStage3IslandsAsDemoIzu(t *testing.T) {
+	t.Parallel()
+	st3, demo := repoStage(t, "stage3"), repoStage(t, "demo-izu")
+	type island struct {
+		Ref   string
+		X, Y  int64
+		Color string
+	}
+	pick := func(st *stage.Stage) []island {
+		var out []island
+		for _, isl := range st.Islands {
+			out = append(out, island{isl.Ref, isl.X, isl.Y, isl.Color})
+		}
+		return out
+	}
+	if got, want := pick(st3), pick(demo); !reflect.DeepEqual(got, want) {
+		t.Errorf("stage3 の島 = %+v, want demo-izu と同じ %+v", got, want)
+	}
+}
+
+func checkIzuFullMesh(t *testing.T, st *stage.Stage) {
+	t.Helper()
 	n := uint64(len(st.Islands))
 	seen := map[[2]uint64]bool{}
 	var minMs, maxMs int64

@@ -114,3 +114,45 @@ func TestRepoNoviceStage2Balance(t *testing.T) {
 		}
 	})
 }
+
+// Stage 3 の難しさ（T-718 #300）。otherGreedySeeds 個のシード（-race なしで 100）で次を確かめる。
+//
+//   - steady の★1 以上が 50% 以上、greedy・steady とも★3 が 100% 未満（簡単すぎない）
+//
+//   - 初心者の代わりの novice の★1 以上が 30% 以上、greedy の★3 が 80% 以下（2026-11-08 の Orchestrator の目安）
+//
+//     go -C server test -tags balance -count=1 -run Stage3Balance -v ./internal/stage/...
+func TestRepoGreedyStage3Balance(t *testing.T) {
+	t.Parallel()
+	for _, name := range repoBots {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := repoStage(t, "stage3")
+			runs := playGreedySeeds(t, name, st, otherGreedySeeds)
+			logGreedySummary(t, name+"/"+st.ID, runs)
+
+			n1, n3 := 0, 0
+			for _, r := range runs {
+				if r.res.Stars >= 1 {
+					n1++
+				}
+				if r.res.Stars >= 3 {
+					n3++
+				}
+			}
+			n := otherGreedySeeds
+			if name == "steady" && n1*2 < n {
+				t.Errorf("steady: ★1 以上のシード = %d / %d（50%% 未満）", n1, n)
+			}
+			if name == "novice" && n1*10 < n*3 {
+				t.Errorf("novice: ★1 以上のシード = %d / %d（30%% 未満）", n1, n)
+			}
+			if name != "novice" && n3 >= n {
+				t.Errorf("%s: ★3 のシード = %d / %d（すべてのシードで★3）", name, n3, n)
+			}
+			if name == "greedy" && n3*10 > n*8 {
+				t.Errorf("greedy: ★3 のシード = %d / %d（80%% より多い）", n3, n)
+			}
+		})
+	}
+}
