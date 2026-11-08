@@ -30,9 +30,44 @@ func Names() []string {
 	return []string{nameGreedy, nameNovice, nameRandom, nameSteady}
 }
 
-// New は name のボットを作る。乱数は sim.Sub(seed, "bot/"+name) から取る（greedy・novice・steady は乱数を引かない）。
-// name が Names() にない（空・大文字を含む）ならエラー。
+// New は name のボットを作る。ボットはすべての船を担当する。乱数は sim.Sub(seed, "bot/"+name) から取る
+// （greedy・novice・steady は乱数を引かない）。name が Names() にない（空・大文字を含む）ならエラー。
 func New(name string, seed uint64) (Bot, error) {
+	b, err := newBot(name, seed)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// NewFor は、船 ferries（FerryID の集合）だけを担当する name のボットを作る（T-723 #379）。ボットは担当でない船に
+// 操作を出さず、その船の分の乱数も引かない。ferries の順と重複は問わない。Engine にない船は、ないものとして扱う。
+// name が Names() にない、ferries が空、または空の ID を含むならエラー。乱数は New と同じ流れから取る。
+func NewFor(name string, seed uint64, ferries []string) (Bot, error) {
+	b, err := newBot(name, seed)
+	if err != nil {
+		return nil, err
+	}
+	if len(ferries) == 0 {
+		return nil, fmt.Errorf("bot: %s: no ferries", name)
+	}
+	if slices.Contains(ferries, "") {
+		return nil, fmt.Errorf("bot: %s: empty ferry id in %q", name, ferries)
+	}
+	owned := slices.Clone(ferries)
+	slices.Sort(owned)
+	b.core().owned = slices.Compact(owned)
+	return b, nil
+}
+
+// botImpl は 4 つのボットの型（共通の部分 base を持つ）。
+type botImpl interface {
+	Bot
+	core() *base
+}
+
+// newBot は name のボットを、すべての船を担当するものとして作る。
+func newBot(name string, seed uint64) (botImpl, error) {
 	switch name {
 	case nameRandom:
 		return newRandom(sim.Sub(seed, streamName(name))), nil
@@ -53,14 +88,28 @@ func streamName(name string) string { return "bot/" + name }
 // 計画は s の上で必ず成功するコマンドだけからなる。
 type planFunc func(s sim.Snapshot, i int) []sim.Command
 
-// base はボットに共通の部分（名前と航路）。
+// base はボットに共通の部分（名前と航路と担当の船）。
 type base struct {
 	name string
 	topo *topology // 最初の Act で Snapshot から作る
+	// owned は担当の船の ID（昇順・重複なし）。nil ならすべての船を担当する（New）。
+	owned []string
 }
 
 // Name は New に渡した名前。
 func (b *base) Name() string { return b.name }
+
+// core は共通の部分（botImpl）。
+func (b *base) core() *base { return b }
+
+// owns は、船 id がこのボットの担当か。
+func (b *base) owns(id string) bool {
+	if b.owned == nil {
+		return true
+	}
+	_, ok := slices.BinarySearch(b.owned, id)
+	return ok
+}
 
 // observe は、最初の 1 回は s から航路を作り、2 回目以降は s の航路が最初と同じであることを確かめる。
 func (b *base) observe(s sim.Snapshot) {
@@ -79,7 +128,7 @@ func (b *base) act(e *sim.Engine, plan planFunc) error {
 	s := e.Snapshot()
 	b.observe(s)
 	for i := range s.Ferries {
-		if !canMove(s.Ferries[i], s.T) {
+		if !b.owns(s.Ferries[i].ID) || !canMove(s.Ferries[i], s.T) {
 			continue
 		}
 		cmds := plan(s, i)
