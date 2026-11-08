@@ -55,7 +55,7 @@
 }
 
 /* エンジニアモードの切り替え（EngineerPanel.css）は、マップの上に重ねず HUD の並びに置く（T-439）。
-   マップの右下の隅に固定する指定（position: fixed・アンカー配置）を打ち消す。開いたパネルはマップの上のまま。
+   マップの右下の隅に固定する指定（position: fixed・アンカー配置）を打ち消す。開いたパネルは島の詳細の列（下）。
    紙のパネルの上なので、フォーカスの輪は親（紙の地の既定の色）を受け継ぐ。 */
 .game-hud > .engineer-toggle {
   --focus-ring-color: inherit;
@@ -92,12 +92,18 @@
 }
 
 /* エンジニアモード（T-438）: 開いている間は、島の詳細の列にエンジニアパネルを置き（島の詳細は出さない）、
-   マップを覆わない。ノード一覧の 8 列が入るよう、列を広げる（マップはその分だけ狭くなり、絵は縮めて収まる）。 */
-.game-screen:has(> .engineer-panel) {
+   マップを覆わない。ノード一覧の 8 列が入るよう、列を広げる（マップはその分だけ狭くなり、絵は縮めて収まる）。
+   パネルは切り替えと一緒に「状況」の帯の中にある（T-439）ので、グリッドの子ではない。ゲーム画面を
+   絶対配置の基準にし、パネルを絶対配置にして grid-area で島の詳細の列に合わせる（CSS Grid §9.1）。 */
+.game-screen:has(> .game-hud > .engineer-panel) {
   --game-island-width: clamp(22rem, 37vw, 44rem);
+
+  position: relative;
 }
 
-.game-screen > .engineer-panel {
+.game-hud > .engineer-panel {
+  position: absolute;
+  inset: 0;
   grid-area: island;
 }
 
