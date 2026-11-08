@@ -1,8 +1,8 @@
 // Command simcli は、サーバーなしで sim.Engine を動かす（DesignDoc §13.5、T-108）。
 //
 //	simcli run    --data DIR --stage ID [--bot NAME] --seeds LIST [--invariants=BOOL] [--determinism] [--inputs-dir DIR]
-//	simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH] [--trace FILE]
-//	simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR]
+//	simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH] [--trace FILE] [--normalized-trace FILE]
+//	simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR] [--normalized-trace FILE]
 //	simcli help
 //
 // 終了コードは 0（成功）・1（実行の失敗）・2（使い方の誤り）。
@@ -34,8 +34,8 @@ const defaultBot = "greedy"
 
 const usageText = `使い方:
   simcli run    --data DIR --stage ID [--bot NAME] --seeds LIST [--invariants=BOOL] [--determinism] [--inputs-dir DIR]
-  simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH] [--trace FILE]
-  simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR]
+  simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH] [--trace FILE] [--normalized-trace FILE]
+  simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR] [--normalized-trace FILE]
   simcli help
 
 サブコマンド:
