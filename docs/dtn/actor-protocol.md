@@ -117,7 +117,7 @@ Session Front → Coordinator の電文。Coordinator → Session Front は `dis
 |---|---|---|
 | `init` | `{stage, stageHash, seed, sessionId}` | ゲームを作る。開幕式を手元で計算する |
 | `dispatch.result` | `{results: [応答…]}` | `dispatch` の応答 |
-| `command` | `{cmdId, type, payload}` | ブラウザのコマンド（今の外部の電文） |
+| `command` | `{cmdId, type, payload}` | ブラウザのコマンド（`cmd.*`・`demo.trigger`）。Session Front が journal に記録できるよう、コマンドは必ず `ch: "ctl"` の `command` で渡す。`ch: "browser"` は、Coordinator → ブラウザのイベントと、コマンドでないブラウザの電文（`hello`・`ping`・`cmd.sync`・`sub.engineer`）だけに使う |
 | `restore.begin`・`restore.chunk`・`restore.end` | `{stage, stageHash, seed, entries}`・`{index, entries}`・`{}` | journal を分けて受け取り、記録した応答で再計算する（[persistence-and-recovery.md §4.2](./persistence-and-recovery.md#42-coordinator-が止まったとき)） |
 
 ## 4. 出力（Actor → Coordinator）
