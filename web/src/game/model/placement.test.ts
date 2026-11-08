@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest";
 import { labelScale } from "./art/labelScale.ts";
 import {
   FERRY_LABELS,
+  captionSize,
   ferryTextBoxes,
   layoutLabels,
+  mapBounds,
   overlapArea,
   pickCandidate,
+  placeCaptions,
   placementCost,
 } from "./placement.ts";
 import type { Box, LabelInput, Placed } from "./placement.ts";
@@ -294,6 +297,32 @@ describe("layoutLabels", () => {
     expect(overlaps(out.placed, () => false)).toEqual([]);
   });
 
+  it("PL-13 文字の札は、島の周りの円の候補から、置いたもの・ほかの札と重ならず、はみ出さない位置を選ぶ", () => {
+    const center = { x: 400, y: 300 };
+    // 島の真上（最初の候補）をふさぐ。
+    const blocker: Placed = { box: { left: 300, top: 0, right: 500, bottom: 272 }, owner: "x" };
+    const bounds: Box = { left: 0, top: 0, right: 800, bottom: 600 };
+    const items = [
+      { key: "a", center, text: "新しい手紙に差し替わりました ×3", fontSize: 11 },
+      { key: "b", center, text: "古い手紙を処分しました", fontSize: 11 },
+    ];
+    const out = placeCaptions(items, [blocker], bounds, 1);
+    expect(out.at.size).toBe(2);
+    expect(out.placed).toHaveLength(2);
+    expect(overlaps([blocker, ...out.placed], () => false)).toEqual([]);
+    for (const p of out.placed) expect(inside(p.box, { width: 800, height: 600 })).toBe(true);
+    // 札の中心は、置いた箱の中心。大きさは captionSize。
+    const a = out.at.get("a");
+    const box = out.placed[0]?.box;
+    const size = captionSize(items[0]?.text ?? "", 11, 1);
+    expect(box && a && (box.left + box.right) / 2).toBeCloseTo(a?.x ?? NaN);
+    expect(box && box.right - box.left).toBeCloseTo(size.width);
+    // ふさぐものが無ければ、島の真上（島の絵の縁の上）に置く。
+    const free = placeCaptions(items.slice(0, 1), [], bounds, 1).at.get("a");
+    expect(free?.x).toBeCloseTo(400);
+    expect(free?.y).toBeCloseTo(300 - MAP_STYLE.islandRadius - size.height / 2);
+  });
+
   it("PL-10 同じ入力なら同じ結果で、入力を書き換えない", () => {
     const input = inputOf(loadStage("stage3"), MAP_1470, LS_1470, { docked: "home" });
     const frozen = JSON.stringify(input);
@@ -322,6 +351,35 @@ describe.each([
       expect(out.ferries.size).toBe(input.docked.length);
     },
   );
+
+  // 手紙の処分・差し替えの文字の札（島ごと・種類ごとに 1 つにまとめたもの）が、どの島で同時に出ても、
+  // 島・名札・手紙の山・停泊中の船・ほかの札と重ならず、はみ出さない（T-428。Stage 3 の大島で重なっていた）。
+  it.each(STAGES)("PL-14 %s: すべての島で 2 種類の文字の札が同時に出ても重ならない", (id) => {
+    const input = inputOf(loadStage(id), size, ls, { docked: "home" });
+    const out = layoutLabels(input);
+    const n = input.islands.length - 1;
+    const items = input.islands.flatMap((island) => [
+      {
+        key: `${String(island.id)}:superseded`,
+        center: island.at,
+        text: `新しい手紙に差し替わりました ×${String(n)}`,
+        fontSize: 11,
+      },
+      {
+        key: `${String(island.id)}:overflow`,
+        center: island.at,
+        text: `古い手紙を処分しました ×${String(n)}`,
+        fontSize: 11,
+      },
+    ]);
+    const captions = placeCaptions(items, out.fixed, mapBounds(size), input.k);
+    expect(captions.at.size).toBe(items.length);
+    const all = [...out.fixed, ...captions.placed];
+    expect(overlaps(all, dockedAllowed(input, all))).toEqual([]);
+    for (const p of captions.placed) {
+      expect(inside(p.box, size), `${p.owner} がはみ出す`).toBe(true);
+    }
+  });
 
   // 山がすべての宛先にあり、さらに 6 隻が 1 つの港に集まると、端の島では重なりを最小にするだけになる
   // （置ける場所が足りない。T-428 の PR に書いた）。ここでは船・文字・島・名札・役のマークが重ならないことを確かめる。

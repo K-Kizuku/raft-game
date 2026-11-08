@@ -109,6 +109,9 @@ export const MAP_STYLE = {
     // 向きを宛先の島の向きから 2π / pileAngles ずつ回す。
     pileRingStep: 30,
     pileRings: 3,
+    // 1 つ外の円に出ることを、向きを何段回すことと同じに見るか（大きいほど、島の近くに一周させてから外へ出す。
+    // T-428 で 2 から上げた。2 では、宛先が片側に集まる端の島で山が島の片側に広がり、名札や隣の島に寄っていた）。
+    pileRingCost: 4,
     pileAngles: 16,
     // 停泊中の船の候補: 島の中心からの距離を、右上の桟橋の位置から dockRingStep ずつ dockRings 段、
     // 並びの向きを dockAngles 通り（1 隻のとき。n 隻なら 2π / n の間を dockAngles / n 通り）回す。
@@ -119,5 +122,10 @@ export const MAP_STYLE = {
     dockArcs: [0.75, 0.5, 0.3],
     // 停泊中の船どうしの中心の、最低限の間（px）。
     dockMinGap: 36,
+    // 手紙の処分・差し替えの文字の札の候補: 島の絵の縁から captionRingStep ずつ captionRings 段、
+    // 向きを真上から 2π / captionAngles ずつ左右へ交互に回す。
+    captionRingStep: 12,
+    captionRings: 10,
+    captionAngles: 16,
   },
 } as const;

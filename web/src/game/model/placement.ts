@@ -11,6 +11,8 @@
 //   5. 停泊中の船（同じ港の船は、島の周りに等間隔に並べる。並びの半径と向き・文字の置き方を候補から選ぶ。
 //      一周に並べるとどうしても重なるときだけ、島の周りの弧に等間隔に並べる）
 //   6. 航行中の船の文字（船の位置は航路の上で動かさず、文字の置き方だけを選ぶ）
+//   7. 手紙の処分・差し替えの文字の札（placeCaptions。島ごと・種類ごとに 1 つにまとめたものを、島の周りの円の
+//      候補から選ぶ。1〜5 を避ける。../animations/letterEffects.ts の planCaptions が呼ぶ）
 //
 // 長さはすべて画面の px（絵の拡大率 k と文字の倍率 ls を掛けたあと）。
 // 1〜3 と 4・5 は直前の入力と同じなら直前の結果を使い回す（毎フレーム呼ばれるため。結果は入力だけで決まる）。
@@ -339,7 +341,20 @@ export type LabelLayout = Readonly<{
   ferries: ReadonlyMap<string, Readonly<{ at: Point; labels: FerryLabels }>>; // 船の ID → 船の中心と文字の置き方
   // 置いたものの箱と持ち主（island:<島>・mark:<島>・tag・pile・ferry:<船>）。テストで重なりを確かめる。
   placed: readonly Placed[];
+  // placed のうち、航行中の船を除いたもの（1〜5。手紙の処分・差し替えの文字の札が避ける。動く船を避けると、
+  // 札が出ている間に跳ねるため）。
+  fixed: readonly Placed[];
 }>;
+
+// mapBounds は札を置いてよい範囲（描画領域から、左下に重ねる島のボタンの列の高さを除いたもの）。
+export function mapBounds(size: Size): Box {
+  return {
+    left: 0,
+    top: 0,
+    right: size.width,
+    bottom: Math.max(0, size.height - MAP_VIEW.bottomReserve),
+  };
+}
 
 export function pileKey(islandId: number, to: number): string {
   return `${String(islandId)}:${String(to)}`;
@@ -355,7 +370,7 @@ function pileCandidates(center: Point, angle: number, k: number): Candidate<Poin
       for (const sign of j === 0 || j === P.pileAngles / 2 ? [1] : [1, -1]) {
         const a = angle + sign * j * step;
         scored.push({
-          score: j + ring * 2,
+          score: j + ring * P.pileRingCost,
           at: { x: center.x + Math.cos(a) * r, y: center.y + Math.sin(a) * r },
         });
       }
@@ -671,13 +686,7 @@ function portLayout(input: LabelInput, base: StaticLayout, bounds: Box): PortLay
 
 // layoutLabels は札の位置を決める。同じ入力なら同じ結果（入力を書き換えない）。
 export function layoutLabels(input: LabelInput): LabelLayout {
-  const { size } = input;
-  const bounds: Box = {
-    left: 0,
-    top: 0,
-    right: size.width,
-    bottom: Math.max(0, size.height - MAP_VIEW.bottomReserve),
-  };
+  const bounds = mapBounds(input.size);
   const base = staticLayout(input, bounds);
   // 4・5 は、港の山と停泊中の船が変わったときだけ作り直す（停泊中の船の候補は多いので、毎フレームは探さない）。
   const dynKey = JSON.stringify([base.key, input.piles, input.docked]);
@@ -700,5 +709,67 @@ export function layoutLabels(input: LabelInput): LabelLayout {
     piles,
     ferries,
     placed,
+    fixed: dockedMemo.value.placed,
   };
+}
+
+// --- 手紙の処分・差し替えの文字の札（T-428） ---------------------------------------------------
+
+export type CaptionItem = Readonly<{
+  key: string;
+  center: Point; // 札を出す島の中心（画面の px）
+  text: string;
+  fontSize: number; // 絵の拡大率 1 の px（描画は k を掛ける）
+}>;
+
+// 文字の札の大きさ（画面の px）。縁取りの幅を含む。
+export function captionSize(text: string, fontSize: number, k: number): Size {
+  return {
+    width: (textWidth(text, fontSize) + D.haloWidth) * k,
+    height: (textHeight(fontSize) + D.haloWidth) * k,
+  };
+}
+
+// 島の周りの円の候補（近い円から。同じ円では真上から左右へ交互に回す）。札の中心を返す。
+function captionCandidates(center: Point, size: Size, k: number): Candidate<Point>[] {
+  const out: Candidate<Point>[] = [];
+  const step = (2 * Math.PI) / P.captionAngles;
+  for (let ring = 0; ring < P.captionRings; ring++) {
+    const r = (S.islandRadius + ring * P.captionRingStep) * k;
+    for (const m of rotations(P.captionAngles)) {
+      const a = -Math.PI / 2 + m * step;
+      const at = {
+        x: center.x + Math.cos(a) * (r + size.width / 2),
+        y: center.y + Math.sin(a) * (r + size.height / 2),
+      };
+      out.push({ value: at, boxes: [boxAt(at.x, at.y, size.width / 2, size.height / 2)] });
+    }
+  }
+  return out;
+}
+
+// placeCaptions は文字の札を、島の周りの円の候補から、placed（島・名札・山・船など）とほかの札に重ならず
+// bounds からはみ出さない位置に置く（どれも重なるなら重なりがいちばん小さい位置）。items の順に置く。
+// 返すのは key → 札の中心（画面の px）と、置いた札の箱（持ち主は caption:<key>）。
+export function placeCaptions(
+  items: readonly CaptionItem[],
+  placed: readonly Placed[],
+  bounds: Box | null,
+  k: number,
+): { at: ReadonlyMap<string, Point>; placed: readonly Placed[] } {
+  const all: Placed[] = [...placed];
+  const at = new Map<string, Point>();
+  const out: Placed[] = [];
+  for (const item of items) {
+    const size = captionSize(item.text, item.fontSize, k);
+    const chosen = pickCandidate(captionCandidates(item.center, size, k), all, bounds);
+    if (chosen === undefined) continue;
+    at.set(item.key, chosen.value);
+    for (const box of chosen.boxes) {
+      const p = { box, owner: `caption:${item.key}` };
+      all.push(p);
+      out.push(p);
+    }
+  }
+  return { at, placed: out };
 }

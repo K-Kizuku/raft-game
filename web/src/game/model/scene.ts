@@ -8,7 +8,13 @@ import { ferryProgress, lerp } from "./ferry.ts";
 import { partitionOf } from "./partition.ts";
 import type { PartitionGroup } from "./partition.ts";
 import { layoutLabels, nameTagOffset, nameTagSize, pileKey } from "./placement.ts";
-import type { FerryLabels, LabelDockedFerry, LabelPile, LabelSailingFerry } from "./placement.ts";
+import type {
+  FerryLabels,
+  LabelDockedFerry,
+  LabelPile,
+  LabelSailingFerry,
+  Placed,
+} from "./placement.ts";
 import { MAP_STYLE } from "./style.ts";
 import { layoutMap, toScreen } from "./viewport.ts";
 import type { MapTransform, Point, Size } from "./viewport.ts";
@@ -71,6 +77,9 @@ export type MapScene = Readonly<{
   islands: readonly IslandNode[];
   piles: readonly LetterPile[];
   ferries: readonly FerrySprite[];
+  // 島・役のマーク・名札・手紙の山・停泊中の船とその文字の箱（画面の px。T-428 の placement.ts）。
+  // 手紙の処分・差し替えの文字の札がこれを避ける。buildMapScene はいつも入れる（省略されたら避けるものなし）。
+  labelBoxes?: readonly Placed[];
   // 島が分かれていないときは null。航路のつながりを示すだけで、代表・確定を決めない。
   partition: Readonly<{
     total: number;
@@ -282,6 +291,7 @@ export function buildMapScene(
     islands,
     piles,
     ferries,
+    labelBoxes: labels.fixed,
     partition: partitionScene(present, routeEnds, centers),
   };
 }
