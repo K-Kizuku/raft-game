@@ -3,9 +3,19 @@
 import type { FailureReason } from "../../net/index.ts";
 import type { RoundConnectionView } from "./useRoundConnection.ts";
 
-export type ConnectionNotice = Readonly<{ text: string; tone: "info" | "error" }>;
+// departing は、出航を押してからゲームが始まるまでの待ち時間（接続の準備中・接続中）の印。
+// 画面は、この間だけ文言に出港の絵を添える（T-436）。
+export type ConnectionNotice = Readonly<{
+  text: string;
+  tone: "info" | "error";
+  departing?: true;
+}>;
 
-const CONNECTING: ConnectionNotice = { text: "サーバーに接続しています…", tone: "info" };
+const CONNECTING: ConnectionNotice = {
+  text: "出航の準備をしています…",
+  tone: "info",
+  departing: true,
+};
 
 const FAILURE_TEXT: Readonly<Record<FailureReason, string>> = {
   unreachable: "サーバーに接続できませんでした。",

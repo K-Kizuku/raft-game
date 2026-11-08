@@ -8,7 +8,14 @@ import type { MapScene } from "../model/scene.ts";
 import { MAP_STYLE } from "../model/style.ts";
 import type { Point } from "../model/viewport.ts";
 import { COLORS, ferryLetter, makeSnapshot, portLetter } from "../testing/snapshot.ts";
-import { createExitTracker, effectFrame, pileAnchor, planLetterEffects } from "./letterEffects.ts";
+import { captionSize, mapBounds, overlapArea } from "../model/placement.ts";
+import {
+  createExitTracker,
+  effectFrame,
+  pileAnchor,
+  planCaptions,
+  planLetterEffects,
+} from "./letterEffects.ts";
 import type { LetterEffect } from "./letterEffects.ts";
 import { LETTER_EFFECT_CAPTIONS, LETTER_EFFECT_STYLE } from "./style.ts";
 
@@ -454,6 +461,76 @@ describe("LE-10 effectFrame（swap）", () => {
     const f = effectFrame(e, scene, 350, true);
     expect(f?.at).toEqual(anchor);
     expect(f?.incoming).toEqual({ at: anchor, alpha: 0.5, scale: 1 });
+  });
+});
+
+describe("LE-12 planCaptions（同じ島・同じ種類の文字を 1 つにまとめ、重ならない位置に置く。T-428）", () => {
+  const scene = sceneOf(
+    worldWith([portLetter(10, 1, 2), portLetter(11, 1, 3), portLetter(12, 2, 1)]),
+  );
+  const swap = (over: Partial<LetterEffect>): LetterEffect =>
+    effect({
+      kind: "swap",
+      reason: "superseded",
+      durationMs: 700,
+      caption: LETTER_EFFECT_CAPTIONS.superseded,
+      ...over,
+    });
+  const effects: LetterEffect[] = [
+    swap({ id: "1", islandId: 1, to: 2 }),
+    // p 0.9 で alpha 0.5。同じ島の alpha 1 のものとまとめると 1。
+    swap({ id: "2", islandId: 1, to: 3, startedAt: -530 }),
+    // 文字を間引いたもの（caption null）は数えない。
+    swap({ id: "3", islandId: 1, to: 3, caption: null }),
+    effect({ id: "4", islandId: 1, to: 2, caption: LETTER_EFFECT_CAPTIONS.overflow }),
+    swap({ id: "5", islandId: 2, to: 1 }),
+  ];
+
+  it("島ごと・種類ごとに 1 つ。2 つ以上なら「 ×数」を足す", () => {
+    const got = planCaptions(effects, scene, 100, false);
+    expect(got.map((c) => [c.key, c.count, c.text, c.alpha])).toEqual([
+      ["1:superseded", 2, `${LETTER_EFFECT_CAPTIONS.superseded} ×2`, 1],
+      ["1:overflow", 1, LETTER_EFFECT_CAPTIONS.overflow, 1],
+      ["2:superseded", 1, LETTER_EFFECT_CAPTIONS.superseded, 1],
+    ]);
+  });
+
+  it("label の書き足しのあとに数を足す", () => {
+    const got = planCaptions(effects, scene, 100, false, (text, reason) => `${text}（${reason}）`);
+    expect(got[0]?.text).toBe(`${LETTER_EFFECT_CAPTIONS.superseded}（superseded） ×2`);
+  });
+
+  it("名札・山・船・ほかの文字と重ならず、描画領域からはみ出さない", () => {
+    const got = planCaptions(effects, scene, 100, false);
+    const k = scene.markScale ?? 1;
+    const boxes = got.map((c) => {
+      const s = captionSize(c.text, LETTER_EFFECT_STYLE.captionFontSize, k);
+      return {
+        left: c.at.x - s.width / 2,
+        right: c.at.x + s.width / 2,
+        top: c.at.y - s.height / 2,
+        bottom: c.at.y + s.height / 2,
+      };
+    });
+    const bounds = mapBounds(scene.size);
+    const fixed = scene.labelBoxes ?? [];
+    expect(fixed.length).toBeGreaterThan(0);
+    boxes.forEach((box, i) => {
+      for (const p of fixed) expect(overlapArea(box, p.box), p.owner).toBe(0);
+      boxes.forEach((other, j) => {
+        if (j !== i) expect(overlapArea(box, other)).toBe(0);
+      });
+      expect(box.left).toBeGreaterThanOrEqual(bounds.left);
+      expect(box.top).toBeGreaterThanOrEqual(bounds.top);
+      expect(box.right).toBeLessThanOrEqual(bounds.right);
+      expect(box.bottom).toBeLessThanOrEqual(bounds.bottom);
+    });
+  });
+
+  it("文字が無い・終わった・島が scene に無いものは出さない", () => {
+    expect(planCaptions([effect({ caption: null })], scene, 100, false)).toEqual([]);
+    expect(planCaptions([swap({ id: "1" })], scene, 700, false)).toEqual([]);
+    expect(planCaptions([swap({ id: "1", islandId: 9 })], scene, 100, false)).toEqual([]);
   });
 });
 

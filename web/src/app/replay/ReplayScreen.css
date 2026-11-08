@@ -1,0 +1,29 @@
+/* リプレイの画面（T-429。基準は 1470×860・docs/11-visual-design.md §15）。
+   リザルトの段では、リザルトの紙（ResultScreen.css で画面の高さちょうど）と「別の入力ログを選ぶ」を、
+   合わせて画面の高さに収める。条件はリザルトの列の並びと同じ（1024px 以上・高さ 600px 以上）。 */
+@media (min-width: 64rem) and (min-height: 37.5rem) {
+  .replay-result {
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    height: 100vh;
+    height: 100dvh;
+    padding-block: var(--space-4);
+  }
+
+  .replay-result > .result.app-screen {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    height: auto;
+    margin-block: 0;
+  }
+
+  .replay-result > .replay-actions.app-screen {
+    flex: none;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: min(100rem, calc(100% - 2 * var(--space-4)));
+    padding: var(--space-3) var(--space-5) 0;
+  }
+}

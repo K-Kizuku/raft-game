@@ -50,6 +50,13 @@ function requestRow(id: string): HTMLElement {
   return row;
 }
 
+// 依頼の行の文字（進み具合のステッパーを除く）。
+function requestText(id: string): string | null {
+  const row = requestRow(id).cloneNode(true) as HTMLElement;
+  row.querySelector(".island-request-progress")?.remove();
+  return row.textContent;
+}
+
 describe("IslandPanel", () => {
   it("IP-1 world が null なら「島の詳細（準備中）」、選択なしなら案内", () => {
     render(<IslandPanel />);
@@ -122,7 +129,7 @@ describe("IslandPanel", () => {
     );
     render(<IslandPanel />);
     const a = requestRow("r-a");
-    expect(a.textContent).toBe("★重要大花火 A🗳審議中あと 0:42");
+    expect(requestText("r-a")).toBe("★重要大花火 A🗳審議中あと 0:42");
     expect(a.querySelector(".island-request-mark")?.getAttribute("aria-hidden")).toBe("true");
 
     const exp = requestRow("r-exp");
@@ -132,7 +139,8 @@ describe("IslandPanel", () => {
     expect(exp.textContent).not.toContain("重要");
 
     const done = requestRow("r-ok");
-    expect(done.textContent).toBe("・屋台✅確定");
+    expect(requestText("r-ok")).toBe("・屋台✅確定");
+    expect(done.querySelector('[data-step="reply"]')?.getAttribute("data-state")).toBe("done");
 
     expect(requestRow("r-unk").textContent).toContain("boat.reserve");
     expect(document.querySelector('[data-request="r-other"]')).toBeNull();
@@ -142,6 +150,37 @@ describe("IslandPanel", () => {
       vi.advanceTimersByTime(250);
     });
     expect(requestRow("r-a").textContent).toContain("あと 0:40");
+  });
+
+  it("IP-T431-1 依頼ごとに 5 段階のステッパーと止まっている理由が出る（用語の併記にも従う）", () => {
+    load(
+      makeSnapshot({
+        requests: [
+          makeRequest("r-p", 1, { status: "proposed" }),
+          makeRequest("r-w", 1, { status: "waiting", expired: true }),
+        ],
+      }),
+    );
+    render(<IslandPanel />);
+    const p = requestRow("r-p");
+    expect(p.querySelectorAll(".request-step")).toHaveLength(5);
+    expect(p.querySelector('[aria-current="step"]')?.getAttribute("data-step")).toBe("append");
+    expect(p.querySelector(".request-progress-reason")?.textContent).toBe(
+      "島々の記録と、代表への返事を待っています",
+    );
+    const w = requestRow("r-w");
+    expect(w.querySelector('[aria-current="step"]')?.getAttribute("data-step")).toBe("propose");
+    expect(w.querySelector(".request-progress-reason")?.textContent).toBe(
+      "依頼書が港で、代表へ運ぶ船を待っています",
+    );
+    expect(p.querySelector('[data-step="append"] .request-step-label')?.textContent).toBe("記録");
+
+    act(() => {
+      setShowRaftTerms(true);
+    });
+    expect(p.querySelector('[data-step="append"] .request-step-label')?.textContent).toBe(
+      "記録（Append）",
+    );
   });
 
   it("IP-4 用語の併記は「代表」「手紙」をそれぞれ 1 か所", () => {

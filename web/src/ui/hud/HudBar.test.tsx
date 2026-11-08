@@ -8,10 +8,11 @@ import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
 import { gameStore } from "../../state/index.ts";
 import { GameCommandProvider } from "../commands/GameCommands.tsx";
 import type { GameCommandSender } from "../commands/GameCommands.tsx";
+import { soundPreference } from "../sound/preference.ts";
 import { setShowRaftTerms } from "../terms/preference.ts";
 import { HudBar } from "./HudBar.tsx";
 import { Notifications } from "./Notifications.tsx";
-import { makeSnapshot } from "./testing/world.ts";
+import { makeRequest, makeSnapshot } from "./testing/world.ts";
 
 let nowMs = 1000;
 
@@ -92,7 +93,12 @@ describe("HudBar", () => {
     expect(text(container, ".hud-fest")).toContain("62%");
     const list = screen.getByRole("list", { name: "重要な資源" });
     const items = [...list.querySelectorAll("li")];
-    expect(items.map((li) => li.textContent)).toEqual(["🎆大花火 A（確定）", "🎆大花火 B（まだ）"]);
+    expect(items.map((li) => li.textContent)).toEqual(["大花火 A（確定）", "大花火 B（まだ）"]);
+    for (const li of items) {
+      expect(li.querySelector('svg[data-icon="firework"]')?.getAttribute("aria-hidden")).toBe(
+        "true",
+      );
+    }
     expect(items[0]?.className).toContain("is-secured");
     expect(items[1]?.className).not.toContain("is-secured");
     cleanup();
@@ -118,6 +124,45 @@ describe("HudBar", () => {
     load();
     const { container } = renderHud();
     expect(text(container, ".hud-successes")).toBe("確定（Apply） 5/8");
+  });
+
+  it("HB-T431-1 重要な依頼ごとに、5 段階のステッパーと止まっている理由が出る", () => {
+    load(
+      makeSnapshot({
+        requests: [
+          makeRequest("a-1", 1, { resource: "firework:a", critical: true, status: "proposed" }),
+          makeRequest("b-1", 2, { resource: "firework:b", critical: true, status: "committed" }),
+          makeRequest("stall", 1, { status: "waiting" }),
+        ],
+      }),
+    );
+    renderHud();
+    const list = screen.getByRole("list", { name: "重要な依頼の進み具合" });
+    const rows = [...list.querySelectorAll<HTMLElement>(".hud-critical-request")];
+    expect(rows.map((row) => row.getAttribute("data-request"))).toEqual(["a-1", "b-1"]);
+    const [a, b] = rows;
+    expect(a?.querySelector(".hud-critical-request-label")?.textContent).toBe("大花火 A");
+    expect(a?.querySelectorAll(".request-step")).toHaveLength(5);
+    expect(a?.querySelector('[aria-current="step"]')?.getAttribute("data-step")).toBe("append");
+    expect(a?.querySelector(".request-progress-reason")?.textContent).toBe(
+      "島々の記録と、代表への返事を待っています",
+    );
+    expect(b?.querySelector('[aria-current="step"]')?.getAttribute("data-step")).toBe("reply");
+    expect(b?.querySelector(".request-progress-reason")?.textContent).toBe(
+      "依頼元の島に結果が届くのを待っています",
+    );
+  });
+
+  it("HB-T431-2 終わっていない重要な依頼が無ければ、進み具合を出さない", () => {
+    load(
+      makeSnapshot({
+        requests: [
+          makeRequest("a-1", 1, { resource: "firework:a", critical: true, status: "succeeded" }),
+        ],
+      }),
+    );
+    renderHud();
+    expect(screen.queryByRole("list", { name: "重要な依頼の進み具合" })).toBeNull();
   });
 
   it("HB-3 時刻が進むと残り時間が減り、一時停止中は減らない", () => {
@@ -363,6 +408,29 @@ describe("HudBar", () => {
       fireEvent.click(screen.getByRole("button", { name: "遅くする" }));
     });
     expect(send).toHaveBeenCalledWith("cmd.game.speed", { speed: 4 });
+  });
+
+  it("HB-9 隅に効果音のオン・オフのボタンがあり、押すとブラウザに保存する（T-434）", () => {
+    localStorage.clear();
+    act(() => {
+      soundPreference.reload();
+    });
+    load();
+    const { container } = renderHud();
+    const button = screen.getByRole("button", { name: "効果音" });
+    expect(button.classList.contains("hud-sound")).toBe(true);
+    expect(container.querySelector(".hud")?.contains(button)).toBe(true);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(localStorage.getItem("raft-game.sound")).toBe('{"v":1,"enabled":false}');
+
+    localStorage.clear();
+    act(() => {
+      soundPreference.reload();
+    });
+    expect(button.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("reset() されたら「状況（準備中）」に戻る", () => {

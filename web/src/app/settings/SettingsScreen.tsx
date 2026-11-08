@@ -1,8 +1,11 @@
 // 設定（T-412・FR-UI-10）。見た目は T-424a: 紙のパネルに、スイッチの見た目のトグルを置く。
 // ステージの進み具合（クリアの記録）を消す節（T-703・T-703b・DesignDoc §13.9）。
+// 効果音のオン・オフ（T-434。HUD の隅のボタンと同じ設定）。
 import { useId, useState, type ReactElement } from "react";
 
 import { ArtIcon } from "../../ui/art/ArtIcon.tsx";
+import { soundEngine } from "../../ui/sound/engine.ts";
+import { setSoundEnabled, useSoundPreference } from "../../ui/sound/preference.ts";
 import { letterRaftTerm } from "../../ui/terms/glossary.ts";
 import { RaftTerm, WithRaftTerm } from "../../ui/terms/RaftTerm.tsx";
 import { setShowRaftTerms, useTermsPreference } from "../../ui/terms/preference.ts";
@@ -42,12 +45,44 @@ export function SettingsScreen(): ReactElement {
           このブラウザには設定を保存できませんでした。ページを閉じると元に戻ります。
         </p>
       )}
+      <SoundSection />
       <ProgressSection />
       <Link className="btn app-back" to={{ name: "title" }}>
         <ArtIcon kind="back" />
         タイトルへ
       </Link>
     </div>
+  );
+}
+
+// 「効果音を鳴らす」のトグル。値はこのブラウザに保存する（既定はオン）。
+function SoundSection(): ReactElement {
+  const { enabled, persistent } = useSoundPreference();
+  const descriptionId = useId();
+  return (
+    <section className="settings-sound">
+      <label className="settings-toggle">
+        <input
+          className="settings-switch"
+          type="checkbox"
+          checked={enabled}
+          aria-describedby={descriptionId}
+          onChange={(event) => {
+            soundEngine.unlock();
+            setSoundEnabled(event.currentTarget.checked);
+          }}
+        />
+        効果音を鳴らす
+      </label>
+      <p className="settings-description" id={descriptionId}>
+        出航・到着・配達・依頼の確定・嵐の予報で、短い音を鳴らします。
+      </p>
+      {persistent ? null : (
+        <p className="settings-warning">
+          このブラウザには効果音の設定を保存できませんでした。ページを閉じると元に戻ります。
+        </p>
+      )}
+    </section>
   );
 }
 

@@ -1,13 +1,17 @@
 // ゲーム画面のスロット「状況」（T-406・ゲームデザイン §7.2 の上部）。
-// 残り時間・スコア・確定した依頼の数・フェス準備度と重要な資源・一時停止と速度を出す。
+// 残り時間・スコア・確定した依頼の数・フェス準備度と重要な資源・重要な依頼の進み具合（T-431）・一時停止と速度・効果音のオン・オフ（T-434）を出す。
 // 値はストア（T-403）から読むだけで、速度と一時停止もサーバーの時計が変わるまで表示を変えない（ADR-0009）。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 
 import type { Ack } from "../../protocol/index.ts";
 import { useGameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
+import { FireworkIcon } from "../art/icons/Firework.tsx";
 import { useGameCommand } from "../commands/GameCommands.tsx";
+import { RequestStepper } from "../requests/RequestStepper.tsx";
+import { criticalRequestsInProgress } from "../requests/requestProgress.ts";
+import { SoundToggle } from "../sound/SoundToggle.tsx";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
 import {
   adjacentSpeeds,
@@ -61,7 +65,7 @@ function HudContent({ world }: { world: World }): ReactElement {
                   className={secured ? "hud-critical is-secured" : "hud-critical"}
                   title={r.label}
                 >
-                  <span aria-hidden="true">🎆</span>
+                  <FireworkIcon />
                   <span className="visually-hidden">
                     {r.label}（{secured ? "確定" : "まだ"}）
                   </span>
@@ -71,8 +75,33 @@ function HudContent({ world }: { world: World }): ReactElement {
           </ul>
         )}
       </span>
+      <CriticalRequests world={world} />
       <SpeedControls world={world} />
+      <SoundToggle className="hud-sound" />
     </div>
+  );
+}
+
+// 重要な依頼（花火）の進み具合（T-431）。重要な資源ごとに、まだ終わっていない最後の依頼を 1 つ出す。
+function CriticalRequests({ world }: { world: World }): ReactElement | null {
+  const requests = useMemo(() => criticalRequestsInProgress(world), [world]);
+  if (requests.length === 0) return null;
+  return (
+    <ul aria-label="重要な依頼の進み具合" className="hud-item hud-critical-requests">
+      {requests.map((request) => {
+        const label =
+          world.stage.resources.find((r) => r.id === request.resource)?.label ?? request.kind;
+        return (
+          <li key={request.id} className="hud-critical-request" data-request={request.id}>
+            <span className="hud-critical-request-label">
+              <FireworkIcon />
+              {label}
+            </span>
+            <RequestStepper status={request.status} compact />
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

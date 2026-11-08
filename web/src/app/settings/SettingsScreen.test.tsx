@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SOUND_STORAGE_KEY, soundPreference } from "../../ui/sound/preference.ts";
 import { termsPreference } from "../../ui/terms/preference.ts";
 import { App, type AppDeps } from "../App.tsx";
 import { stageProgress } from "../progress/progress.ts";
@@ -14,6 +15,7 @@ beforeEach(() => {
   act(() => {
     termsPreference.reload();
     stageProgress.reload();
+    soundPreference.reload();
   });
 });
 
@@ -191,5 +193,56 @@ describe("SettingsScreen のステージの進み具合（T-703）", () => {
     fireEvent.click(button("消す"));
     expect(screen.getByText("クリアしたステージ: 0")).toBeDefined();
     expect(screen.getByRole("status").textContent).toBe("進み具合を消しました。");
+  });
+});
+
+describe("SettingsScreen の効果音（T-434）", () => {
+  const SOUND_SAVE_FAILED =
+    "このブラウザには効果音の設定を保存できませんでした。ページを閉じると元に戻ります。";
+
+  function soundCheckbox(): HTMLInputElement {
+    return screen.getByRole<HTMLInputElement>("checkbox", { name: "効果音を鳴らす" });
+  }
+
+  it("SE-S1 既定はオンで、切り替えるとブラウザに保存する", () => {
+    render(<SettingsScreen />);
+
+    expect(soundCheckbox().checked).toBe(true);
+    const id = soundCheckbox().getAttribute("aria-describedby") ?? "";
+    expect(document.getElementById(id)?.textContent).toContain(
+      "出航・到着・配達・依頼の確定・嵐の予報",
+    );
+
+    fireEvent.click(soundCheckbox());
+    expect(soundCheckbox().checked).toBe(false);
+    expect(localStorage.getItem(SOUND_STORAGE_KEY)).toBe('{"v":1,"enabled":false}');
+    // 用語の設定の値は変えない
+    expect(localStorage.getItem("raft-game.settings")).toBeNull();
+
+    fireEvent.click(soundCheckbox());
+    expect(soundCheckbox().checked).toBe(true);
+    expect(localStorage.getItem(SOUND_STORAGE_KEY)).toBe('{"v":1,"enabled":true}');
+    expect(screen.queryByText(SOUND_SAVE_FAILED)).toBeNull();
+  });
+
+  it("SE-S2 保存した値で始まる", () => {
+    localStorage.setItem(SOUND_STORAGE_KEY, '{"v":1,"enabled":false}');
+    act(() => {
+      soundPreference.reload();
+    });
+    render(<SettingsScreen />);
+
+    expect(soundCheckbox().checked).toBe(false);
+  });
+
+  it("SE-S3 保存できなかったことを表示する", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    render(<SettingsScreen />);
+
+    fireEvent.click(soundCheckbox());
+    expect(soundCheckbox().checked).toBe(false);
+    expect(screen.getByText(SOUND_SAVE_FAILED)).toBeDefined();
   });
 });

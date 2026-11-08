@@ -1,0 +1,262 @@
+<!doctype html>
+<!-- og-image.png（1200×630。共有のプレビュー）の元（T-430）。scripts/render-brand-images.sh が、ヘッドレスの Chrome で撮る。
+     絵はタイトルの画面（web/src/ui/art/TitleArt.tsx・parts.tsx、T-424a）と同じ部品を、1200×630 に並べ直したもの。
+     色と線は web/src/ui/theme/tokens.css と web/src/ui/art/art.css を読み込んで塗る（16 進の色を書かない）。
+     タイトルの絵や部品を変えたら、ここも合わせて直し、スクリプトで PNG を作り直す。 -->
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>og-image</title>
+    <link rel="stylesheet" href="../src/ui/theme/tokens.css" />
+    <link rel="stylesheet" href="../src/ui/art/art.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+
+      body {
+        position: relative;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        background: var(--color-paper);
+        color: var(--color-ink);
+        font-family: var(--font-body);
+      }
+
+      /* 海の地。タイトルの絵のグラデーション（淡い海 → 中くらいの海）は、Chrome が粒状にぼかして描き、
+         PNG が 300KB を超えるので、淡い海の単色にする（濃淡は水彩のにじみの楕円で出す） */
+      .og-sea {
+        fill: var(--color-sea-light);
+      }
+
+      svg.art {
+        position: absolute;
+        inset: 0;
+        width: 1200px;
+        height: 630px;
+      }
+
+      .copy {
+        position: absolute;
+        top: 0;
+        left: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        width: 1200px;
+        height: 560px;
+        text-align: center;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 112px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        line-height: 1.1;
+        text-shadow:
+          0 0 18px var(--color-paper),
+          0 0 6px var(--color-paper);
+      }
+
+      p {
+        margin: 0;
+        padding: 10px 28px;
+        border: 3px solid var(--color-postal);
+        border-radius: var(--radius-l);
+        background: var(--color-paper);
+        color: var(--color-ink);
+        font-size: 38px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+      }
+    </style>
+  </head>
+  <body>
+    <svg class="art title-art" viewBox="0 0 1200 630" aria-hidden="true">
+      <defs>
+        <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+          <stop class="title-art-stop-paper" offset="0" />
+          <stop class="title-art-stop-paper" offset="0.55" />
+          <stop class="title-art-stop-paper" offset="1" stop-opacity="0" />
+        </radialGradient>
+        <clipPath id="sea-clip">
+          <rect x="26" y="26" width="1148" height="578" rx="32" />
+        </clipPath>
+        <!-- 水彩のにじみ: ノイズで縁をゆらす -->
+        <filter id="wc" x="-5%" y="-5%" width="110%" height="110%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.014" numOctaves="3" seed="7" />
+          <feDisplacementMap
+            in="SourceGraphic"
+            scale="24"
+            xChannelSelector="R"
+            yChannelSelector="G"
+          />
+        </filter>
+
+        <!-- 波の印 -->
+        <path id="wave" class="title-art-wave" d="M-30 0 q10 -9 20 0 t20 0 t20 0" />
+
+        <!-- 島（parts.tsx の Island と同じ形） -->
+        <g id="island-base">
+          <ellipse class="art-shoal" cx="0" cy="6" rx="80" ry="40" />
+          <ellipse class="art-foam" cx="0" cy="6" rx="68" ry="33" />
+          <path
+            class="art-sand"
+            d="M-58 6 C-60 -10 -36 -22 -4 -22 C30 -22 58 -12 58 4 C58 20 30 28 0 28 C-30 28 -56 22 -58 6 Z"
+          />
+          <path
+            class="art-green"
+            d="M-42 2 C-42 -22 -24 -40 -2 -42 C22 -44 42 -26 42 -4 C40 8 20 12 0 12 C-22 12 -40 10 -42 2 Z"
+          />
+        </g>
+        <g id="island-house">
+          <use href="#island-base" />
+          <circle class="art-tree" cx="-24" cy="-12" r="9" />
+          <circle class="art-tree" cx="26" cy="-8" r="7" />
+          <rect class="art-paper" x="-10" y="-30" width="22" height="18" rx="2" />
+          <path class="art-hull" d="M-14 -29 L1 -42 L16 -29 Z" />
+          <rect class="art-sea-deep" x="-3" y="-22" width="6" height="10" rx="1" />
+        </g>
+        <g id="island-lighthouse">
+          <use href="#island-base" />
+          <circle class="art-tree" cx="-26" cy="-6" r="8" />
+          <path class="art-paper" d="M-6 -10 L-3 -52 L5 -52 L8 -10 Z" />
+          <path class="art-hull" d="M-5 -24 L-4 -36 L6 -36 L7 -24 Z" />
+          <rect class="art-gold" x="-6" y="-62" width="12" height="10" rx="2" />
+          <path class="art-hull" d="M-8 -62 L0 -70 L8 -62 Z" />
+        </g>
+        <g id="island-trees">
+          <use href="#island-base" />
+          <circle class="art-tree" cx="-18" cy="-18" r="11" />
+          <circle class="art-tree" cx="2" cy="-26" r="13" />
+          <circle class="art-tree" cx="22" cy="-14" r="10" />
+        </g>
+        <g id="island-palm">
+          <use href="#island-base" />
+          <path class="art-line" d="M2 -8 C0 -26 6 -42 14 -54" stroke-width="5" />
+          <path
+            class="art-tree"
+            d="M14 -54 C2 -66 -18 -62 -24 -48 C-10 -54 2 -54 14 -54 C24 -68 44 -66 50 -52 C36 -58 24 -58 14 -54 Z"
+          />
+          <path
+            class="art-tree"
+            d="M14 -54 C6 -50 -2 -40 -4 -28 C2 -38 8 -46 14 -54 C24 -50 32 -42 34 -30 C28 -40 22 -48 14 -54 Z"
+          />
+          <circle class="art-sand" cx="12" cy="-50" r="4" />
+          <path class="art-paper" d="M38 8 L66 14 L64 20 L36 14 Z" />
+        </g>
+
+        <!-- 郵便船（parts.tsx の MailShip と同じ形） -->
+        <g id="ship">
+          <path
+            class="art-wake"
+            d="M-70 18 C-90 14 -104 20 -122 16 M-66 26 C-84 28 -96 34 -112 32"
+          />
+          <path class="art-line" d="M-6 0 L-6 -86" />
+          <path class="art-paper" d="M-2 -82 C26 -66 38 -36 36 -10 L-2 -10 Z" />
+          <path class="art-paper" d="M-10 -74 C-30 -58 -38 -34 -36 -10 L-10 -10 Z" />
+          <rect class="art-paper" x="6" y="-48" width="20" height="14" rx="2" />
+          <path class="art-line" d="M6 -48 L16 -40 L26 -48" />
+          <path class="art-gold" d="M-6 -86 L14 -80 L-6 -74 Z" />
+          <path class="art-hull" d="M-60 -8 L62 -8 L48 18 C20 24 -20 24 -50 18 Z" />
+          <path class="art-line" d="M-54 4 L56 4" />
+          <circle class="art-paper" cx="-30" cy="-1" r="3.5" />
+          <circle class="art-paper" cx="-16" cy="-1" r="3.5" />
+        </g>
+
+        <!-- 封筒（parts.tsx の Envelope と同じ形） -->
+        <g id="envelope">
+          <rect class="art-paper" x="-22" y="-15" width="44" height="30" rx="4" />
+          <path class="art-line" d="M-21 -13 L0 3 L21 -13" />
+          <circle class="art-hull" cx="0" cy="3" r="5" />
+        </g>
+
+        <!-- 方位記号（parts.tsx の CompassRose と同じ形） -->
+        <g id="compass">
+          <circle class="art-paper" cx="0" cy="0" r="60" />
+          <circle class="art-line" cx="0" cy="0" r="48" stroke-dasharray="3 7" />
+          <polygon class="art-gold" points="0,-34 6,-6 0,0 -6,-6" transform="rotate(45)" />
+          <polygon class="art-gold" points="0,-34 6,-6 0,0 -6,-6" transform="rotate(135)" />
+          <polygon class="art-gold" points="0,-34 6,-6 0,0 -6,-6" transform="rotate(225)" />
+          <polygon class="art-gold" points="0,-34 6,-6 0,0 -6,-6" transform="rotate(315)" />
+          <polygon class="art-hull" points="0,-54 9,-9 0,0 -9,-9" />
+          <polygon class="art-paper" points="0,-54 9,-9 0,0 -9,-9" transform="rotate(90)" />
+          <polygon class="art-paper" points="0,-54 9,-9 0,0 -9,-9" transform="rotate(180)" />
+          <polygon class="art-paper" points="0,-54 9,-9 0,0 -9,-9" transform="rotate(270)" />
+          <circle class="art-gold" cx="0" cy="0" r="6" />
+          <path class="art-line" d="M-6 -66 L-6 -80 L6 -66 L6 -80" />
+        </g>
+      </defs>
+
+      <!-- 紙の地と、にじんだ海 -->
+      <rect class="title-art-paper" x="0" y="0" width="1200" height="630" />
+      <g filter="url(#wc)">
+        <rect class="og-sea" x="26" y="26" width="1148" height="578" rx="32" />
+        <g clip-path="url(#sea-clip)">
+          <ellipse class="title-art-wash-mid" cx="190" cy="540" rx="270" ry="120" />
+          <ellipse class="title-art-wash-mid" cx="1050" cy="120" rx="240" ry="105" />
+          <ellipse class="title-art-wash-deep" cx="980" cy="570" rx="320" ry="90" />
+          <ellipse class="title-art-wash-deep" cx="120" cy="100" rx="200" ry="80" />
+          <ellipse class="title-art-wash-light" cx="930" cy="360" rx="170" ry="64" />
+          <ellipse class="title-art-wash-light" cx="300" cy="300" rx="150" ry="58" />
+        </g>
+      </g>
+
+      <!-- 海図の経緯線と枠 -->
+      <path
+        class="title-art-grid"
+        d="M240 26 V604 M480 26 V604 M720 26 V604 M960 26 V604 M26 157 H1174 M26 315 H1174 M26 472 H1174"
+      />
+      <rect class="title-art-frame" x="14" y="14" width="1172" height="602" rx="22" />
+      <rect class="title-art-frame-ticks" x="20" y="20" width="1160" height="590" rx="18" />
+
+      <!-- 中央を明るく（タイトルの下地） -->
+      <ellipse class="title-art-glow" cx="600" cy="285" rx="430" ry="270" fill="url(#glow)" />
+
+      <!-- 航路（海図の点線） -->
+      <path class="title-art-route" d="M200 215 C130 300 160 390 210 430" />
+      <path class="title-art-route" d="M300 520 C440 600 600 600 700 560" />
+      <path class="title-art-route" d="M1000 450 C1090 380 1090 280 1035 225" />
+      <path class="title-art-route" d="M250 120 C480 50 740 50 950 120" />
+
+      <!-- 波の印 -->
+      <g>
+        <use href="#wave" x="110" y="270" />
+        <use href="#wave" x="360" y="190" />
+        <use href="#wave" x="790" y="200" />
+        <use href="#wave" x="1100" y="420" />
+        <use href="#wave" x="420" y="560" />
+        <use href="#wave" x="860" y="530" />
+        <use href="#wave" x="70" y="90" />
+        <use href="#wave" x="1120" y="80" />
+      </g>
+
+      <!-- 島 -->
+      <use href="#island-house" transform="translate(180 170) scale(1)" />
+      <use href="#island-lighthouse" transform="translate(220 490) scale(1.2)" />
+      <use href="#island-trees" transform="translate(1030 165) scale(1.05)" />
+      <use href="#island-palm" transform="translate(990 500) scale(1)" />
+
+      <!-- 方位記号 -->
+      <use href="#compass" transform="translate(1110 545) rotate(-8) scale(0.62)" />
+
+      <!-- 封筒 -->
+      <use href="#envelope" transform="translate(420 92) rotate(-12) scale(1.1)" />
+      <use href="#envelope" transform="translate(1115 315) rotate(14) scale(1.05)" />
+      <use href="#envelope" transform="translate(80 360) rotate(-6) scale(1)" />
+
+      <!-- 郵便船 -->
+      <use href="#ship" transform="translate(610 562) scale(0.8)" />
+    </svg>
+
+    <div class="copy">
+      <h1>合意、乗船中。</h1>
+      <p>嵐の島々に、手紙で合意を届けよう</p>
+    </div>
+  </body>
+</html>

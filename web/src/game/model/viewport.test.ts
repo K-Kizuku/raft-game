@@ -134,7 +134,8 @@ describe("layoutMap", () => {
       { width: 600, height: 900 },
     ]) {
       const { transform, markScale } = layoutMap(STAGE1, size);
-      const pad = mapInsets(markScaleFor(size));
+      // 余白は、決まった絵の拡大率の分だけ広げる（T-428。拡大率を下げたときは、下げた倍率の余白）。
+      const pad = mapInsets(markScale);
       const box = screenBox(STAGE1, size);
       expect(box.minX).toBeGreaterThanOrEqual(pad.left - 1e-9);
       expect(box.maxX).toBeLessThanOrEqual(size.width - pad.right + 1e-9);
@@ -177,7 +178,13 @@ describe("layoutMap", () => {
     const { transform, markScale } = layoutMap(near, size);
     const gap = 40 * transform.scale;
     expect(markScale).toBeLessThan(markScaleFor(size));
-    expect(markScale).toBeCloseTo(Math.max(MAP_VIEW.minMarkScale, gap / MAP_VIEW.islandSpacing));
+    // 下げた倍率で余白を作り直して収め直すので（T-428）、島の間は下げる前より広がるだけ。
+    const before = fitIslands(near, size, mapInsets(markScaleFor(size)));
+    expect(markScale).toBeCloseTo(
+      Math.max(MAP_VIEW.minMarkScale, (40 * before.scale) / MAP_VIEW.islandSpacing),
+    );
+    expect(transform).toEqual(fitIslands(near, size, mapInsets(markScale)));
+    expect(transform.scale).toBeGreaterThanOrEqual(before.scale);
     // 隣り合う島の中心どうしの間隔が、拡大した島の間隔より狭くならない（下限で止まるときを除く）。
     if (markScale > MAP_VIEW.minMarkScale) {
       expect(gap).toBeGreaterThanOrEqual(MAP_VIEW.islandSpacing * markScale - 1e-9);

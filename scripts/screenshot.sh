@@ -5,8 +5,9 @@
 #   <URL>                  開発のサーバーの URL（例: http://127.0.0.1:<DEV_WEB_PORT>。ポートは make dev-env）
 #   <出力先のディレクトリ>  画像を置くディレクトリ（なければ作る）。ファイル名は <画面>-<幅>x<高さ>.png
 #
-#   --size WxH         撮る大きさ（繰り返せる。既定: 1600x900 と 1280x720）
-#   --page NAME=PATH   撮る画面（繰り返せる。既定: title=/ howto=/howto credits=/credits settings=/settings）
+#   --size WxH         撮る大きさ（繰り返せる。既定: 1470x860（基準の画面。docs/11 §15）と 1600x900 と 1280x720）
+#   --page NAME=PATH   撮る画面（繰り返せる。既定: title=/ stage-select=/stages intro-stage1=/stages/stage1
+#                      intro-stage2=/stages/stage2 intro-stage3=/stages/stage3 howto=/howto credits=/credits settings=/settings）
 #   --wait MS          読み込んでから撮るまでの時間（Chrome の --virtual-time-budget。既定: 3000）
 #   --dry-run          実行せず、実行するはずのコマンドを「+ 」を付けて出す
 #   -h, --help         この説明を出す
@@ -124,8 +125,8 @@ done
 [ -n "$OUT" ] || usage_error "出力先のディレクトリがない"
 [[ "$URL" =~ ^https?:// ]] || usage_error "URL は http:// か https:// で始める: '$URL'"
 URL="${URL%/}"
-[ -n "$SIZES" ] || SIZES="1600x900 1280x720"
-[ -n "$PAGES" ] || PAGES="title=/ howto=/howto credits=/credits settings=/settings"
+[ -n "$SIZES" ] || SIZES="1470x860 1600x900 1280x720"
+[ -n "$PAGES" ] || PAGES="title=/ stage-select=/stages intro-stage1=/stages/stage1 intro-stage2=/stages/stage2 intro-stage3=/stages/stage3 howto=/howto credits=/credits settings=/settings"
 
 CHROME_BIN="$(find_chrome)" || die "Chrome（Chromium）が見つからない。CHROME で実行ファイルを指定する"
 
