@@ -1,0 +1,31 @@
+{
+  "description": "transfer.prepare to the coordinator",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.prepare",
+    "payload": {
+      "transferId": "x1300",
+      "t": 12600,
+      "to": "coordinator",
+      "contact": {
+        "contactId": "k1207",
+        "sessionId": "s_0123456789abcdef",
+        "island": 2,
+        "ferry": "f1",
+        "islandEpoch": 1,
+        "ferryEpoch": 2,
+        "openedAt": 12500,
+        "sig": "c2lnbmF0dXJl"
+      },
+      "letterIds": [
+        2000000001
+      ]
+    }
+  },
+  "expect": "invalid"
+}

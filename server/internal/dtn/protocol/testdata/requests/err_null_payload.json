@@ -1,0 +1,14 @@
+{
+  "description": "payload is null",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1207,
+    "kind": "advance",
+    "payload": null
+  },
+  "expect": "invalid"
+}

@@ -1,0 +1,26 @@
+{
+  "description": "contact.close (Host only)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "contact.close",
+    "payload": {
+      "contact": {
+        "contactId": "k1207",
+        "sessionId": "s_0123456789abcdef",
+        "island": 2,
+        "ferry": "f1",
+        "islandEpoch": 1,
+        "ferryEpoch": 2,
+        "openedAt": 12500,
+        "sig": "c2lnbmF0dXJl"
+      }
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:89bad146d8860c72e0a003b334abb219b6f64afe4c7064b20bf878868c7a7788"
+}

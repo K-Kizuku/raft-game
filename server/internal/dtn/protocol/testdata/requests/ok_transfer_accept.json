@@ -1,0 +1,35 @@
+{
+  "description": "transfer.accept",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.accept",
+    "payload": {
+      "transferId": "x1300",
+      "from": "island:2",
+      "contact": {
+        "contactId": "k1207",
+        "sessionId": "s_0123456789abcdef",
+        "island": 2,
+        "ferry": "f1",
+        "islandEpoch": 1,
+        "ferryEpoch": 2,
+        "openedAt": 12500,
+        "sig": "c2lnbmF0dXJl"
+      },
+      "bundles": [
+        {
+          "letterId": 2000000001,
+          "bundle": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fj/Bg0UGyIpMA==",
+          "digest": "sha256:8ebde99462ec72b43a7e722b62361594fa41c6de9c3c91311663f42594b97f47"
+        }
+      ]
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:625f347bda25a4a469c106aa35a33040b735b7b56ea8938a5eb34ca403742c09"
+}

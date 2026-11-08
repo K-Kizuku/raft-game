@@ -1,0 +1,19 @@
+{
+  "description": "v = 0",
+  "request": {
+    "v": 0,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1207,
+    "kind": "advance",
+    "payload": {
+      "horizon": [
+        12500,
+        1
+      ]
+    }
+  },
+  "expect": "unsupported_version"
+}

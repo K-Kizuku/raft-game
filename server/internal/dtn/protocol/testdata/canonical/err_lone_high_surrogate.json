@@ -1,0 +1,5 @@
+{
+  "description": "lone high surrogate",
+  "input": "\"\\ud800\"",
+  "error": "invalid"
+}

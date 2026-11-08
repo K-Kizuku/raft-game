@@ -1,0 +1,24 @@
+{
+  "description": "digest in uppercase hex",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "deliver",
+    "payload": {
+      "t": 7000,
+      "letters": [
+        {
+          "letterId": 1000000001,
+          "createdAt": 100,
+          "digest": "sha256:8EBDE99462EC72B43A7E722B62361594FA41C6DE9C3C91311663F42594B97F47",
+          "bundle": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fj/Bg0UGyIpMA=="
+        }
+      ]
+    }
+  },
+  "expect": "invalid"
+}

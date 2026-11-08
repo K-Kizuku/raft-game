@@ -1,0 +1,6 @@
+{
+  "description": "keys sorted by UTF-16 code units, not code points",
+  "input": "{\"\\ufb33\": 5, \"\\ud83d\\ude00\": 4, \"\\u20ac\": 3, \"a\": 2, \"1\": 1}",
+  "canonical": "{\"1\":1,\"a\":2,\"€\":3,\"😀\":4,\"דּ\":5}",
+  "digest": "sha256:586c3b927a85bfcf437ff22e6dab151d406ba146996c6e39e0e4d53faa80a01b"
+}

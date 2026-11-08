@@ -1,0 +1,5 @@
+{
+  "description": "trailing comma",
+  "input": "[1,]",
+  "error": "invalid"
+}

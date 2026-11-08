@@ -1,0 +1,19 @@
+{
+  "description": "relay.remove",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "relay.remove",
+    "payload": {
+      "letterIds": [
+        3000000002
+      ]
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:ba30e81a78ef06dbadc9e3b40dfcb6f2cde730e2194f91e3e011f9a4f313fa5d"
+}

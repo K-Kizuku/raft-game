@@ -1,0 +1,5 @@
+{
+  "description": "eventSeq above 2^53-1",
+  "requestText": "{\"v\":1,\"sessionId\":\"s_0123456789abcdef\",\"actor\":\"island:2\",\"epoch\":3,\"coordEpoch\":1,\"eventSeq\":9007199254740992,\"kind\":\"advance\",\"payload\":{\"horizon\":[12500,1]}}",
+  "expect": "invalid"
+}

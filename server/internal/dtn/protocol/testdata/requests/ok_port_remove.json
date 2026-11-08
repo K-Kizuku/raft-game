@@ -1,0 +1,20 @@
+{
+  "description": "port.remove",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "port.remove",
+    "payload": {
+      "letterIds": [
+        1000000001,
+        1000000003
+      ]
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:896fb49573f3a6516b0cd5c7c65477a6957a3f6215cd39e2c7c0d2733e248cf2"
+}

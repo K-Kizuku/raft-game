@@ -1,0 +1,30 @@
+{
+  "description": "init plan for a ferry",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1,
+    "kind": "init",
+    "payload": {
+      "stage": "stage2",
+      "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+      "seed": 1,
+      "actor": "ferry:f1",
+      "plan": [
+        {
+          "id": "stage2-0001",
+          "origin": 2,
+          "kind": "supply",
+          "resource": "water",
+          "critical": false,
+          "createdAt": 3000,
+          "deadline": 33000
+        }
+      ]
+    }
+  },
+  "expect": "invalid"
+}

@@ -1,0 +1,5 @@
+{
+  "description": "trailing data",
+  "input": "{} {}",
+  "error": "invalid"
+}
