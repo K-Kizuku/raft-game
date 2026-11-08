@@ -57,6 +57,13 @@
 
 意味は今と同じ。どれも Coordinator だけの状態で、Actor には伝えない（Actor は上限の分だけ進む）。「次の出来事まで」（`cmd.game.skip`、デモだけ）の `NextNotableAt` は Coordinator が計算する。
 
+### 2.5 参照モデルでの呼び方（DTN-00）
+
+- `sim.Engine` は、Coordinator のスケジューラと全島の待ち行列から `(At, Class, Seq)` の順にイベントを取り出す。参照モデルでは、島のイベントと待っている依頼の Seq を全島で 1 本の連番（`islandcore.Config.NextSeq`）にして、組み替えの前の 1 本のスケジューラと同じ順にしている。分散版の島は島の中の連番を使う
+- `RaftTick` は全島で同じ時刻にあるので、参照モデルは今までどおり「全ノードの Tick → 全島の待っている依頼の再試行（入れた順）→ 全ノードの Process → 全ノードの `node.state`」の順にまとめて処理する（`islandcore` の `HandleTick`・`TakeWaits`・`RetryWait`・`Process`・`ReportState`）。分散版の島は `AdvanceTo` で、イベントごとに `Handle` → `Process` → `ReportState` を行う
+- `islandcore.Core.Deliver` は、最後に `Process` と `ReportState` まで行う。到着で入力があるのはその島だけなので、参照モデルの後処理（全ノードの `Process`・`node.state`）と同じ並びになる
+- `letter.created` の `digest`・`size` は、DTN-06 の Codec ができるまでゼロ値
+
 ## 3. 島の出力をまとめる順序
 
 島の出力（手紙を作った・捨てた・Term が変わった・役割が変わった・台帳に適用した、など）には、`(t, class, 島の中の Seq)` が付く。CoordinatorCore は、1 回の上限の間に集めた全島の出力を、次の順に並べて処理する。
@@ -83,6 +90,8 @@
 - 手紙の ID を `islandId × 1,000,000,000 + n` にする。`n` はその島で作った手紙の通し番号（1 から）。依頼の手紙も同じ
 - 型は `ferry.LetterID`（uint64）のまま。最大の島の ID は 6 なので、JS の安全な整数（2^53 − 1）に収まる
 - 参照モデルもこの規則に変える。これで島ごとの列が、そのまま比べられる
+- DTN-00 の段階 B で実装した（`islandcore.LetterIDBase`）。ID の順は作った順と一致しない。ID の昇順で並べるもの（中継倉庫・`Unload` の処理の順・`letter.stale`・`Snapshot` の手紙・おまかせ積み込みの同じ順位の中）は、島をまたぐと送信元の島の ID の順になる。このため段階 B で `traceHash` の期待値が変わった（ゲームの規則は同じ）
+- web は手紙を `Record<number, Letter>` に持つ。4,294,967,295 以上の ID はオブジェクトの整数のキーにならず、キーの順が ID の順にならないので、手紙を並べるときは必ず ID で並べ直す（今の `lettersAtPort` などはそうしている）
 
 ### 5.2 列への振り分け
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/K-Kizuku/raft-game/server/internal/ferry"
 	"github.com/K-Kizuku/raft-game/server/internal/game"
+	"github.com/K-Kizuku/raft-game/server/internal/islandcore"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 )
 
@@ -132,7 +133,7 @@ func leaderRoundTrip(t *testing.T) (e *Engine, at0, at9000 []DomainEvent) {
 	e = reqStarted(t, reqTestConfig(stallReq(0, 1)))
 	e.RunUntil(0)
 	at0 = e.DrainEvents()
-	load(t, e, []uint64{1})
+	load(t, e, lids(1, 1))
 	evs := sail(t, e, 2)
 	var resp []uint64
 	for _, c := range ofType[LetterCreated](evs) {
@@ -169,7 +170,7 @@ func TestRequestLeaderOrigin(t *testing.T) { // E-1
 	wantEntries := []EntryView{{Index: 5, Term: 2, Type: "normal", Summary: "stall.reserve t-0001"}}
 	for i, to := range []uint64{2, 3} {
 		l := at0[1+i].Data.(LetterCreated).Letter
-		if l.ID != uint64(i+1) || l.From != 1 || l.To != to || l.Label != "append" || !reflect.DeepEqual(l.Raft.Entries, wantEntries) {
+		if l.ID != lid(1, uint64(i+1)) || l.From != 1 || l.To != to || l.Label != "append" || !reflect.DeepEqual(l.Raft.Entries, wantEntries) {
 			t.Errorf("letter.created %d = %+v (raft %+v)", i, l, l.Raft)
 		}
 	}
@@ -239,16 +240,16 @@ func TestRequestFollowerOrigin(t *testing.T) { // E-2
 			ID: "t-0001", Origin: 2, Kind: ledger.KindFireworkReserve, Resource: "firework:a",
 			Critical: true, CreatedAt: 0, Deadline: 90000, Status: "received",
 		}},
-		LetterCreated{Letter: reqLetter(1, 2, 1, 0, "t-0001", 0)},
+		LetterCreated{Letter: reqLetter(lid(2, 1), 2, 1, 0, "t-0001", 0)},
 		updated("t-0001", game.StatusWaiting, nil),
 	})
 
 	// 2. 2 で依頼書を積む
 	record(sail(t, e, 2))
-	evs = load(t, e, []uint64{1})
+	evs = load(t, e, lids(2, 1))
 	record(evs)
 	checkEvents(t, evs, []EventData{
-		LetterMoved{LetterID: 1, Loc: ferryLoc("f1")},
+		LetterMoved{LetterID: lid(2, 1), Loc: ferryLoc("f1")},
 		updated("t-0001", game.StatusInTransit, nil),
 	})
 
@@ -256,7 +257,7 @@ func TestRequestFollowerOrigin(t *testing.T) { // E-2
 	evs = sail(t, e, 1)
 	record(evs)
 	evs = at(evs, 9000)
-	iDel := indexOf(evs, func(d EventData) bool { return d == LetterDelivered{LetterID: 1, IslandID: 1, Accepted: true} })
+	iDel := indexOf(evs, func(d EventData) bool { return d == LetterDelivered{LetterID: lid(2, 1), IslandID: 1, Accepted: true} })
 	iApp := indexOf(evs, func(d EventData) bool {
 		c, ok := d.(LetterCreated)
 		return ok && c.Letter.From == 1 && c.Letter.Label == "append"
@@ -324,10 +325,10 @@ func TestRequestRetry(t *testing.T) { // E-3
 		t.Fatalf("no request letter at 25000: %+v", datas(evs))
 	}
 	l := evs[i].Data.(LetterCreated).Letter
-	if l.ID == 1 || l.CreatedAt != 25000 || l.From != 2 || l.To != 1 || l.Request.Hops != 0 {
+	if l.ID == lid(2, 1) || l.CreatedAt != 25000 || l.From != 2 || l.To != 1 || l.Request.Hops != 0 {
 		t.Errorf("retried letter = %+v", l)
 	}
-	if got, want := evs[i+1].Data, (LetterDropped{LetterID: 1, Reason: "superseded"}); got != want {
+	if got, want := evs[i+1].Data, (LetterDropped{LetterID: lid(2, 1), Reason: "superseded"}); got != want {
 		t.Errorf("after the retried letter: %+v, want %+v", got, want)
 	}
 	if got := ofType[RequestUpdated](evs); len(got) != 0 {
@@ -399,7 +400,7 @@ func TestRequestForward(t *testing.T) { // E-5
 	e := reqStarted(t, reqTestConfig(stallReq(0, 3)))
 	e.RunUntil(0)
 	e.DrainEvents()
-	id, _, err := e.tr.PostRequest(0, 1, 2, ferry.RequestNote{ReqID: "t-0001", Hops: 0})
+	id, _, err := e.postRequestForTest(0, 1, 2, ferry.RequestNote{ReqID: "t-0001", Hops: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,12 +457,14 @@ func TestRequestNoLeader(t *testing.T) { // E-6
 	if got := requestLetters(e.DrainEvents()); len(got) != 0 {
 		t.Errorf("request letters until 60000: %+v", got)
 	}
-	if want := []routeWait{{req: 0, island: 1, hops: 0}}; !reflect.DeepEqual(e.reqs.waits, want) {
-		t.Errorf("waits = %+v, want %+v", e.reqs.waits, want)
+	if ws := e.islands[0].Waits(); len(ws) != 1 || ws[0].Req != 0 || ws[0].Hops != 0 {
+		t.Errorf("waits of island 1 = %+v, want request 0 with hops 0", ws)
 	}
-	for _, ev := range e.sched.q {
-		if ev.Kind == kindRequestRetry {
-			t.Errorf("retry timer is scheduled: %+v", ev)
+	for _, isl := range e.islands {
+		for _, ev := range isl.Events() {
+			if ev.Kind == islandcore.KindRequestRetry {
+				t.Errorf("retry timer is scheduled on island %d: %+v", isl.ID(), ev)
+			}
 		}
 	}
 }
@@ -471,8 +474,8 @@ func TestRequestWaitRetried(t *testing.T) { // E-7
 	e := reqStarted(t, reqTestConfig(stallReq(0, 2)))
 	e.RunUntil(0)
 	e.DrainEvents()
-	gen := e.reqs.list[0].gen
-	e.reqs.waits = append(e.reqs.waits, routeWait{req: 0, island: 3, hops: 2})
+	gen := e.islands[0].RetryGen(0)
+	e.islands[2].AddWait(0, 2)
 	e.RunUntil(500)
 	got := requestLetters(e.DrainEvents())
 	if len(got) != 1 {
@@ -481,11 +484,13 @@ func TestRequestWaitRetried(t *testing.T) { // E-7
 	if want := reqLetter(got[0].ID, 3, 1, 500, "t-0001", 2); !reflect.DeepEqual(got[0], want) {
 		t.Errorf("letter = %+v, want %+v", got[0], want)
 	}
-	if len(e.reqs.waits) != 0 {
-		t.Errorf("waits = %+v, want empty", e.reqs.waits)
+	for _, isl := range e.islands {
+		if ws := isl.Waits(); len(ws) != 0 {
+			t.Errorf("waits of island %d = %+v, want empty", isl.ID(), ws)
+		}
 	}
-	if e.reqs.list[0].gen != gen {
-		t.Errorf("gen = %d, want %d (not re-armed by island 3)", e.reqs.list[0].gen, gen)
+	if g := e.islands[0].RetryGen(0); g != gen {
+		t.Errorf("gen = %d, want %d (not re-armed by island 3)", g, gen)
 	}
 }
 

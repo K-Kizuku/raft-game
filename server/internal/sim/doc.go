@@ -16,15 +16,20 @@
 // 土台の部品は次の 3 つ。
 //
 //   - SimTime: ゲーム内時間（ミリ秒）。0 は航行開始（§3.1）
-//   - Scheduler: イベントを (At, Class, Seq) の昇順に取り出す優先度キュー（§4.2）
+//   - Scheduler: イベントを (At, Class, Seq) の昇順に取り出す優先度キュー（§4.2。coordcore の別名）
 //   - Sub: ラウンドのシードと用途の名前から、用途ごとに独立した乱数列を作る（§9.1）
 //
-// 住民の依頼（DesignDoc §8）は、Raft の外の「役場」として Engine の中で動く。依頼は New で全部を決め
-// （game.PlanRequests。台本とランダム）、発生・route・再送・転送・適用の観察・状態の判定（request.go）は
-// Engine が行う。役場が読むのはノードの役割と知っている Leader だけで、Leader や Commit を決めない。
+// 参照モデル（DTN-00 #363）: 島ごとの状態（ノード・台帳・港と中継倉庫・依頼の窓口・島のイベント）は
+// islandcore.Core、Coordinator の状態（仮想時計とスケジューラ・航路・船・手紙の所在の写し・古い手紙の検出・
+// 自動の積み込みの選択）は coordcore.Core が持つ。Engine は今までと同じ順序でそれらを呼び、島の出力を
+// ドメインイベントにする（docs/dtn/architecture.md §2・simulation-time.md §2.5）。
+//
+// 住民の依頼（DesignDoc §8）は、Raft の外の「役場」として動く。依頼は New で全部を決め
+// （game.PlanRequests。台本とランダム）、発生・route・再送・転送は島の窓口（islandcore）、適用の観察・
+// 状態の判定（request.go）は Engine が行う。役場が読むのはノードの役割と知っている Leader だけで、Leader や Commit を決めない。
 // 状態の変化は、ステップの後処理で request.updated にまとめて出す。
 //
-// 依存の向きは sim → game・cluster・ferry・ledger の一方向。下のパッケージは sim を import しない
+// 依存の向きは sim → islandcore・coordcore → game・cluster・ferry・ledger の一方向。下のパッケージは sim を import しない
 // （game は状態を持たない純粋な型と関数だけを持つ）。
 // stage（T-201）と protocol（T-301）はまだないので、設定・コマンド・イベントは sim の中の型
 // （Config・Command・Ack・DomainEvent）で受け、返す。

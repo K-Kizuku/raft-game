@@ -5,12 +5,12 @@ import (
 	"slices"
 
 	"go.etcd.io/raft/v3"
-	pb "go.etcd.io/raft/v3/raftpb"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/K-Kizuku/raft-game/server/internal/cluster"
+	"github.com/K-Kizuku/raft-game/server/internal/coordcore"
 	"github.com/K-Kizuku/raft-game/server/internal/ferry"
 	"github.com/K-Kizuku/raft-game/server/internal/game"
+	"github.com/K-Kizuku/raft-game/server/internal/islandcore"
 	"github.com/K-Kizuku/raft-game/server/internal/ledger"
 )
 
@@ -61,14 +61,12 @@ const (
 	PhaseEnded   Phase = "ended"   // 終了（DurationMs に達した）
 )
 
-// スケジューラのイベントの種類。
+// Coordinator のスケジューラのイベントの種類。島のイベント（RaftTick・依頼の発生・再送）は各島の
+// islandcore.Core の待ち行列にある（DTN-00 #363）。
 const (
-	kindRaftTick     EventKind = iota + 1 // ClassRaftTick。Data なし
-	kindFerryArrive                       // ClassFerryArrive。Data は ferry.FerryID
-	kindFerryReady                        // ClassFerryReady。Data は ferry.FerryID
-	kindRoundEnd                          // ClassGameTimer。Data なし
-	kindRequestSpawn                      // ClassRequestSpawn。Data は int（帳簿の添字）
-	kindRequestRetry                      // ClassRequestRetry。Data は retryTimer
+	kindFerryArrive EventKind = iota + 2 // ClassFerryArrive。Data は ferry.FerryID
+	kindFerryReady                       // ClassFerryReady。Data は ferry.FerryID
+	kindRoundEnd                         // ClassGameTimer。Data なし
 )
 
 // nodeView は node.state に出す値（最後に出した値と比べる）。
@@ -78,6 +76,9 @@ type nodeView struct {
 }
 
 // Engine は 1 ゲーム分の世界（DesignDoc §4.3）。I/O・goroutine・実時間を使わずに動く。
+// 参照モデル（DTN-00 #363）: 島ごとの状態は N 個の islandcore.Core、Coordinator の状態（仮想時計・航路・船・手紙の
+// 写し・古い手紙の検出）は coordcore.Core が持ち、Engine は今までと同じ順序でそれらを呼んで、島の出力を
+// ドメインイベントにする。依頼の帳簿の表示・スコア・統計・台本のイベントは Engine が持つ。
 // 外から動かす方法は Apply（コマンド）と RunUntil（時間）だけで、出力はドメインイベントの列（DrainEvents）と
 // そのハッシュ（TraceHash）。状態を変えない観察として Snapshot と NextNotableAt がある。
 // 1 つの goroutine から使う（ADR-0003）。
@@ -89,10 +90,13 @@ type Engine struct {
 	opt Options
 	inv *invariantState // テストモードの検査が覚えておく値（invariants.go）。テストモードでなければ nil
 
-	sched      Scheduler
-	nodes      []*cluster.Node  // 添字 = ID - 1
-	ledgers    []*ledger.Ledger // 添字 = ID - 1
-	tr         *ferry.Transport
+	coord   *coordcore.Core
+	tr      *ferry.Fleet       // = coord.Fleet（航路・船・手紙の写し）
+	islands []*islandcore.Core // 添字 = ID - 1
+	nodes   []*cluster.Node    // 観察だけに使う（= islands[i].Node()）。添字 = ID - 1
+	ledgers []*ledger.Ledger   // 観察だけに使う（= islands[i].Ledger()）。添字 = ID - 1
+
+	islandSeq  uint64        // 島のイベントと待ちに振る、全島で 1 本の Seq（組み替えの前の Engine の Seq の相対的な順を保つ）
 	storms     stormBook     // 嵐の帳簿（storm.go）
 	breakdowns breakdownBook // 船の故障の帳簿（breakdown.go）
 	rushes     rushBook      // 注文ラッシュの帳簿（rush.go）
@@ -104,10 +108,7 @@ type Engine struct {
 	phase   Phase
 	opening cluster.OpeningResult
 
-	last       []nodeView // node.state を最後に出した値。添字 = ID - 1
-	leaderTerm []uint64   // Leader になったときの Term。添字 = ID - 1
-	staleTerm  []uint64   // 送信元の手紙を古いと判定した基準の Term（letter.stale）。添字 = ID - 1
-	contactAt  []SimTime  // 最後に Leader から手紙を受け取った時刻（NodeDetail の選挙の推定。観察だけ）。添字 = ID - 1
+	last []nodeView // node.state を最後に出した値（島の出力の写し）。添字 = ID - 1
 
 	seq     uint64        // 最後に振ったイベントの連番
 	pending []DomainEvent // まだ取り出していないイベント
@@ -133,59 +134,47 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	cfg.Resources = slices.Clone(cfg.Resources)
 
 	n := cfg.Islands
-	ids := make([]uint64, n)
-	for i := range ids {
-		ids[i] = uint64(i + 1)
-	}
-
 	e := &Engine{
-		cfg:        cfg,
-		opt:        opt,
-		nodes:      make([]*cluster.Node, n),
-		ledgers:    make([]*ledger.Ledger, n),
-		phase:      PhaseIntro,
-		last:       make([]nodeView, n),
-		leaderTerm: make([]uint64, n),
-		staleTerm:  make([]uint64, n),
-		contactAt:  make([]SimTime, n),
-		trace:      newTraceHash(),
+		cfg:   cfg,
+		opt:   opt,
+		phase: PhaseIntro,
+		last:  make([]nodeView, n),
+		trace: newTraceHash(),
 	}
-	for i, id := range ids {
-		l, err := ledger.New(cfg.Resources)
-		if err != nil {
-			return nil, fmt.Errorf("sim: island %d: %w", id, err)
-		}
-		e.ledgers[i] = l
-	}
-	for i, id := range ids {
-		node, err := cluster.NewNode(cluster.NodeConfig{
-			ID:              id,
-			Peers:           ids,
-			ElectionTick:    cfg.Raft.ElectionTick,
-			HeartbeatTick:   cfg.Raft.HeartbeatTick,
-			MaxSizePerMsg:   cfg.Raft.MaxSizePerMsg,
-			MaxInflightMsgs: cfg.Raft.MaxInflightMsgs,
-			RandIntn:        RaftRandIntn(seed, id),
-			StateMachine:    ledgerSM{l: e.ledgers[i]},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("sim: %w", err)
-		}
-		e.nodes[i] = node
-	}
-	tr, err := ferry.New(ferry.Config{
-		Islands:       ids,
-		Routes:        cfg.Routes,
-		Ferries:       cfg.Ferries,
-		DockMs:        cfg.DockMs,
-		PortCap:       cfg.PortCap,
-		PerLinkAppCap: cfg.PerLinkAppCap,
-		RelayCap:      cfg.RelayCap,
+	nodes, ledgers, opening, err := islandcore.OpeningAll(islandcore.NodeParams{
+		Islands:         n,
+		InitialLeader:   cfg.InitialLeader,
+		ElectionTick:    cfg.Raft.ElectionTick,
+		HeartbeatTick:   cfg.Raft.HeartbeatTick,
+		MaxSizePerMsg:   cfg.Raft.MaxSizePerMsg,
+		MaxInflightMsgs: cfg.Raft.MaxInflightMsgs,
+		Resources:       cfg.Resources,
+		RandIntn:        func(id uint64) func(int) int { return RaftRandIntn(seed, id) },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sim: %w", err)
 	}
-	e.tr = tr
+	e.nodes, e.ledgers, e.opening = nodes, ledgers, opening
+	coord, err := coordcore.New(coordcore.Config{
+		Islands:  n,
+		Routes:   cfg.Routes,
+		Ferries:  cfg.Ferries,
+		DockMs:   cfg.DockMs,
+		RelayCap: cfg.RelayCap,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sim: %w", err)
+	}
+	switch {
+	case cfg.PortCap < 1:
+		return nil, fmt.Errorf("sim: ferry: portCap %d < 1", cfg.PortCap)
+	case cfg.PerLinkAppCap < 1:
+		return nil, fmt.Errorf("sim: ferry: perLinkAppCap %d < 1", cfg.PerLinkAppCap)
+	case cfg.RelayCap < 0:
+		return nil, fmt.Errorf("sim: ferry: relayCap %d < 0", cfg.RelayCap)
+	}
+	e.coord = coord
+	e.tr = coord.Fleet
 	if err := e.initStorms(seed); err != nil {
 		return nil, err
 	}
@@ -215,16 +204,35 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		return nil, err
 	}
 	e.initStats()
-	res, err := cluster.Opening(e.nodes, cfg.InitialLeader)
-	if err != nil {
-		return nil, fmt.Errorf("sim: %w", err)
+	e.islands = make([]*islandcore.Core, n)
+	for i := range e.islands {
+		isl, err := islandcore.New(islandcore.Config{
+			Island:        uint64(i + 1),
+			Islands:       n,
+			TickMs:        int64(cfg.Raft.TickMs),
+			RetryMs:       e.cfg.Requests.RetryMs,
+			PortCap:       cfg.PortCap,
+			PerLinkAppCap: cfg.PerLinkAppCap,
+			RelayCap:      cfg.RelayCap,
+			Requests:      plan,
+			NextSeq:       e.nextIslandSeq,
+		}, nodes[i], ledgers[i])
+		if err != nil {
+			return nil, fmt.Errorf("sim: %w", err)
+		}
+		e.islands[i] = isl
 	}
-	e.opening = res
 	return e, nil
 }
 
+// nextIslandSeq は島のイベントと待ちの Seq を全島で 1 本の連番で振る。
+func (e *Engine) nextIslandSeq() uint64 {
+	e.islandSeq++
+	return e.islandSeq
+}
+
 // Now はゲーム内時刻を返す。
-func (e *Engine) Now() SimTime { return e.sched.Now() }
+func (e *Engine) Now() SimTime { return e.coord.Now() }
 
 // Phase は今のフェーズを返す。
 func (e *Engine) Phase() Phase { return e.phase }
@@ -267,17 +275,21 @@ func (e *Engine) start() {
 	e.phase = PhaseOpening
 	e.emit(PhaseChanged{Phase: PhaseOpening})
 	for _, rc := range e.opening.Events {
-		e.handleRoleChange(rc)
+		isl := e.islands[rc.Node-1]
+		isl.ApplyRoleChange(int64(e.Now()), rc)
+		e.drain(isl)
 	}
 	// 即時配達した手紙（e.opening.Delivered）は港を通らず ID もないので、手紙のイベントにしない。
-	e.afterStep()
+	e.afterStepAt(islandcore.ClassStart)
 	e.phase = PhaseSailing
 	e.emit(PhaseChanged{Phase: PhaseSailing})
 	e.startStorms()
 	e.startBreakdowns()
 	e.startRushes()
 	e.startDrifts()
-	e.push(e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
+	for _, isl := range e.islands {
+		isl.StartTicks(int64(e.Now()))
+	}
 	e.push(e.cfg.DurationMs, ClassGameTimer, kindRoundEnd, nil)
 	e.scheduleRequests()
 	e.startScore()
@@ -288,30 +300,30 @@ func (e *Engine) applyFerry(cmd Command) error {
 	id := ferry.FerryID(cmd.FerryID)
 	switch cmd.Type {
 	case CmdFerryLoad:
-		if err := e.tr.Load(id, toLetterIDs(cmd.LetterIDs)); err != nil {
+		if err := e.load(id, toLetterIDs(cmd.LetterIDs)); err != nil {
 			return err
 		}
 		for _, lid := range cmd.LetterIDs {
 			e.emit(LetterMoved{LetterID: lid, Loc: ferryLoc(id)})
 		}
 	case CmdFerryUnload:
-		dropped, err := e.tr.Unload(id, toLetterIDs(cmd.LetterIDs))
+		unloaded, err := e.tr.Unload(id, toLetterIDs(cmd.LetterIDs))
 		if err != nil {
 			return err
 		}
 		f, _ := e.tr.Ferry(id)
-		sorted := slices.Clone(cmd.LetterIDs)
-		slices.Sort(sorted)
-		for _, lid := range sorted {
-			// 送信元がこの島の手紙は港へ戻し、経由の手紙は中継倉庫に預けた（ferry.Transport.Unload）。
-			// 港で破棄された手紙も From はこの島なので港の位置を出す（破棄は下の emitDrops）。
+		for _, l := range unloaded {
+			// 送信元がこの島の手紙は港へ戻し、経由の手紙は中継倉庫に預けた（ferry.Fleet.Unload）。
+			// 港で破棄された手紙も港の位置を出す（破棄は島の出力の letter.dropped）。
 			loc := portLoc(f.At)
-			if l, _ := e.tr.Letter(ferry.LetterID(lid)); l.From != f.At {
+			if l.Location.Kind == ferry.LocRelay {
 				loc = relayLoc(f.At)
 			}
-			e.emit(LetterMoved{LetterID: lid, Loc: loc})
+			e.emit(LetterMoved{LetterID: uint64(l.ID), Loc: loc})
 		}
-		e.emitDrops(dropped)
+		isl := e.islands[f.At-1]
+		isl.Unload(int64(e.Now()), unloaded)
+		e.drain(isl)
 	case CmdFerryDepart:
 		before, _ := e.tr.Ferry(id)
 		arriveAt, err := e.tr.Depart(int64(e.Now()), id, cmd.To)
@@ -339,6 +351,9 @@ func (e *Engine) applyFerry(cmd Command) error {
 // RunUntil は t 以下の時刻のイベントをすべて処理し、Now() を t にする。
 // 航行中でなければ何もしない。t が DurationMs を超えていても DurationMs で止まり、ラウンドを終える。
 // t < Now() なら何もしない。
+//
+// イベントは Coordinator のスケジューラと各島の待ち行列から (At, Class, Seq) の順に取り出す（島の Seq は全島で
+// 1 本なので、今の Engine の 1 本のスケジューラと同じ順になる）。
 func (e *Engine) RunUntil(t SimTime) {
 	if e.phase != PhaseSailing {
 		return
@@ -348,19 +363,119 @@ func (e *Engine) RunUntil(t SimTime) {
 		return
 	}
 	for {
-		ev, ok := e.sched.PopUntil(target)
-		if !ok {
+		k, iev, ok := e.nextIslandEvent(target)
+		cev, cok := e.coord.Sched.Peek()
+		cok = cok && cev.At <= target
+		if !ok && !cok {
 			break
 		}
-		e.handleEvent(ev)
-		e.afterStep()
-		if ev.Kind == kindRoundEnd {
-			return
+		if !ok || (cok && coordFirst(cev, iev)) {
+			ev, _ := e.coord.Sched.Pop()
+			e.handleEvent(ev)
+			e.afterStepAt(islandcore.Class(ev.Class))
+			if ev.Kind == kindRoundEnd {
+				return
+			}
+			continue
 		}
+		if err := e.coord.Sched.AdvanceTo(SimTime(iev.At)); err != nil {
+			panic(fmt.Sprintf("sim: advance to island event at %d: %v", iev.At, err))
+		}
+		e.handleIslandEvent(k, iev)
+		e.afterStepAt(iev.Class)
 	}
-	if err := e.sched.AdvanceTo(target); err != nil {
+	if err := e.coord.Sched.AdvanceTo(target); err != nil {
 		panic(fmt.Sprintf("sim: advance to %d: %v", target, err))
 	}
+}
+
+// coordFirst は、Coordinator のイベント c が島のイベント i より先か（(At, Class) で比べる。種類は重ならない）。
+func coordFirst(c Event, i islandcore.Event) bool {
+	if int64(c.At) != i.At {
+		return int64(c.At) < i.At
+	}
+	return uint8(c.Class) < uint8(i.Class)
+}
+
+// nextIslandEvent は、全島の待ち行列のうち At <= target で (At, Class, Seq) が最小のイベントと、その島の添字を返す。
+func (e *Engine) nextIslandEvent(target SimTime) (int, islandcore.Event, bool) {
+	best, found := -1, false
+	var bev islandcore.Event
+	for k, isl := range e.islands {
+		ev, ok := isl.Peek()
+		if !ok || ev.At > int64(target) {
+			continue
+		}
+		if !found || islandEventLess(ev, bev) {
+			best, bev, found = k, ev, true
+		}
+	}
+	return best, bev, found
+}
+
+func islandEventLess(a, b islandcore.Event) bool {
+	if a.At != b.At {
+		return a.At < b.At
+	}
+	if a.Class != b.Class {
+		return a.Class < b.Class
+	}
+	return a.Seq < b.Seq
+}
+
+// handleIslandEvent は島 k の待ち行列の先頭のイベント iev を処理する（後処理は呼び出し側）。
+//
+// RaftTick は全島で同じ時刻にあるので、今の Engine と同じく、全ノードの Tick → 全島の待っている依頼の再試行
+// （入れた順）の順にまとめて処理する。
+func (e *Engine) handleIslandEvent(k int, iev islandcore.Event) {
+	now := int64(e.Now())
+	switch iev.Kind {
+	case islandcore.KindRaftTick:
+		for _, isl := range e.islands {
+			ev, ok := isl.Peek()
+			if !ok || ev.Kind != islandcore.KindRaftTick || ev.At != iev.At {
+				panic(fmt.Sprintf("sim: island %d: next event %+v is not the RaftTick at %d", isl.ID(), ev, iev.At))
+			}
+			isl.HandleTick(isl.Pop())
+		}
+		type wait struct {
+			isl *islandcore.Core
+			w   islandcore.Wait
+		}
+		var ws []wait
+		for _, isl := range e.islands {
+			for _, w := range isl.TakeWaits() {
+				ws = append(ws, wait{isl, w})
+			}
+		}
+		slices.SortFunc(ws, func(a, b wait) int { return cmpUint64(a.w.Seq, b.w.Seq) })
+		for _, w := range ws {
+			w.isl.RetryWait(now, w.w)
+			e.drain(w.isl)
+		}
+	case islandcore.KindRequestSpawn:
+		isl := e.islands[k]
+		ev := isl.Pop()
+		e.spawnRequest(ev.Req)
+		isl.Handle(ev)
+		e.drain(isl)
+	case islandcore.KindRequestRetry:
+		isl := e.islands[k]
+		isl.Handle(isl.Pop())
+		e.drain(isl)
+	default:
+		panic(fmt.Sprintf("sim: unknown island event kind %d", iev.Kind))
+	}
+}
+
+func cmpUint64(a, b uint64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }
 
 // DrainEvents は前回呼んでから出たドメインイベントを取り出す。ほかの状態は変えない。
@@ -385,7 +500,7 @@ func (e *Engine) TraceHash() [32]byte { return e.trace.sum() }
 
 // push はスケジューラにイベントを積む。エラーは Engine の誤りなので panic する。
 func (e *Engine) push(at SimTime, class EventClass, kind EventKind, data any) {
-	if _, err := e.sched.Push(at, class, kind, data); err != nil {
+	if _, err := e.coord.Sched.Push(at, class, kind, data); err != nil {
 		panic(fmt.Sprintf("sim: push kind %d at %d: %v", kind, at, err))
 	}
 }
@@ -399,21 +514,9 @@ func (e *Engine) emit(d EventData) {
 	e.observeStats(ev)
 }
 
-func (e *Engine) emitDrops(drops []ferry.Drop) {
-	for _, d := range drops {
-		e.emit(LetterDropped{LetterID: uint64(d.Letter), Reason: string(d.Reason)})
-	}
-}
-
 // handleEvent はスケジューラのイベント 1 つを処理する（後処理は呼び出し側）。
 func (e *Engine) handleEvent(ev Event) {
 	switch ev.Kind {
-	case kindRaftTick:
-		for _, n := range e.nodes {
-			n.Tick()
-		}
-		e.push(e.Now()+e.cfg.Raft.TickMs, ClassRaftTick, kindRaftTick, nil)
-		e.retryWaits()
 	case kindStormForecast, kindStormStart, kindStormEnd:
 		e.handleStorm(ev)
 	case kindBreakdownStart, kindBreakdownRepair:
@@ -433,16 +536,12 @@ func (e *Engine) handleEvent(ev Event) {
 		e.finishScore()
 		e.phase = PhaseEnded
 		e.emit(PhaseChanged{Phase: PhaseEnded})
-	case kindRequestSpawn:
-		e.spawnRequest(ev.Data.(int))
-	case kindRequestRetry:
-		e.retryRequest(ev.Data.(retryTimer))
 	default:
 		panic(fmt.Sprintf("sim: unknown event kind %d", ev.Kind))
 	}
 }
 
-// arrive は船の到着を処理し、その島宛ての手紙を積んだ順に 1 通ずつ配達する（§6.3）。
+// arrive は船の到着を処理し、その島宛ての手紙を積んだ順に、その島の核に配達する（§6.3）。
 func (e *Engine) arrive(id ferry.FerryID) {
 	delivered, err := e.tr.Arrive(int64(e.Now()), id)
 	if err != nil {
@@ -453,66 +552,45 @@ func (e *Engine) arrive(id ferry.FerryID) {
 	e.breakOnArrival(id)
 	e.push(SimTime(f.ReadyAt), ClassFerryReady, kindFerryReady, id)
 	e.noteDelivered(f.At, len(delivered))
+	letters := make([]ferry.Letter, 0, len(delivered))
 	for _, lid := range delivered {
 		l, ok := e.tr.Letter(lid)
 		if !ok {
 			panic(fmt.Sprintf("sim: delivered letter %d not found", lid))
 		}
-		if l.Kind != ferry.LetterRaft {
-			// 依頼書。届いた島の役場に渡す（request.go）。
-			e.emit(LetterDelivered{LetterID: uint64(lid), IslandID: l.To, Accepted: true})
-			e.deliverRequest(l)
-			continue
-		}
 		e.noteDriftCandidate(l)
-		node := e.nodes[l.To-1]
-		// ferry が持つメッセージを Raft に触らせないよう、複製を渡す。
-		derr := node.Deliver(proto.Clone(l.Raft).(*pb.Message))
-		e.emit(LetterDelivered{LetterID: uint64(lid), IslandID: l.To, Accepted: derr == nil})
-		// 返事がすぐにその島の港に並び、同じ船で持ち帰れるようにする。
-		out, err := node.Process()
-		if err != nil {
-			panic(fmt.Sprintf("sim: node %d: process: %v", l.To, err))
-		}
-		e.noteLeaderContact(l.To, l.From)
-		e.handleOutput(l.To, out)
+		letters = append(letters, l)
 	}
+	isl := e.islands[f.At-1]
+	isl.Deliver(int64(e.Now()), letters)
+	e.drain(isl)
 }
 
-// afterStep は 1 ステップ（成功した Apply・スケジューラのイベント 1 つ）の後処理。
-func (e *Engine) afterStep() {
-	for i, n := range e.nodes {
-		out, err := n.Process()
-		if err != nil {
-			panic(fmt.Sprintf("sim: node %d: process: %v", i+1, err))
-		}
-		e.handleOutput(uint64(i+1), out)
+// load は停泊中の船 id に、今いる島の港の手紙を積む（Coordinator の写しで検査して積み、島の港から取り出す）。
+func (e *Engine) load(id ferry.FerryID, letters []ferry.LetterID) error {
+	if err := e.tr.Load(id, letters); err != nil {
+		return err
 	}
-	for i, n := range e.nodes {
-		st := n.Status()
-		v := nodeView{
-			role:      st.Role,
-			term:      st.Term,
-			vote:      st.Vote,
-			lead:      st.Lead,
-			commit:    st.Commit,
-			applied:   st.Applied,
-			lastIndex: st.LastIndex,
-		}
-		if v == e.last[i] {
-			continue
-		}
-		e.last[i] = v
-		e.emit(NodeState{
-			ID:        st.ID,
-			Role:      roleString(v.role),
-			Term:      v.term,
-			Vote:      v.vote,
-			Lead:      v.lead,
-			Commit:    v.commit,
-			Applied:   v.applied,
-			LastIndex: v.lastIndex,
-		})
+	f, _ := e.tr.Ferry(id)
+	if _, err := e.islands[f.At-1].Take(letters); err != nil {
+		panic(fmt.Sprintf("sim: load %q: island %d: %v", id, f.At, err))
+	}
+	return nil
+}
+
+// afterStep はコマンド（成功した Apply）の後処理（afterStepAt の ClassCommand）。
+func (e *Engine) afterStep() { e.afterStepAt(islandcore.ClassCommand) }
+
+// afterStepAt は 1 ステップ（成功した Apply・スケジューラのイベント 1 つ）の後処理。class は島の出力に付ける印。
+func (e *Engine) afterStepAt(class islandcore.Class) {
+	now := int64(e.Now())
+	for _, isl := range e.islands {
+		isl.Process(now, class)
+		e.drain(isl)
+	}
+	for _, isl := range e.islands {
+		isl.ReportState(now, class)
+		e.drain(isl)
 	}
 	e.refreshRequests()
 	e.refreshScore()
@@ -523,67 +601,68 @@ func (e *Engine) afterStep() {
 	}
 }
 
-// handleOutput は 1 ノードの Process の出力をイベントに変える。
-func (e *Engine) handleOutput(id uint64, out cluster.Output) {
-	for _, rc := range out.Events {
-		e.handleRoleChange(rc)
-	}
-	e.emitStale(id)
-	for _, m := range out.Messages {
-		e.postRaft(id, m)
-	}
-	for _, a := range out.Applied {
-		r := ledgerResult(a.Result)
-		e.emit(LedgerApplied{IslandID: id, Index: a.Index, ReqID: r.ReqID, Result: r.Status, Reason: r.Reason})
-		e.observeApplied(id, r)
-	}
-}
-
-// postRaft は Raft のメッセージ m を島 id の港に置き、作った手紙の letter.created と、港の規則で破棄した手紙の
-// letter.dropped を出す（handleOutput と漂流瓶）。m はそのまま ferry に渡す（書き換えない）。
-func (e *Engine) postRaft(id uint64, m *pb.Message) {
-	created, dropped, err := e.tr.PostRaft(int64(e.Now()), id, []*pb.Message{m})
-	if err != nil {
-		panic(fmt.Sprintf("sim: node %d: post: %v", id, err))
-	}
-	term := e.nodes[id-1].Status().Term
-	for _, lid := range created {
-		l, ok := e.tr.Letter(lid)
-		if !ok {
-			panic(fmt.Sprintf("sim: created letter %d not found", lid))
+// drain は島 isl の出力を、出した順にドメインイベントと Coordinator の写しに反映する。
+func (e *Engine) drain(isl *islandcore.Core) {
+	id := isl.ID()
+	for _, o := range isl.Drain() {
+		switch d := o.Data.(type) {
+		case islandcore.LetterCreatedOut:
+			if err := e.tr.Track(d.Letter); err != nil {
+				panic(fmt.Sprintf("sim: island %d: track: %v", id, err))
+			}
+			e.emit(LetterCreated{Letter: newLetterView(d.Letter, d.SenderTerm)})
+		case islandcore.LetterDroppedOut:
+			if err := e.tr.MarkDropped(d.LetterID); err != nil {
+				panic(fmt.Sprintf("sim: island %d: drop: %v", id, err))
+			}
+			e.emit(LetterDropped{LetterID: uint64(d.LetterID), Reason: string(d.Reason)})
+		case islandcore.LetterDeliveredOut:
+			e.emit(LetterDelivered{LetterID: uint64(d.LetterID), IslandID: id, Accepted: d.Accepted})
+		case islandcore.NodeStateOut:
+			v := nodeView{
+				role:      d.Role,
+				term:      d.Term,
+				vote:      d.Vote,
+				lead:      d.Lead,
+				commit:    d.Commit,
+				applied:   d.Applied,
+				lastIndex: d.LastIndex,
+			}
+			e.last[id-1] = v
+			e.emit(NodeState{
+				ID:        id,
+				Role:      roleString(v.role),
+				Term:      v.term,
+				Vote:      v.vote,
+				Lead:      v.lead,
+				Commit:    v.commit,
+				Applied:   v.applied,
+				LastIndex: v.lastIndex,
+			})
+		case islandcore.LeaderElectedOut:
+			e.emit(LeaderElected{ID: id, Term: d.Term})
+		case islandcore.SteppedDownOut:
+			e.emit(SteppedDown{ID: id, Term: d.Term, Reason: d.Reason})
+		case islandcore.TermChangedOut:
+			for _, lid := range e.coord.StaleLetters(id, d.Term) {
+				e.emit(LetterStale{LetterID: uint64(lid)})
+			}
+		case islandcore.LedgerAppliedOut:
+			e.emit(LedgerApplied{IslandID: id, Index: d.Index, ReqID: d.ReqID, Result: d.Result, Reason: d.Reason})
+			e.observeApplied(id, ledger.Result{ReqID: d.ReqID, Status: d.Result, Reason: d.Reason})
+		case islandcore.RequestRoutedOut:
+			e.observeRouted(d)
+		default:
+			panic(fmt.Sprintf("sim: island %d: unknown output %T", id, o.Data))
 		}
-		e.emit(LetterCreated{Letter: newLetterView(l, term)})
 	}
-	e.emitDrops(dropped)
-}
-
-// handleRoleChange は役割の変化を node.leader_elected・node.stepped_down にする。
-// そのほかの変化は node.state だけで表す。
-func (e *Engine) handleRoleChange(rc cluster.RoleChange) {
-	i := rc.Node - 1
-	switch {
-	case rc.Role == raft.StateLeader && rc.PrevRole != raft.StateLeader:
-		e.emit(LeaderElected{ID: rc.Node, Term: rc.Term})
-		e.leaderTerm[i] = rc.Term
-	case rc.PrevRole == raft.StateLeader && rc.Role != raft.StateLeader:
-		e.emit(SteppedDown{ID: rc.Node, Term: rc.Term, Reason: stepDownReason(e.leaderTerm[i], rc.Term)})
-	}
-}
-
-// stepDownReason は Leader でなくなった理由の推定（プロトコル §6 の注）。
-// Leader になったときより Term が上がっていれば higher_term、そうでなければ check_quorum。
-func stepDownReason(leaderTerm, term uint64) string {
-	if term > leaderTerm {
-		return "higher_term"
-	}
-	return "check_quorum"
 }
 
 // propose は island のノードに data を提案する。Leader でなければ raft.ErrProposalDropped（包まない）。
 // 後処理は呼ばない（呼び出し側のステップの後処理で、手紙と適用のイベントになる）。
 func (e *Engine) propose(island uint64, data []byte) error {
-	if island < 1 || island > uint64(len(e.nodes)) {
+	if island < 1 || island > uint64(len(e.islands)) {
 		return fmt.Errorf("sim: propose: unknown island %d", island)
 	}
-	return e.nodes[island-1].Propose(data)
+	return e.islands[island-1].Propose(data)
 }

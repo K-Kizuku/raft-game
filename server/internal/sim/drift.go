@@ -121,8 +121,9 @@ func (e *Engine) drift(i int) {
 		p := e.drifts.rng.IntN(len(idx))
 		rec := e.drifts.log[idx[p]]
 		idx = slices.Delete(idx, p, p+1)
-		e.emitStale(rec.from)
-		e.postRaft(rec.from, proto.Clone(rec.msg).(*pb.Message))
+		isl := e.islands[rec.from-1]
+		isl.Repost(int64(e.Now()), proto.Clone(rec.msg).(*pb.Message))
+		e.drain(isl)
 	}
 }
 

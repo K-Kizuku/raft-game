@@ -92,7 +92,7 @@ func (e *Engine) Snapshot() Snapshot {
 		if !ok {
 			panic(fmt.Sprintf("sim: snapshot: letter %d not found", lid))
 		}
-		v := newLetterView(l, e.staleTerm[l.From-1])
+		v := newLetterView(l, e.coord.StaleTerm(l.From))
 		switch l.Location.Kind {
 		case ferry.LocPort:
 			v.Loc = portLoc(l.Location.Island)
@@ -121,7 +121,7 @@ func (e *Engine) Snapshot() Snapshot {
 	return s
 }
 
-// ferryView は船の表示用の値を作る。f は Transport が返した複製。
+// ferryView は船の表示用の値を作る。f は Fleet が返した複製。
 func (e *Engine) ferryView(f ferry.Ferry) FerryView {
 	v := FerryView{
 		ID:       string(f.ID),

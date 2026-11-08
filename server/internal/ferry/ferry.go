@@ -42,7 +42,7 @@ func TravelMs(routeMs, speedPermille int64) int64 {
 	return v
 }
 
-func (t *Transport) ferry(id FerryID) (*Ferry, error) {
+func (t *Fleet) ferry(id FerryID) (*Ferry, error) {
 	i, ok := t.ferryIdx[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownFerry, id)
@@ -65,7 +65,7 @@ func checkIDs(letters []LetterID) error {
 }
 
 // Load は停泊中の船に、今いる島の港の手紙を積む。1 通でも積めなければ 1 通も積まない。
-func (t *Transport) Load(id FerryID, letters []LetterID) error {
+func (t *Fleet) Load(id FerryID, letters []LetterID) error {
 	f, err := t.ferry(id)
 	if err != nil {
 		return err
@@ -93,11 +93,13 @@ func (t *Transport) Load(id FerryID, letters []LetterID) error {
 	return nil
 }
 
-// Unload は停泊中の船から手紙を降ろす。ID の昇順に、送信元が今いる島の手紙はその島の港に戻し
-// （規則 R1〜R6 を適用する）、そうでない手紙（経由の手紙）はその島の中継倉庫に預ける（合流・破棄しない）。
+// Unload は停泊中の船から手紙を降ろす。ID の昇順に、送信元が今いる島の手紙はその島の港に戻し、
+// そうでない手紙（経由の手紙）はその島の中継倉庫に預ける（合流・破棄しない）。
 // 預けると倉庫が relayCap 通を超えるなら ErrRelayFull。1 通でも降ろせなければ 1 通も降ろさない。
-// 返す dropped は港へ戻した手紙の破棄だけ（倉庫では破棄は起きない）。
-func (t *Transport) Unload(id FerryID, letters []LetterID) (dropped []Drop, err error) {
+//
+// 降ろした手紙を ID の昇順に、新しい所在（港か中継倉庫）つきで返す。港に戻した手紙への規則 R1〜R6 の適用は、
+// 呼び出し側が、返した順に島の Port.Return で行い、破棄を MarkDropped で写す（Transport.Unload）。
+func (t *Fleet) Unload(id FerryID, letters []LetterID) (unloaded []Letter, err error) {
 	f, err := t.ferry(id)
 	if err != nil {
 		return nil, err
@@ -126,17 +128,22 @@ func (t *Transport) Unload(id FerryID, letters []LetterID) (dropped []Drop, err 
 	sorted := slices.Clone(letters)
 	slices.Sort(sorted)
 	for _, lid := range sorted {
-		if t.letter(lid).From == f.At {
-			dropped = t.enqueue(f.At, lid, dropped)
-			continue
+		l := t.letter(lid)
+		if l.From == f.At {
+			port := t.ports[f.At]
+			pos, _ := slices.BinarySearch(port, lid)
+			t.ports[f.At] = slices.Insert(port, pos, lid)
+			l.Location = Location{Kind: LocPort, Island: f.At}
+		} else {
+			t.store(f.At, lid)
 		}
-		t.store(f.At, lid)
+		unloaded = append(unloaded, cloneLetter(*l))
 	}
-	return dropped, nil
+	return unloaded, nil
 }
 
 // store は手紙 id を island の中継倉庫の ID の順の位置に入れる。規則 R1〜R6 は当てはめない。
-func (t *Transport) store(island uint64, id LetterID) {
+func (t *Fleet) store(island uint64, id LetterID) {
 	relay := t.relays[island]
 	pos, _ := slices.BinarySearch(relay, id)
 	t.relays[island] = slices.Insert(relay, pos, id)
@@ -145,7 +152,7 @@ func (t *Transport) store(island uint64, id LetterID) {
 
 // RelayLoad は停泊中の船に、今いる島の中継倉庫の手紙を渡した順に積む（どの船でもよい）。
 // 1 通でも積めなければ 1 通も積まない。
-func (t *Transport) RelayLoad(id FerryID, letters []LetterID) error {
+func (t *Fleet) RelayLoad(id FerryID, letters []LetterID) error {
 	f, err := t.ferry(id)
 	if err != nil {
 		return err
@@ -177,7 +184,7 @@ func (t *Transport) RelayLoad(id FerryID, letters []LetterID) error {
 }
 
 // Depart は停泊中の船を to に向けて出航させ、到着の時刻を返す。
-func (t *Transport) Depart(now int64, id FerryID, to uint64) (arriveAt int64, err error) {
+func (t *Fleet) Depart(now int64, id FerryID, to uint64) (arriveAt int64, err error) {
 	f, err := t.ferry(id)
 	if err != nil {
 		return 0, err
@@ -209,7 +216,7 @@ func (t *Transport) Depart(now int64, id FerryID, to uint64) (arriveAt int64, er
 // Break は停泊中の船を until まで故障させ（出航だけを止める）、故障が直る時刻を返す。
 // 故障中にもう一度呼ぶと、直る時刻は大きい方になる（重なった故障は延びる）。
 // until <= now は ErrInvalidArgument、航行中の船は ErrNotDocked で、何も変えない。
-func (t *Transport) Break(now int64, id FerryID, until int64) (newUntil int64, err error) {
+func (t *Fleet) Break(now int64, id FerryID, until int64) (newUntil int64, err error) {
 	f, err := t.ferry(id)
 	if err != nil {
 		return 0, err
@@ -226,7 +233,7 @@ func (t *Transport) Break(now int64, id FerryID, until int64) (newUntil int64, e
 
 // Arrive は航行中の船を ArriveAt ちょうどの時刻に到着させ、宛先がその島の手紙を配達する。
 // 配達した手紙の ID を積んだ順に返す。宛先が別の島の手紙は積んだまま（経由輸送）。
-func (t *Transport) Arrive(now int64, id FerryID) (delivered []LetterID, err error) {
+func (t *Fleet) Arrive(now int64, id FerryID) (delivered []LetterID, err error) {
 	f, err := t.ferry(id)
 	if err != nil {
 		return nil, err

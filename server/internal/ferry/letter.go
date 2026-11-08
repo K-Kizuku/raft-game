@@ -2,7 +2,7 @@ package ferry
 
 import pb "go.etcd.io/raft/v3/raftpb"
 
-// LetterID は手紙の ID。1 から振る連番（Transport の中で決定的）。
+// LetterID は手紙の ID（0 は使わない）。Transport は全体で 1 本の連番、島ごとの核（islandcore）は islandId × 10^9 + n で振る。
 type LetterID uint64
 
 // LetterKind は手紙の種類。

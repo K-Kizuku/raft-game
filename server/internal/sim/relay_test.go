@@ -198,13 +198,13 @@ func TestRelayAcks(t *testing.T) { // SR-3
 	t.Run("phase_invalid", func(t *testing.T) {
 		t.Parallel()
 		e := newEngine(t, relayTestConfig(), Options{CheckInvariants: true})
-		fail(t, e, Command{Type: CmdRelayLoad, FerryID: "f2", LetterIDs: []uint64{1}}, CodePhaseInvalid)
+		fail(t, e, Command{Type: CmdRelayLoad, FerryID: "f2", LetterIDs: lids(1, 1)}, CodePhaseInvalid)
 		mustApply(t, e, Command{Type: CmdGameStart})
 		e.RunUntil(e.cfg.DurationMs)
 		if e.Phase() != PhaseEnded {
 			t.Fatalf("phase = %s", e.Phase())
 		}
-		fail(t, e, Command{Type: CmdRelayLoad, FerryID: "f2", LetterIDs: []uint64{1}}, CodePhaseInvalid)
+		fail(t, e, Command{Type: CmdRelayLoad, FerryID: "f2", LetterIDs: lids(1, 1)}, CodePhaseInvalid)
 	})
 }
 

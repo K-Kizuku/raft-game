@@ -1,7 +1,6 @@
 package ferry
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -52,363 +51,202 @@ type Config struct {
 	RelayCap      int   // transport.relayCap（島ごとの中継倉庫の上限。0 = 積み替えなし）
 }
 
-// Transport は港・船・航路・手紙の状態を持つ。1 つの goroutine から使う。
+// Transport は港・船・航路・手紙の状態を 1 つにまとめたもの（単一のプロセスでの使い方）。
+// 航路・船・手紙の所在の写しは Fleet（埋め込み）、各島の港と中継倉庫は Port が持ち、Transport はその間を
+// つなぐ（DTN-00 #363 で分けた。sim.Engine は Fleet と各島の Port を直接使う）。手紙の ID は全体で 1 本の連番。
+// 1 つの goroutine から使う。
 type Transport struct {
-	islands  []uint64
-	isIsland map[uint64]bool
-	routes   []Route
-	routeIdx map[routeKey]int
-	ferries  []Ferry
-	ferryIdx map[FerryID]int
-	letters  []Letter              // ID の昇順（狭義）。港・船・中継倉庫にある手紙と、まだ Reclaim していない配達済み・破棄の手紙
-	lastID   LetterID              // 最後に振った ID（0 = まだない）。Reclaim しても戻さない
-	ports    map[uint64][]LetterID // 島 → その島が送信元の手紙（ID の昇順）
-	relays   map[uint64][]LetterID // 島 → その島の中継倉庫の手紙（ID の昇順）
-
-	dockMs        int64
+	*Fleet
+	islandPorts   map[uint64]*Port // 島 → 港。検索だけに使い、走査しない
+	lastID        LetterID         // 最後に振った ID（0 = まだない）。Reclaim しても戻さない
 	portCap       int
 	perLinkAppCap int
-	relayCap      int
 }
 
 // New は設定を検査して Transport を作る。
 func New(cfg Config) (*Transport, error) {
-	if len(cfg.Islands) == 0 {
-		return nil, errors.New("ferry: no islands")
+	fl, err := NewFleet(FleetConfig{
+		Islands:  cfg.Islands,
+		Routes:   cfg.Routes,
+		Ferries:  cfg.Ferries,
+		DockMs:   cfg.DockMs,
+		RelayCap: cfg.RelayCap,
+	})
+	if err != nil {
+		return nil, err
 	}
 	t := &Transport{
-		islands:       slices.Clone(cfg.Islands),
-		isIsland:      make(map[uint64]bool, len(cfg.Islands)),
-		routeIdx:      make(map[routeKey]int, len(cfg.Routes)),
-		ferryIdx:      make(map[FerryID]int, len(cfg.Ferries)),
-		ports:         make(map[uint64][]LetterID, len(cfg.Islands)),
-		relays:        make(map[uint64][]LetterID, len(cfg.Islands)),
-		dockMs:        cfg.DockMs,
+		Fleet:         fl,
+		islandPorts:   make(map[uint64]*Port, len(cfg.Islands)),
 		portCap:       cfg.PortCap,
 		perLinkAppCap: cfg.PerLinkAppCap,
-		relayCap:      cfg.RelayCap,
 	}
 	for _, id := range cfg.Islands {
-		if id == 0 {
-			return nil, errors.New("ferry: island id 0")
-		}
-		if t.isIsland[id] {
-			return nil, fmt.Errorf("ferry: duplicate island %d", id)
-		}
-		t.isIsland[id] = true
-	}
-	for _, rc := range cfg.Routes {
-		if !t.isIsland[rc.A] || !t.isIsland[rc.B] {
-			return nil, fmt.Errorf("ferry: route %d-%d: unknown island", rc.A, rc.B)
-		}
-		if rc.A == rc.B {
-			return nil, fmt.Errorf("ferry: route %d-%d: same island", rc.A, rc.B)
-		}
-		k := makeRouteKey(rc.A, rc.B)
-		if _, dup := t.routeIdx[k]; dup {
-			return nil, fmt.Errorf("ferry: duplicate route %d-%d", rc.A, rc.B)
-		}
-		if rc.TravelMs < 1 {
-			return nil, fmt.Errorf("ferry: route %d-%d: travelMs %d < 1", rc.A, rc.B, rc.TravelMs)
-		}
-		t.routeIdx[k] = len(t.routes)
-		t.routes = append(t.routes, Route{A: k.a, B: k.b, TravelMs: rc.TravelMs})
-	}
-	for _, fc := range cfg.Ferries {
-		if fc.ID == "" {
-			return nil, errors.New("ferry: empty ferry id")
-		}
-		if _, dup := t.ferryIdx[fc.ID]; dup {
-			return nil, fmt.Errorf("ferry: duplicate ferry %q", fc.ID)
-		}
-		if !t.isIsland[fc.Home] {
-			return nil, fmt.Errorf("ferry: ferry %q: unknown home %d", fc.ID, fc.Home)
-		}
-		if fc.Capacity < 1 {
-			return nil, fmt.Errorf("ferry: ferry %q: capacity %d < 1", fc.ID, fc.Capacity)
-		}
-		if fc.SpeedPermille < 1 {
-			return nil, fmt.Errorf("ferry: ferry %q: speedPermille %d < 1", fc.ID, fc.SpeedPermille)
-		}
-		t.ferryIdx[fc.ID] = len(t.ferries)
-		t.ferries = append(t.ferries, Ferry{
-			ID:            fc.ID,
-			Name:          fc.Name,
-			Capacity:      fc.Capacity,
-			SpeedPermille: fc.SpeedPermille,
-			State:         Docked,
-			At:            fc.Home,
+		p, err := NewPort(PortConfig{
+			Island:        id,
+			Islands:       cfg.Islands,
+			PortCap:       cfg.PortCap,
+			PerLinkAppCap: cfg.PerLinkAppCap,
+			RelayCap:      cfg.RelayCap,
+			NewID:         t.nextID,
 		})
-	}
-	if cfg.DockMs < 0 {
-		return nil, fmt.Errorf("ferry: dockMs %d < 0", cfg.DockMs)
-	}
-	if cfg.PortCap < 1 {
-		return nil, fmt.Errorf("ferry: portCap %d < 1", cfg.PortCap)
-	}
-	if cfg.PerLinkAppCap < 1 {
-		return nil, fmt.Errorf("ferry: perLinkAppCap %d < 1", cfg.PerLinkAppCap)
-	}
-	if cfg.RelayCap < 0 {
-		return nil, fmt.Errorf("ferry: relayCap %d < 0", cfg.RelayCap)
+		if err != nil {
+			return nil, err
+		}
+		t.islandPorts[id] = p
 	}
 	return t, nil
 }
 
-// index は手紙 id の t.letters での添字を返す。
-func (t *Transport) index(id LetterID) (int, bool) {
-	if id == 0 {
-		return 0, false
-	}
-	return slices.BinarySearchFunc(t.letters, id, func(l Letter, id LetterID) int { return cmp.Compare(l.ID, id) })
+func (t *Transport) nextID() LetterID {
+	t.lastID++
+	return t.lastID
 }
 
-func (t *Transport) letter(id LetterID) *Letter {
-	i, ok := t.index(id)
+// newLetter は、港の規則を通さずに手紙 l を写しに加える（テストが不変条件を壊すのに使う）。
+func (t *Transport) newLetter(l Letter) LetterID {
+	l.ID = t.nextID()
+	t.letters = append(t.letters, l)
+	return l.ID
+}
+
+// track は Port が作った手紙と破棄を写しに反映する。
+func (t *Transport) track(created []Letter, dropped []Drop) {
+	for _, l := range created {
+		if err := t.Track(l); err != nil {
+			panic(fmt.Sprintf("ferry: track: %v", err))
+		}
+	}
+	t.markDropped(dropped)
+}
+
+func (t *Transport) markDropped(dropped []Drop) {
+	for _, d := range dropped {
+		if err := t.MarkDropped(d.Letter); err != nil {
+			panic(fmt.Sprintf("ferry: mark dropped: %v", err))
+		}
+	}
+}
+
+// PostRaft は Raft のメッセージを順に手紙にして from の港に入れる。
+// 先にすべてを検査し、誤りがあれば何も変えずにエラーを返す。
+// m は書き換えず、ポインタをそのまま持つ。
+func (t *Transport) PostRaft(now int64, from uint64, msgs []*pb.Message) (created []LetterID, dropped []Drop, err error) {
+	p, ok := t.islandPorts[from]
 	if !ok {
-		return nil
+		return nil, nil, fmt.Errorf("%w: %d", ErrUnknownIsland, from)
 	}
-	return &t.letters[i]
+	letters, dropped, err := p.PostRaft(now, msgs)
+	if err != nil {
+		return nil, nil, err
+	}
+	t.track(letters, dropped)
+	for _, l := range letters {
+		created = append(created, l.ID)
+	}
+	return created, dropped, nil
 }
 
-// Letter は手紙の値の複製を返す（Req は複製、Raft は同じポインタ）。
-// 配達済み・破棄した手紙も、Reclaim を呼ぶまでは引ける（Location が LocDelivered・LocDropped）。
-// Reclaim で手放した ID・振っていない ID・0 は (Letter{}, false) を返す。
-func (t *Transport) Letter(id LetterID) (Letter, bool) {
-	l := t.letter(id)
-	if l == nil {
-		return Letter{}, false
-	}
-	c := *l
-	if l.Req != nil {
-		r := *l.Req
-		c.Req = &r
-	}
-	return c, true
-}
-
-// Reclaim は、配達済み・破棄した手紙（LocDelivered・LocDropped）をすべて手放し、その数を返す。
-// 手放した手紙は Letter で引けなくなる（Load・Unload では存在しない ID と同じ扱い）。ID は再利用しない。
-// 港・船・中継倉庫にある手紙・船・航路・次に振る ID は変えない。
-//
-// 呼び出し側は、配達・破棄の結果から必要な値（Letter、Raft のポインタ）を取り出し、
-// ドメインイベントを作り終えたあとで呼ぶ。呼ばなければ終わった手紙を持ち続ける（メモリは増え続ける）。
-// 呼べば、直後に持つ手紙の数は港・船の上限（V-7）で抑えられる。スライスの容量は縮めない。
-func (t *Transport) Reclaim() int {
-	n := len(t.letters)
-	t.letters = slices.DeleteFunc(t.letters, func(l Letter) bool {
-		return l.Location.Kind == LocDelivered || l.Location.Kind == LocDropped
-	})
-	return n - len(t.letters)
-}
-
-// Port は島の港にある手紙の ID（昇順）の複製を返す。島がなければ nil。
-func (t *Transport) Port(island uint64) []LetterID {
-	if !t.isIsland[island] {
-		return nil
-	}
-	p := t.ports[island]
-	if p == nil {
-		return []LetterID{}
-	}
-	return slices.Clone(p)
-}
-
-// Relay は島の中継倉庫にある手紙の ID（昇順）の複製を返す。島がなければ nil。
-func (t *Transport) Relay(island uint64) []LetterID {
-	if !t.isIsland[island] {
-		return nil
-	}
-	r := t.relays[island]
-	if r == nil {
-		return []LetterID{}
-	}
-	return slices.Clone(r)
-}
-
-func cloneFerry(f Ferry) Ferry {
-	f.Cargo = slices.Clone(f.Cargo)
-	if f.Cargo == nil {
-		f.Cargo = []LetterID{}
-	}
-	return f
-}
-
-// Ferry は船の値の複製を返す（Cargo も複製）。
-func (t *Transport) Ferry(id FerryID) (Ferry, bool) {
-	i, ok := t.ferryIdx[id]
+// PostRequest は依頼書を 1 通作って from の港に入れる。
+func (t *Transport) PostRequest(now int64, from, to uint64, note RequestNote) (id LetterID, dropped []Drop, err error) {
+	p, ok := t.islandPorts[from]
 	if !ok {
-		return Ferry{}, false
+		return 0, nil, fmt.Errorf("%w: from %d", ErrUnknownIsland, from)
 	}
-	return cloneFerry(t.ferries[i]), true
+	l, dropped, err := p.PostRequest(now, to, note)
+	if err != nil {
+		return 0, nil, err
+	}
+	t.track([]Letter{l}, dropped)
+	return l.ID, dropped, nil
 }
 
-// Ferries は船の複製を Config の順に返す。
-func (t *Transport) Ferries() []Ferry {
-	out := make([]Ferry, len(t.ferries))
-	for i, f := range t.ferries {
-		out[i] = cloneFerry(f)
+// Load は停泊中の船に、今いる島の港の手紙を積む。1 通でも積めなければ 1 通も積まない。
+func (t *Transport) Load(id FerryID, letters []LetterID) error {
+	f, ok := t.Ferry(id)
+	if err := t.Fleet.Load(id, letters); err != nil {
+		return err
 	}
-	return out
+	if _, err := t.islandPorts[f.At].Take(letters); !ok || err != nil {
+		panic(fmt.Sprintf("ferry: load: port %d: %v", f.At, err))
+	}
+	return nil
 }
 
-// Routes は航路の複製を Config の順に返す。
-func (t *Transport) Routes() []Route { return slices.Clone(t.routes) }
+// Unload は停泊中の船から手紙を降ろす。ID の昇順に、送信元が今いる島の手紙はその島の港に戻し
+// （規則 R1〜R6 を適用する）、そうでない手紙（経由の手紙）はその島の中継倉庫に預ける（合流・破棄しない）。
+// 預けると倉庫が relayCap 通を超えるなら ErrRelayFull。1 通でも降ろせなければ 1 通も降ろさない。
+// 返す dropped は港へ戻した手紙の破棄だけ（倉庫では破棄は起きない）。
+func (t *Transport) Unload(id FerryID, letters []LetterID) (dropped []Drop, err error) {
+	unloaded, err := t.Fleet.Unload(id, letters)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range unloaded {
+		p := t.islandPorts[l.Location.Island]
+		if l.Location.Kind == LocPort {
+			ds, err := p.Return(l)
+			if err != nil {
+				panic(fmt.Sprintf("ferry: unload: %v", err))
+			}
+			t.markDropped(ds)
+			dropped = append(dropped, ds...)
+			continue
+		}
+		if err := p.Store(l); err != nil {
+			panic(fmt.Sprintf("ferry: unload: %v", err))
+		}
+	}
+	return dropped, nil
+}
+
+// RelayLoad は停泊中の船に、今いる島の中継倉庫の手紙を渡した順に積む（どの船でもよい）。
+// 1 通でも積めなければ 1 通も積まない。
+func (t *Transport) RelayLoad(id FerryID, letters []LetterID) error {
+	f, ok := t.Ferry(id)
+	if err := t.Fleet.RelayLoad(id, letters); err != nil {
+		return err
+	}
+	if _, err := t.islandPorts[f.At].TakeRelay(letters); !ok || err != nil {
+		panic(fmt.Sprintf("ferry: relay load: relay %d: %v", f.At, err))
+	}
+	return nil
+}
 
 // CheckInvariants は港・船・手紙の不変条件（V-7・I-7）を確かめ、違反を 1 つ見つけたら
 // 説明つきのエラーを返す。
 func (t *Transport) CheckInvariants() error {
-	// 並びが崩れていると二分探索が当てにならないので、港・船より先に ID の並びを確かめる。
 	for i := range t.letters {
-		id := t.letters[i].ID
-		if id < 1 || id > t.lastID {
+		if id := t.letters[i].ID; id > t.lastID {
 			return fmt.Errorf("ferry: invariant: letter at %d has id %d (last id %d)", i, id, t.lastID)
 		}
-		if i > 0 && t.letters[i-1].ID >= id {
-			return fmt.Errorf("ferry: invariant: letter at %d has id %d, not above %d", i, id, t.letters[i-1].ID)
-		}
 	}
-	seen := make([]bool, len(t.letters)) // 港・船・中継倉庫の一覧に出てきた手紙（t.letters の添字）
-	mark := func(id LetterID, where string) error {
-		i, ok := t.index(id)
-		if !ok {
-			return fmt.Errorf("ferry: invariant: %s: unknown letter %d", where, id)
-		}
-		if seen[i] {
-			return fmt.Errorf("ferry: invariant: letter %d listed twice (%s)", id, where)
-		}
-		seen[i] = true
-		return nil
+	if err := t.Fleet.CheckInvariants(); err != nil {
+		return err
 	}
 	for _, island := range t.islands {
-		port := t.ports[island]
-		where := fmt.Sprintf("port %d", island)
-		raftN := 0
-		appN := make(map[uint64]int)
-		hb := make(map[kindTo]int)
-		appResp := make(map[uint64]int)
-		reqs := make(map[string]int)
-		for i, id := range port {
-			if i > 0 && port[i-1] >= id {
-				return fmt.Errorf("ferry: invariant: %s: ids not strictly ascending at %d", where, i)
-			}
-			if err := mark(id, where); err != nil {
-				return err
-			}
-			l := t.letter(id)
-			if l.Location != (Location{Kind: LocPort, Island: island}) {
-				return fmt.Errorf("ferry: invariant: %s: letter %d location %+v", where, id, l.Location)
-			}
-			if l.From != island {
-				return fmt.Errorf("ferry: invariant: %s: letter %d from %d", where, id, l.From)
-			}
-			if l.Kind == LetterRequest {
-				reqs[l.Req.ReqID]++
-				if reqs[l.Req.ReqID] > 1 {
-					return fmt.Errorf("ferry: invariant: %s: request %q twice", where, l.Req.ReqID)
-				}
-				continue
-			}
-			raftN++
-			m := l.Raft
-			switch typ := m.GetType(); {
-			case typ == pb.MsgApp:
-				appN[l.To]++
-				if appN[l.To] > t.perLinkAppCap {
-					return fmt.Errorf("ferry: invariant: %s: MsgApp to %d exceeds perLinkAppCap %d", where, l.To, t.perLinkAppCap)
-				}
-			case isHeartbeat(typ):
-				k := kindTo{typ, l.To}
-				hb[k]++
-				if hb[k] > 1 {
-					return fmt.Errorf("ferry: invariant: %s: %v to %d twice", where, typ, l.To)
-				}
-			case typ == pb.MsgAppResp && !m.GetReject():
-				appResp[l.To]++
-				if appResp[l.To] > 1 {
-					return fmt.Errorf("ferry: invariant: %s: MsgAppResp to %d twice", where, l.To)
-				}
-			case isElection(typ):
-				for _, prev := range port[:i] {
-					p := t.letter(prev)
-					if p.Kind == LetterRaft && p.Raft.GetType() == typ && p.To == l.To && p.Raft.GetTerm() <= m.GetTerm() {
-						return fmt.Errorf("ferry: invariant: %s: %v to %d: letter %d (term %d) not superseded by %d (term %d)",
-							where, typ, l.To, prev, p.Raft.GetTerm(), id, m.GetTerm())
-					}
-				}
-			}
+		if err := checkPortRules(island, t.ports[island], t.letter, t.portCap, t.perLinkAppCap); err != nil {
+			return err
 		}
-		if raftN > t.portCap {
-			return fmt.Errorf("ferry: invariant: %s: %d raft letters exceed portCap %d", where, raftN, t.portCap)
+		p := t.islandPorts[island]
+		if err := p.CheckInvariants(); err != nil {
+			return err
+		}
+		if err := CheckPortMirror(t.Fleet, p); err != nil {
+			return err
 		}
 	}
-	for _, island := range t.islands {
-		relay := t.relays[island]
-		where := fmt.Sprintf("relay %d", island)
-		for i, id := range relay {
-			if i > 0 && relay[i-1] >= id {
-				return fmt.Errorf("ferry: invariant: %s: ids not strictly ascending at %d", where, i)
-			}
-			if err := mark(id, where); err != nil {
-				return err
-			}
-			l := t.letter(id)
-			if l.Location != (Location{Kind: LocRelay, Island: island}) {
-				return fmt.Errorf("ferry: invariant: %s: letter %d location %+v", where, id, l.Location)
-			}
-			if l.To == island {
-				return fmt.Errorf("ferry: invariant: %s: letter %d to %d", where, id, l.To)
-			}
-			if l.From == island {
-				return fmt.Errorf("ferry: invariant: %s: letter %d from %d", where, id, l.From)
-			}
-		}
-		if len(relay) > t.relayCap {
-			return fmt.Errorf("ferry: invariant: %s: %d letters exceed relayCap %d", where, len(relay), t.relayCap)
-		}
+	return nil
+}
+
+// CheckPortMirror は、Fleet の写しの island の港・中継倉庫の手紙の ID の並びが、島の Port と一致するかを確かめる。
+func CheckPortMirror(fl *Fleet, p *Port) error {
+	island := p.Island()
+	if got, want := fl.ports[island], p.port; !slices.Equal(got, want) {
+		return fmt.Errorf("ferry: invariant: port %d: mirror %v, port %v", island, got, want)
 	}
-	for _, f := range t.ferries {
-		where := fmt.Sprintf("ferry %q", f.ID)
-		if len(f.Cargo) > f.Capacity {
-			return fmt.Errorf("ferry: invariant: %s: cargo %d exceeds capacity %d", where, len(f.Cargo), f.Capacity)
-		}
-		for _, id := range f.Cargo {
-			if err := mark(id, where); err != nil {
-				return err
-			}
-			if l := t.letter(id); l.Location != (Location{Kind: LocFerry, Ferry: f.ID}) {
-				return fmt.Errorf("ferry: invariant: %s: letter %d location %+v", where, id, l.Location)
-			}
-		}
-		switch f.State {
-		case Docked:
-			if !t.isIsland[f.At] || f.From != 0 || f.To != 0 {
-				return fmt.Errorf("ferry: invariant: %s: docked with at=%d from=%d to=%d", where, f.At, f.From, f.To)
-			}
-		case Sailing:
-			if _, ok := t.route(f.From, f.To); f.At != 0 || !ok || f.From == f.To {
-				return fmt.Errorf("ferry: invariant: %s: sailing with at=%d from=%d to=%d", where, f.At, f.From, f.To)
-			}
-			// 故障中に出航していない（Break は停泊中だけなので、故障が直る前に出た船はない）。
-			if f.BrokenUntil != 0 && f.DepartAt < f.BrokenUntil {
-				return fmt.Errorf("ferry: invariant: %s: departed at %d before broken until %d", where, f.DepartAt, f.BrokenUntil)
-			}
-		default:
-			return fmt.Errorf("ferry: invariant: %s: unknown state %d", where, f.State)
-		}
-	}
-	for i := range t.letters {
-		l := &t.letters[i]
-		switch l.Location.Kind {
-		case LocPort, LocFerry, LocRelay:
-			if !seen[i] {
-				return fmt.Errorf("ferry: invariant: letter %d at %+v is not listed", l.ID, l.Location)
-			}
-		default:
-			if seen[i] {
-				return fmt.Errorf("ferry: invariant: letter %d at %+v is listed", l.ID, l.Location)
-			}
-		}
+	if got, want := fl.relays[island], p.relay; !slices.Equal(got, want) {
+		return fmt.Errorf("ferry: invariant: relay %d: mirror %v, relay %v", island, got, want)
 	}
 	return nil
 }

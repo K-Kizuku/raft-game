@@ -271,7 +271,7 @@ func rpRecord(t testing.TB, cfg Config, seed uint64) rpRun {
 			case 0:
 				if len(sailing) > 0 {
 					f := sailing[r.IntN(len(sailing))]
-					bad = Command{Type: CmdFerryLoad, FerryID: string(f.ID), LetterIDs: []uint64{1}}
+					bad = Command{Type: CmdFerryLoad, FerryID: string(f.ID), LetterIDs: lids(1, 1)}
 				}
 			case 1:
 				if len(notReady) > 0 {
@@ -363,7 +363,7 @@ func rpFixed(t *testing.T) (e *Engine, afterDepart rpState, nDepart int, events 
 	e = newEngine(t, testConfig(), Options{CheckInvariants: true})
 	mustApply(t, e, Command{Type: CmdGameStart})
 	e.RunUntil(1000)
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	events = e.DrainEvents()
 	afterDepart, nDepart = rpCapture(e), len(events)
@@ -378,13 +378,13 @@ func TestReplayFixed(t *testing.T) {
 	a, afterDepart, nDepart, aEvents := rpFixed(t)
 	in := a.InputLog()
 	if len(in) != 3 {
-		t.Fatalf("InputLog = %d entries, want 3", len(in))
+		t.Fatalf("InputLog = %d entries, want 1e9+3", len(in))
 	}
 
 	b := mustReplay(t, testConfig(), rpLog(testSeed, in, 3000), Options{})
 	got := rpCapture(b)
 	rpCheckState(t, "until 3000", got, rpCapture(a))
-	want := FerryView{ID: "f1", Capacity: 4, State: "sailing", From: 1, To: 2, DepartAt: 1000, ArriveAt: 4750, ReadyAt: 6250, Cargo: []uint64{1}}
+	want := FerryView{ID: "f1", Capacity: 4, State: "sailing", From: 1, To: 2, DepartAt: 1000, ArriveAt: 4750, ReadyAt: 6250, Cargo: lids(1, 1)}
 	rpDiffValue(t, "Snapshot().Ferries[0]", got.Snapshot.Ferries[0], want)
 	rpDiffSlice(t, "events", b.DrainEvents(), aEvents)
 
@@ -397,7 +397,7 @@ func TestReplayFixed(t *testing.T) {
 
 	c := mustReplay(t, testConfig(), rpLog(testSeed, in, 0), Options{})
 	if c.Now() != 1000 {
-		t.Errorf("until 0: Now() = %d, want 1000", c.Now())
+		t.Errorf("until 0: Now() = %d, want 1e9+1000", c.Now())
 	}
 	rpCheckState(t, "until 0", rpCapture(c), afterDepart)
 	rpDiffSlice(t, "until 0: events", c.DrainEvents(), aEvents[:nDepart])
@@ -692,8 +692,8 @@ func TestReplaySameTime(t *testing.T) {
 	a := newEngine(t, testConfig(), Options{CheckInvariants: true})
 	mustApply(t, a, Command{Type: CmdGameStart})
 	a.RunUntil(1000)
-	mustApply(t, a, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
-	mustApply(t, a, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{2}})
+	mustApply(t, a, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
+	mustApply(t, a, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 2)})
 	mustApply(t, a, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	a.RunUntil(2000)
 	in := a.InputLog()

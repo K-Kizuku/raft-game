@@ -313,7 +313,7 @@ func (d *detRecorder) failRandom() {
 	case 0: // 航行中の船への load
 		for _, f := range fs {
 			if f.State == ferry.Sailing {
-				d.mustFail(Command{Type: CmdFerryLoad, FerryID: string(f.ID), LetterIDs: []uint64{1}})
+				d.mustFail(Command{Type: CmdFerryLoad, FerryID: string(f.ID), LetterIDs: lids(1, 1)})
 				return
 			}
 		}
@@ -427,8 +427,8 @@ func detEvent(cfg Config, seed uint64) detAdvancer {
 	return func(e *Engine, to SimTime) {
 		for e.Phase() == PhaseSailing && e.Now() < to {
 			next := to
-			if ev, ok := e.sched.Peek(); ok && e.Now() < ev.At && ev.At < to {
-				next = ev.At
+			if at, ok := e.nextEventAt(); ok && e.Now() < at && at < to {
+				next = at
 			}
 			e.RunUntil(next)
 		}

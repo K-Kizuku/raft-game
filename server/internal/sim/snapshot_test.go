@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"cmp"
 	"math/rand/v2"
 	"reflect"
 	"slices"
@@ -48,7 +49,7 @@ func loadedEngine(t *testing.T) (*Engine, []LetterView) {
 	for _, c := range ofType[LetterCreated](e.DrainEvents()) {
 		created = append(created, c.Letter)
 	}
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
 	e.DrainEvents()
 	return e, created
 }
@@ -56,7 +57,7 @@ func loadedEngine(t *testing.T) (*Engine, []LetterView) {
 func TestSnapshotLetters(t *testing.T) { // SN-3・SN-4
 	t.Parallel()
 	e, created := loadedEngine(t)
-	if len(created) != 2 || created[0].ID != 1 || created[1].ID != 2 {
+	if len(created) != 2 || created[0].ID != lid(1, 1) || created[1].ID != lid(1, 2) {
 		t.Fatalf("letter.created = %+v", created)
 	}
 	s := e.Snapshot()
@@ -65,13 +66,13 @@ func TestSnapshotLetters(t *testing.T) { // SN-3・SN-4
 	if want := []LetterView{l1, created[1]}; !reflect.DeepEqual(s.Letters, want) {
 		t.Errorf("Letters =\n %+v\nwant\n %+v", s.Letters, want)
 	}
-	if want := []uint64{1}; !reflect.DeepEqual(s.Ferries[0].Cargo, want) {
+	if want := lids(1, 1); !reflect.DeepEqual(s.Ferries[0].Cargo, want) {
 		t.Errorf("Cargo = %v, want %v", s.Ferries[0].Cargo, want)
 	}
 
 	// SN-4
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
-	want := FerryView{ID: "f1", Capacity: 4, State: "sailing", From: 1, To: 2, DepartAt: 1000, ArriveAt: 4750, ReadyAt: 6250, Cargo: []uint64{1}}
+	want := FerryView{ID: "f1", Capacity: 4, State: "sailing", From: 1, To: 2, DepartAt: 1000, ArriveAt: 4750, ReadyAt: 6250, Cargo: lids(1, 1)}
 	if got := e.Snapshot().Ferries[0]; !reflect.DeepEqual(got, want) {
 		t.Errorf("sailing ferry = %+v, want %+v", got, want)
 	}
@@ -254,10 +255,15 @@ func (m *eventModel) apply(t *testing.T, evs []DomainEvent) int {
 		m.lastSeq = ev.Seq
 		switch d := ev.Data.(type) {
 		case LetterCreated:
-			if n := len(m.letters); n > 0 && m.letters[n-1].ID >= d.Letter.ID {
-				t.Fatalf("letter %d created after %d", d.Letter.ID, m.letters[n-1].ID)
+			// 手紙の ID は島ごとの番号（islandId × 10^9 + n）なので、作った順と ID の順は一致しない。ID の順の位置に入れる。
+			i, found := slices.BinarySearchFunc(m.letters, d.Letter.ID, func(l LetterView, id uint64) int { return cmp.Compare(l.ID, id) })
+			if found {
+				t.Fatalf("letter %d created twice", d.Letter.ID)
 			}
-			m.letters = append(m.letters, d.Letter)
+			if n := len(m.letters); n > 0 && m.letters[n-1].From == d.Letter.From && m.letters[n-1].ID > d.Letter.ID {
+				t.Fatalf("letter %d created after %d of the same island", d.Letter.ID, m.letters[n-1].ID)
+			}
+			m.letters = slices.Insert(m.letters, i, d.Letter)
 		case LetterMoved:
 			m.letters[m.find(t, d.LetterID)].Loc = d.Loc
 		case LetterDelivered:
@@ -309,8 +315,8 @@ func snapshotRun(t *testing.T, seed uint64) ([]DomainEvent, [32]byte, int) {
 		}
 		for i, n := range e.nodes {
 			// cmd.game.start の前は、開会式の Term をまだ反映していない（後処理を通っていないため）。
-			if e.Phase() != PhaseIntro && e.staleTerm[i] != n.Status().Term {
-				t.Fatalf("t=%d: staleTerm[%d] = %d, Term = %d", e.Now(), i, e.staleTerm[i], n.Status().Term)
+			if e.Phase() != PhaseIntro && e.staleTerms()[i] != n.Status().Term {
+				t.Fatalf("t=%d: staleTerm[%d] = %d, Term = %d", e.Now(), i, e.staleTerms()[i], n.Status().Term)
 			}
 		}
 	}

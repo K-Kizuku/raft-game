@@ -377,7 +377,7 @@ func TestRaiseStorm(t *testing.T) {
 			e := startedEngineWith(t, stormTestConfig(stormAt(50000, 1000, 1000, [2]uint64{2, 3})), Options{CheckInvariants: true})
 			e.RunUntil(7000)
 			e.DrainEvents()
-			list, unb, n, routes := slices.Clone(e.storms.list), slices.Clone(e.storms.unblockedAt), e.sched.Len(), e.tr.Routes()
+			list, unb, n, routes := slices.Clone(e.storms.list), slices.Clone(e.storms.unblockedAt), e.coord.Sched.Len(), e.tr.Routes()
 			if _, err := e.raiseStorm(tc.s); !errors.Is(err, tc.want) {
 				t.Fatalf("raiseStorm の err = %v, want %v", err, tc.want)
 			}
@@ -387,8 +387,8 @@ func TestRaiseStorm(t *testing.T) {
 			if !reflect.DeepEqual(e.storms.list, list) || !reflect.DeepEqual(e.storms.unblockedAt, unb) {
 				t.Errorf("帳簿が変わった: %+v", e.storms)
 			}
-			if e.sched.Len() != n {
-				t.Errorf("スケジューラの長さ = %d, want %d", e.sched.Len(), n)
+			if e.coord.Sched.Len() != n {
+				t.Errorf("スケジューラの長さ = %d, want %d", e.coord.Sched.Len(), n)
 			}
 			if !reflect.DeepEqual(e.tr.Routes(), routes) {
 				t.Errorf("航路が変わった: %+v", e.tr.Routes())

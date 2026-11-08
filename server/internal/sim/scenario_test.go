@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"cmp"
 	"reflect"
 	"slices"
 	"testing"
@@ -135,9 +136,9 @@ func scnDrive(t *testing.T, e *Engine, tours []*scnTour) {
 
 // scnRec は台本の実行の記録。
 type scnRec struct {
-	evs  []DomainEvent // DrainEvents の結果を、出た順に連結したもの
-	pool []*pb.Message // 港と船で見つけた Raft の手紙の中身の複製（見つけた順）。漂流瓶に使う
-	seen []bool        // 添字 = 手紙の ID。pool に入れたか（map を使わない）
+	evs  []DomainEvent    // DrainEvents の結果を、出た順に連結したもの
+	pool []*pb.Message    // 港と船で見つけた Raft の手紙の中身の複製（見つけた順）。漂流瓶に使う
+	seen []ferry.LetterID // pool に入れたか調べた手紙の ID（昇順。map を使わない）
 }
 
 // drain は e.DrainEvents() を evs に足す。テストは DrainEvents をこれ以外で呼ばない。
@@ -149,14 +150,12 @@ func (r *scnRec) drain(e *Engine) {
 // proto.Clone して pool に足す。
 func (r *scnRec) capture(e *Engine) {
 	take := func(lid ferry.LetterID) {
-		id := int(lid)
-		if id >= len(r.seen) {
-			r.seen = append(r.seen, make([]bool, id+1-len(r.seen))...)
-		}
-		if r.seen[id] {
+		// 手紙の ID は島ごとの番号（最大 6,000,000,000 台）なので、ID を添字にしない。
+		i, found := slices.BinarySearch(r.seen, lid)
+		if found {
 			return
 		}
-		r.seen[id] = true
+		r.seen = slices.Insert(r.seen, i, lid)
 		l, ok := e.tr.Letter(lid)
 		if !ok || l.Kind != ferry.LetterRaft {
 			return
@@ -261,25 +260,27 @@ func scnConverged(t *testing.T, e *Engine) bool {
 	return true
 }
 
-// scnLetters は letter.created の手紙の表示用の値を、手紙の ID を添字にして並べる（作られていない ID は空の値）。
+// scnLetters は letter.created の手紙の表示用の値を、手紙の ID の昇順に並べる（ID は島ごとの番号なので添字にしない）。
 func scnLetters(evs []DomainEvent) []LetterView {
 	var out []LetterView
 	for _, d := range ofType[LetterCreated](evs) {
-		id := int(d.Letter.ID)
-		if id >= len(out) {
-			out = append(out, make([]LetterView, id+1-len(out))...)
+		i, found := slices.BinarySearchFunc(out, d.Letter.ID, func(l LetterView, id uint64) int { return cmp.Compare(l.ID, id) })
+		if found {
+			out[i] = d.Letter
+			continue
 		}
-		out[id] = d.Letter
+		out = slices.Insert(out, i, d.Letter)
 	}
 	return out
 }
 
 // scnLetter は ls の id の手紙（なければ空の値）。
 func scnLetter(ls []LetterView, id uint64) LetterView {
-	if id >= uint64(len(ls)) {
+	i, found := slices.BinarySearchFunc(ls, id, func(l LetterView, id uint64) int { return cmp.Compare(l.ID, id) })
+	if !found {
 		return LetterView{}
 	}
-	return ls[id]
+	return ls[i]
 }
 
 // scnResults はその島の ledger.applied のうち ReqID == reqID のものの Result を、出た順に返す。
