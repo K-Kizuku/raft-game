@@ -37,7 +37,7 @@ func (b *noviceBot) Act(e *sim.Engine) error {
 		return nil
 	}
 	for _, f := range e.Snapshot().Ferries {
-		if f.State == "sailing" {
+		if f.State == "sailing" && b.owns(f.ID) {
 			b.arrived[f.ID] = f.ArriveAt
 		}
 	}
