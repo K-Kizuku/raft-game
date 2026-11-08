@@ -2,9 +2,11 @@
 // 各領域の中身はスロットのコンポーネントが持つ。この画面は、ラウンドの接続（useRoundConnection）を作って
 // ストアにつなぎ、パネルにコマンドを送る関数（GameCommandProvider）と sub.engineer の関数を渡し、
 // 接続の状態を出す。round.result を受けたら（ストアに結果を入れてから）onRoundEnd を呼ぶ。
+// エンジニアモードを開いている間は、右の島の詳細の代わりにエンジニアパネルを出し、マップを覆わない（T-438）。
 import type { ReactElement } from "react";
 
 import { MapView } from "../../game/MapView.tsx";
+import { useEngineerMode } from "../../state/engineerMode.ts";
 import { DepartureArt } from "../../ui/art/DepartureArt.tsx";
 import { GameCommandProvider } from "../../ui/commands/GameCommands.tsx";
 import { DemoKeys } from "../../ui/demo/DemoKeys.tsx";
@@ -50,6 +52,7 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
   // 「次の出来事まで」のボタンを出す（T-720f）。
   const replaying =
     view.kind !== "offline" && view.kind !== "unavailable" && view.source === "replay";
+  const engineerOpen = useEngineerMode();
 
   return (
     <GameCommandProvider send={send}>
@@ -92,9 +95,12 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
               </div>
             )}
           </section>
-          <aside aria-label="島の詳細" className="game-island">
-            <IslandPanel />
-          </aside>
+          {/* エンジニアモードを開いている間は、この列にエンジニアパネルを置く（T-438。GameScreen.css）。 */}
+          {!engineerOpen && (
+            <aside aria-label="島の詳細" className="game-island">
+              <IslandPanel />
+            </aside>
+          )}
           <section aria-label="フェリー操作" className="game-ferry">
             <FerryPanel />
           </section>

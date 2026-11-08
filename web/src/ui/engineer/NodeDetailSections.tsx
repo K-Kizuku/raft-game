@@ -1,43 +1,51 @@
-// エンジニアパネルの「Raft ログ」「Progress」の節（T-711・FR-ENG-05・FR-ENG-06・ゲームデザイン §7.4）。
+// エンジニアパネルの「Raft ログ」「Progress」のタブの中身（T-711・T-438・FR-ENG-05・FR-ENG-06・ゲームデザイン §7.4）。
 // データは props で受けず、ストアの nodeDetail（node.detail）から読む（ADR-0010・DesignDoc §13.3）。
 // 値はサーバーのまま出し、Leader や Commit をここで決めない（ADR-0009）。表示の決まりは nodeDetailView.ts の先頭。
+// Raft ログは、パネルの中を巻き取らずに収まるよう、新しい順に ENGINEER_LOG_LIMIT 件まで出す（T-438）。
 import { useMemo } from "react";
 import type { ReactElement } from "react";
 
 import { gameStore, useGameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { nodeName } from "./engineerView.ts";
-import { nodeDetailView } from "./nodeDetailView.ts";
+import { ENGINEER_LOG_LIMIT, nodeDetailView, newestLogRows } from "./nodeDetailView.ts";
 import type { LogRow, NodeDetailView, ProgressRow } from "./nodeDetailView.ts";
 
 const LOG_COLUMNS = ["Index", "Term", "Type", "Summary", "Commit"];
 const PROGRESS_COLUMNS = ["Node", "Match", "Next", "State", "Active", "遅れ"];
+const NOT_YET = "ノードの詳細はまだ届いていません（サーバーにつながっているときだけ表示します）。";
 
-export function NodeDetailSections(props: {
-  world: World;
-  targetId: number | null;
-}): ReactElement | null {
-  const { world, targetId } = props;
+type DetailProps = { world: World; targetId: number | null };
+
+// 選んでいるノードの詳細（届いていない・別のノードの詳細なら null）。
+function useNodeDetailView(world: World, targetId: number | null): NodeDetailView | null {
   const detail = useGameStore((s) => s.nodeDetail);
-  const view = useMemo(
+  return useMemo(
     () => (detail !== null && detail.id === targetId ? nodeDetailView(world, detail) : null),
     [world, detail, targetId],
   );
+}
 
-  if (view === null) {
-    return (
-      <section className="engineer-section">
-        <h3>Raft ログ・Progress</h3>
-        <p>ノードの詳細はまだ届いていません（サーバーにつながっているときだけ表示します）。</p>
-      </section>
-    );
-  }
+// 「Raft ログ」のタブの中身。
+export function RaftLogSection({ world, targetId }: DetailProps): ReactElement {
+  const view = useNodeDetailView(world, targetId);
+  if (view === null) return <NotYet title="Raft ログ" />;
+  return <LogSection view={view} />;
+}
 
+// 「Progress」のタブの中身。
+export function ProgressDetailSection({ world, targetId }: DetailProps): ReactElement {
+  const view = useNodeDetailView(world, targetId);
+  if (view === null) return <NotYet title="Progress" />;
+  return <ProgressSection world={world} view={view} />;
+}
+
+function NotYet({ title }: { title: string }): ReactElement {
   return (
-    <>
-      <LogSection view={view} />
-      <ProgressSection world={world} view={view} />
-    </>
+    <section className="engineer-section">
+      <h3>{title}</h3>
+      <p>{NOT_YET}</p>
+    </section>
   );
 }
 
@@ -64,8 +72,19 @@ function maxCommittedIndex(log: readonly LogRow[]): number | null {
   return max;
 }
 
+function logNote(view: NodeDetailView, shown: number): string | null {
+  if (shown < view.log.length) {
+    return `新しい ${String(shown)} 件だけ出しています（古いエントリは省いています）。`;
+  }
+  if (view.logTruncated) {
+    return `古いエントリは省いています（末尾の ${String(view.log.length)} 件）。`;
+  }
+  return null;
+}
+
 function LogSection({ view }: { view: NodeDetailView }): ReactElement {
-  const rows = [...view.log].reverse();
+  const rows = newestLogRows(view.log, ENGINEER_LOG_LIMIT);
+  const note = logNote(view, rows.length);
   const boundary = view.commit === 0 ? null : maxCommittedIndex(view.log);
   // 区切りを入れる行（描画の順で、Commit 済みの最大の index の最初の行）。無ければ -1。
   const boundaryAt =
@@ -106,9 +125,7 @@ function LogSection({ view }: { view: NodeDetailView }): ReactElement {
               })}
             </tbody>
           </table>
-          {view.logTruncated && (
-            <p>{`古いエントリは省いています（末尾の ${String(view.log.length)} 件）。`}</p>
-          )}
+          {note !== null && <p className="engineer-note">{note}</p>}
         </>
       )}
     </section>

@@ -92,6 +92,18 @@ function open(): void {
   fireEvent.click(toggle());
 }
 
+function tab(name: string): HTMLElement {
+  return within(panel()).getByRole("tab", { name });
+}
+
+function showTab(name: string): void {
+  fireEvent.click(tab(name));
+}
+
+function tabPanel(): HTMLElement {
+  return within(panel()).getByRole("tabpanel");
+}
+
 function nodeTable(): HTMLElement {
   return screen.getByRole("table", { name: "ノード一覧" });
 }
@@ -298,6 +310,7 @@ describe("EngineerPanel", () => {
     loadMini(9);
     render(<EngineerPanel />);
     open();
+    showTab("手紙");
     expect(
       within(panel()).getByText("マップで島か船を選ぶと、そこにある手紙が並びます。"),
     ).toBeDefined();
@@ -338,6 +351,7 @@ describe("EngineerPanel", () => {
     loadMini(9);
     render(<EngineerPanel />);
     open();
+    showTab("手紙");
     act(() => {
       gameStore.getState().selectIsland(1);
     });
@@ -369,6 +383,7 @@ describe("EngineerPanel", () => {
     loadMini(18);
     render(<EngineerPanel />);
     open();
+    showTab("手紙");
     act(() => {
       gameStore.getState().selectIsland(1);
     });
@@ -420,6 +435,7 @@ describe("EngineerPanel", () => {
     });
     render(<EngineerPanel />);
     open();
+    showTab("手紙");
     const buttons = panel().querySelectorAll("button[data-letter]");
     expect(buttons).toHaveLength(50);
     expect(buttons[0]?.querySelector('[data-part="border"]')).toBeNull();
@@ -451,27 +467,115 @@ describe("EngineerPanel", () => {
     expect(engineerModeStore.getState().open).toBe(false);
   });
 
-  it("EP-L1 詳細を入れると「ノード一覧」の後・「手紙」の前に「Raft ログ」と「Progress」の見出し", () => {
+  it("EP-T1 タブは「ノード一覧」「Raft ログ」「Progress」「手紙」。押すと中身が変わる", () => {
     loadMini(5);
     render(<EngineerPanel />);
     open();
-    expect(
-      within(panel()).getByText(
-        "ノードの詳細はまだ届いていません（サーバーにつながっているときだけ表示します）。",
-      ),
-    ).toBeDefined();
+    const tabs = within(panel()).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["ノード一覧", "Raft ログ", "Progress", "手紙"]);
+    expect(within(panel()).getByRole("tablist").getAttribute("aria-label")).toBe(
+      "エンジニアパネルの表示",
+    );
+    // はじめはノード一覧。選んでいるタブだけ Tab の順に入る。
+    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual([
+      "true",
+      "false",
+      "false",
+      "false",
+    ]);
+    expect(tabs.map((t) => t.tabIndex)).toEqual([0, -1, -1, -1]);
+    expect(tabPanel().getAttribute("aria-labelledby")).toBe(tab("ノード一覧").id);
+    expect(tab("ノード一覧").getAttribute("aria-controls")).toBe(tabPanel().id);
+    expect(within(tabPanel()).getByRole("table", { name: "ノード一覧" })).toBeDefined();
+
     act(() => {
       gameStore.getState().setNodeDetail(detail(1, 1));
     });
-    const headings = within(panel())
-      .getAllByRole("heading", { level: 3 })
-      .map((h) => h.textContent);
-    const at = (pred: (text: string) => boolean): number => headings.findIndex(pred);
-    const nodes = at((t) => t === "ノード一覧");
-    const log = at((t) => t.startsWith("Raft ログ: 1 "));
-    const progress = at((t) => t.startsWith("Progress"));
-    const letters = at((t) => t === "手紙");
-    expect(nodes).toBeGreaterThanOrEqual(0);
-    expect([nodes < log, log < progress, progress < letters]).toEqual([true, true, true]);
+    showTab("Raft ログ");
+    expect(tab("Raft ログ").getAttribute("aria-selected")).toBe("true");
+    expect(tabPanel().getAttribute("aria-labelledby")).toBe(tab("Raft ログ").id);
+    expect(within(tabPanel()).getByRole("heading", { name: "Raft ログ: 1 一の島" })).toBeDefined();
+    expect(screen.queryByRole("table", { name: "ノード一覧" })).toBeNull();
+
+    showTab("Progress");
+    expect(
+      within(tabPanel()).getByRole("heading", {
+        name: "Progress（Leader から見た複製の進み具合）",
+      }),
+    ).toBeDefined();
+    expect(screen.queryByRole("heading", { name: /Raft ログ/ })).toBeNull();
+
+    showTab("手紙");
+    expect(within(tabPanel()).getByRole("heading", { name: "手紙" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: /Progress/ })).toBeNull();
+  });
+
+  it("EP-T2 ← → でタブを移り（端では反対の端へ）、フォーカスも移る", () => {
+    loadMini(5);
+    render(<EngineerPanel />);
+    open();
+    tab("ノード一覧").focus();
+    fireEvent.keyDown(tab("ノード一覧"), { key: "ArrowRight" });
+    expect(tab("Raft ログ").getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tab("Raft ログ"));
+    expect(within(tabPanel()).getByRole("heading", { name: "Raft ログ" })).toBeDefined();
+
+    fireEvent.keyDown(tab("Raft ログ"), { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(tab("ノード一覧"));
+    fireEvent.keyDown(tab("ノード一覧"), { key: "ArrowLeft" });
+    expect(tab("手紙").getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tab("手紙"));
+    fireEvent.keyDown(tab("手紙"), { key: "ArrowRight" });
+    expect(tab("ノード一覧").getAttribute("aria-selected")).toBe("true");
+
+    // ほかのキーではタブを移らない。
+    fireEvent.keyDown(tab("ノード一覧"), { key: "ArrowDown" });
+    expect(tab("ノード一覧").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("EP-T3 閉じて開き直しても同じタブ。ノード一覧で島を選ぶと、ほかのタブもその島", () => {
+    loadMini(5);
+    const subscribe = vi.fn<EngineerSubscriber>();
+    render(
+      <EngineerSubscriptionProvider subscribe={subscribe}>
+        <EngineerPanel />
+      </EngineerSubscriptionProvider>,
+    );
+    open();
+    fireEvent.click(within(nodeTable()).getByRole("button", { name: "2 二の島" }));
+    act(() => {
+      gameStore.getState().setNodeDetail({ ...detail(2, 1), log: [] });
+    });
+    showTab("Raft ログ");
+    expect(within(tabPanel()).getByRole("heading", { name: "Raft ログ: 2 二の島" })).toBeDefined();
+    open();
+    expect(queryPanel()).toBeNull();
+    open();
+    expect(tab("Raft ログ").getAttribute("aria-selected")).toBe("true");
+
+    // マップで島を選んだときも、開いたままのパネルはその島を見る。
+    act(() => {
+      gameStore.getState().selectIsland(3);
+    });
+    expect(subscribe).toHaveBeenLastCalledWith({ enabled: true, nodeId: 3 });
+    showTab("ノード一覧");
+    expect(
+      within(nodeTable()).getByRole("button", { name: "3 三の島" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("EP-T4 手紙の詳細は、タブを移って戻っても選んだまま", () => {
+    loadMini(9);
+    act(() => {
+      gameStore.getState().selectIsland(1);
+    });
+    render(<EngineerPanel />);
+    open();
+    showTab("手紙");
+    fireEvent.click(within(panel()).getByRole("button", { name: "#2 MsgApp 1→3" }));
+    showTab("ノード一覧");
+    expect(within(panel()).queryByRole("heading", { name: "手紙の詳細 #2" })).toBeNull();
+    showTab("手紙");
+    expect(within(panel()).getByRole("heading", { name: "手紙の詳細 #2" })).toBeDefined();
   });
 });

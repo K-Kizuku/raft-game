@@ -1,10 +1,11 @@
-/* エンジニアパネル（T-407・ゲームデザイン §7.4）。マップの上に重ねる（非モーダル）。
+/* エンジニアパネル（T-407・ゲームデザイン §7.4）。非モーダル。
    見た目（T-425・docs/11-visual-design.md §8・§12）: 「夜の海図」。地は嵐の濃い色（--color-storm-deep。不透明）、
    文字は紙の色（--color-paper。約 10:1）、補足と罫は海の淡い青（--color-sea-light・--color-sea-mid）、
    代表（Leader）の行と古い情報の札の強調は封筒の金（--color-gold）。表の罫線は点線。数字は数字用の文字（--font-number）。
-   置き場所（T-425）: 切り替えはマップの右下の隅、パネルはマップの左半分（右上のお知らせ・左下の島のボタンの列・
-   HUD・フェリー操作の出航のボタンを隠さない）。CSS のアンカー配置（--game-map・--map-islands は GameScreen.css）で
-   マップに合わせる。アンカー配置が使えないブラウザでは、画面の右下（島の詳細の列の左）に固定する。 */
+   置き場所: 切り替えはマップの右下の隅（T-425。CSS のアンカー配置 --game-map は GameScreen.css。アンカー配置が
+   使えないブラウザでは、画面の右下（島の詳細の列の左）に固定する）。パネルは、開いている間は右の島の詳細の列に置き、
+   マップを覆わない（T-438。置き場所と列の幅は GameScreen.css）。
+   中身はタブに分け（T-438）、タブの中は巻き取らずに収める（パネルの高さは列の高さ。表の行を詰めて収める）。 */
 .engineer-toggle {
   /* マップ（海）の上にあるので、フォーカスの輪は墨にする。 */
   --focus-ring-color: var(--focus-ring-color-on-sea);
@@ -45,16 +46,13 @@
   /* 地は不透明（下のマップの文字が透けると、プロジェクターで読みにくい）。 */
   --engineer-night: var(--color-storm-deep);
 
-  position: fixed;
-  right: calc(var(--game-island-width, 22rem) + 2 * var(--space-3) + var(--space-2));
-  bottom: calc(var(--space-4) + 2.75em + var(--space-2));
-  z-index: 20;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
-  width: 42em;
-  max-width: calc(100vw - 2rem);
-  max-height: 70vh;
-  overflow: auto;
-  padding: var(--space-4);
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: var(--space-3) var(--space-4);
   color: var(--color-paper);
   /* 夜の海図: 緯線・経線のような、ごく淡い格子。 */
   background:
@@ -80,40 +78,78 @@
 }
 
 @media (max-width: 52rem) {
-  .engineer-toggle,
-  .engineer-panel {
+  .engineer-toggle {
     right: var(--space-4);
   }
 }
 
-/* アンカー配置が使えるとき: マップの右下の隅に切り替え、マップの左半分にパネル（上はマップの上端、
-   下は島のボタンの列の上まで）。パネルの幅はマップの幅の半分まで。 */
+/* アンカー配置が使えるとき: マップの右下の隅に切り替え。 */
 @supports (anchor-name: --a) {
   .engineer-toggle {
     right: calc(anchor(--game-map right, var(--space-4)) + var(--space-2));
     bottom: calc(anchor(--game-map bottom, var(--space-4)) + var(--space-2));
   }
-
-  .engineer-panel {
-    top: calc(anchor(--game-map top, var(--space-4)) + var(--space-2));
-    right: auto;
-    bottom: calc(
-      anchor(--map-islands top, anchor(--game-map bottom, var(--space-4))) + var(--space-2)
-    );
-    left: calc(anchor(--game-map left, var(--space-4)) + var(--space-2));
-    width: min(42em, calc(anchor-size(--game-map width, 84em) / 2 - var(--space-3)));
-    max-width: none;
-    max-height: none;
-  }
 }
 
 .engineer-header {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding-bottom: var(--space-2);
+  padding-bottom: var(--space-1);
   border-bottom: 3px double var(--color-sea-light);
+}
+
+/* 中身（タブの列＋タブの中）。残りの高さをタブの中が使う。 */
+.engineer-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* タブの列: 海図の索引の札のように横に並べる。選んでいるタブは封筒の金の地（押した札と同じ）。 */
+.engineer-tabs {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.engineer-panel .engineer-tab {
+  padding: 0.15em var(--space-3);
+  border-style: dotted;
+  border-radius: var(--radius-m) var(--radius-m) var(--radius-s) var(--radius-s);
+  font-weight: bold;
+  letter-spacing: 0.03em;
+}
+
+.engineer-panel .engineer-tab[aria-selected="true"] {
+  color: var(--color-storm-deep);
+  background: var(--color-gold);
+  border-style: solid;
+  border-color: var(--color-gold);
+}
+
+/* タブの中。中身は巻き取らずに収まる量にしてある（Raft ログは新しい件だけ）。それでも入りきらない
+   （ブラウザの拡大・とても低い画面）ときだけ、ここで巻き取る。 */
+.engineer-tabpanel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.engineer-tabpanel > .engineer-section:first-child h3 {
+  margin-top: var(--space-2);
+}
+
+.engineer-section .engineer-note {
+  margin: 0.2em 0 0;
+  color: var(--color-sea-light);
+  font-size: 0.85em;
+  line-height: 1.35;
 }
 
 .engineer-header h2 {
@@ -148,7 +184,7 @@
 .engineer-header button {
   border-color: var(--color-paper);
   border-radius: var(--radius-m);
-  padding: var(--space-1) var(--space-3);
+  padding: 0.15em var(--space-3);
   font-weight: bold;
 }
 
@@ -171,17 +207,18 @@
   color: var(--color-paper);
 }
 
-/* 表の罫は点線（見出しの下は太い点線）。数字は桁をそろえる。 */
+/* 表の罫は点線（見出しの下は太い点線）。数字は桁をそろえる。タブの中に収まるよう、行は詰める（T-438）。 */
 .engineer-table {
   width: 100%;
   border-collapse: collapse;
   font-family: var(--font-number);
   font-variant-numeric: tabular-nums;
   font-size: 0.95em;
+  line-height: 1.35;
 }
 
 .engineer-table th {
-  padding: var(--space-1) var(--space-2);
+  padding: 0.15em 0.45em;
   color: var(--color-sea-light);
   font-family: var(--font-body);
   font-size: 0.85em;
@@ -193,7 +230,7 @@
 }
 
 .engineer-table td {
-  padding: var(--space-1) var(--space-2);
+  padding: 0.15em 0.45em;
   text-align: left;
   border-bottom: 1px dotted var(--color-sea-mid);
   white-space: nowrap;
@@ -232,7 +269,7 @@
 .engineer-table td.engineer-role {
   position: relative;
   isolation: isolate;
-  padding-inline: var(--space-3);
+  padding-inline: 0.8em;
   font-family: var(--font-body);
   font-size: 0.9em;
   font-weight: bold;
@@ -365,30 +402,31 @@
   letter-spacing: 0.03em;
 }
 
-/* Raft ログ（T-711・FR-ENG-05）: 未 Commit の行は文字を薄くし、左の縁に点線（「未」の印でも分かる。NFR-10）。
-   薄い文字は --color-ink-muted（紙の上で 4.5:1 以上）。 */
+/* Raft ログ（T-711・FR-ENG-05）: 未 Commit の行は文字を補足の色（海の淡い青）にし、左の縁に点線
+   （「未」の印でも分かる。NFR-10）。夜の地の上でも読める色にする（T-438。墨の色は夜の地では見えない）。 */
 .engineer-log tr[data-committed="false"] td {
-  color: var(--color-ink-muted);
+  color: var(--color-sea-light);
 }
 
 .engineer-log tr[data-committed="false"] td:first-child {
-  border-left: 2px dotted var(--color-ink-muted);
+  border-left: 2px dotted var(--color-sea-light);
 }
 
-/* Commit Index の区切りの行: 上下の線と小さな文字。 */
+/* Commit Index の区切りの行: 上下の線と小さな文字（封筒の金）。 */
 .engineer-log-commit td {
   padding-block: 0.1em;
-  color: var(--color-ink);
+  color: var(--color-gold);
   font-family: var(--font-body);
   font-size: 0.8em;
   font-weight: bold;
   letter-spacing: 0.03em;
-  border-top: 1.5px solid var(--color-ink);
-  border-bottom: 1.5px solid var(--color-ink);
+  border-top: 1.5px solid var(--color-gold);
+  border-bottom: 1.5px solid var(--color-gold);
 }
 
-/* Progress（T-711・FR-ENG-06）: recentActive でない Follower は注意の色（郵便の赤をうすく敷く。文字は墨のまま）。 */
+/* Progress（T-711・FR-ENG-06）: recentActive でない Follower は注意の色（郵便の赤をうすく敷く。文字は紙の色のまま。
+   立候補中の札と同じ混ぜ方で、夜の地の上でも文字が読める。T-438）。 */
 .engineer-progress tr[data-inactive="true"] td {
-  background: color-mix(in srgb, var(--color-postal) 14%, var(--color-paper));
+  background: color-mix(in srgb, var(--color-postal) 35%, transparent);
   font-weight: bold;
 }

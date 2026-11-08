@@ -4,7 +4,13 @@ import type { LogEntry, NodeDetail } from "../../protocol/index.ts";
 import { worldFromSnapshot } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
-import { PROGRESS_STATE_LABELS, nodeDetailView } from "./nodeDetailView.ts";
+import {
+  ENGINEER_LOG_LIMIT,
+  PROGRESS_STATE_LABELS,
+  newestLogRows,
+  nodeDetailView,
+} from "./nodeDetailView.ts";
+import type { LogRow } from "./nodeDetailView.ts";
 
 function mini(): World {
   return worldFromSnapshot(loadMiniRound().snapshot, 0);
@@ -159,5 +165,19 @@ describe("nodeDetailView", () => {
     const view = nodeDetailView(world, input);
     expect(view.log.map((r) => r.index)).toEqual([5, 6, 7]);
     expect(JSON.stringify(input)).toBe(before);
+  });
+  it("NV-L1 newestLogRows は新しい順に limit 件まで（元の列は変えない）", () => {
+    const rows: LogRow[] = [1, 2, 3, 4, 5].map((index) => ({
+      index,
+      term: 1,
+      type: "normal",
+      summary: "—",
+      committed: true,
+    }));
+    expect(newestLogRows(rows, 3).map((r) => r.index)).toEqual([5, 4, 3]);
+    expect(newestLogRows(rows, 10).map((r) => r.index)).toEqual([5, 4, 3, 2, 1]);
+    expect(newestLogRows([], 3)).toEqual([]);
+    expect(rows.map((r) => r.index)).toEqual([1, 2, 3, 4, 5]);
+    expect(ENGINEER_LOG_LIMIT).toBe(8);
   });
 });
