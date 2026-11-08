@@ -9,9 +9,11 @@
 //   判断（maxLagMs）だけゲーム内時刻を使う（タブが裏にあった・再接続でまとめて届いたとき）。
 // - 同じ山の差し替え（swap）は重ねず、新しいもので置き換える（定期便は 1 秒ごとに差し替わる）。
 // - 文字は同じ山・同じ種類で captionCooldownMs に 1 回だけ添える（間引いたものは null）。
+// - 描くときは、同じ島・同じ種類で同時に出ている文字を 1 つにまとめ、重ならない位置に置く（planCaptions。T-428）。
 // - 同時に描くのは maxEffects まで。超えたら startedAt の古いものから捨てる。
 import type { DropReason } from "../../protocol/index.ts";
 import type { LetterExit, World } from "../../state/index.ts";
+import { mapBounds, placeCaptions } from "../model/placement.ts";
 import type { MapScene } from "../model/scene.ts";
 import { MAP_STYLE } from "../model/style.ts";
 import type { Point } from "../model/viewport.ts";
@@ -214,4 +216,84 @@ export function effectFrame(
     incoming: { at: anchor, alpha: p, scale: E.swapInScale + (1 - E.swapInScale) * p },
     caption,
   };
+}
+
+export type CaptionFrame = Readonly<{
+  key: string; // `${islandId}:${reason}`
+  islandId: number;
+  reason: DropReason;
+  count: number; // まとめた文字の数
+  text: string; // 描く文字（count が 2 以上なら「 ×count」を足す）
+  at: Point; // 文字の中心（画面の px）
+  alpha: number;
+}>;
+
+// planCaptions は、いま出ている文字（effectFrame の caption）を、同じ島・同じ種類ごとに 1 つにまとめ
+// （「新しい手紙に差し替わりました ×3」）、島の名札・手紙の山・船・ほかの文字と重ならない位置に置く（T-428）。
+// 位置は placement.ts の placeCaptions が島の周りの円の候補から選ぶ。文字の大きさ・出す時間は変えない。
+// label は描く文字への書き足し（用語の併記。幅の見積もりに使うので、描画と同じものを渡す）。
+export function planCaptions(
+  effects: readonly LetterEffect[],
+  scene: MapScene,
+  now: number,
+  reducedMotion: boolean,
+  label: (caption: string, reason: DropReason) => string = (caption) => caption,
+): CaptionFrame[] {
+  type Group = {
+    islandId: number;
+    reason: DropReason;
+    caption: string;
+    count: number;
+    alpha: number;
+  };
+  const groups = new Map<string, Group>();
+  for (const effect of effects) {
+    const frame = effectFrame(effect, scene, now, reducedMotion);
+    if (frame === null || frame.caption === null) continue;
+    const key = `${String(effect.islandId)}:${effect.reason}`;
+    const group = groups.get(key);
+    if (group === undefined) {
+      groups.set(key, {
+        islandId: effect.islandId,
+        reason: effect.reason,
+        caption: frame.caption.text,
+        count: 1,
+        alpha: frame.caption.alpha,
+      });
+    } else {
+      group.count += 1;
+      group.alpha = Math.max(group.alpha, frame.caption.alpha);
+    }
+  }
+  if (groups.size === 0) return [];
+  const k = scene.markScale ?? 1;
+  const items: { key: string; group: Group; text: string; center: Point }[] = [];
+  for (const [key, group] of groups) {
+    const center = scene.islands.find((i) => i.id === group.islandId)?.at;
+    if (center === undefined) continue;
+    const base = label(group.caption, group.reason);
+    const text = group.count > 1 ? `${base} ×${String(group.count)}` : base;
+    items.push({ key, group, text, center });
+  }
+  const { at } = placeCaptions(
+    items.map((i) => ({ key: i.key, center: i.center, text: i.text, fontSize: E.captionFontSize })),
+    scene.labelBoxes ?? [],
+    mapBounds(scene.size),
+    k,
+  );
+  return items.flatMap((i) => {
+    const p = at.get(i.key);
+    if (p === undefined) return [];
+    return [
+      {
+        key: i.key,
+        islandId: i.group.islandId,
+        reason: i.group.reason,
+        count: i.group.count,
+        text: i.text,
+        at: p,
+        alpha: i.group.alpha,
+      },
+    ];
+  });
 }

@@ -14,6 +14,7 @@ function island(id: number, at: Point): IslandNode {
     color: "#000000",
     at,
     roleMark: null,
+    tagOffset: { x: 0, y: MAP_STYLE.islandRadius },
     selected: false,
     candidate: false,
   };
@@ -31,6 +32,7 @@ function ferry(id: string, at: Point): FerrySprite {
     etaMs: null,
     broken: false,
     selected: false,
+    labels: "split",
   };
 }
 
