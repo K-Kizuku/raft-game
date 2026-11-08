@@ -1,0 +1,21 @@
+# server/Dockerfile のビルドの文脈（server/）から、ビルドに要るものだけを残す（許可リストの形。T-306）。
+# まず全部を除き、要るものだけを戻す。
+*
+
+# モジュールの定義（replace の先 third_party/etcd-raft の go.mod・go.sum は !third_party/ で戻る）
+!go.mod
+!go.sum
+
+# コマンドはゲームサーバーだけ（cmd/islandsdata などの ETL は入れない）
+!cmd/
+cmd/*
+!cmd/server/
+
+# internal/stage/embedded/（make sync-data のコピー先）もここで戻る。
+# go:embed all:embedded が失敗するので、internal/stage の下を除く行を書かない。
+!internal/
+!third_party/
+
+# テストとテストのデータはビルドに要らない（third_party/etcd-raft のものも含めて除く）
+**/*_test.go
+**/testdata/

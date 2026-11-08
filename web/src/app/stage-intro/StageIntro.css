@@ -1,0 +1,154 @@
+/* ステージの紹介文（StageIntroText）と学べること（T-416）。出典は小さく、本文の下に置く。 */
+.stage-intro-text {
+  margin: 0.5em 0;
+}
+
+.stage-intro-text__body {
+  margin: 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.stage-intro-text__meta,
+.stage-intro-text__quote {
+  margin: 0.25em 0 0;
+  font-size: 0.8em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.stage-intro-text__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25em 0.75em;
+}
+
+/* ステージ紹介の画面の見た目（T-424・docs/11-visual-design.md）。便箋のような紙に、地域名の切手・
+   島の数などの札・島の紹介の手紙・学べることのカード・大きな「出航する」を並べる。
+   色・余白・角丸・影はトークン（web/src/ui/theme/tokens.css）だけを使う。 */
+.stage-intro {
+  /* 切手の目打ち（ミシン目）の大きさ。 */
+  --stage-intro-perforation: 8px;
+}
+
+/* 地域名の切手。縁の目打ちはマスクで抜く。 */
+.stage-intro .stage-intro-region {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-sea-light);
+  box-shadow:
+    inset 0 0 0 calc(var(--stage-intro-perforation) / 2 + 2px) var(--color-paper),
+    inset 0 0 0 calc(var(--stage-intro-perforation) / 2 + 4px) var(--color-sea-deep);
+  font-weight: bold;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  transform: rotate(-2deg);
+  mask:
+    linear-gradient(black 0 0) center / calc(100% - var(--stage-intro-perforation))
+      calc(100% - var(--stage-intro-perforation)) no-repeat,
+    radial-gradient(circle at center, transparent 2.5px, black 3px)
+      calc(var(--stage-intro-perforation) / -2) calc(var(--stage-intro-perforation) / -2) /
+      var(--stage-intro-perforation) var(--stage-intro-perforation);
+}
+
+/* 島の数・フェリー・制限時間の札。横に並べ、狭い画面では折り返す。 */
+.stage-intro .stage-intro-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+  padding: 0;
+}
+
+.stage-intro .stage-intro-facts > div {
+  flex: 1 1 8em;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  text-align: center;
+  background: var(--color-paper);
+  border: 1px solid var(--color-land);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+}
+
+.stage-intro .stage-intro-facts dt {
+  color: var(--color-ink-muted);
+  font-size: 0.875em;
+}
+
+.stage-intro .stage-intro-facts dd {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-number);
+  font-size: var(--font-size-h3);
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
+}
+
+/* 出典区分のラベルは数字の下に置く（ラベルそのものの見た目は ProvenanceLabel の CSS）。 */
+.stage-intro .stage-intro-facts dd .provenance-label {
+  display: table;
+  margin: var(--space-1) auto 0;
+  font-family: var(--font-body);
+  font-weight: normal;
+  overflow-wrap: anywhere;
+}
+
+/* 島の紹介は便箋（左に郵便の赤の二重線）、学べることは紙のカード。行の長さと行間を読みやすくする。 */
+.stage-intro .stage-intro-letter,
+.stage-intro .stage-intro-learning {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-paper);
+}
+
+.stage-intro .stage-intro-letter {
+  background: var(--color-paper);
+  border-left: 6px double var(--color-postal);
+}
+
+.stage-intro .stage-intro-learning {
+  background: var(--color-paper-deep);
+}
+
+.stage-intro .stage-intro-letter h2,
+.stage-intro .stage-intro-learning h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-h3);
+}
+
+.stage-intro .stage-intro-letter .stage-intro-text__body {
+  max-width: 38em;
+  line-height: 1.9;
+}
+
+.stage-intro .stage-intro-learning p {
+  margin: 0;
+}
+
+.stage-intro .stage-intro-learning ul {
+  margin: 0;
+  padding-left: var(--space-5);
+  list-style-type: "✉ ";
+}
+
+.stage-intro .stage-intro-learning li {
+  margin: var(--space-1) 0;
+}
+
+.stage-intro .stage-intro-learning li::marker {
+  color: var(--color-postal);
+}
+
+/* 「出航する」は大きな主ボタン（.btn-primary）。 */
+.stage-intro .stage-intro-depart {
+  display: flex;
+  width: min(100%, 22rem);
+  min-height: 56px;
+  margin: var(--space-6) auto var(--space-5);
+  font-size: var(--font-size-h3);
+}

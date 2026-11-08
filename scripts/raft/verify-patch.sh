@@ -160,7 +160,7 @@ print(v)' "$json" "$1"
   dl_sum="$(jget Sum)"
   if [ "$rc" -ne 0 ] || [ -n "$dl_error" ] || [ -z "$upstream_dir" ]; then
     {
-      echo "verify-patch: 上流 $MODULE@$version の取得に失敗した（go mod download の終了コード $rc）"
+      echo "verify-patch: 上流 $MODULE@$version の取得に失敗した（go mod download の終了コード ${rc}）"
       [ -z "$dl_error" ] || echo "  Error: $dl_error"
       cat "$tmp/download.err"
       cat "$json"
@@ -232,7 +232,7 @@ LC_ALL=C comm -13 "$tmp/upstream.list" "$tmp/vendored.list" >"$tmp/only-vendored
 LC_ALL=C comm -12 "$tmp/upstream.list" "$tmp/vendored.list" >"$tmp/common"
 
 if [ -s "$tmp/only-upstream" ]; then
-  ng "ファイルの一覧" "上流にだけある（同梱の木の一覧は $vendored_source）:"
+  ng "ファイルの一覧" "上流にだけある（同梱の木の一覧は ${vendored_source}）:"
   list_lines "$tmp/only-upstream"
 fi
 if [ -s "$tmp/only-vendored" ]; then
@@ -282,7 +282,7 @@ else
     >"$tmp/patch.diff" 2>"$tmp/patch.err" || rc=$?
   if [ "$rc" -gt 1 ]; then
     cat "$tmp/patch.err" >&2
-    die_env "git diff --no-index に失敗した（終了コード $rc）"
+    die_env "git diff --no-index に失敗した（終了コード ${rc}）"
   fi
   changed_lines <"$tmp/patch.diff" >"$tmp/patch.actual"
   if cmp -s "$tmp/patch.expected" "$tmp/patch.actual"; then
@@ -309,12 +309,12 @@ for f in "$upstream_dir"/*.go; do
 done
 rand_count="$(wc -l <"$tmp/rand.uses" | tr -d ' ')"
 if [ "$rand_count" -ne 1 ] || ! grep -qF "$RAND_USE" "$tmp/rand.uses"; then
-  ng "上流の乱数の使い方" "上流の globalRand. の利用は「$RAND_USE」の 1 行だけのはずが、$rand_count 行ある（パッチで覆えない使い方がないかを確かめ、ADR を書く）:"
+  ng "上流の乱数の使い方" "上流の globalRand. の利用は「${RAND_USE}」の 1 行だけのはずが、$rand_count 行ある（パッチで覆えない使い方がないかを確かめ、ADR を書く）:"
   list_lines "$tmp/rand.uses"
 fi
 
 if [ "$failures" -ne 0 ]; then
-  echo "verify-patch: $failures 件の検査に失敗した（上流 $MODULE@${version:-?}、同梱 $vendored_dir）" >&2
+  echo "verify-patch: $failures 件の検査に失敗した（上流 $MODULE@${version:-?}、同梱 ${vendored_dir}）" >&2
   exit 1
 fi
 
@@ -335,4 +335,4 @@ fi
 
 echo "版: $MODULE@${version:-?}"
 echo "ファイル数: $(wc -l <"$tmp/common" | tr -d ' ')（上流と同梱の両方にあるもの。PATCHES.md を除く）"
-echo "パッチの行数: $patch_lines（変わった行）"
+echo "パッチの行数: ${patch_lines}（変わった行）"

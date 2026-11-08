@@ -1,0 +1,79 @@
+{
+  "repo": "K-Kizuku/raft-game",
+  "pull_request": {
+    "number": 12,
+    "state": "open",
+    "merged": false,
+    "draft": false,
+    "title": "feat: 手順を足す (#3)",
+    "body": "Closes #3\r\n\r\n## 概要\r\n手順を足す。\r\n\r\n## 変更内容\r\n- `docs/guide.md` に手順を足した\r\n\r\n## Acceptance Criteria\r\n<!-- Issue の AC をすべて転記し、満たしたものにチェックする -->\r\n- [x] AC-1: gate が判定する\r\n- [x] AC-2: 設定で無効にできない\r\n\r\n## テスト\r\n- [x] 追加・更新したテスト: gate_test.go\r\n- [x] ローカルで実行したコマンドと結果: go test -race ./... が通った\r\n\r\n## ドキュメント\r\n- [x] 更新した（docs/guide.md）\r\n\r\n## チェックリスト\r\n- [x] Issue のスコープ外の変更を含まない\r\n- [x] 公開 API・仕様を変えていない\r\n- [x] シークレットを含まない\r\n",
+    "author": "K-Kizuku",
+    "labels": ["agent", "status:in-review"],
+    "base_ref": "main",
+    "base_sha": "4444444444444444444444444444444444444444",
+    "head_ref": "agent/issue-3",
+    "head_sha": "1111111111111111111111111111111111111111",
+    "mergeable": true,
+    "mergeable_state": "blocked",
+    "changed_files": 3
+  },
+  "files": [
+    {"filename": "docs/guide.md", "status": "modified", "patch": "@@ -12,6 +12,7 @@ ## 手順\n 文脈 A\n 文脈 B\n 文脈 C\n+PR が足した行\n 文脈 D\n 文脈 E\n 文脈 F"},
+    {"filename": "server/internal/foo/foo.go", "status": "added", "patch": "@@ -0,0 +1,3 @@\n+package foo\n+\n+func F() int { return 1 }\n\\ No newline at end of file"},
+    {"filename": "docs/new.md", "previous_filename": "docs/old.md", "status": "renamed", "patch": "@@ -1,3 +1,3 @@\n # 見出し\n-古い説明\n+新しい説明\n 末尾"}
+  ],
+  "issue": {
+    "number": 3,
+    "state": "open",
+    "title": "手順を足す",
+    "body": "## 背景・目的\n\n手順を足す。\n\n## 変更予定ファイル\n\n- `docs/**`\n- `server/internal/foo/**`\n\n## 変更禁止範囲\n\n- `web/**`\n\n## 依存 Issue\n\n- なし\n\n## Acceptance Criteria\n\n- [ ] AC-1: gate が判定する\n- [ ] AC-2: 設定で無効にできない\n",
+    "labels": ["agent"],
+    "is_pull_request": false
+  },
+  "check_runs": [
+    {"name": "ci-ok", "head_sha": "1111111111111111111111111111111111111111", "status": "completed", "conclusion": "success", "app": "github-actions"},
+    {"name": "go", "head_sha": "1111111111111111111111111111111111111111", "status": "completed", "conclusion": "success", "app": "github-actions"}
+  ],
+  "statuses": [
+    {"context": "merge-gate", "state": "pending"}
+  ],
+  "comments": [
+    {
+      "id": 1001,
+      "author": "K-Kizuku",
+      "created_at": "2026-11-01T10:00:00Z",
+      "updated_at": "2026-11-01T10:00:00Z",
+      "body": "<!-- agent-review:v1 -->\n## レビュー記録（round 1）\n\n```json\n{\"schema\":\"agent-review/v1\",\"pr\":12,\"head_sha\":\"5555555555555555555555555555555555555555\",\"base_sha\":\"2222222222222222222222222222222222222222\",\"round\":1,\"reviewer\":\"codex\",\"reviewer_version\":\"codex-cli 0.167.0\",\"fallback_reason\":\"\",\"verdict\":\"request_changes\",\"summary\":\"手順が足りない\",\"protected_paths_ack\":{\"reviewed\":true,\"weakens_guards\":false},\"findings\":[{\"id\":\"F1\",\"severity\":\"high\",\"category\":\"correctness\",\"file\":\"docs/guide.md\",\"line\":12,\"title\":\"手順が足りない\",\"detail\":\"\",\"status\":\"open\",\"resolution\":\"\"}],\"created_at\":\"2026-11-01T10:00:00Z\"}\n```\n"
+    },
+    {
+      "id": 1003,
+      "author": "K-Kizuku",
+      "created_at": "2026-11-01T12:00:00Z",
+      "updated_at": "2026-11-01T12:00:00Z",
+      "body": "<!-- agent-review:v1 -->\n## レビュー記録（round 2）\n\n```json\n{\"schema\":\"agent-review/v1\",\"pr\":12,\"head_sha\":\"3333333333333333333333333333333333333333\",\"base_sha\":\"2222222222222222222222222222222222222222\",\"round\":2,\"reviewer\":\"codex\",\"reviewer_version\":\"codex-cli 0.167.0\",\"fallback_reason\":\"\",\"verdict\":\"approve\",\"summary\":\"F1 は直った\",\"protected_paths_ack\":{\"reviewed\":true,\"weakens_guards\":false},\"findings\":[{\"id\":\"F1\",\"severity\":\"high\",\"category\":\"correctness\",\"file\":\"docs/guide.md\",\"line\":12,\"title\":\"手順が足りない\",\"detail\":\"\",\"status\":\"resolved\",\"resolution\":\"足した\"}],\"created_at\":\"2026-11-01T12:00:00Z\"}\n```\n"
+    }
+  ],
+  "compare": {"status": "ahead", "ahead_by": 3, "behind_by": 0},
+  "carry_over": {
+    "sha": "3333333333333333333333333333333333333333",
+    "commits": [
+      {"sha": "1111111111111111111111111111111111111111", "parents": ["3333333333333333333333333333333333333333", "4444444444444444444444444444444444444444"]}
+    ],
+    "in_base": {"4444444444444444444444444444444444444444": true},
+    "files": [
+      {"filename": "docs/guide.md", "status": "modified", "patch": "@@ -10,6 +10,7 @@ ## 手順\n 文脈 A\n 文脈 B\n 文脈 C\n+PR が足した行\n 文脈 D\n 文脈 E\n 文脈 F"},
+      {"filename": "docs/new.md", "previous_filename": "docs/old.md", "status": "renamed", "patch": "@@ -1,3 +1,3 @@\n # 見出し\n-古い説明\n+新しい説明\n 末尾"},
+      {"filename": "server/internal/foo/foo.go", "status": "added", "patch": "@@ -0,0 +1,3 @@\n+package foo\n+\n+func F() int { return 1 }\n\\ No newline at end of file"}
+    ],
+    "modes": {
+      "s": {
+        "base": {"docs/guide.md": "100644", "docs/old.md": "100644"},
+        "tip": {"docs/guide.md": "100644", "docs/new.md": "100644", "server/internal/foo/foo.go": "100644"}
+      },
+      "head": {
+        "base": {"docs/guide.md": "100644", "docs/old.md": "100644"},
+        "tip": {"docs/guide.md": "100644", "docs/new.md": "100644", "server/internal/foo/foo.go": "100644"}
+      }
+    }
+  }
+}

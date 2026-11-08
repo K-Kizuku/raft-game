@@ -1,0 +1,97 @@
+/* お知らせ（T-406・ゲームデザイン §7.3）。見た目は T-422（docs/11-visual-design.md）:
+   郵便局長のセリフの吹き出し。マップ（海）の上に重なるので、地は不透明に近い紙の色
+   （紙 96%。海の濃い色の上でも --color-ink は約 9:1、--color-ink-muted は 4.5:1 以上。NFR-10）。 */
+.notices {
+  /* 吹き出しの地（不透明に近い紙の色）。 */
+  --notice-paper: color-mix(in srgb, var(--color-paper) 96%, transparent);
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* 郵便局長の絵の代わりの丸（島の色に白い頭文字。墨の縁取りで、明るい島の色でも読める）。
+   丸の縁は紙の色、その外側に墨の細い輪（暗い島の色でも、紙の地でも見分けられる）。 */
+.notice-face {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.5em;
+  height: 2.5em;
+  border-radius: 50%;
+  color: white;
+  font-weight: bold;
+  text-shadow:
+    -1px -1px 0 var(--color-ink),
+    1px -1px 0 var(--color-ink),
+    -1px 1px 0 var(--color-ink),
+    1px 1px 0 var(--color-ink);
+  border: 3px solid var(--color-paper);
+  box-shadow:
+    0 0 0 1.5px var(--color-ink),
+    var(--shadow-paper);
+}
+
+/* セリフの吹き出し。しっぽ（::before）は左の顔の丸の方を指す。 */
+.notice-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-ink);
+  background: var(--notice-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-paper);
+  animation: notice-pop 0.2s ease-out;
+}
+
+.notice-body::before {
+  position: absolute;
+  top: 50%;
+  left: -7px;
+  width: 10px;
+  height: 10px;
+  content: "";
+  background: var(--color-paper);
+  border-bottom: 2px solid var(--color-ink);
+  border-left: 2px solid var(--color-ink);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.notice-speaker {
+  color: var(--color-ink-muted);
+  font-size: 0.8em;
+}
+
+.notice-text {
+  overflow-wrap: anywhere;
+}
+
+@keyframes notice-pop {
+  from {
+    transform: translateY(-4px);
+  }
+
+  to {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice-body {
+    animation: none;
+  }
+}

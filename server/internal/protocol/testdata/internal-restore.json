@@ -1,0 +1,18 @@
+{
+  "sessionId": "s_abc.def",
+  "stageId": "stage2",
+  "seed": 20261101,
+  "demo": false,
+  "inputLog": {
+    "format": 1,
+    "build": "git:3f2c1ab",
+    "stageId": "stage2",
+    "stageHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "seed": 20261101,
+    "commands": [
+      {"t": 0,    "cmd": {"type": "cmd.game.start",   "payload": {}}},
+      {"t": 1200, "cmd": {"type": "cmd.ferry.depart", "payload": {"ferryId": "f1", "to": 2}}}
+    ]
+  },
+  "until": 2500
+}

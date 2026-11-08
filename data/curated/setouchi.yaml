@@ -1,0 +1,31 @@
+# 瀬戸内（Stage 1）で使う、離島振興計画書（D2）の抜き出し（データ仕様 §3.3）。
+format: 1
+excerpts:
+  - id: setouchi-climate
+    region: 小豆島地域
+    field: NATURAL_CLIMATE_FEATURES
+    quote: "温暖、小雨の典型的な瀬戸内式気候"
+    provenance: fact
+    note: 嵐のない穏やかな海のチュートリアルの紹介文（Stage 1）
+  - id: setouchi-teshima-tonosho-minutes
+    region: 小豆島地域
+    field: MARITIME_TRANSPORT
+    quote: "豊島~小豊島~土庄(8km・25分"
+    provenance: derived
+    value: 25
+    unit: 分
+    note: 小豊島に寄る便の全体の所要時間。小豆島–豊島の航行時間に使う（25 × 150 = 3750 ms、データ仕様 §4.3）
+  - id: setouchi-takamatsu-naoshima-teshima-minutes
+    region: 小豆島地域
+    field: MARITIME_TRANSPORT
+    quote: "高松~直島~豊島(22.6km・35分"
+    provenance: derived
+    value: 35
+    unit: 分
+    note: 高松発の便の全体の所要時間。豊島–直島の航行時間の上限に使う（35 × 150 = 5250 ms、データ仕様 §4.3）
+  - id: setouchi-olive
+    region: 小豆島地域
+    field: LOCAL_INDUSTRY_TOURISM
+    quote: "オリーブ製品"
+    provenance: fact
+    note: 小豆島の郵便局長の名前の由来（ゲームデザイン §7.3）

@@ -1,7 +1,7 @@
 # ADR-0016: インフラは Cloudflare（Workers ＋ Durable Objects ＋ Containers）、構成は Cloudflare CLI（`cf`）だけで管理する
 
 - 状態: Accepted
-- 日付: 2026-11-06（同日、Containers の公式ドキュメントの確認結果で改訂）
+- 日付: 2026-11-06 (2026-11-07、T-007 のクラウド実測を追記。2026-11-08、予算アラートの例外を追記)
 - 決めた人: プロダクトオーナー（Cloudflare と `cf` の採用、1 ゲーム＝1 コンテナ、マシンの大きさ、ドメイン）、Claude（調査と具体化）
 - 関連: C-03、NFR-06・15、ADR-0009、ADR-0017、ADR-0018、ADR-0019、[アーキテクチャ §5](../02-architecture.md)、[判断の記録 A-02・A-03・A-22、R-01〜R-04・R-07](../09-assumptions-and-open-questions.md)
 - 置き換える ADR: [ADR-0011](./0011-infrastructure-aws-ecs-fargate.md)（AWS ＋ Terraform）
@@ -107,10 +107,11 @@ export default defineConfig(({ mode }) => {
       workersDev: false,                         // workers.dev の URL は使わない
       previewUrls: false,
       assets: { notFoundHandling: "single-page-application", runWorkerFirst: ["/api/*", "/ws/*"] },
-      limits: { cpuMs: 50 },                     // コストガード（ADR-0018）。値は T-007 で測って決める
+      limits: { cpuMs: 500 },                    // T-007 の暫定値。本体の CPU と WS は T-605 で再確認
       env: {
         DEMO_CONTROLS: bindings.text(isDemo ? "1" : "0"),
         CONTAINER_INSTANCE: bindings.text(isDemo ? "standard-1" : "lite"),
+        CONTAINER_START_TIMEOUT_MS: bindings.text("10000"), // T-007。/healthz の待機期限
         ALLOWED_ORIGINS: bindings.text(isDemo ? "https://raft-demo.kizuku-hackathon.work" : "https://raft.kizuku-hackathon.work"),
         GUARDS: bindings.json({ /* コストガードの既定値（ADR-0018） */ }),
         SESSION_SIGNING_KEY: bindings.secret(),  // --secrets-file で渡す
@@ -153,6 +154,10 @@ this.ctx.container.start({
 - **デプロイ**: GitHub Actions で `pnpm install` → `cf build` → PR では `cf deploy --prebuilt --dry-run`、`main` への push で `cf deploy --prebuilt --mode production`。デモ用は手動の実行で `--mode demo`。シークレットは GitHub の Secrets から一時ファイルを作り、`--secrets-file` で渡す
 - **費用**: Workers の有料プラン（月 5 USD）が必要。追加料金はコストガード（ADR-0018）で月 30 USD までに抑える
 
+### 例外（ダッシュボードで設定したもの）
+
+- **予算アラート**（ADR-0018 G6）: 2026-11-08、`cf billing spend-policies list` が `[1003] spend policy not found`（404）で失敗し `scripts/cloudflare/budget_alert.py` で作れなかったため、オーナーの判断（D-22 の例外）でダッシュボードで設定した。経緯と確かめ直す手順は [コストの緊急停止 §9](../runbooks/cost-emergency.md)
+
 ## 結果
 
 - 良いこと: インフラの定義が `web/cloudflare.config.ts` の 1 ファイルにまとまる。1 ゲーム＝1 コンテナで、ゲームどうしが完全に分かれる。マシンの大きさを環境ごとに変えられる
@@ -170,3 +175,86 @@ this.ctx.container.start({
 - `cf` の正式版が出たとき、`durable_object` 方式が正式版になったとき（版を上げ、制約の表を見直す）
 - 測定の結果、`lite` で 8 倍速や復元が遅いと分かったとき（`standard-1` に上げ、ADR-0018 の見積もりを直す）
 - コンテナの起動待ちがデモで目立つとき
+- T-605 の本体測定で CPU 500 ms・起動待ち 10 秒に余裕がない、または過大と分かったとき
+- inactivity による停止や monitor の寿命の扱いが変わったとき
+
+## T-007 の測定結果 (2026-11-07、cf@1.0.0-beta.28)
+
+人がデプロイと測定を実行した。詳細とコマンド履歴は [実行記録](../verification/t007-cloudflare-spike.md)。
+測定コードは main `d862bb78cbfea3fe0e476605b3b6d4996153f818` の `spike/`。
+本番の `web/`・`server/` を使わない最小の構成と Raft の負荷模型であり、本体の性能や全 NFR の達成を証明する測定ではない。
+公開先は独立した workers.dev のみで、ゾーンの設定は変更していない。
+
+| ID | 項目 | lite | standard-1 | ローカル (cf dev / native Go) | 判断 |
+|---|---|---|---|---|---|
+| M-1 | 起動時間 (DO 内 p50 / p95 / 最大) | 247 / 1112 / 1112 ms。初回 1112 ms。同時 3 件は全成功、最大 1706 ms | 230 / 396 / 396 ms。初回 359 ms。同時 3 件は全成功、最大 303 ms | cf dev: 166 / 593 / 593 ms。同時最大 853 ms | 各 10 回。同じ DO の再起動を含む。毎回新規のコールド起動 10 回ではない |
+| M-2 | 7 ノード・30 分の再計算 | wall 561 ms、CPU 481 ms、53.4 仮想分/秒 | wall 330 ms、CPU 282 ms、90.9 仮想分/秒 | Apple M2 / Go 1.26.9: wall 79.343 ms | 負荷模型では現行 NFR の 3 秒を下回る。本体の復元は T-605 |
+| M-3 | 8 倍速 | step p99 1.2 ms、遅れ p99 1.8 ms、cpuUtil 0.008 | step p99 0.275 ms、遅れ p99 1.1 ms、cpuUtil 0.004 | native: step p99 0.289 ms、遅れ p99 3.639 ms、cpuUtil 0.002 | lite の 1 倍速では遅れ p99 202 ms も観測。cpuUtil は測定コードの値 |
+| M-4 | CPU 制限 | 50 ms で Worker は 1e9 まで成功、DO は 1e9 で CPU 超過リセット。500 ms の再測定は Worker が 1e9 で 503、DO は 1e9 まで成功 | 50 ms: Worker は 1e9 で 503、DO は 1e9 で CPU 超過リセット | 50 ms 指定でも Worker / DO とも 1e9 まで成功 | 通常処理の CPU と設定値は下表。反復回数や clientMs は CPU 時間ではない |
+| M-5 | WS 中継 | 1 KiB RTT p50 / p99 140 / 171 ms | 130 / 335 ms | 0.6 / 1.7 ms | 各 200 回。クラウド両サイズで 16 KiB 20/20、超過は破棄、500/500 順序維持、120 秒無通信後も往復成功 |
+| M-6 | DO→コンテナ HTTP 往復 | p50 / p99 3 / 9 ms | 2 / 5 ms | 0 / 1 ms | 各 200/200 回成功。クライアントの RTT と区別 |
+| M-7 | SQLite | 100 行 193 ms / 1000 行 227 ms | 204 / 219 ms | 12.9 / 38.4 ms | クライアント時間。コンテナの停止・再起動後に 1100 行を確認。DO の退避後の永続性を検証した実験ではない |
+| M-8 | 継承しない DO | PlainStore の SQL、SpikeSession の SQL・container・alarm が成功。継承する ControlStore も成功 | 同左 | SQL・container 成功。ローカル smoke の alarm は対象外 | fetch の形を使う設計の前提を確認。CostGuard / GameSession 本体の試験は残る |
+| M-9 | enableInternet: false | DNS / TCP / HTTPS がすべて失敗。true の対照ではすべて成功 | false はすべて失敗 | false でも TCP が成功。DNS / HTTPS は失敗 | 禁止の確認はクラウドの結果を使う。宛先は固定の 3 種類のみ |
+| M-10 | 停止 | destroy 38 ms、60 秒アラームで停止。30 秒 inactivity は 60 秒後も稼働 | destroy 48 ms。alarm / inactivity は lite と同じ | destroy 30 ms | 明示的な destroy と上限付きアラームを主な停止手段にする |
+| M-11 | crash 検知 / 再起動 | 127 / 1066 ms | 124 / 216 ms | 123 / 297 ms | monitor による検知と再起動を確認。本体の復元処理は別 |
+| M-12 | cf dev | — | — | 必須 8 項目すべて成功。起動準備 6 秒 | 機能の smoke に使える。CPU 制限・外部通信禁止・クラウド性能の代用にはしない |
+| M-13 | デプロイ | 初回 33.77 秒、CPU 500 ms への更新 7.07 秒 | 同じ Worker・同じイメージ | Docker 上のイメージ 10.5 MB、linux/amd64 | 初回と更新でキャッシュ条件が異なる。サイズはローカルの値 |
+| M-14 | 見える資源 | Go 1.26.4、numCPU / GOMAXPROCS=1、cgroup 上限は null、入口 colo=SEA | 同じ Go / CPU 表示、入口 colo=SJC | cf dev: CPU / GOMAXPROCS=8 | colo は入口 Worker の情報。DO / コンテナの配置や、両サイズの割当資源が等しい証拠ではない |
+
+### 通常処理の CPU と暫定値
+
+50 ms のデプロイで、CPU 時間が存在するログから、`iters` を持つ反復負荷試験を除外して集計した。
+Worker は `entrypoint` を含むグループ化では現れず、実行モデルとイベントの種類だけに分けて取得できた。
+経路別には DO の `$workers.event.path` を使用した。
+件数の少ないグループの p99 は参考値であり、本番の分布や余裕を保証しない。
+
+| 対象 | 件数 | CPU p99 / 最大 |
+|---|---|---|
+| Worker fetch | 73 | 3 / 3 ms |
+| DO fetch 全体 | 115 | 112 / 116 ms |
+| DO alarm | 10 | 1 / 1 ms |
+| SpikeSession /ws | 2 | 116 / 116 ms |
+| SpikeSession /ping | 2 | 64 / 64 ms |
+| SpikeSession /sql | 4 | 25 / 25 ms |
+| SpikeSession /start | 49 | 10 / 10 ms |
+
+`/ws` は 1 電文ごとの CPU の統計ではなく、fetch ログの集計。`/ping` は 1 要求で HTTP 往復を 200 回行い、`/sql` は 100 / 1000 行をまとめて書く測定。
+[DO の CPU 制限](https://developers.cloudflare.com/durable-objects/platform/limits/) は HTTP 要求や WS メッセージの受信で予算が更新される。
+[Workers の制限](https://developers.cloudflare.com/workers/platform/limits/) には設定値を時々超えることを許容する仕組みもあるため、設定値と累計や反復回数を単純に比較しない。
+
+本番向けの暫定候補は **limits.cpuMs=500**。上の DO fetch p99 の約 4.46 倍にした。
+実際に 500 ms をデプロイ済みバージョンのメタデータで確認し、lite / s-25 で CPU と WS を再測定した。
+WS は 1 KiB p50 / p99 137 / 146 ms、16 KiB 20/20、超過の破棄、500/500 の順序維持、120 秒無通信後の往復が成功。
+Worker の 1e9 反復は 503、DO は今回の範囲で失敗なし。
+500 ms は必要な最小値でも、厳密な請求上限でもない。本体の入力・復元・長時間の中継の CPU を T-605 で再測定する。
+
+### 設計への反映と次の検証
+
+| 項目 | T-007 後の判断 |
+|---|---|
+| CONTAINER_INSTANCE | 一般公開 lite / デモ standard-1 を維持。CostGuard の予約と実際に起動するサイズを一致させる |
+| 起動待ち | CONTAINER_START_TIMEOUT_MS=10000 を設定候補にする。同時起動の最大 1706 ms に余裕を持たせた値。start() の戻りを準備完了とせず /healthz を待つ。本体の T-605 で再確認 |
+| 停止 | ラウンド終了の destroy と回数上限付きアラームを使う。inactivity のみを終了・費用停止の保証にしない |
+| monitor / inactivity | 今回は monitor の Promise が生きたまま。DO の退避を妨げ得るため、60 秒後も動いた理由の候補。本実験は monitor を外した対照ではない |
+| DO の形 | 継承しない fetch ハンドラーを維持できる。ADR-0023 の承認状態をこの実験だけで変更しない |
+| WS 切断 | ブラウザ側からの切断は確認成功。コンテナ停止時は 1011 を観測。本体の終了理由・再接続・正常終了の close code は T-605 で別途確認 |
+
+[コンテナ API](https://developers.cloudflare.com/containers/api/durable-object-container/) の monitor と inactivity の仕様を踏まえ、DO が作り直された際の monitor / inactivity 設定の付け直しも確認する。
+スパイクの 8 倍速 step p99 <=25 ms、復元 <=5 秒、起動 p95 <=5 秒は Issue #15 の提案値。
+現行 NFR-03 の復元 <=3 秒などを、この実験で緩和しない。
+WS のクライアント RTT と国内向けの p95 要件も別物である。
+
+### 後片付けと後続への引き継ぎ
+
+2026-11-07 19:48:58.765 JST の s-16 の再確認で、使った全 20 セッションの running=false を確認できた。
+19:49:07.962 JST の一覧で、対象 Worker・コンテナアプリ・レジストリタグがすべて残っていないことを確認し、削除の終了コードは 0。
+アプリ削除には停止の遅延があり得る応答があるため、ダッシュボードでの残存確認、ローカルの後片付け、翌日 11-08 の費用確認は引き続き必要。
+完了記録は [実行記録](../verification/t007-cloudflare-spike.md) で更新する。
+
+- T-601 (#65): cpuMs=500、一般公開 lite / デモ standard-1、CONTAINER_START_TIMEOUT_MS=10000 を設定する候補。GUARDS の表示値も CPU 制限に合わせる。
+- T-308 (#44) / 復元の後続: 起動時の /healthz、destroy / alarm、monitor の再設定、長時間の WS・終了理由を確認する。
+- T-309 (#45) / ADR-0023: 継承しない DO の SQL がクラウドで使えた。実際の CostGuard の予約・精算は別途確認する。
+- T-605 (#69): 本体の 8 倍速、30 分の復元、長時間 WS と CPU、停止・再起動、外部通信禁止、費用の帳簿を確認する。
+
+上記は PR で提示する引き継ぎ案。各 Issue へのコメント投稿は未実施。

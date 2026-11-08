@@ -1,0 +1,327 @@
+{
+  "format": 1,
+  "kind": "simcli.record",
+  "build": "test",
+  "stageId": "mini",
+  "stageHash": "sha256:test",
+  "seed": 1,
+  "bot": "greedy",
+  "durationMs": 60000,
+  "eventCount": 30,
+  "traceHash": "sha256:test",
+  "snapshot": {
+    "phase": "intro",
+    "t": 0,
+    "endsAt": 60000,
+    "ferries": [
+      {
+        "id": "f1",
+        "name": "テスト丸",
+        "capacity": 4,
+        "state": "docked",
+        "islandId": 1,
+        "departAt": 0,
+        "arriveAt": 0,
+        "readyAt": 0,
+        "cargo": []
+      }
+    ],
+    "routesState": [
+      { "id": "1-2", "blockedUntil": null },
+      { "id": "1-3", "blockedUntil": null },
+      { "id": "2-3", "blockedUntil": null }
+    ],
+    "letters": [],
+    "nodes": [
+      {
+        "id": 1,
+        "role": "follower",
+        "term": 0,
+        "vote": 0,
+        "lead": 0,
+        "commit": 0,
+        "applied": 0,
+        "lastIndex": 0
+      },
+      {
+        "id": 2,
+        "role": "follower",
+        "term": 0,
+        "vote": 0,
+        "lead": 0,
+        "commit": 0,
+        "applied": 0,
+        "lastIndex": 0
+      },
+      {
+        "id": 3,
+        "role": "follower",
+        "term": 0,
+        "vote": 0,
+        "lead": 0,
+        "commit": 0,
+        "applied": 0,
+        "lastIndex": 0
+      }
+    ],
+    "lastSeq": 0
+  },
+  "events": [
+    { "seq": 1, "t": 0, "type": "phase.changed", "phase": "opening" },
+    {
+      "seq": 2,
+      "t": 0,
+      "type": "node.state",
+      "id": 1,
+      "role": "leader",
+      "term": 2,
+      "vote": 1,
+      "lead": 1,
+      "commit": 0,
+      "applied": 0,
+      "lastIndex": 1
+    },
+    {
+      "seq": 3,
+      "t": 0,
+      "type": "node.state",
+      "id": 2,
+      "role": "follower",
+      "term": 2,
+      "vote": 1,
+      "lead": 1,
+      "commit": 0,
+      "applied": 0,
+      "lastIndex": 0
+    },
+    {
+      "seq": 4,
+      "t": 0,
+      "type": "node.state",
+      "id": 3,
+      "role": "follower",
+      "term": 2,
+      "vote": 1,
+      "lead": 1,
+      "commit": 0,
+      "applied": 0,
+      "lastIndex": 0
+    },
+    { "seq": 5, "t": 0, "type": "node.leader_elected", "id": 1, "term": 2 },
+    { "seq": 6, "t": 0, "type": "phase.changed", "phase": "sailing" },
+    {
+      "seq": 7,
+      "t": 1000,
+      "type": "letter.created",
+      "letter": {
+        "id": 1,
+        "kind": "raft",
+        "from": 1,
+        "to": 2,
+        "createdAt": 1000,
+        "loc": { "type": "port", "islandId": 1 },
+        "label": "heartbeat",
+        "raft": {
+          "type": "MsgHeartbeat",
+          "term": 2,
+          "logTerm": 0,
+          "index": 0,
+          "commit": 0,
+          "entries": [],
+          "reject": false,
+          "rejectHint": 0,
+          "stale": false
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "t": 1000,
+      "type": "letter.created",
+      "letter": {
+        "id": 2,
+        "kind": "raft",
+        "from": 1,
+        "to": 3,
+        "createdAt": 1000,
+        "loc": { "type": "port", "islandId": 1 },
+        "label": "append",
+        "raft": {
+          "type": "MsgApp",
+          "term": 2,
+          "logTerm": 2,
+          "index": 1,
+          "commit": 0,
+          "entries": [
+            { "index": 2, "term": 2, "type": "normal", "summary": "stall.reserve mini-0001" }
+          ],
+          "reject": false,
+          "rejectHint": 0,
+          "stale": false
+        }
+      }
+    },
+    {
+      "seq": 9,
+      "t": 2000,
+      "type": "request.created",
+      "request": {
+        "id": "mini-0001",
+        "origin": 2,
+        "kind": "stall.reserve",
+        "resource": "stall:main",
+        "critical": false,
+        "createdAt": 2000,
+        "deadline": 50000,
+        "status": "received",
+        "expired": false,
+        "result": null
+      }
+    },
+    {
+      "seq": 10,
+      "t": 3000,
+      "type": "letter.moved",
+      "letterId": 1,
+      "loc": { "type": "ferry", "ferryId": "f1" }
+    },
+    {
+      "seq": 11,
+      "t": 3000,
+      "type": "ferry.departed",
+      "ferryId": "f1",
+      "from": 1,
+      "to": 2,
+      "departAt": 3000,
+      "arriveAt": 7000
+    },
+    {
+      "seq": 12,
+      "t": 5000,
+      "type": "forecast",
+      "event": "storm",
+      "at": 10000,
+      "routeIds": ["2-3"]
+    },
+    {
+      "seq": 13,
+      "t": 7000,
+      "type": "ferry.arrived",
+      "ferryId": "f1",
+      "islandId": 2,
+      "readyAt": 8500
+    },
+    {
+      "seq": 14,
+      "t": 7000,
+      "type": "letter.delivered",
+      "letterId": 1,
+      "islandId": 2,
+      "accepted": true
+    },
+    {
+      "seq": 15,
+      "t": 8000,
+      "type": "request.updated",
+      "id": "mini-0001",
+      "status": "proposed",
+      "expired": false,
+      "result": null
+    },
+    {
+      "seq": 16,
+      "t": 9000,
+      "type": "ledger.applied",
+      "islandId": 1,
+      "index": 2,
+      "reqId": "mini-0001",
+      "result": "ok"
+    },
+    { "seq": 17, "t": 10000, "type": "route.blocked", "routeIds": ["2-3"], "until": 20000 },
+    {
+      "seq": 18,
+      "t": 11000,
+      "type": "letter.created",
+      "letter": {
+        "id": 3,
+        "kind": "raft",
+        "from": 1,
+        "to": 3,
+        "createdAt": 11000,
+        "loc": { "type": "port", "islandId": 1 },
+        "label": "heartbeat",
+        "raft": {
+          "type": "MsgHeartbeat",
+          "term": 2,
+          "logTerm": 0,
+          "index": 0,
+          "commit": 0,
+          "entries": [],
+          "reject": false,
+          "rejectHint": 0,
+          "stale": false
+        }
+      }
+    },
+    { "seq": 19, "t": 12000, "type": "letter.dropped", "letterId": 3, "reason": "superseded" },
+    { "seq": 20, "t": 13000, "type": "letter.stale", "letterId": 2 },
+    { "seq": 21, "t": 14000, "type": "ferry.broken", "ferryId": "f1", "until": 16000 },
+    { "seq": 22, "t": 16000, "type": "ferry.repaired", "ferryId": "f1", "until": 16000 },
+    { "seq": 23, "t": 20000, "type": "route.unblocked", "routeIds": ["2-3"], "until": 20000 },
+    {
+      "seq": 24,
+      "t": 21000,
+      "type": "node.stepped_down",
+      "id": 1,
+      "term": 2,
+      "reason": "check_quorum"
+    },
+    {
+      "seq": 25,
+      "t": 21000,
+      "type": "node.state",
+      "id": 1,
+      "role": "follower",
+      "term": 2,
+      "vote": 1,
+      "lead": 0,
+      "commit": 0,
+      "applied": 0,
+      "lastIndex": 1
+    },
+    {
+      "seq": 26,
+      "t": 30000,
+      "type": "request.updated",
+      "id": "mini-0001",
+      "status": "succeeded",
+      "expired": false,
+      "result": "ok"
+    },
+    {
+      "seq": 27,
+      "t": 30000,
+      "type": "island.updated",
+      "id": 2,
+      "satisfaction": 70,
+      "lastDeliveredAt": 7000
+    },
+    {
+      "seq": 28,
+      "t": 30000,
+      "type": "score.updated",
+      "total": 100,
+      "successes": 1,
+      "criticalSecured": []
+    },
+    {
+      "seq": 29,
+      "t": 30000,
+      "type": "notice",
+      "islandId": 2,
+      "key": "request.succeeded",
+      "params": { "reqId": "mini-0001" }
+    },
+    { "seq": 30, "t": 60000, "type": "phase.changed", "phase": "ended" }
+  ]
+}

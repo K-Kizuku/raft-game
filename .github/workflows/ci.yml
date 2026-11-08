@@ -2,6 +2,12 @@
 # 結果は `ci-ok` の 1 つのチェックにまとめる。
 # ワークフロー名 `ci` とチェック名 `ci-ok` は Merge Gate（#3）と Rulesets（#5）が
 # 参照する公開の契約なので、名前を変えない。
+# server: server/ の Go に gofmt・vet・mod tidy・golangci-lint（forbidigo）・test（T-005 / #13）と、
+#   リプレイの WASM の確かめ（scripts/build-replay-wasm.sh --verify。T-720b / #321）。
+# web: web/ に lint・typecheck・test（T-005 / #13）。
+# e2e: Playwright の E2E（make e2e。T-506 / #310）。必須ではないので ci-ok の needs に入れない。
+# secrets: gitleaks で git の履歴全体にシークレットがないかを検査する（scripts/check-secrets.sh。T-009 / #17）。
+# docs: scripts/check-license.py で LICENSE・NOTICE が同梱の OSS・提供データの出典と合っているかを確かめる（T-009 / #17）。
 name: ci
 
 on:
@@ -29,7 +35,9 @@ jobs:
           persist-credentials: false
       - name: Check relative links in Markdown
         run: python3 scripts/check-docs.py
-      - name: Test check-docs.py
+      - name: Check LICENSE and NOTICE
+        run: python3 scripts/check-license.py
+      - name: Test scripts/ (Python)
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
   shell:
@@ -125,10 +133,192 @@ jobs:
           done
           exit "$status"
 
+  server:
+    name: server
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find server/go.mod
+        id: find
+        run: |
+          set -euo pipefail
+          if [ -f server/go.mod ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "対象なし: server/go.mod がない"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@v5
+        if: steps.find.outputs.found == 'true'
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: make gen-check
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: make gen-check
+      - name: gofmt / go vet / go mod tidy
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          status=0
+          gofmt="$(go -C server env GOROOT)/bin/gofmt"
+          unformatted="$("$gofmt" -l server)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt の差分がある: $unformatted"
+            status=1
+          fi
+          go -C server vet ./... || status=1
+          if ! go -C server mod tidy -diff; then
+            echo "::error::go mod tidy の差分がある"
+            status=1
+          fi
+          exit "$status"
+      # サードパーティのアクションもビルド済みのバイナリも使わず、server/go.mod の Go で
+      # ビルドして実行する（古い Go でビルドした golangci-lint は新しい Go のモジュールを lint できない）。
+      - name: golangci-lint
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+          # Makefile の GOLANGCI_LINT_VERSION と同じ版にする。
+          GOLANGCI_LINT_VERSION: v2.15.0
+        run: |
+          set -euo pipefail
+          go -C server run "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$GOLANGCI_LINT_VERSION" run ./...
+      - name: go test
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: go -C server test -race -count=1 ./...
+      # リプレイの WASM（ADR-0028・T-720b）を作り、ネイティブの simcli replay と traceHash が一致するかを
+      # Node で確かめる。node-version-file を使わない理由は web ジョブと同じ。
+      - uses: actions/setup-node@v4
+        if: steps.find.outputs.found == 'true'
+        with:
+          node-version: "22"
+      - name: replay wasm
+        if: steps.find.outputs.found == 'true'
+        env:
+          GOTOOLCHAIN: auto
+        run: bash scripts/build-replay-wasm.sh --verify
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find web/package.json
+        id: find
+        run: |
+          set -euo pipefail
+          if [ -f web/package.json ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "対象なし: web/package.json がない"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      # node-version-file: web/package.json は使わない。engines.node（>=22.23.0）から
+      # corepack を同梱しない新しい Node が選ばれ得るため。
+      - uses: actions/setup-node@v4
+        if: steps.find.outputs.found == 'true'
+        with:
+          node-version: "22"
+      # pnpm はルートの package.json の packageManager の版を corepack で使う。
+      - name: Enable pnpm
+        if: steps.find.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --version
+      - name: pnpm install
+        if: steps.find.outputs.found == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: lint
+        if: steps.find.outputs.found == 'true'
+        run: pnpm -C web lint
+      - name: typecheck
+        if: steps.find.outputs.found == 'true'
+        run: pnpm -C web typecheck
+      - name: test
+        if: steps.find.outputs.found == 'true'
+        run: pnpm -C web test
+
+  # E2E（T-506）: 開発のサーバー（Go の standalone・モックなし）をヘッドレスの Chromium で
+  # タイトルからエンジニアモードまでたどる（make e2e）。必須ではない（ci-ok の needs に入れない）。
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # ポートは scripts/dev-env.sh が DEV_SLOT から計算する（ADR-0019）。ランナーは 1 ジョブ 1 台なので 0 を使う。
+      DEV_SLOT: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enable pnpm
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --version
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+      # web/package.json の @playwright/test の版に合う Chromium を入れる。
+      - name: Install Chromium
+        run: pnpm -C web exec playwright install --with-deps chromium
+      - name: make e2e
+        env:
+          GOTOOLCHAIN: auto
+        run: make e2e
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: web/e2e/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 履歴全体を検査するので、浅いクローンにしない。
+          fetch-depth: 0
+          persist-credentials: false
+      # gitleaks を server/go.mod の Go でビルドする（scripts/check-secrets.sh）。
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: gitleaks
+        env:
+          GOTOOLCHAIN: auto
+        run: bash scripts/check-secrets.sh
+
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [docs, shell, go-tools]
+    needs: [docs, shell, go-tools, server, web, secrets]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -137,10 +327,13 @@ jobs:
           RESULT_DOCS: ${{ needs.docs.result }}
           RESULT_SHELL: ${{ needs.shell.result }}
           RESULT_GO_TOOLS: ${{ needs.go-tools.result }}
+          RESULT_SERVER: ${{ needs.server.result }}
+          RESULT_WEB: ${{ needs.web.result }}
+          RESULT_SECRETS: ${{ needs.secrets.result }}
         run: |
           set -euo pipefail
           fail=0
-          for pair in "docs=$RESULT_DOCS" "shell=$RESULT_SHELL" "go-tools=$RESULT_GO_TOOLS"; do
+          for pair in "docs=$RESULT_DOCS" "shell=$RESULT_SHELL" "go-tools=$RESULT_GO_TOOLS" "server=$RESULT_SERVER" "web=$RESULT_WEB" "secrets=$RESULT_SECRETS"; do
             echo "$pair"
             if [ "${pair#*=}" != "success" ]; then
               fail=1

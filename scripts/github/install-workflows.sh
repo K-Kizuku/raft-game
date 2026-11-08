@@ -111,9 +111,9 @@ on_exit() {
   local status=$?
   [ "$status" -ne 0 ] || return 0
   if git checkout --quiet "$orig"; then
-    echo "install-workflows: 失敗した（終了コード $status）。元のブランチ $orig に戻った" >&2
+    echo "install-workflows: 失敗した（終了コード ${status}）。元のブランチ $orig に戻った" >&2
   else
-    echo "install-workflows: 失敗した（終了コード $status）。元のブランチ $orig に戻れなかった" >&2
+    echo "install-workflows: 失敗した（終了コード ${status}）。元のブランチ $orig に戻れなかった" >&2
   fi
   echo "install-workflows: 後片付けをするには、次を実行する:" >&2
   echo "  git branch -D $branch" >&2

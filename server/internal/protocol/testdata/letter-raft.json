@@ -1,0 +1,14 @@
+{
+  "id": 31,
+  "kind": "raft",
+  "from": 1, "to": 2,
+  "createdAt": 57000,
+  "loc": { "type": "ferry", "ferryId": "f1" },
+  "label": "append",
+  "raft": {
+    "type": "MsgApp", "term": 2, "logTerm": 2, "index": 13, "commit": 13,
+    "entries": [ { "index": 14, "term": 2, "type": "normal", "summary": "stall.reserve stage2-0005 (奈留島)" } ],
+    "reject": false, "rejectHint": 0,
+    "stale": false
+  }
+}

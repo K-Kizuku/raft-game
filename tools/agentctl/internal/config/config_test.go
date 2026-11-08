@@ -22,8 +22,175 @@ func TestRepoConfigIsValid(t *testing.T) {
 	if !c.IsTrustedAuthor("k-kizuku") || c.IsTrustedAuthor("other") {
 		t.Error("IsTrustedAuthor")
 	}
+	// Issue #282: AI 用の GitHub App（kizuku-claude）が書いたレビュー記録も C5 で数える（[bot] の付いた名前だけ）
+	if !c.IsTrustedAuthor("kizuku-claude[bot]") || c.IsTrustedAuthor("kizuku-claude") {
+		t.Error("IsTrustedAuthor（kizuku-claude[bot]）")
+	}
+	if !c.IsCodexBot("chatgpt-codex-connector[bot]") || c.IsCodexBot("chatgpt-codex-connector") || c.IsCodexBot("K-Kizuku") {
+		t.Error("IsCodexBot")
+	}
 	if !c.IsFallbackReason("rate_limited") || c.IsFallbackReason("") || c.IsFallbackReason("x") {
 		t.Error("IsFallbackReason")
+	}
+}
+
+// review.carry_over_on_base_merge（Issue #120）は、リポジトリの設定では true、書かなければ false。
+func TestCarryOverOnBaseMerge(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Review.CarryOverOnBaseMerge {
+		t.Error("リポジトリの設定の carry_over_on_base_merge が true ではない")
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { delete(review(m), "carry_over_on_base_merge") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.CarryOverOnBaseMerge {
+		t.Error("既定が false ではない")
+	}
+}
+
+// review.skip_small_prs・skip_paths・skip_max_lines（Issue #243）は、リポジトリの設定に書いてあり、
+// 書かなければ skip_small_prs は false、skip_paths・skip_max_lines は既定の値。
+func TestSkipSmallPRs(t *testing.T) {
+	data, err := os.ReadFile(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Review map[string]json.RawMessage `json:"review"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"skip_small_prs", "skip_paths", "skip_max_lines"} {
+		if _, ok := raw.Review[k]; !ok {
+			t.Errorf("リポジトリの設定に review.%s がない", k)
+		}
+	}
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Review.SkipSmallPRs {
+		t.Error("リポジトリの設定の skip_small_prs が true ではない")
+	}
+	if got := strings.Join(c.Review.SmallPRSkipPaths(), " "); got != strings.Join(DefaultSkipPaths, " ") {
+		t.Errorf("リポジトリの設定の skip_paths = %s", got)
+	}
+	if c.Review.SmallPRMaxLines() != 300 {
+		t.Errorf("リポジトリの設定の skip_max_lines = %d", c.Review.SmallPRMaxLines())
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) {
+		for _, k := range []string{"skip_small_prs", "skip_paths", "skip_max_lines"} {
+			delete(review(m), k)
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.SkipSmallPRs {
+		t.Error("skip_small_prs の既定が false ではない")
+	}
+	if got := strings.Join(c.Review.SmallPRSkipPaths(), " "); got != "docs/** **/*_test.go **/*.test.ts **/*.test.tsx **/testdata/** **/fixtures/**" {
+		t.Errorf("skip_paths の既定 = %s", got)
+	}
+	if c.Review.SmallPRMaxLines() != DefaultSkipMaxLines || DefaultSkipMaxLines != 300 {
+		t.Errorf("skip_max_lines の既定 = %d", c.Review.SmallPRMaxLines())
+	}
+	if strings.Join(NeverSkipPaths, " ") != "docs/adr/**" {
+		t.Errorf("NeverSkipPaths = %v", NeverSkipPaths)
+	}
+}
+
+// merge.require_up_to_date（Issue #239）は、リポジトリの設定では false、書かなければ true。
+func TestRequireUpToDate(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RequireUpToDate() {
+		t.Error("リポジトリの設定の merge.require_up_to_date が false ではない")
+	}
+	for name, f := range map[string]func(m map[string]any){
+		"merge がない":              func(m map[string]any) { delete(m, "merge") },
+		"merge が null":           func(m map[string]any) { m["merge"] = nil },
+		"require_up_to_date がない": func(m map[string]any) { m["merge"] = map[string]any{} },
+		"require_up_to_date が true": func(m map[string]any) {
+			m["merge"] = map[string]any{"require_up_to_date": true}
+		},
+	} {
+		c, err := Parse(mutate(t, f))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !c.RequireUpToDate() {
+			t.Errorf("%s: true ではない", name)
+		}
+	}
+	if _, err := Parse(mutate(t, func(m map[string]any) { m["merge"] = map[string]any{"unknown": true} })); err == nil {
+		t.Error("merge の未知のキーを受け付けた")
+	}
+	if _, err := Parse(mutate(t, func(m map[string]any) { m["merge"] = map[string]any{"require_up_to_date": "no"} })); err == nil {
+		t.Error("require_up_to_date の真偽値でない値を受け付けた")
+	}
+	var nilCfg *Config
+	if !nilCfg.RequireUpToDate() {
+		t.Error("nil の設定が true ではない")
+	}
+}
+
+// review.max_rounds（Issue #240）は、リポジトリの設定では 1（Issue #336）、書かなければ DefaultMaxRounds（2）。
+func TestMaxRounds(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.MaxRounds != 1 || c.Review.MaxReviewRounds() != 1 {
+		t.Errorf("リポジトリの設定の max_rounds = %d（MaxReviewRounds %d）", c.Review.MaxRounds, c.Review.MaxReviewRounds())
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { delete(review(m), "max_rounds") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.MaxReviewRounds() != DefaultMaxRounds || DefaultMaxRounds != 2 {
+		t.Errorf("既定が 2 ではない（%d）", c.Review.MaxReviewRounds())
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { review(m)["max_rounds"] = 3 }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Review.MaxReviewRounds() != 3 {
+		t.Errorf("max_rounds = 3 が効かない（%d）", c.Review.MaxReviewRounds())
+	}
+}
+
+// github_app（Issue #282）は、リポジトリの設定では App ID と鍵のパスがある。省略してもよい。
+func TestGithubApp(t *testing.T) {
+	c, err := Load(repoConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GithubApp == nil || c.GithubApp.AppID != 5659452 || c.GithubApp.KeyPath != "~/.config/raft-game/agent-app.pem" {
+		t.Errorf("github_app = %+v", c.GithubApp)
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) { delete(m, "github_app") }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GithubApp != nil {
+		t.Errorf("省略したのに github_app = %+v", c.GithubApp)
+	}
+	c, err = Parse(mutate(t, func(m map[string]any) {
+		m["github_app"] = map[string]any{"app_id": 1, "key_path": "/etc/agent.pem"}
+	}))
+	if err != nil {
+		t.Fatalf("絶対パスを受け付けない: %v", err)
+	}
+	if c.GithubApp.AppID != 1 || c.GithubApp.KeyPath != "/etc/agent.pem" {
+		t.Errorf("github_app = %+v", c.GithubApp)
 	}
 }
 
@@ -63,6 +230,9 @@ func TestInvalid(t *testing.T) {
 			review(m)["blocking_severities"] = []any{"critical", "high", "urgent"}
 		}, "urgent"},
 		{"trusted_authors が空", func(m map[string]any) { review(m)["trusted_authors"] = []any{} }, "trusted_authors"},
+		{"codex_bot_authors が空", func(m map[string]any) { review(m)["codex_bot_authors"] = []any{} }, "codex_bot_authors"},
+		{"codex_bot_authors がない", func(m map[string]any) { delete(review(m), "codex_bot_authors") }, "codex_bot_authors"},
+		{"codex_bot_authors に空の値", func(m map[string]any) { review(m)["codex_bot_authors"] = []any{" "} }, "codex_bot_authors"},
 		{"max_workers が 0", func(m map[string]any) { m["max_workers"] = 0 }, "max_workers"},
 		{"max_workers が 9", func(m map[string]any) { m["max_workers"] = 9 }, "max_workers"},
 		{"retry_limit が 0", func(m map[string]any) { m["retry_limit"] = 0 }, "retry_limit"},
@@ -73,7 +243,35 @@ func TestInvalid(t *testing.T) {
 		{"primary が別", func(m map[string]any) { review(m)["primary"] = "anyone" }, "primary"},
 		{"未知のキー", func(m map[string]any) { m["skip_review"] = true }, "unknown field"},
 		{"review の未知のキー", func(m map[string]any) { review(m)["disabled"] = true }, "unknown field"},
+		{"max_rounds が負", func(m map[string]any) { review(m)["max_rounds"] = -1 }, "review.max_rounds"},
+		{"max_rounds が 11", func(m map[string]any) { review(m)["max_rounds"] = 11 }, "review.max_rounds"},
+		{"max_rounds が整数でない", func(m map[string]any) { review(m)["max_rounds"] = "2" }, "max_rounds"},
+		{"github_app.app_id が 0", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 0, "key_path": "~/k.pem"}
+		}, "github_app.app_id"},
+		{"github_app.app_id がない", func(m map[string]any) {
+			m["github_app"] = map[string]any{"key_path": "~/k.pem"}
+		}, "github_app.app_id"},
+		{"github_app.app_id が文字列", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": "5659452", "key_path": "~/k.pem"}
+		}, "app_id"},
+		{"github_app.key_path が空", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": ""}
+		}, "github_app.key_path"},
+		{"github_app.key_path が相対パス", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": "keys/agent.pem"}
+		}, "github_app.key_path"},
+		{"github_app.key_path に改行", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": "~/a\nb.pem"}
+		}, "github_app.key_path"},
+		{"github_app の未知のキー", func(m map[string]any) {
+			m["github_app"] = map[string]any{"app_id": 1, "key_path": "~/k.pem", "private_key": "x"}
+		}, "unknown field"},
 		{"不正な glob", func(m map[string]any) { m["protected_paths"] = []any{"a/[b"} }, "protected_paths"},
+		{"skip_paths に不正な glob", func(m map[string]any) { review(m)["skip_paths"] = []any{"docs/[x"} }, "review.skip_paths"},
+		{"skip_paths に空の値", func(m map[string]any) { review(m)["skip_paths"] = []any{" "} }, "review.skip_paths"},
+		{"skip_max_lines が負", func(m map[string]any) { review(m)["skip_max_lines"] = -1 }, "review.skip_max_lines"},
+		{"skip_small_prs が真偽値でない", func(m map[string]any) { review(m)["skip_small_prs"] = "yes" }, "skip_small_prs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

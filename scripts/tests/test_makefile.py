@@ -21,11 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 TARGETS = ["test", "lint", "dev", "dev-env", "clean-docker", "gen", "sync-data", "demo-local", "help"]
 
-UNIMPLEMENTED = {
-    "gen": "T-301",
-    "sync-data": "T-201/T-205",
-    "demo-local": "T-504",
-}
+UNIMPLEMENTED: dict = {}
 
 SKELETON_DIRS = [
     "server/cmd",
@@ -150,6 +146,13 @@ class MakefileTest(unittest.TestCase):
         self.assertIn("DEV_WEB_PORT=15193", res.stdout)
         self.assertIn("DEV_SERVER_PORT=18100", res.stdout)
 
+    # MK-1（T-504）: make demo-local DRY_RUN=1 は Go（デモ操作あり）と Vite の起動を表示する。
+    def test_demo_local_dry_run(self) -> None:
+        res = make("demo-local", "DRY_RUN=1", "CHECK=", "DEMO_DATA_DIR=server/internal/server/testdata")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("DEMO_CONTROLS=1", res.stdout)
+        self.assertIn("DEV_BACKEND=standalone", res.stdout)
+
     # M-4
     def test_clean_docker_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,6 +167,65 @@ class MakefileTest(unittest.TestCase):
             calls = read_log(log)
             self.assertTrue(calls)
             self.assertFalse(any("rm" in c for c in calls), calls)
+
+
+class SyncDataTest(unittest.TestCase):
+    """MK-2（T-302・D-2 の案）: make sync-data が data/ を embedded/ にコピーする。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.src = self.tmp / "data"
+        (self.src / "stages").mkdir(parents=True)
+        (self.src / "islands.json").write_text('{"x":1}', encoding="utf-8")
+        (self.src / "stages" / "alpha.yaml").write_text("id: alpha\n", encoding="utf-8")
+        (self.src / "stages" / "beta.yaml").write_text("id: beta\n", encoding="utf-8")
+        (self.src / "stages" / "typo.yml").write_text("id: typo\n", encoding="utf-8")
+        (self.src / "stages" / "sub").mkdir()
+        (self.src / "stages" / "sub" / "skip.yaml").write_text("id: skip\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def sync(self, dest: Path) -> subprocess.CompletedProcess:
+        return make("sync-data", f"SYNC_DATA_SRC={self.src}", f"SYNC_DATA_DEST={dest}")
+
+    def test_copies(self) -> None:
+        dest = self.tmp / "out" / "embedded"
+        (dest / "stages").mkdir(parents=True)
+        (dest / "stale.json").write_text("{}", encoding="utf-8")
+        (dest / "stages" / "old.yaml").write_text("id: old\n", encoding="utf-8")
+        res = self.sync(dest)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("ステージ 2 個", res.stdout)
+        self.assertEqual((dest / "islands.json").read_text(encoding="utf-8"), '{"x":1}')
+        names = sorted(p.name for p in (dest / "stages").iterdir())
+        self.assertEqual(names, [".gitkeep", "alpha.yaml", "beta.yaml", "typo.yml"])
+        self.assertFalse((dest / "stale.json").exists())
+
+    def test_missing_islands(self) -> None:
+        (self.src / "islands.json").unlink()
+        dest = self.tmp / "out" / "embedded"
+        dest.mkdir(parents=True)
+        (dest / "keep").write_text("x", encoding="utf-8")
+        res = self.sync(dest)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("islands.json", res.stderr)
+        self.assertTrue((dest / "keep").exists())
+
+    def test_dest_must_end_with_embedded(self) -> None:
+        dest = self.tmp / "out"
+        dest.mkdir()
+        (dest / "keep").write_text("x", encoding="utf-8")
+        res = self.sync(dest)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("/embedded", res.stderr)
+        self.assertTrue((dest / "keep").exists())
+
+    def test_default_dest(self) -> None:
+        res = make("-n", "sync-data")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("server/internal/stage/embedded", res.stdout)
 
 
 if __name__ == "__main__":

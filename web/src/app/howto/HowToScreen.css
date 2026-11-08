@@ -1,0 +1,155 @@
+/* 遊び方（T-424a）。便箋のカードに、番号つきの手順を絵と並べる（docs/11-visual-design.md §8）。
+   共通の紙のカード（.app-card）を、罫線と赤い余白線の便箋にする。色はトークンだけを使う。 */
+
+.app-howto {
+  /* 便箋の行の高さ（罫線の間隔）。大きな画面では本文の文字とともに大きくなる */
+  --howto-line: calc(var(--font-size-body) * 2);
+  /* 便箋の罫線と、左の余白線 */
+  --howto-rule: color-mix(in srgb, var(--color-sea-mid) 45%, transparent);
+  --howto-margin: color-mix(in srgb, var(--color-postal) 45%, transparent);
+}
+
+.app-howto.app-card.app-screen {
+  padding-left: calc(var(--space-6) + var(--space-5));
+  background-color: var(--color-paper);
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent calc(var(--space-6) - 1px),
+      var(--howto-margin) calc(var(--space-6) - 1px),
+      var(--howto-margin) calc(var(--space-6) + 1px),
+      transparent calc(var(--space-6) + 1px)
+    ),
+    repeating-linear-gradient(
+      180deg,
+      transparent 0,
+      transparent calc(var(--howto-line) - 1px),
+      var(--howto-rule) calc(var(--howto-line) - 1px),
+      var(--howto-rule) var(--howto-line)
+    );
+}
+
+/* 右上の切手のような封筒（飾り） */
+.app-howto .howto-stamp {
+  position: absolute;
+  top: var(--space-5);
+  right: var(--space-5);
+  width: 3.5em;
+  height: auto;
+  transform: rotate(8deg);
+}
+
+.app-howto > h1 {
+  padding-right: 4em;
+}
+
+/* 手順。番号（CSS の連番）と絵を左に、文を右に置く。 */
+.app-howto .howto-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: howto-step;
+}
+
+.app-howto .howto-step {
+  position: relative;
+  box-sizing: border-box;
+  /* 絵の高さに合わせて最低の高さを取る（文が長ければ伸びる） */
+  min-height: 5em;
+  padding: var(--space-4) var(--space-4) var(--space-4) 8em;
+  background: var(--color-paper);
+  border: 2px solid color-mix(in srgb, var(--color-ink) 25%, transparent);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  counter-increment: howto-step;
+  font-size: calc(var(--font-size-body) * 1.1);
+  line-height: 1.7;
+}
+
+.app-howto .howto-step::before {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-3);
+  display: grid;
+  place-items: center;
+  width: 1.8em;
+  height: 1.8em;
+  content: counter(howto-step);
+  color: var(--color-ink);
+  background: var(--color-gold);
+  border: 2px solid var(--color-ink);
+  border-radius: 50%;
+  font-family: var(--font-number);
+  font-weight: bold;
+}
+
+.app-howto .howto-step-icon {
+  position: absolute;
+  top: var(--space-4);
+  left: 2.8em;
+  width: 4.8em;
+  height: 3.8em;
+}
+
+/* 節の見出しと中身（T-417）。番号と絵は節の上の端にそろえ、文は右に流す。 */
+.app-howto .howto-step-title {
+  margin: 0 0 var(--space-2);
+  font-size: 1.15em;
+  line-height: 1.6;
+}
+
+.app-howto .howto-step p,
+.app-howto .howto-list,
+.app-howto .howto-keys {
+  margin: 0;
+}
+
+/* 箇条書きの行（ページの中の list は手順の 1 つだけにするため、<p> の行に点を付ける） */
+.app-howto .howto-list p {
+  position: relative;
+  padding-left: 1.1em;
+}
+
+.app-howto .howto-list p::before {
+  position: absolute;
+  left: 0;
+  content: "・";
+}
+
+.app-howto .howto-step > p + .howto-list {
+  margin-top: var(--space-1);
+}
+
+/* キーの行の下に、説明を少し下げて置く */
+.app-howto .howto-keys dd {
+  margin: 0 0 var(--space-1) 1.1em;
+}
+
+.app-howto kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0 0.35em;
+  background: var(--color-paper-deep);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-s);
+  font-family: var(--font-number);
+  font-size: 0.9em;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* 広い画面（1280px 以上）では、節を 2 列に並べて、スクロールを減らす */
+@media (min-width: 80rem) {
+  .app-howto.app-card.app-screen {
+    max-width: 84rem;
+  }
+
+  .app-howto .howto-steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}

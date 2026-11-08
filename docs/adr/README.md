@@ -38,6 +38,12 @@
 | [0019](./0019-parallel-local-development.md) | AI エージェントの並列開発のため、ローカル環境を作業ディレクトリ単位で分ける | Accepted | 容易 |
 | [0020](./0020-public-repository-apache-license.md) | リポジトリを公開し、ライセンスは Apache-2.0 にする | Accepted | 中 |
 | [0021](./0021-hootl-agent-development.md) | AI エージェントの開発は、ローカル PC の Codex CLI と Claude Code で行い、Rulesets・必須のチェック・hooks で強制する | Accepted | 中 |
+| [0022](./0022-yaml-library.md) | YAML の読み込みに `go.yaml.in/yaml/v3` を使い、未知のキーを拒否する | Accepted | 容易 |
+| [0023](./0023-durable-object-fetch-handler.md) | Durable Object は `fetch` のハンドラーで呼び、`cloudflare:workers`・RPC を使わない | Accepted | 容易（`cost-guard.ts`・`admin/client.ts` だけ） |
+| [0024](./0024-worker-rate-limit-binding.md) | Worker の IP ごとのレート制限に、Workers の Rate Limiting の束縛を使う | Proposed | 容易（`security/rate-limit.ts`・`cloudflare.config.ts` の束縛） |
+| [0025](./0025-stage-data-source.md) | ステージ定義は、ビルドタグ `embeddata` を付けたときだけバイナリに埋め込み、ローカルでは `DATA_DIR` で読む | Proposed | 容易（`stage/embed*.go`・`Makefile` の `sync-data`・`server.OpenData`） |
+| [0026](./0026-vite-dev-backend.md) | standalone の開発サーバーでは `@cloudflare/vite-plugin` を読み込まず、Vite の `server.proxy` で `/api`・`/ws` を Go に中継する | Proposed | 容易（`vite.config.ts`・`src/devserver/`・`scripts/dev-env.sh`） |
+| [0028](./0028-browser-replay.md) | ブラウザでのリプレイは、同じ Go のコード（`sim`）を WebAssembly にしてブラウザで再シミュレーションし、出てきた記録を web の記録の再生で流す | Accepted | 容易（`server/cmd/replaywasm`・`web/src/app/replay/`。`sim` は変えない） |
 
 ## 判断を差し替える手順
 

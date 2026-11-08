@@ -7,13 +7,29 @@
 3. `docs/08-implementation-plan.md`（タスク一覧）
 4. 迷ったら `docs/adr/` と `docs/09-assumptions-and-open-questions.md`（判断の記録）
 5. AI エージェントとして動くときは `docs/agents/README.md`（役割と権限・Issue からマージまでの流れ・運用。ローカル環境の分け方は ADR-0019）
+6. レビューをするときは `REVIEW.md`
+
+## リポジトリの構成
+
+| パス | 中身 |
+|---|---|
+| `server/` | Go のモジュール（`server/go.mod`）。`cmd/`（`islandsdata` などのコマンド）・`internal/`（シミュレーションのコアなど。役割は `docs/02-architecture.md` §3）・`third_party/etcd-raft`（同梱の etcd-raft。ADR-0005） |
+| `web/` | ブラウザのクライアント（`src/`）・Worker と Durable Object（`worker/`）・インフラの正本 `cloudflare.config.ts` |
+| `data/` | 提供データの原本（`raw/`）・人手の抜き出し（`curated/`）・ETL の設定（`islands-select.yaml`）・生成物（`islands.json`。コミットする）・ステージ定義（`stages/`） |
+| `spike/` | T-007 のスパイク（本番と別の Worker `raft-game-spike`）。本番のコードから import しない。CI では検査しない（`spike/README.md`） |
+| `scripts/` | 開発の補助（`dev-env.sh`・`dev-slot.sh`・`check-docs.py`）・`raft/`（パッチの検証）・`github/`（人が使うワークフローの取り込み・リポジトリの設定）・`agents/`（エージェントの運用）・`tests/`（Python のテスト） |
+| `tools/agentctl` | Merge Gate と Issue・PR の書式の検査（Go の別モジュール） |
+| `docs/` | 要件・設計・ADR・エージェントの運用 |
+| `.github/workflow-sources/` | ワークフローの正本。`.github/workflows/` は人が取り込む |
+
+全体の予定の構成は `docs/02-architecture.md` §6 にある。人向けの準備・作業の流れは [CONTRIBUTING.md](CONTRIBUTING.md) にある。
 
 ## 絶対に守ること
 
 - **Raft のアルゴリズムを変更しない。** `server/third_party/etcd-raft` への変更は ADR-0005 の乱数のパッチだけ。それ以外の変更が必要に見えたら、ADR を書いて相談する
 - **ゲーム側で Leader や Commit の結果を決めない。** Raft の出力（`Ready`）を観察するだけ
 - **Raft のメッセージを書き換えない。** 港キューでの合流・破棄（ネットワークでの欠落と同じ扱い）だけが許される
-- **`server/internal/sim` 以下を決定的に保つ。** `time.Now`、goroutine、チャネル、グローバルな `math/rand`、map の走査順への依存、スコアや判定での浮動小数点を使わない（`forbidigo` で検出）
+- **`sim.Engine` の中で動くパッケージ（`server/internal/sim`・`cluster`・`ferry`・`ledger`・`game`）とボット（`internal/bot`）を決定的に保つ。** `time.Now`、goroutine、チャネル、グローバルな `math/rand`、map の走査順への依存、スコアや判定での浮動小数点を使わない。`forbidigo`（`server/.golangci.yml`）が検出するのは実時間・`math/rand`・共有の乱数・`float32`/`float64` の型だけで、goroutine・チャネル・`select`・map の走査順・型を書かない小数はレビューで見る（DesignDoc §9.2）
 - **Ready の処理順序**は「Append → SetHardState → 送信 → 適用 → Advance」。`cluster.Node.processReady` 以外で Ready を扱わない
 - ゲームの数値はコードに直接書かず、ステージ定義（`data/stages/*.yaml`）に置く
 
@@ -23,13 +39,23 @@
 - 新しい技術判断をしたら `docs/adr/` に ADR を追加する（`docs/adr/template.md`）
 - PR やコミットには、関係する要件 ID（`FR-…`）やタスク ID（`T-…`）を書く
 
-## コマンド（M0 で整備する予定）
+## コマンド
+
+ルートで実行する。一覧は `make help`。
+
+```bash
+corepack enable && pnpm install   # pnpm は package.json の packageManager の版（ワークスペース: web・spike）
+scripts/dev-slot.sh acquire       # 並列で動かすとき。ポートなどは make dev-env で確かめる
+```
 
 ```bash
 make test       # Go と web のテスト
 make lint       # golangci-lint・ESLint・型チェック
 make gen        # Go のプロトコルの型から TS の型を生成
+make gen-check  # 生成した TS の型が Go の型と一致するか（CI の server ジョブ）
 make sync-data  # data/ を server/internal/stage/embedded/ にコピー
+make check-secrets  # gitleaks で git の履歴にシークレットがないか（CI の secrets ジョブ。初回は gitleaks をビルドする）
+make check-license  # LICENSE・NOTICE が同梱の OSS・提供データの出典と合っているか（CI の docs ジョブ）
 make dev        # Go（standalone モード）と Vite を DEV_SLOT のポートで起動（DRY_RUN=1 で表示だけ）
 make dev-env    # この作業ツリーの DEV_SLOT・ポート・cf の状態・Docker の名前を出す
 make clean-docker  # この作業ツリーの Docker のコンテナとイメージを消す（DRY_RUN=1 で表示だけ）
@@ -40,6 +66,22 @@ python3 scripts/check-docs.py                            # Markdown の相対リ
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'  # scripts/ のテスト
 bash scripts/github/tests/run.sh                         # install-workflows.sh のテスト（CI の shell ジョブ）
 bash scripts/raft/verify-patch.sh --with-tests   # 同梱の etcd-raft と上流の差分がパッチだけか（CI の shell ジョブ）
+```
+
+- `make test` は Go（`tools/*`・`server`）・web・`scripts/tests` の Python・追跡されている `*tests/run.sh` を実行する。`-race` は付けないので、CI と同じにするときは `go -C server test -race -count=1 ./...`
+- `make lint` は go vet・gofmt（`tools/*`・`server`）・golangci-lint（`server`。版は Makefile の `GOLANGCI_LINT_VERSION`）・web の lint と typecheck・shellcheck を実行する。ツールがないものは「対象なし」と出して飛ばす
+- `make help` で「未実装」と出るターゲットは、まだ何もしない
+- `make dev` は、今は web（Vite）だけを起動する。Go の standalone は、そのコマンド（server/cmd/server）ができてから（それまでは `scripts/dev-env.sh` が「対象なし」と出す）
+
+よく使う個別のコマンド:
+
+```bash
+go -C server test -race -count=1 ./...          # CI の server ジョブと同じ
+pnpm -C web lint && pnpm -C web typecheck && pnpm -C web test   # CI の web ジョブと同じ
+pnpm -C web format                               # Prettier の検査（CI では動かさない）
+go -C server run ./cmd/islandsdata --raw ../data/raw --curated ../data/curated \
+  --select ../data/islands-select.yaml --out ../data/islands.json --check   # islands.json が最新か（--check を外すと生成し直す）
+bash spike/scripts/check.sh                      # スパイクの検査（Docker が要る。CI では動かさない）
 ```
 
 - ワークフローは `.github/workflow-sources/` に書き、`.github/workflows/` には書かない（人が `scripts/github/install-workflows.sh` で取り込む）
@@ -98,13 +140,14 @@ bash .claude/hooks/tests/run.sh && bash scripts/agents/tests/run.sh   # テス�
 ## Cloudflare（`cf`）の注意点
 
 - インフラの構成は `web/cloudflare.config.ts` と `cf`（Cloudflare CLI、ベータ版）だけで管理する。Wrangler・Terraform・ダッシュボードでの手作業の変更は使わない（ADR-0016）
-- `cf` は `web/` の devDependency として版を固定する。上げるときは専用の PR にする
+- `cf` は `web/` の devDependency として版を固定する。上げるときは専用の PR にする。`spike/package.json` も同じ版にする（`spike/README.md`）
 - `cf deploy` を使う。Durable Object のクラスの作成・削除・改名は `cf workers versions create` ではできない
 - リアルタイムのログ表示とシークレットの個別登録は未対応。ログはダッシュボード、シークレットは `cf deploy --secrets-file`
 - 1 ゲーム＝1 Durable Object `GameSession`＝1 コンテナ。コンテナ（Go）は外部に直接公開せず、外部への通信も禁止する（`enableInternet: false`）
 - コンテナは `durable_object` 方式（`default` 方式は非推奨）。マシンの大きさは `ctx.container.start()` で指定する。イメージは `linux/amd64`
 - URL は `raft.kizuku-hackathon.work`（一般公開）と `raft-demo.kizuku-hackathon.work`（デモ用）。ゾーンの設定は、この 2 つのホスト名だけに効くようにする
 - 公開リポジトリなので、シークレットをコミットしない（`--secrets-file` 用のファイルは `.gitignore` に入れる）
+  - テストの偽のトークン・鍵は、その行に `gitleaks:allow` のコメントを付けるか、値を実行時に組み立てる（例: `"x".repeat(32)`）。`.gitleaksignore` に足してよいのは main にあるコミットの指紋だけ（`make check-secrets` が確かめる）
 - ブラウザから届いた `internal.*` の電文は、Durable Object で必ず破棄する
 
 ## etcd-io/raft v3.7 の注意点

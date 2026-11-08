@@ -10,6 +10,7 @@
 .env
 .env.*
 *.secrets*
+.dev.vars*
 
 # テストなどで作られるもの（残ると git worktree remove が失敗する）
 __pycache__/
@@ -20,4 +21,6 @@ dist/
 web/.cloudflare/
 .cloudflare/
 server/internal/stage/embedded/
+# リプレイの WASM と wasm_exec.js（scripts/build-replay-wasm.sh・make wasm が作る。T-720b）
+web/public/wasm/
 coverage/

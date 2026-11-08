@@ -40,6 +40,8 @@ type pull struct {
 	Mergeable      *bool   `json:"mergeable"`
 	MergeableState string  `json:"mergeable_state"`
 	ChangedFiles   int     `json:"changed_files"`
+	Additions      *int    `json:"additions"`
+	Deletions      *int    `json:"deletions"`
 }
 
 type issue struct {
@@ -102,6 +104,115 @@ func (c *Client) OpenPullsForSHA(ctx context.Context, repo, sha string) ([]int, 
 	return out, nil
 }
 
+func (p *pull) toGate() gate.PullRequest {
+	return gate.PullRequest{
+		Number: p.Number, State: p.State, Merged: p.Merged, Draft: p.Draft,
+		Title: p.Title, Body: str(p.Body), Author: p.User.Login, Labels: labelNames(p.Labels),
+		BaseRef: p.Base.Ref, BaseSHA: p.Base.SHA, HeadRef: p.Head.Ref, HeadSHA: p.Head.SHA,
+		Mergeable: p.Mergeable, MergeableState: p.MergeableState, ChangedFiles: p.ChangedFiles,
+		Additions: p.Additions, Deletions: p.Deletions,
+	}
+}
+
+type pullReview struct {
+	ID          int64  `json:"id"`
+	User        *user  `json:"user"`
+	CommitID    string `json:"commit_id"`
+	Body        string `json:"body"`
+	SubmittedAt string `json:"submitted_at"`
+}
+
+type reviewComment struct {
+	ID               int64  `json:"id"`
+	User             *user  `json:"user"`
+	CommitID         string `json:"commit_id"`
+	OriginalCommitID string `json:"original_commit_id"`
+	Path             string `json:"path"`
+	Line             *int   `json:"line"`
+	OriginalLine     *int   `json:"original_line"`
+	Body             string `json:"body"`
+	CreatedAt        string `json:"created_at"`
+}
+
+func login(u *user) string {
+	if u == nil {
+		return ""
+	}
+	return u.Login
+}
+
+// fetchDiscussion は、PR のコメント（Issue のコメント）・レビュー・行コメントを、すべてのページで読む（REST だけ）。
+func (c *Client) fetchDiscussion(ctx context.Context, repo string, n int, in *gate.Input) error {
+	rp := repoPath(repo)
+	cs, err := getPages(ctx, c, fmt.Sprintf("%s/issues/%d/comments?per_page=100", rp, n), listOf[comment])
+	if err != nil {
+		return err
+	}
+	in.Comments = []gate.Comment{}
+	for _, cm := range cs {
+		in.Comments = append(in.Comments, gate.Comment{ID: cm.ID, Author: cm.User.Login, Body: cm.Body, CreatedAt: cm.CreatedAt, UpdatedAt: cm.UpdatedAt})
+	}
+
+	rvs, err := getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/reviews?per_page=100", rp, n), listOf[pullReview])
+	if err != nil {
+		return err
+	}
+	in.Reviews = []gate.PullReview{}
+	for _, r := range rvs {
+		in.Reviews = append(in.Reviews, gate.PullReview{ID: r.ID, Author: login(r.User), CommitID: r.CommitID, Body: r.Body, SubmittedAt: r.SubmittedAt})
+	}
+
+	rcs, err := getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/comments?per_page=100", rp, n), listOf[reviewComment])
+	if err != nil {
+		return err
+	}
+	in.ReviewComments = []gate.ReviewComment{}
+	for _, r := range rcs {
+		line := 0
+		if r.Line != nil {
+			line = *r.Line
+		} else if r.OriginalLine != nil {
+			line = *r.OriginalLine
+		}
+		in.ReviewComments = append(in.ReviewComments, gate.ReviewComment{
+			ID: r.ID, Author: login(r.User), CommitID: r.CommitID, OriginalCommitID: r.OriginalCommitID,
+			Path: r.Path, Line: line, Body: r.Body, CreatedAt: r.CreatedAt,
+		})
+	}
+	return nil
+}
+
+// FetchDiscussion は、PR の状態と、コメント・レビュー・行コメントだけを集める（`agentctl pr view`）。
+// 結果は gate.Input の形で、ファイル・Issue・CI・比較は含まない。
+func (c *Client) FetchDiscussion(ctx context.Context, repo string, n int) (gate.Input, error) {
+	in := gate.Input{Repo: repo}
+	p, err := c.getPull(ctx, repo, n)
+	if err != nil {
+		return in, err
+	}
+	in.PullRequest = p.toGate()
+	if err := c.fetchDiscussion(ctx, repo, n, &in); err != nil {
+		return in, err
+	}
+	return in, nil
+}
+
+// ListFiles は、PR の変更ファイルを、すべてのページで読む（`agentctl pr protected-files`）。
+func (c *Client) ListFiles(ctx context.Context, repo string, n int) ([]gate.File, error) {
+	return getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/files?per_page=100", repoPath(repo), n), listOf[gate.File])
+}
+
+// CreateComment は PR（Issue）にコメントを作り、その ID を返す。
+func (c *Client) CreateComment(ctx context.Context, repo string, n int, body string) (int64, error) {
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	if _, err := c.do(ctx, http.MethodPost, fmt.Sprintf("%s/issues/%d/comments", repoPath(repo), n), map[string]string{"body": body}, &out); err != nil {
+		return 0, err
+	}
+	return out.ID, nil
+}
+
 // mergeableRetries は、mergeable が未計算（null）のときに読み直す回数。
 const mergeableRetries = 3
 
@@ -120,19 +231,14 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 			return in, err
 		}
 	}
-	in.PullRequest = gate.PullRequest{
-		Number: p.Number, State: p.State, Merged: p.Merged, Draft: p.Draft,
-		Title: p.Title, Body: str(p.Body), Author: p.User.Login, Labels: labelNames(p.Labels),
-		BaseRef: p.Base.Ref, BaseSHA: p.Base.SHA, HeadRef: p.Head.Ref, HeadSHA: p.Head.SHA,
-		Mergeable: p.Mergeable, MergeableState: p.MergeableState, ChangedFiles: p.ChangedFiles,
-	}
+	in.PullRequest = p.toGate()
 	if p.State != "open" {
 		// closed・merged は fail にするだけなので、ほかの情報は集めない。
 		return in, nil
 	}
 	head := p.Head.SHA
 
-	if in.Files, err = getPages(ctx, c, fmt.Sprintf("%s/pulls/%d/files?per_page=100", rp, n), listOf[gate.File]); err != nil {
+	if in.Files, err = c.ListFiles(ctx, repo, n); err != nil {
 		return in, err
 	}
 
@@ -188,12 +294,8 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 		return in, err
 	}
 
-	cs, err := getPages(ctx, c, fmt.Sprintf("%s/issues/%d/comments?per_page=100", rp, n), listOf[comment])
-	if err != nil {
+	if err := c.fetchDiscussion(ctx, repo, n, &in); err != nil {
 		return in, err
-	}
-	for _, cm := range cs {
-		in.Comments = append(in.Comments, gate.Comment{ID: cm.ID, Author: cm.User.Login, Body: cm.Body, CreatedAt: cm.CreatedAt, UpdatedAt: cm.UpdatedAt})
 	}
 
 	var cmp gate.Compare
@@ -211,6 +313,169 @@ func (c *Client) FetchInput(ctx context.Context, repo string, n int) (gate.Input
 		return in, fmt.Errorf("github: 判定中に PR #%d の HEAD が %s から %s に変わった", n, head, again.Head.SHA)
 	}
 	return in, nil
+}
+
+// FetchCarryOver は、レビュー記録の引き継ぎ（Merge Gate の C6。Issue #120）の判定の材料を集め、in.CarryOver に入れる。
+// sha は引き継ぎの候補（gate.CarryOverCandidate）。集めるのに失敗しても、エラーは返さず in.CarryOver.Error に書く
+// （引き継がないだけで、今までどおり HEAD のレビューを求める）。
+//
+//   - commits: HEAD から GET /git/commits/{sha} で最初の親をたどり、sha に着くか、マージではないコミットに当たるまで
+//   - in_base: マージコミットの 2 番目以降の親ごとに、GET /compare/{base}...{親} の ahead_by が 0（ベースの履歴に含まれる）か
+//   - files: GET /compare/{base}...{sha} の files（ベースとのマージベースから sha までの変更。patch を含む）
+//   - modes: 変更ファイルの、差分の両端（ベースとのマージベースと、sha か HEAD）でのモード。
+//     GET /git/commits/{sha}・GET /compare/{base}...{sha か HEAD} の merge_base_commit からツリーを決め、
+//     GET /git/trees/{tree}?recursive=1 から取る（ツリーが大きすぎて切れていたら集めない）
+func (c *Client) FetchCarryOver(ctx context.Context, repo string, in *gate.Input, sha string) {
+	co := &gate.CarryOverInput{SHA: sha, Commits: []gate.Commit{}, InBase: map[string]bool{}, Files: []gate.File{}}
+	in.CarryOver = co
+	if err := c.fetchCarryOver(ctx, repo, in.PullRequest.BaseRef, in.PullRequest.HeadSHA, in.Files, co); err != nil {
+		co.Error = err.Error()
+		co.Modes = nil
+	}
+}
+
+type gitCommit struct {
+	SHA  string `json:"sha"`
+	Tree struct {
+		SHA string `json:"sha"`
+	} `json:"tree"`
+	Parents []struct {
+		SHA string `json:"sha"`
+	} `json:"parents"`
+}
+
+// compareMergeBase は、GET /compare の応答のうち、変更ファイルとマージベースのツリー。
+type compareMergeBase struct {
+	Files           []gate.File `json:"files"`
+	MergeBaseCommit struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Tree struct {
+				SHA string `json:"sha"`
+			} `json:"tree"`
+		} `json:"commit"`
+	} `json:"merge_base_commit"`
+}
+
+func (c *Client) fetchCarryOver(ctx context.Context, repo, base, head string, headFiles []gate.File, co *gate.CarryOverInput) error {
+	rp := repoPath(repo)
+	headTree := ""
+	for cur := head; cur != co.SHA; {
+		if len(co.Commits) >= gate.MaxCarryOverCommits {
+			return fmt.Errorf("HEAD から %s までのコミットが %d 個より多い", co.SHA, gate.MaxCarryOverCommits)
+		}
+		var gc gitCommit
+		if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/git/commits/%s", rp, esc(cur)), nil, &gc); err != nil {
+			return err
+		}
+		if cur == head {
+			headTree = gc.Tree.SHA
+		}
+		cm := gate.Commit{SHA: gc.SHA, Parents: []string{}}
+		for _, p := range gc.Parents {
+			cm.Parents = append(cm.Parents, p.SHA)
+		}
+		co.Commits = append(co.Commits, cm)
+		if len(cm.Parents) < 2 {
+			// マージではないコミット（PR の作者の変更）。判定で引き継がないので、これ以上は集めない。
+			return nil
+		}
+		for _, p := range cm.Parents[1:] {
+			if _, ok := co.InBase[p]; ok {
+				continue
+			}
+			var cmp gate.Compare
+			if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/compare/%s...%s?per_page=1", rp, esc(base), esc(p)), nil, &cmp); err != nil {
+				return err
+			}
+			co.InBase[p] = cmp.AheadBy == 0 && (cmp.Status == "behind" || cmp.Status == "identical")
+		}
+		cur = cm.Parents[0]
+	}
+	var cmp compareMergeBase
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/compare/%s...%s?per_page=1", rp, esc(base), esc(co.SHA)), nil, &cmp); err != nil {
+		return err
+	}
+	if cmp.Files != nil {
+		co.Files = cmp.Files
+	}
+
+	// ファイルのモード（差分の両端）。
+	var sc gitCommit
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/git/commits/%s", rp, esc(co.SHA)), nil, &sc); err != nil {
+		return err
+	}
+	var hcmp compareMergeBase
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/compare/%s...%s?per_page=1", rp, esc(base), esc(head)), nil, &hcmp); err != nil {
+		return err
+	}
+	trees := map[string]map[string]string{}
+	modesOf := func(tree string, files []gate.File, tip bool) (map[string]string, error) {
+		if tree == "" {
+			return nil, fmt.Errorf("モードを調べるツリーの SHA がない")
+		}
+		all, ok := trees[tree]
+		if !ok {
+			var err error
+			if all, err = c.treeModes(ctx, rp, tree); err != nil {
+				return nil, err
+			}
+			trees[tree] = all
+		}
+		out := map[string]string{}
+		for _, f := range files {
+			p := f.Filename
+			if !tip && f.PreviousFilename != "" {
+				p = f.PreviousFilename
+			}
+			if m, ok := all[p]; ok {
+				out[p] = m
+			}
+		}
+		return out, nil
+	}
+	var modes gate.CarryOverModes
+	var err error
+	if modes.S.Base, err = modesOf(cmp.MergeBaseCommit.Commit.Tree.SHA, co.Files, false); err != nil {
+		return err
+	}
+	if modes.S.Tip, err = modesOf(sc.Tree.SHA, co.Files, true); err != nil {
+		return err
+	}
+	if modes.Head.Base, err = modesOf(hcmp.MergeBaseCommit.Commit.Tree.SHA, headFiles, false); err != nil {
+		return err
+	}
+	if modes.Head.Tip, err = modesOf(headTree, headFiles, true); err != nil {
+		return err
+	}
+	co.Modes = &modes
+	return nil
+}
+
+// treeModes は、ツリー tree の中のファイルのモード（パス → mode）を返す（GET /git/trees/{tree}?recursive=1）。
+// ツリーが大きすぎて応答が切れていたらエラーを返す。
+func (c *Client) treeModes(ctx context.Context, rp, tree string) (map[string]string, error) {
+	var t struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Mode string `json:"mode"`
+			Type string `json:"type"`
+		} `json:"tree"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/git/trees/%s?recursive=1", rp, esc(tree)), nil, &t); err != nil {
+		return nil, err
+	}
+	if t.Truncated {
+		return nil, fmt.Errorf("ツリー %s が大きすぎて、モードを確かめられない", tree)
+	}
+	out := map[string]string{}
+	for _, e := range t.Tree {
+		if e.Type != "tree" {
+			out[e.Path] = e.Mode
+		}
+	}
+	return out, nil
 }
 
 // SetStatus は sha にコミットステータスを付ける。

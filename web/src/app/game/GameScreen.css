@@ -1,0 +1,194 @@
+/* ゲーム画面のレイアウト（ゲームデザイン §7.2）。
+   上に「状況」、中央に「マップ」、右に「島の詳細」、下に「フェリー操作」。
+   「お知らせ」はマップの隅に重ねる。
+   見た目（T-422・docs/11-visual-design.md）: 紙の地の上に、各領域を重なった紙のパネルとして置く。
+   大きな画面（T-425・docs/11-visual-design.md §12）: 画面の高さちょうどに収め、ページ全体の縦のスクロールを出さない。
+   フェリー操作と島の詳細は、その領域の中で巻き取る。マップの行は高さの 45%（大きな画面では 55%）以上を取り、
+   残りをフェリー操作が中身の分だけ使う。画面が低い（36rem 未満。拡大したときなど）ときだけページを巻き取る。 */
+.game-screen {
+  /* 島の詳細の列の幅（画面の幅に合わせる）。エンジニアパネルの切り替えの位置（アンカー配置が無いとき）も使う。 */
+  --game-island-width: clamp(18rem, 24vw, 30rem);
+  /* マップの行の最小の高さ */
+  --game-map-min-height: 45vh;
+
+  display: grid;
+  grid-template-areas:
+    "hud hud"
+    "map island"
+    "ferry ferry"
+    "offline offline";
+  grid-template-columns: minmax(0, 1fr) var(--game-island-width);
+  grid-template-rows: auto minmax(var(--game-map-min-height), 1fr) minmax(0, auto) auto;
+  gap: var(--space-3);
+  height: 100vh;
+  height: 100dvh;
+  min-height: 36rem;
+  box-sizing: border-box;
+  padding: var(--space-3);
+  color: var(--color-ink);
+  background-color: var(--color-paper);
+}
+
+@media (min-width: 1600px) {
+  .game-screen {
+    --game-map-min-height: 55vh;
+  }
+}
+
+/* デモ操作のキー（DemoKeys.css）は画面の下の端の帯。帯の分だけ下の余白を取り、ほかの領域を隠さない。
+   帯の高さは DemoKeys.css の .demo-keys の min-height と同じ式。 */
+.game-screen:has(> .demo-keys) {
+  padding-bottom: calc(var(--font-size-body) * 2.25 + 2 * var(--space-2));
+}
+
+.game-hud {
+  grid-area: hud;
+}
+
+/* マップは、重ねる部品（エンジニアパネル・チュートリアル・嵐の紹介）がアンカー配置で位置を合わせる基準。
+   マップの上の部品のフォーカスの輪は、海の上で見える墨にする。 */
+.game-map {
+  grid-area: map;
+  position: relative;
+  overflow: hidden;
+  anchor-name: --game-map;
+  --focus-ring-color: var(--focus-ring-color-on-sea);
+}
+
+/* お知らせ（右上）。右下のエンジニアパネルの切り替えに届かない高さまで（古いものから隠れる）。 */
+.game-notifications {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  max-width: 50%;
+  max-height: calc(100% - 2 * var(--space-3) - var(--font-size-body) * 3.5);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.game-island {
+  grid-area: island;
+  overflow: auto;
+}
+
+/* フェリー操作は中身の分だけの高さ（上限はマップの行の残り）。入りきらないときは中で巻き取る。 */
+.game-ferry {
+  grid-area: ferry;
+  overflow: auto;
+  scroll-padding-block: var(--space-3);
+}
+
+/* マップの上の部品（MapView.css・PartitionLegend.css）の文字の大きさを、トークンに合わせる
+   （大きな画面で 1.25 倍）。島のボタンのフォーカスの輪はトークンの輪（海の上の色）にそろえる。 */
+.game-map .map-view__islands {
+  anchor-name: --map-islands;
+}
+
+.game-map .map-view__islands button {
+  font-size: calc(var(--font-size-body) * 0.875);
+}
+
+.game-map .map-view__islands button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.game-map .map-partition {
+  font-size: calc(var(--font-size-body) * 0.8125);
+}
+
+.game-map .map-partition__title {
+  font-size: calc(var(--font-size-body) * 0.875);
+}
+
+.game-offline {
+  grid-area: offline;
+}
+
+/* 接続の状態（接続中・再接続中・失敗）と、開発用の記録の再生中の表示。マップの上に重ねる小さな紙の札。 */
+.game-connection {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.game-connection-notice,
+.game-connection-mock {
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 1px solid var(--color-ink-muted);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-paper);
+}
+
+.game-connection-notice p {
+  margin: 0;
+}
+
+.game-connection-error {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.game-connection-mock {
+  font-size: 0.85em;
+  color: var(--color-ink-muted);
+}
+
+/* 紙のパネル（パネルの地・丸い角・紙が重なる影）。 */
+.game-hud,
+.game-map,
+.game-island,
+.game-ferry {
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper-deep);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+}
+
+/* マップは海が端まで見えるよう、内側の余白を 0 にして角丸で切る。 */
+.game-screen .game-map {
+  padding: 0;
+}
+
+/* 接続の状態・骨組みの表示の札（紙の札）。 */
+.game-offline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper-deep);
+  border: 2px dashed var(--color-ink-muted);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-paper);
+}
+
+.game-offline p {
+  margin: 0;
+}
+
+.game-offline button {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.game-offline button:active {
+  box-shadow: none;
+}

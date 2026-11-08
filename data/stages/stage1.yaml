@@ -1,0 +1,98 @@
+# Stage 1「はじめての郵便船」（瀬戸内）。値は進行表 §3・データ仕様 §5.2 のとおり（調整は T-501）。
+format: 1
+id: stage1
+title: はじめての郵便船
+region: 瀬戸内（香川県）
+intro:
+  text: 温暖で雨の少ない瀬戸内の海。小豆島・豊島・直島を結ぶ郵便船の、はじめての航海です。
+  provenance: derived
+  source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: NATURAL_CLIMATE_FEATURES, quote: "温暖、小雨の典型的な瀬戸内式気候" }
+learning: [log_replication, commit, quorum, prevote]
+durationMs: 180000
+unlock: null
+
+islands:
+  - ref: kagawa-shodoshima
+    layout: { x: 680, y: 260 }
+    color: "#E07A5F"
+    postmaster:               # 名前は計画書の記述にちなむ（ゲームデザイン §7.3）
+      name: オリーブ局長
+      tone: casual
+      provenance: derived
+      source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: LOCAL_INDUSTRY_TOURISM, quote: "オリーブ製品" }
+  - ref: kagawa-teshima
+    layout: { x: 430, y: 300 }
+    color: "#3D85C6"
+    postmaster: { name: しおさい局長, tone: polite, provenance: creative }
+  - ref: kagawa-naoshima
+    layout: { x: 200, y: 330 }
+    color: "#81B29A"
+    postmaster: { name: うみかぜ局長, tone: elder, provenance: creative }
+
+routes:
+  - a: kagawa-shodoshima
+    b: kagawa-teshima
+    travelMs: 3750              # 25 分 × 150（データ仕様 §4.3）
+    provenance: derived
+    source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: MARITIME_TRANSPORT, quote: "豊島~小豊島~土庄(8km・25分" }
+  - a: kagawa-teshima
+    b: kagawa-naoshima
+    travelMs: 5250              # 35 分 × 150
+    provenance: derived
+    source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: MARITIME_TRANSPORT, quote: "高松~直島~豊島(22.6km・35分" }
+
+ferries:
+  - { id: f1, name: せとうち丸, home: kagawa-shodoshima, capacity: 6, speed: 1.0 }
+
+raft:
+  initialLeader: kagawa-shodoshima
+  tickMs: 500
+  heartbeatTick: 2
+  electionTick: 120             # 60〜120 秒（A-07）
+  checkQuorum: true
+  preVote: true
+  maxInflightMsgs: 4
+  maxSizePerMsg: 4096
+
+transport: { dockMs: 1500, perLinkAppCap: 4, portCap: 24, relayCap: 12 }
+
+resources:
+  - { id: "firework:a", kind: firework, label: 大花火, critical: true }
+  - { id: "stall:main", kind: stall, label: 屋台の出店枠, capacity: 5 }
+
+requests:
+  deadlineMs: { normal: 90000, critical: 120000 }
+  retryMs: 25000
+  script:                       # 進行表 §3 の「依頼の台本」
+    - { at: 5000,   island: kagawa-shodoshima, kind: stall.reserve,    resource: "stall:main" }
+    - { at: 30000,  island: kagawa-naoshima,   kind: firework.reserve, resource: "firework:a" }
+    - { at: 60000,  island: kagawa-teshima,    kind: stall.reserve,    resource: "stall:main" }
+    - { at: 80000,  island: kagawa-shodoshima, kind: stall.reserve,    resource: "stall:main" }
+    - { at: 105000, island: kagawa-naoshima,   kind: stall.reserve,    resource: "stall:main" }
+    - { at: 130000, island: kagawa-teshima,    kind: stall.reserve,    resource: "stall:main" }
+  random:
+    rateMilliPerMin: 0          # ランダムな依頼なし
+    slotMs: 10000
+    populationExponent: 0.5
+    kinds: [ { kind: stall.reserve, resource: "stall:main", weight: 1 } ]
+
+events: []
+
+scoring:
+  target: { successes: 3, score3: 1150 }  # ★1 の目標は初心者のボット novice で決める（T-501f #311・ゲームデザイン §5.5）。★3 は greedy の★3 が 9 割以下になるよう上げた（T-501i #350）
+  points: { normal: 100, critical: 300, late: 30, rejected: 0, expiredPenalty: 50 }
+  ferryCostMsPerPoint: 2000
+  fairnessPerSatisfaction: 5
+
+satisfaction:
+  initial: 60
+  silenceAfterMs: 30000
+  silencePenalty: { everyMs: 10000, amount: 2 }
+  succeeded: 10
+  rejectedPenalty: 3
+  expiredPenalty: 10
+
+speed:
+  allowed: [0.5, 1, 2, 4]
+
+tutorial: stage1

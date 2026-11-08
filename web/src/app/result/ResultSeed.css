@@ -1,0 +1,35 @@
+/* リザルトのシードの節（T-705）。.result の下にだけ効かせる。色・余白・文字は T-420 のトークンを使う。 */
+
+.result .result-seed p {
+  margin: 0 0 var(--space-3);
+}
+
+.result .result-seed-value {
+  font-family: var(--font-number);
+  font-size: var(--font-size-h3);
+  font-weight: bold;
+}
+
+/* 長い URL は折り返す。URL は選んでコピーできるようにする。 */
+.result .result-seed-url {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.result .result-seed-url code {
+  padding: var(--space-1) var(--space-2);
+  font-family: var(--font-number);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border-radius: var(--radius-s);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.result .result-seed .result-seed-copy {
+  margin: 0;
+  color: var(--color-ink-muted);
+}

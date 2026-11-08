@@ -1,0 +1,128 @@
+# テスト用の、すべてのキーを使うステージ（架空の島）。値はテストのためのもので、ゲームの調整値ではない。
+format: 1
+id: beta
+title: テストの群島
+region: 波間県・潮見県・風見県（架空）
+intro:
+  text: 架空の島々を結ぶ、少し荒れた海です。
+  provenance: creative
+learning: [log_replication, commit]
+durationMs: 240000
+unlock: alpha
+tutorial: beta-tour
+
+islands:
+  - { ref: hama-hoshizuna, layout: { x: 600, y: 200 }, color: "#E07A5F" }
+  - { ref: hama-tsukikage, layout: { x: 400, y: 300 }, color: "#3D85C6" }
+  - { ref: hama-todai, layout: { x: 200, y: 300 }, color: "#81B29A" }
+  - { ref: shiomi-koishi, layout: { x: 700, y: 500 }, color: "#F2CC8F" }
+  - { ref: shiomi-ooishi, layout: { x: 600, y: 420 }, color: "#6D597A" }
+  - { ref: shiomi-nami, layout: { x: 450, y: 520 }, color: "#b56576" }
+  - { ref: kaze-hayate, layout: { x: 820, y: 120 }, color: "#355070" }
+
+routes:
+  - a: hama-hoshizuna
+    b: hama-tsukikage
+    travelMs: 1500
+    provenance: derived
+    source: { dataset: fixture-2026, region: 星砂地域, field: MARITIME_TRANSPORT, quote: "月影~星砂(3km・10分" }
+  - { a: hama-tsukikage, b: hama-todai, travelMs: 4000, provenance: creative }
+  - { a: hama-hoshizuna, b: shiomi-ooishi, travelMs: 3000, provenance: creative }
+  - { a: shiomi-ooishi, b: shiomi-koishi, travelMs: 2000, provenance: creative }
+  - { a: shiomi-nami, b: shiomi-ooishi, travelMs: 2500, provenance: creative }
+  - { a: hama-hoshizuna, b: kaze-hayate, travelMs: 3500, provenance: fact }
+
+ferries:
+  - { id: f1, name: 架空丸, home: hama-hoshizuna, capacity: 4, speed: 1.2, provenance: fact }
+  - { id: f2, name: テスト丸, home: shiomi-ooishi, capacity: 3, speed: 1 }
+
+raft:
+  initialLeader: hama-hoshizuna
+  tickMs: 500
+  heartbeatTick: 2
+  electionTick: 60
+  checkQuorum: true
+  preVote: false
+  maxInflightMsgs: 8
+  maxSizePerMsg: 8192
+
+transport:
+  dockMs: 1000
+  perLinkAppCap: 3
+  portCap: 16
+  relayCap: 0
+
+resources:
+  - { id: "firework:a", kind: firework, label: 大花火, critical: true }
+  - { id: "firework:b", kind: firework, label: 小花火 }
+  - { id: "stall:main", kind: stall, label: 屋台の出店枠, capacity: 3, critical: false }
+
+requests:
+  deadlineMs: { normal: 50000, critical: 80000 }
+  retryMs: 20000
+  script:
+    - { at: 0, island: shiomi-nami, kind: stall.reserve, resource: "stall:main" }
+    - { at: 30000, island: kaze-hayate, kind: firework.reserve, resource: "firework:a" }
+  random:
+    rateMilliPerMin: 600
+    slotMs: 10000
+    populationExponent: 0.5
+    kinds:
+      - { kind: stall.reserve, resource: "stall:main", weight: 3 }
+      - { kind: firework.reserve, resource: "firework:b", weight: 1 }
+
+events:
+  - kind: storm
+    at: 60000
+    durationMs: 20000
+    routes: [[hama-tsukikage, hama-hoshizuna], [hama-todai, hama-tsukikage]]
+    forecastMs: 10000
+    flavor:
+      text: 架空の台風が近づいています
+      provenance: derived
+      source: { dataset: fixture-2026, region: 灯台地域, field: DISASTER_LAND_CONSERVATION, quote: "架空の台風で灯台が壊れた" }
+  - kind: cancellation
+    island: hama-todai
+    probabilityPermille: 170
+    slotMs: 30000
+    durationMs: 10000
+    provenance: derived
+    source: { dataset: fixture-2026, region: 灯台地域, field: DISASTER_LAND_CONSERVATION }
+  - kind: breakdown
+    window: [80000, 120000]
+    ferry: any
+    durationMs: 30000
+  - kind: rush
+    window: [100000, 110000]
+    requests: 4
+    forecastMs: 5000
+  - kind: drift
+    at: 130000
+    letters: 3
+    minAgeMs: 30000
+
+demo:
+  endOnAllCriticalSecured: true
+  storm:
+    routes: [[shiomi-ooishi, hama-hoshizuna]]
+    durationMs: 20000
+    flavor:
+      text: 星砂島と大石島の間の海が荒れています
+      provenance: creative
+
+scoring:
+  target: { successes: 3, score3: 800 }
+  points: { normal: 80, critical: 250, late: 20, rejected: 1, expiredPenalty: 40 }
+  ferryCostMsPerPoint: 1500
+  fairnessPerSatisfaction: 4
+
+satisfaction:
+  initial: 50
+  silenceAfterMs: 25000
+  silencePenalty: { everyMs: 5000, amount: 1 }
+  succeeded: 8
+  rejectedPenalty: 2
+  expiredPenalty: 9
+
+speed:
+  allowed: [1, 1.5, 2.25]

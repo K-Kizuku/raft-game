@@ -30,14 +30,16 @@ type fake struct {
 	pulls    []map[string]any // GET /pulls/12 の応答を順に返す（最後のものを繰り返す）
 	pullGets int
 	comments int // コメントの件数（100 件ずつページ送り）
-	fail     map[string]int
-	posted   []string // POST・PATCH のパスと本文
-	issue404 bool
-	external string // Link に入れる別のホスト
+	// reviewComments は行コメントの件数（100 件ずつページ送り）。
+	reviewComments int
+	fail           map[string]int
+	posted         []string // POST・PATCH のパスと本文
+	issue404       bool
+	external       string // Link に入れる別のホスト
 }
 
 func newFake(t *testing.T) *fake {
-	f := &fake{t: t, fail: map[string]int{}, comments: 3}
+	f := &fake{t: t, fail: map[string]int{}, comments: 3, reviewComments: 2}
 	f.pulls = []map[string]any{pullJSON(head, true)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
@@ -52,6 +54,7 @@ func pullJSON(sha string, mergeable any) map[string]any {
 		"base":      map[string]any{"ref": "main", "sha": "2222222222222222222222222222222222222222"},
 		"head":      map[string]any{"ref": "agent/issue-3", "sha": sha},
 		"mergeable": mergeable, "mergeable_state": "blocked", "changed_files": 1,
+		"additions": 7, "deletions": 3,
 	}
 }
 
@@ -141,6 +144,32 @@ func (f *fake) handle(w http.ResponseWriter, r *http.Request) {
 			out = []any{}
 		}
 		write(out)
+	case pre + "/pulls/12/reviews":
+		write([]any{map[string]any{"id": 501, "user": map[string]any{"login": "chatgpt-codex-connector[bot]"}, "commit_id": head,
+			"body": "<!-- codex-review-receipt:v1 -->", "submitted_at": "2026-11-01T00:00:00Z"}})
+	case pre + "/pulls/12/comments":
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page == 0 {
+			page = 1
+		}
+		start := (page - 1) * 100
+		end := min(start+100, f.reviewComments)
+		out := []any{}
+		for i := start; i < end; i++ {
+			c := map[string]any{"id": 9000 + i, "user": map[string]any{"login": "chatgpt-codex-connector[bot]"}, "commit_id": head,
+				"original_commit_id": head, "path": "a.go", "line": i + 1, "body": fmt.Sprintf("rc%d", i), "created_at": "2026-11-01T00:00:00Z"}
+			if i == 0 {
+				// 古くなった行コメントは line が null で、original_line だけがある。
+				c["line"] = nil
+				c["original_line"] = 42
+				c["user"] = nil
+			}
+			out = append(out, c)
+		}
+		if end < f.reviewComments {
+			w.Header().Set("Link", fmt.Sprintf(`<%s%s?per_page=100&page=%d>; rel="next"`, f.srv.URL, p, page+1))
+		}
+		write(out)
 	case pre + "/compare/main..." + head:
 		write(map[string]any{"status": "ahead", "ahead_by": 1, "behind_by": 0})
 	default:
@@ -174,6 +203,72 @@ func TestFetchInput(t *testing.T) {
 	}
 	if in.PullRequest.Labels[0] != "agent" || in.PullRequest.Author != "K-Kizuku" {
 		t.Errorf("pr = %+v", in.PullRequest)
+	}
+	// 小さな PR の判定（Issue #243）に使う追加・削除の行数。
+	if a, d := in.PullRequest.Additions, in.PullRequest.Deletions; a == nil || d == nil || *a != 7 || *d != 3 {
+		t.Errorf("additions = %v, deletions = %v", a, d)
+	}
+	if len(in.Reviews) != 1 || in.Reviews[0].ID != 501 || in.Reviews[0].Author != "chatgpt-codex-connector[bot]" || in.Reviews[0].CommitID != head {
+		t.Errorf("reviews = %+v", in.Reviews)
+	}
+	if len(in.ReviewComments) != 2 || in.ReviewComments[1].Line != 2 || in.ReviewComments[1].Path != "a.go" || in.ReviewComments[1].ReviewedSHA() != head {
+		t.Errorf("review comments = %+v", in.ReviewComments)
+	}
+}
+
+func TestFetchDiscussion(t *testing.T) {
+	f := newFake(t)
+	f.reviewComments = 230
+	in, err := f.client(t).FetchDiscussion(context.Background(), repo, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.PullRequest.HeadSHA != head || in.PullRequest.BaseSHA != "2222222222222222222222222222222222222222" || len(in.Comments) != 3 {
+		t.Errorf("input = %+v", in)
+	}
+	if len(in.ReviewComments) != 230 || in.ReviewComments[229].ID != 9229 {
+		t.Fatalf("review comments = %d", len(in.ReviewComments))
+	}
+	// line が null なら original_line、user が null なら作者は空。
+	if rc := in.ReviewComments[0]; rc.Line != 42 || rc.Author != "" {
+		t.Errorf("review comment[0] = %+v", rc)
+	}
+	// ファイル・Issue・CI は集めない。
+	if in.Files != nil || in.Issue != nil || in.CheckRuns != nil || in.Compare != nil {
+		t.Errorf("余計な情報を集めた: %+v", in)
+	}
+	for _, p := range []string{"/repos/" + repo + "/pulls/12/reviews", "/repos/" + repo + "/pulls/12/comments"} {
+		f2 := newFake(t)
+		f2.fail[p] = http.StatusBadGateway
+		if _, err := f2.client(t).FetchDiscussion(context.Background(), repo, 12); err == nil {
+			t.Errorf("%s の失敗を無視した", p)
+		}
+	}
+}
+
+func TestCreateComment(t *testing.T) {
+	f := newFake(t)
+	if _, err := f.client(t).CreateComment(context.Background(), repo, 12, "@codex review"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.posted) != 1 || f.posted[0] != "POST /repos/"+repo+"/issues/12/comments "+`{"body":"@codex review"}` {
+		t.Errorf("posted = %q", f.posted)
+	}
+}
+
+// 追加・削除の行数がない応答では null のまま（小さな PR と判定しない）。
+func TestFetchInputNoLineCounts(t *testing.T) {
+	f := newFake(t)
+	p := pullJSON(head, true)
+	delete(p, "additions")
+	delete(p, "deletions")
+	f.pulls = []map[string]any{p}
+	in, err := f.client(t).FetchInput(context.Background(), repo, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.PullRequest.Additions != nil || in.PullRequest.Deletions != nil {
+		t.Errorf("additions = %v, deletions = %v", in.PullRequest.Additions, in.PullRequest.Deletions)
 	}
 }
 

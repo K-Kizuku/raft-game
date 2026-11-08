@@ -1,0 +1,234 @@
+# Cloudflare へのビルド・検査・デプロイ（T-603 / #67）。
+# 正本はこのファイル（.github/workflow-sources/deploy.yml）。人が scripts/github/install-workflows.sh で
+# .github/workflows/ に取り込む（AI は .github/workflows/ を変更できない）。
+#
+# - cf build の前に scripts/build-replay-wasm.sh でリプレイの WASM を web/public/wasm/ に作る（T-720b）
+# - PR: production・demo の両方を cf build → check-build-output.ts → cf deploy --prebuilt --dry-run（Secrets を参照しない）
+# - main への push: production にデプロイ
+# - 手動の実行（main だけ）: demo（既定）か production にデプロイ
+# 流れの説明は docs/02-architecture.md §5.2。
+#
+# 使う Secrets（リポジトリの Secrets。値はここに書かない）:
+#   CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID  cf deploy の認証（両方のモード）
+#   SESSION_SIGNING_KEY                          production の sessionId の署名の鍵
+#   DEMO_SESSION_SIGNING_KEY                     demo の sessionId の署名の鍵（一般公開と別の値）
+#   ADMIN_TOKEN                                  production の管理用 API のトークン
+#   TURNSTILE_SECRET                             Turnstile のシークレットキー（両方のモード）
+# 使う Variables: TURNSTILE_SITE_KEY（Turnstile のサイトキー。公開の値）
+#
+# このワークフローは ci（チェック ci-ok）とは別で、必須のチェックではない。
+name: deploy
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "server/**"
+      - "data/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "Makefile"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflow-sources/deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "server/**"
+      - "data/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "Makefile"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflow-sources/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: デプロイするモード（demo はデモ用の Worker、production は一般公開の再デプロイ。シークレットを変えたときなど）
+        type: choice
+        options: [demo, production]
+        default: demo
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CF_SEND_TELEMETRY: "false"
+
+jobs:
+  dry-run:
+    name: dry-run (${{ matrix.mode }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [production, demo]
+    concurrency:
+      group: deploy-dry-run-${{ github.event.pull_request.number }}-${{ matrix.mode }}
+      cancel-in-progress: true
+    env:
+      MODE: ${{ matrix.mode }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # node-version-file は使わない（ci.yml の web ジョブと同じ理由）。cache も付けない。
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enable pnpm
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --version
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+      - name: make sync-data
+        run: make sync-data
+      - name: Set BUILD_ID
+        run: |
+          set -euo pipefail
+          sha="${HEAD_SHA:-$GITHUB_SHA}"
+          echo "BUILD_ID=git:${sha:0:7}" >> "$GITHUB_ENV"
+      # リプレイの WASM（ADR-0028・T-720b）を web/public/wasm/ に作る。Vite の静的ファイルとして cf build の出力に入る。
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - name: Build replay wasm
+        env:
+          GOTOOLCHAIN: auto
+          BUILD_ID: ${{ env.BUILD_ID }}
+        run: bash scripts/build-replay-wasm.sh
+      # サイトキーが空でも dry-run は続ける（PR・フォークでは Variables がないことがある）。
+      - name: cf build
+        env:
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+        run: pnpm -C web exec cf build --mode "$MODE"
+      - name: Check build output
+        run: node web/scripts/check-build-output.ts --mode "$MODE" web/.cloudflare/output/v0
+      - name: cf deploy --dry-run
+        run: pnpm -C web exec cf deploy --prebuilt --dry-run --mode "$MODE"
+
+  deploy:
+    name: deploy (${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'production' }})
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'production' }}
+      url: https://${{ (github.event_name == 'workflow_dispatch' && inputs.mode || 'production') == 'demo' && 'raft-demo.kizuku-hackathon.work' || 'raft.kizuku-hackathon.work' }}
+    # デプロイの途中で止めない。後から来た実行は待つ。
+    concurrency:
+      group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'production' }}
+      cancel-in-progress: false
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'production' }}
+      HOST: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode || 'production') == 'demo' && 'raft-demo.kizuku-hackathon.work' || 'raft.kizuku-hackathon.work' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enable pnpm
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --version
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+      # demo の COST_GUARD は Worker raft-game の CostGuard を参照するので、一般公開を先にデプロイする。
+      - name: Check production is up (demo only)
+        if: env.MODE == 'demo'
+        run: |
+          set -euo pipefail
+          if ! node web/scripts/wait-healthz.ts --url https://raft.kizuku-hackathon.work/api/healthz --timeout 30 --interval 10; then
+            echo "::error::一般公開（production）を先にデプロイする（demo の COST_GUARD が raft-game の CostGuard を参照する）"
+            exit 1
+          fi
+      - name: make sync-data
+        run: make sync-data
+      - name: Set BUILD_ID
+        run: |
+          set -euo pipefail
+          echo "BUILD_ID=git:${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+      # リプレイの WASM（ADR-0028・T-720b）を web/public/wasm/ に作る。Vite の静的ファイルとして cf build の出力に入る。
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - name: Build replay wasm
+        env:
+          GOTOOLCHAIN: auto
+          BUILD_ID: ${{ env.BUILD_ID }}
+        run: bash scripts/build-replay-wasm.sh
+      # サイトキーが空のままデプロイすると、POST /api/sessions が必ず 403 turnstile_failed になる。
+      - name: cf build
+        env:
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VITE_TURNSTILE_SITE_KEY:-}" ]; then
+            echo "::error::GitHub の Variables の TURNSTILE_SITE_KEY が空（空のままデプロイすると POST /api/sessions が必ず 403 turnstile_failed になる）"
+            exit 1
+          fi
+          pnpm -C web exec cf build --mode "$MODE"
+      - name: Check build output
+        run: node web/scripts/check-build-output.ts --mode "$MODE" web/.cloudflare/output/v0
+      - name: cf deploy --dry-run
+        run: pnpm -C web exec cf deploy --prebuilt --dry-run --mode "$MODE"
+      # シークレットはこの手順の env だけに置く。ファイルのパスだけを GITHUB_ENV に書き、中身を出さない。
+      - name: Write secrets file
+        id: secrets
+        env:
+          CF_SECRET_SESSION_SIGNING_KEY_PRODUCTION: ${{ secrets.SESSION_SIGNING_KEY }}
+          CF_SECRET_SESSION_SIGNING_KEY_DEMO: ${{ secrets.DEMO_SESSION_SIGNING_KEY }}
+          CF_SECRET_ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          CF_SECRET_TURNSTILE_SECRET: ${{ secrets.TURNSTILE_SECRET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          file="$RUNNER_TEMP/cf-secrets-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          node web/scripts/deploy-secrets.ts --mode "$MODE" --out "$file"
+          echo "CF_SECRETS_FILE=$file" >> "$GITHUB_ENV"
+      # --containers-rollout は付けない（cf の既定に任せる）。--provision は既定（有効）のまま。
+      - name: cf deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm -C web exec cf deploy --prebuilt --mode "$MODE" --secrets-file "$CF_SECRETS_FILE" --message "$BUILD_ID run $GITHUB_RUN_ID"
+      # $RUNNER_TEMP もジョブの後に消えるが、それに頼らない。
+      - name: Remove secrets file
+        if: always()
+        run: rm -f -- "${CF_SECRETS_FILE:-}"
+      - name: Wait for /api/healthz
+        run: node web/scripts/wait-healthz.ts --url "https://$HOST/api/healthz" --build "$BUILD_ID" --timeout 600 --interval 15
+      - name: Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## deploy ($MODE)"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "|---|---|"
+            echo "| モード | \`$MODE\` |"
+            echo "| BUILD_ID | \`${BUILD_ID:-（未設定）}\` |"
+            echo "| commit | \`$GITHUB_SHA\` |"
+            echo "| URL | https://$HOST |"
+            echo ""
+            echo "前の版に戻すときは T-604 の手順で行う（このワークフローは自動では戻さない）。"
+          } >> "$GITHUB_STEP_SUMMARY"

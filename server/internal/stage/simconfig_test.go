@@ -1,0 +1,353 @@
+package stage
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"reflect"
+	"testing"
+
+	"github.com/K-Kizuku/raft-game/server/internal/ferry"
+	"github.com/K-Kizuku/raft-game/server/internal/game"
+	"github.com/K-Kizuku/raft-game/server/internal/ledger"
+	"github.com/K-Kizuku/raft-game/server/internal/sim"
+)
+
+// parseStage は testdata/stages/ の data を Parse する。
+func parseStage(t *testing.T, name, data string) *Stage {
+	t.Helper()
+	st, err := Parse("stages/"+name, []byte(data), fixtureIslands(t))
+	if err != nil {
+		t.Fatalf("Parse(%s): %v", name, err)
+	}
+	return st
+}
+
+// alphaSimConfig は SC-1 の期待値。
+func alphaSimConfig() sim.Config {
+	return sim.Config{
+		Islands:       3,
+		InitialLeader: 1,
+		DurationMs:    180000,
+		Raft: sim.RaftConfig{
+			TickMs:          500,
+			HeartbeatTick:   2,
+			ElectionTick:    40,
+			MaxSizePerMsg:   4096,
+			MaxInflightMsgs: 4,
+		},
+		Routes: []ferry.RouteConfig{
+			{A: 1, B: 2, TravelMs: 1500},
+			{A: 2, B: 3, TravelMs: 4000},
+		},
+		Ferries: []ferry.FerryConfig{
+			{ID: "f1", Name: "テスト丸", Home: 1, Capacity: 4, SpeedPermille: 1000},
+		},
+		DockMs:        1500,
+		PortCap:       24,
+		PerLinkAppCap: 4,
+		RelayCap:      12,
+		Resources: []ledger.ResourceDef{
+			{ID: "firework:a", Kind: "firework", Capacity: 0},
+			{ID: "stall:main", Kind: "stall", Capacity: 2},
+		},
+		Requests: alphaRequests(),
+		Score: game.ScoreConfig{
+			PointsNormal: 100, PointsCritical: 300, PointsLate: 30, PointsRejected: 0, ExpiredPenalty: 50,
+			FerryCostMsPerPoint: 2000, FairnessPerSatisfaction: 5, TargetSuccesses: 2, TargetScore3: 500,
+			SatInitial: 60, SatSucceeded: 10, SatRejectedPenalty: 3, SatExpiredPenalty: 10,
+			SilenceAfterMs: 30000, SilenceEveryMs: 10000, SilenceAmount: 2,
+		},
+	}
+}
+
+// alphaRequests は SR-1 の期待値（alpha.yaml の requests.*）。
+func alphaRequests() game.RequestConfig {
+	return game.RequestConfig{
+		StageID:            "alpha",
+		DeadlineNormalMs:   60000,
+		DeadlineCriticalMs: 90000,
+		RetryMs:            25000,
+		Script: []game.ScriptRequest{
+			{At: 5000, Island: 3, Kind: ledger.KindFireworkReserve, Resource: "firework:a"},
+			{At: 6000, Island: 2, Kind: ledger.KindStallReserve, Resource: "stall:main"},
+		},
+		Random: game.RandomConfig{
+			RateMilliPerMin: 500,
+			SlotMs:          10000,
+			Weights:         []int64{773, 155, 72},
+			Kinds:           []game.RandomKind{{Kind: ledger.KindStallReserve, Resource: "stall:main", Weight: 1}},
+		},
+		Critical: []string{"firework:a"},
+	}
+}
+
+// SC-1 alpha.yaml の変換。
+func TestSimConfigAlpha(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	if want := alphaSimConfig(); !reflect.DeepEqual(cfg, want) {
+		t.Errorf("SimConfig(alpha) =\n%+v\nwant\n%+v", cfg, want)
+	}
+}
+
+// SC-2 作った設定で Engine が作れて、ラウンドの終わりまで動く。
+func TestSimConfigEngineRuns(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	e, err := sim.New(cfg, 20261101, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatalf("sim.New: %v", err)
+	}
+	if ack := e.Apply(sim.Command{Type: sim.CmdGameStart}); !ack.OK {
+		t.Fatalf("Apply(game.start) = %+v", ack)
+	}
+	e.RunUntil(cfg.DurationMs)
+	if got := e.Phase(); got != sim.PhaseEnded {
+		t.Errorf("Phase() = %q, want %q", got, sim.PhaseEnded)
+	}
+}
+
+// SC-3 checkQuorum・preVote が false なら *Error。
+func TestSimConfigRaftFlags(t *testing.T) {
+	t.Parallel()
+	alpha := readTestdata(t, "stages/alpha.yaml")
+	cq := edit{"checkQuorum: true", "checkQuorum: false"}
+	pv := edit{"preVote: true", "preVote: false"}
+	cases := []struct {
+		name  string
+		edits []edit
+		paths []string
+	}{
+		{"checkQuorum", []edit{cq}, []string{"raft.checkQuorum"}},
+		{"preVote", []edit{pv}, []string{"raft.preVote"}},
+		{"both", []edit{cq, pv}, []string{"raft.checkQuorum", "raft.preVote"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := parseStage(t, "alpha.yaml", applyEdits(t, alpha, tc.edits...))
+			cfg, err := SimConfig(st)
+			se := asError(t, err)
+			if se.File != "alpha" {
+				t.Errorf("File = %q, want %q", se.File, "alpha")
+			}
+			paths := make([]string, len(se.Issues))
+			for i, is := range se.Issues {
+				paths[i] = is.Path
+				if is.Message == "" {
+					t.Errorf("Message が空の Issue: %+v", is)
+				}
+			}
+			if !reflect.DeepEqual(paths, tc.paths) {
+				t.Errorf("Issues の Path = %v, want %v", paths, tc.paths)
+			}
+			if !reflect.DeepEqual(cfg, sim.Config{}) {
+				t.Errorf("誤りのときの sim.Config がゼロ値でない: %+v", cfg)
+			}
+		})
+	}
+}
+
+// SC-4 beta.yaml（preVote: false）は *Error。
+func TestSimConfigBeta(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "beta.yaml", readTestdata(t, "stages/beta.yaml"))
+	cfg, err := SimConfig(st)
+	se := asError(t, err)
+	if se.File != st.ID {
+		t.Errorf("File = %q, want %q", se.File, st.ID)
+	}
+	if len(se.Issues) != 1 || se.Issues[0].Path != "raft.preVote" {
+		t.Errorf("Issues = %+v, want [raft.preVote] の 1 件", se.Issues)
+	}
+	if !reflect.DeepEqual(cfg, sim.Config{}) {
+		t.Errorf("誤りのときの sim.Config がゼロ値でない: %+v", cfg)
+	}
+}
+
+// SC-5 relayCap は sim.Config.RelayCap に入る（12 と 0）。ほかの値は変わらない。
+func TestSimConfigRelayCap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		yaml string
+		want int
+	}{
+		{"relayCap: 12", 12},
+		{"relayCap: 0", 0},
+	} {
+		data := applyEdits(t, readTestdata(t, "stages/alpha.yaml"), edit{"relayCap: 12", tc.yaml})
+		st := parseStage(t, "alpha.yaml", data)
+		cfg, err := SimConfig(st)
+		if err != nil {
+			t.Fatalf("SimConfig(%s): %v", tc.yaml, err)
+		}
+		if cfg.RelayCap != tc.want {
+			t.Errorf("SimConfig(%s).RelayCap = %d, want %d", tc.yaml, cfg.RelayCap, tc.want)
+		}
+		want := alphaSimConfig()
+		want.RelayCap = tc.want
+		if !reflect.DeepEqual(cfg, want) {
+			t.Errorf("SimConfig(%s) =\n%+v\nwant\n%+v", tc.yaml, cfg, want)
+		}
+	}
+}
+
+// SC-6 返した値は st とスライスを共有せず、同じ st からは同じ値になる。
+func TestSimConfigCopies(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	first, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	second, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Errorf("2 回の結果が違う:\n%+v\n%+v", first, second)
+	}
+
+	travel, capacity, id := st.Routes[0].TravelMs, st.Ferries[0].Capacity, st.Resources[0].ID
+	first.Routes[0].TravelMs = 99999
+	first.Ferries[0].Capacity = 99
+	first.Resources[0].ID = "changed"
+	if st.Routes[0].TravelMs != travel {
+		t.Errorf("st.Routes[0].TravelMs が変わった: %d", st.Routes[0].TravelMs)
+	}
+	if st.Ferries[0].Capacity != capacity {
+		t.Errorf("st.Ferries[0].Capacity が変わった: %d", st.Ferries[0].Capacity)
+	}
+	if st.Resources[0].ID != id {
+		t.Errorf("st.Resources[0].ID が変わった: %q", st.Resources[0].ID)
+	}
+	if !reflect.DeepEqual(second, alphaSimConfig()) {
+		t.Errorf("別の結果が変わった: %+v", second)
+	}
+}
+
+// SC-7 nil はエラー（panic しない）。
+func TestSimConfigNil(t *testing.T) {
+	t.Parallel()
+	cfg, err := SimConfig(nil)
+	if err == nil {
+		t.Fatal("SimConfig(nil) がエラーにならなかった")
+	}
+	if !reflect.DeepEqual(cfg, sim.Config{}) {
+		t.Errorf("sim.Config がゼロ値でない: %+v", cfg)
+	}
+}
+
+// SC-8 リポジトリのステージはすべて変換でき、sim.New も通る。
+func TestSimConfigRepoData(t *testing.T) {
+	t.Parallel()
+	if _, err := os.Stat("../../../data/islands.json"); errors.Is(err, fs.ErrNotExist) {
+		t.Skip("data/islands.json がない。提供データを置いて islandsdata で作る（data/raw/README.md）")
+	}
+	stages, err := LoadDir(os.DirFS("../../.."), "data/islands.json", "data/stages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range stages {
+		cfg, err := SimConfig(st)
+		if err != nil {
+			t.Errorf("%s: SimConfig: %v", st.ID, err)
+			continue
+		}
+		if _, err := sim.New(cfg, 20261101, sim.Options{CheckInvariants: true}); err != nil {
+			t.Errorf("%s: sim.New: %v", st.ID, err)
+		}
+	}
+}
+
+// SR-1 alpha.yaml の依頼の設定。
+func TestSimConfigRequests(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	if want := alphaRequests(); !reflect.DeepEqual(cfg.Requests, want) {
+		t.Errorf("Requests =\n%+v\nwant\n%+v", cfg.Requests, want)
+	}
+}
+
+// SR-2 依頼の設定で Engine が動き、台本の依頼が発生する。
+func TestSimConfigRequestsRun(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	e, err := sim.New(cfg, 20261101, sim.Options{CheckInvariants: true})
+	if err != nil {
+		t.Fatalf("sim.New: %v", err)
+	}
+	if ack := e.Apply(sim.Command{Type: sim.CmdGameStart}); !ack.OK {
+		t.Fatalf("Apply(game.start) = %+v", ack)
+	}
+	e.RunUntil(180000)
+	found := false
+	for _, ev := range e.DrainEvents() {
+		c, ok := ev.Data.(sim.RequestCreated)
+		if !ok {
+			continue
+		}
+		r := c.Request
+		if r.Origin == 3 && r.CreatedAt == 5000 && r.Critical && r.Deadline == 95000 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("request.created of the script request (origin 3, createdAt 5000) is missing")
+	}
+	if got := e.Phase(); got != sim.PhaseEnded {
+		t.Errorf("Phase() = %q, want %q", got, sim.PhaseEnded)
+	}
+}
+
+// SR-3 返した Requests のスライスを書き換えても st は変わらない。
+func TestSimConfigRequestsCopies(t *testing.T) {
+	t.Parallel()
+	st := parseStage(t, "alpha.yaml", readTestdata(t, "stages/alpha.yaml"))
+	cfg, err := SimConfig(st)
+	if err != nil {
+		t.Fatalf("SimConfig: %v", err)
+	}
+	island, kindWeight, weight := st.Requests.Script[0].Island, st.Requests.Random.Kinds[0].Weight, st.Islands[0].WeightPermille
+	rq := cfg.Requests
+	rq.Script[0].Island = 99
+	rq.Random.Weights[0] = 99
+	rq.Random.Kinds[0].Weight = 99
+	rq.Critical[0] = "changed"
+	if st.Requests.Script[0].Island != island {
+		t.Errorf("st.Requests.Script[0].Island が変わった: %d", st.Requests.Script[0].Island)
+	}
+	if st.Requests.Random.Kinds[0].Weight != kindWeight {
+		t.Errorf("st.Requests.Random.Kinds[0].Weight が変わった: %d", st.Requests.Random.Kinds[0].Weight)
+	}
+	if st.Islands[0].WeightPermille != weight {
+		t.Errorf("st.Islands[0].WeightPermille が変わった: %d", st.Islands[0].WeightPermille)
+	}
+	if !st.Resources[0].Critical || st.Resources[0].ID != "firework:a" {
+		t.Errorf("st.Resources[0] が変わった: %+v", st.Resources[0])
+	}
+	again, err := SimConfig(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.Requests, alphaRequests()) {
+		t.Errorf("SimConfig の結果が変わった: %+v", again.Requests)
+	}
+}

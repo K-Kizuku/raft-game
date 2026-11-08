@@ -409,10 +409,10 @@ func TestReplicasConverge(t *testing.T) {
 	for range 500 {
 		index += 1 + uint64(rng.IntN(3)) // index は飛ぶことがある
 		var data []byte
-		switch p := rng.IntN(20); {
-		case p == 0:
+		switch rng.IntN(20) {
+		case 0:
 			data = broken[rng.IntN(len(broken))]
-		case p == 1:
+		case 1:
 			data = rawJSON(Command{V: rng.IntN(3), ReqID: "r" + strconv.Itoa(rng.IntN(50)), Origin: uint64(rng.IntN(3)), Kind: KindStallReserve, Resource: "stall:side"})
 		default:
 			data = cmd("r"+strconv.Itoa(rng.IntN(50)), uint64(1+rng.IntN(5)), kinds[rng.IntN(len(kinds))], resources[rng.IntN(len(resources))])

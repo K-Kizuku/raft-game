@@ -1,0 +1,22 @@
+# テスト用の islands-select.yaml。島・自治体・出典はすべて架空。
+format: 1
+generatedAt: "2026-11-07"
+dataset: fixture-2026
+sources:
+  fixture-2026:
+    title: 架空の離島のデータ（テスト用）
+    publisher: 架空の提供者
+    license: 架空の利用規約
+    termsUrl: https://example.com/terms
+    publishedAt: "2026-10-31"
+  another-2025:
+    title: 架空の別のデータ（テスト用）
+    publisher: 架空の提供者
+    license: 架空の利用規約
+    termsUrl: https://example.com/terms-2025
+    publishedAt: "2025-10-31"
+islands:
+  - { id: hama-hoshizuna, prefecture: 波間県, name: 星砂島, designatedArea: 星砂諸島, municipalities: [星砂町, 月影町], plan: { region: 星砂地域 } }
+  - { id: hama-tsukikage, prefecture: 波間県, name: 月影島, designatedArea: 星砂諸島, municipalities: [月影町], plan: { region: 星砂地域 } }
+  - { id: hama-todai, prefecture: 波間県, name: 灯台島, designatedArea: 灯台列島, municipalities: [灯台村], plan: { region: 灯台地域 } }
+  - { id: shiomi-koishi, prefecture: 汐見県, name: 小石島, designatedArea: 汐見諸島, municipalities: [小石町] }

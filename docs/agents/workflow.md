@@ -39,6 +39,16 @@ Issue は Worker にとって**タスクの唯一の正本**で、Merge Gate と
 - Epic（親の Issue）には `status:*` を付けない。`agentctl plan` が作業中として数え、容量を減らす
 - Issue の本文に足りないものがあれば、Orchestrator が Issue のコメントに補足を書いてから `status:ready` にする。補足は実装仕様の一部として扱う
 
+### Acceptance Criteria の転記と CI の AC
+
+- Worker は、Issue の `## Acceptance Criteria` の `- [ ] AC-n: …` の行を、PR の本文に**一字一句そのまま**（同じ番号・同じ件数で）写し、満たしたものを `[x]` にする
+- AC の下の補足の行（`  - …`）は、PR でもチェックボックスにしない（`  - [x] …` にしない）。チェックボックスにすると C2 が数える AC の件数が Issue より多くなる。Issue を書くときも、補足はチェックボックスでない `  - …` の行で書く
+- CI の成否は Merge Gate の C4 が確かめる。AC に CI（「CI（`ci-ok`）が通る」など）を書くときは、Worker が PR を作った（fix・conflict では push した）あと、**チェック `ci-ok` だけ**の結果を待ってからチェックする。`gh pr checks <PR> --json name,bucket` で `name` が `ci-ok` の `bucket` を読み、`pending` の間（`ci-ok` がまだ現れない間も）は 30 秒ごとに読み直す（上限 20 分）。`pass` なら AC を `[x]` にし、`fail` なら原因を直して push する（同じ原因で 3 回まで）。上限を超えたら `[ ]` のまま「## Orchestrator への報告」に書く
+  - 必須のステータス `merge-gate` は待たない・見ない。`merge-gate` は CI の AC が未チェックだと C2 で failure になり、レビューの前は pending のままなので、待つと循環する。そのため `gh pr checks` の `--watch`・`--required`・`--fail-fast` は使わない（Merge Gate の判定は変えない）
+  - fix・conflict のモードでも同じ。push したあと、再レビューの記録は待たない（Orchestrator がレビューを依頼する）
+- Worker は、web の依存（`web/node_modules`）がなければ最初に `pnpm install --frozen-lockfile` を実行する（web を触らない Issue でも `make test` に要る）
+- Worker は終わる前に、`gh issue view` と `gh pr view` の AC の行を比べ、件数・文が一致し、すべて `[x]` であることを確かめる
+
 ## 状態と遷移
 
 状態は Issue のラベル `status:<状態>` で、ちょうど 1 つだけ付ける。遷移は `agentctl state <issue> <状態>` で行い、遷移表（[state.go](../../tools/agentctl/internal/state/state.go) の `transitions`）にない遷移は拒否される（終了コード 1）。遷移のたびに、Issue のコメントに記録（`<!-- agent-state:v1 {…} -->`）を付ける。
@@ -116,8 +126,10 @@ flowchart LR
 | 容量 | `capacity = max_workers −（in-progress と changes-requested の数）`。`max_workers` は [.agents/config.json](../../.agents/config.json) で 5。同時に動く数を増やすと、CPU（`go test -race`・`pnpm install` の重なり）と API の利用量が増える |
 | 順番 | クリティカルパス（後ろに続く依存の鎖の長さ）の長いものを先に、同じなら番号の小さいものを先に |
 | 競合の回避 | 変更予定ファイルの glob の、最初のワイルドカードより前の部分が、一方が他方の前方一致なら「重なる」とみなす（控えめな判定）。実装中の Issue（`in-progress`〜`ready-to-merge`）と、同時に選ぶ Issue の両方と比べる |
-| 追記だけのファイル | `shared_append_files`（`CLAUDE.md`・`docs/README.md`・`docs/adr/README.md`・`docs/08-implementation-plan.md`）だけの重なりは、競合にせず警告にする。マージの後の Conflict は [Conflict の解消](#conflict-の解消の手順) で扱う |
+| 追記だけのファイル | `shared_append_files`（`CLAUDE.md`・`docs/README.md`・`docs/adr/README.md`・`docs/08-implementation-plan.md`・`docs/02-architecture.md`・`docs/03-design-doc.md`・`docs/04-game-design.md`・`docs/06-protocol.md`・`docs/07-data-spec.md`）だけの重なりは、競合にせず警告にする。値は glob ではなくパスで、変更予定ファイルに同じパスがそのまま書かれたときだけ警告になる（`docs/**` のような glob との重なりは競合のまま）。マージの後の Conflict は [Conflict の解消](#conflict-の解消の手順) で扱う |
 | 数える PR | 作者が `trusted_authors`（か `AGENTCTL_BOT_LOGIN`）のものだけ |
+
+`docs/02-architecture.md`・`docs/03-design-doc.md`・`docs/04-game-design.md`・`docs/06-protocol.md`・`docs/07-data-spec.md` を `shared_append_files` に入れているのは、多くの Issue がこれらの別々の節を少しずつ直すためである（AG-15）。重なりを競合にすると、1 つの Issue が実装中なだけで、ほかの多くの Issue が `conflicts` に入って Worker の枠が空いたままになる。節が別なら Conflict は小さく、起きても Worker が `--mode conflict` で解消できる。`Makefile` やコードのファイルは入れず、重なれば今までどおり選ばない。
 
 `spawn-worker.sh` も、動いている Worker（`.agents/run/issue-*.json` の pid が生きているもの）が `max_workers` 以上なら起動を拒否する。DAG の図は `agentctl plan --mermaid` で出せる。
 
@@ -168,7 +180,7 @@ sequenceDiagram
 
 ## Codex レビューの実行方法とフォールバック
 
-レビューは [scripts/agents/review.sh](../../scripts/agents/review.sh) で行う（Orchestrator だけが実行できる）。
+レビューは [scripts/agents/review.sh](../../scripts/agents/review.sh) で行う（Orchestrator だけが実行できる）。正規の経路は **Codex の GitHub 連携**（`--via github`、既定）で、api.openai.com に接続できないクラウドのセッションでも使える（Issue #82）。
 
 ```bash
 scripts/agents/review.sh <pr>
@@ -178,6 +190,54 @@ scripts/agents/review.sh <pr>
 scripts/agents/review.sh <pr> --no-post
 ```
 
+```bash
+scripts/agents/review.sh <pr> --via local
+```
+
+### Codex の GitHub 連携（`--via github`、既定）
+
+| 手順 | 内容 |
+|---|---|
+| 1. 依頼 | `agentctl pr view` で、依頼する前の要約のコメント（`codex_bot_authors` の `codex-review-state`）の `updated_at` を覚える。`agentctl comment` で PR に `@codex review` と書く（`--no-post` でも依頼は投稿する） |
+| 2. 待つ | `agentctl pr codex-record --sha <HEAD> --after <依頼する前の updated_at>` を `AGENT_CODEX_GITHUB_POLL` 秒（既定 30）ごとに実行し、対象の SHA の `codex-review-state` の `code_review.status` が `completed` になり、要約のコメントが依頼する前より後に更新されるまで待つ（既定 900 秒、`AGENT_CODEX_GITHUB_TIMEOUT`）。同じ SHA の前のレビューの `completed` を、今回の結果と取り違えない |
+| 3. 変換 | Codex の出力を `agent-review/v1` に変換する（下の表）。`agentctl review validate` で検証し、`--no-post` でなければ `agentctl comment` で PR に載せる |
+| 4. 保護されたパス | 変更ファイルが `protected_paths` に当たるとき（`agentctl pr protected-files`。確かめられないときも同じ）は、Codex の GitHub 連携の記録に続けて、下のこれまでの経路のレビューも行い、`protected_paths_ack` を持つ記録を作る。両方の記録を出す（GitHub 連携の記録が先、これまでの経路の記録が round ＋ 1 で後。`--out` は後者） |
+| 5. フォールバック | タイムアウト、または連携の不調（PR を読めない・`@codex review` を投稿できない・`agentctl` のエラーが `retry_limit` 回続く・変換した記録が不正）のときだけ、`service_unavailable` として下のこれまでの経路（ローカルの Codex CLI → Claude Code）に切り替える |
+
+Codex が PR に書くもの（作者は `review.codex_bot_authors`。既定は `chatgpt-codex-connector[bot]`。ほかの作者の、似せたコメントは無視する）:
+
+| 種類 | 目印 | 使い方 |
+|---|---|---|
+| 要約のコメント（Issue のコメント） | `<!-- codex-pull-request-review-summary -->` と `<!-- codex-review-state:v1 {…} -->` | `code_review.status == "completed"` のものだけを「レビュー記録」に数える。対象の SHA は `code_review.commit_sha`。新しいレビューのたびに同じコメントが更新されるので、日時は `updated_at`。JSON が壊れていれば無視して警告する |
+| 行コメント | `<!-- codex-code-review-finding:v1 -->` と重大度のバッジ `![P2 Badge](…)` | 対象の SHA（`original_commit_id`、なければ `commit_id`）の行コメントを指摘とする。P0 → critical、P1 → high、P2 → medium、P3 → low。バッジがない指摘は high とみなす（fail closed） |
+| PR のレビュー・指摘がないときのコメント | `<!-- codex-review-receipt:v1 -->` | 判定には使わない（要約のコメントがまだなければ、要約を待つ） |
+
+変換した記録（`agentctl pr codex-record`）:
+
+| 項目 | 値 |
+|---|---|
+| `reviewer`・`reviewer_version` | `codex`・`chatgpt-codex-connector (GitHub)` |
+| `round` | 前回の記録（`--previous`、省略時は PR のコメントの最新のレビュー記録）の round ＋ 1 |
+| `findings` | 対象の SHA の行コメントから。`id` は `C<コメントの ID>`、`status` は `open`、`category` は `correctness`、`title` は本文の 1 行目（P0〜P3 を前に付ける）。前回の記録の `open` の指摘で今回の指摘にないものは引き継ぐ。Codex の指摘と重大でない指摘は `resolved`（今回の SHA のレビューで指摘されなかった）にする。**Codex 以外の重大な指摘（critical・high）は、Codex のレビューでは `resolved` にできないので `open` のまま引き継ぐ**。Codex の指摘として扱うのは、`id` が信頼する作者（`codex_bot_authors`）の指摘の行コメント（`codex-code-review-finding:v1`）に対応する `C<コメントの ID>` だけ（ID の形だけでは判断しない。ほかのレビュー役の記録の `C123` などで、対応する行コメントがないものは Codex 以外の指摘）。前の SHA の Codex の指摘は、下の「前の SHA の Codex の指摘」に従う |
+| `verdict` | P0・P1 の指摘、または引き継いだ `open` の重大な指摘があれば `request_changes`、なければ `approve` |
+| `protected_paths_ack` | `reviewed: false`（Codex は保護されたパスの確認をしない）。保護されたパスを変える PR では C12 が fail になるので、これまでの経路のレビューも続けて行う（手順 4） |
+
+前の SHA の Codex の指摘（Codex は、後のレビューで前の指摘を行コメントとして出し直すとは限らない。Merge Gate の C7 と `agentctl pr codex-record` で同じ扱い）:
+
+- 最新の要約の `code_review.has_unresolved_findings` が `false` なら、それまでの SHA の Codex の指摘はすべて `resolved` とみなす
+- `true` のあいだは、前の SHA の Codex の P0・P1（バッジのないものを含む）を `open` のまま引き継ぐ（C7 は fail、変換した記録の `verdict` は `request_changes`）。`resolved` にできるのは、その行コメントより後の `agent-review/v1` の記録（Codex の GitHub 連携の変換ではないもの）が、同じ `id`（`C<コメントの ID>`）を `resolved` にしたときと、次の「重大な指摘なし」のときだけ
+- 前の SHA の P2・P3 は引き継がない（それだけが残っていてもマージを止めない）
+- **重大な指摘なし**（#213）: `true` でも、最新のレビューが重大な指摘なしと答えたなら、前の SHA の P0・P1 のうち receipt より前に作られたものは解消とみなし、P2・P3（`has_unresolved_findings` が残っている理由）を `open` のまま引き継ぐ（重大でないので C7 は止めない）。変換した記録では、解消とみなした指摘を `resolved` にし、`resolution` に根拠（receipt のコメントの ID と作成日時・レビューした SHA・元の SHA）を書く。receipt と同じか後に作られた指摘（例: `main` の取り込み前の SHA の receipt の後に、取り込み後の SHA に出た P1）・作成日時が分からない指摘と、`blocking_severities` に足した P0・P1 以外の重大度（`medium` など）の指摘は、receipt のレビューが見ていない・対象外なので解消とみなさず、`open` のまま引き継ぐ。重大な指摘なしとみなすのは、次をすべて満たすときだけ:
+  - 信頼する作者の receipt（`codex-review-receipt:v1` を持つ Issue のコメントと PR のレビュー）のうち、最も新しいものが Issue のコメントで、文言 `Didn't find any major issues` を持ち、`**Reviewed commit:**` が最新の要約の SHA を指す
+  - 最新の要約の SHA に、信頼する作者の P0・P1（バッジのないものを含む）の行コメントがない（Codex が同じ指摘を再び出していない）
+- 上を満たさないとき（receipt がない・文言が英語以外や別の文言・SHA が違う・receipt の作成日時が分からない・最も新しい receipt が同じ日時で複数ある・Codex が同じ SHA に P0・P1 を出した）は、解消とみなさず、今までどおり `open` のまま引き継ぐ（安全側。notes に理由が出る）
+
+同じ SHA の再レビュー: 最新の完了した要約の `code_review.has_any_findings` と `has_unresolved_findings` がどちらも `false` なら、その SHA の行コメントのうち要約の更新（`updated_at`）より前に作られたものは、前のレビューの指摘（Codex が取り下げた）として `resolved` とみなす（C7 と `pr codex-record` で同じ扱い）。要約の更新より後の行コメントと、作成日時が分からない行コメントは、そのまま判定に使う。
+
+`agentctl pr codex-record` の終了コードは 0=成功・2=まだ終わっていない（対象の SHA の完了したレビューがない・`--after` より後に更新されていない）・3=内部エラー。`agentctl pr protected-files` は、PR の変更ファイル（名前を変えたファイルは前の名前も）のうち `protected_paths` に当たるものを 1 行ずつ出す（C12 と同じ判定）。`agentctl pr view` は PR の状態・コメント・レビュー・行コメントを `gate.Input` の形の JSON で出す（`codex-record --input` にそのまま渡せる）。どちらも REST だけを使い、`GITHUB_TOKEN` か `GH_TOKEN` が要る（`review.sh` は、どちらもなければ `gh auth token` を使う）。
+
+### これまでの経路（`--via local`、または GitHub 連携が使えないとき）
+
 | 手順 | 内容 |
 |---|---|
 | 1. 取り出し | PR の HEAD を一時的な Worktree に `--detach` で取り出す（終わったら必ず消す） |
@@ -185,7 +245,7 @@ scripts/agents/review.sh <pr> --no-post
 | 3. Codex | `codex exec --sandbox read-only --output-schema …` を `timeout`（既定 300 秒、`AGENT_CODEX_TIMEOUT`）付きで実行する |
 | 4. 失敗の分類 | 標準エラーと終了コードから理由を決める（下の表）。4 つの理由に当たらない失敗とスキーマに合わない出力は、`retry_limit` 回まで Codex で再試行し、だめなら終了コード 5 |
 | 5. フォールバック | 理由が 4 つのどれかで `allow_fallback` が true のときだけ、別セッションの Claude Code（`AGENT_ROLE=reviewer`）に切り替える。記録の `reviewer` は `claude-fallback`、`fallback_reason` に理由が入る |
-| 6. 記録 | `agentctl review validate` で検証し、`agentctl review render` で本文にして PR にコメントする |
+| 6. 記録 | `agentctl review validate` で検証し、`agentctl review render` で本文にして `agentctl comment` で PR にコメントする |
 
 | `fallback_reason` | 判定のしかた |
 |---|---|
@@ -197,7 +257,7 @@ scripts/agents/review.sh <pr> --no-post
 - ネットワークが遮断された環境では `codex exec` が終わらないので、タイムアウト（終了コード 124）で `service_unavailable` になってフォールバックする
 - 標準エラーのうち、プロンプト（Issue の本文など）を echo した行は分類に使わない（Issue の本文の「auth」などの語に一致させない）
 - フォールバックの Reviewer は、`--agent` を使わず、main の `reviewer.md` の本文（`--append-system-prompt`）とツール、main の `settings.json` と hooks（`--setting-sources user`・`--settings`）で動く。PR が自分のレビューのガードを書き換えられないようにするため
-- `--reviewer codex` で Codex だけ、`--reviewer claude`（`AGENT_FALLBACK_REASON` に理由が必要）で Claude Code だけを使う
+- `--reviewer codex` で Codex だけ（GitHub 連携 → ローカルの Codex CLI。Claude Code に切り替えない）、`--reviewer claude`（`AGENT_FALLBACK_REASON` に理由が必要）で Claude Code だけを使う（GitHub 連携も使わない）
 
 ## レビュー記録の書式
 
@@ -260,18 +320,42 @@ go -C tools/agentctl run . review render "$PWD/review.json"
 | C2 | Issue をちょうど 1 つ閉じ、AC がすべて転記・チェック済み | — | 本文の `Closes`・`Fixes`・`Resolves #N` が 1 つではない・Issue がない／番号が違う／PR である／開いていない・Issue に AC のチェックボックスがない・PR の AC の件数が Issue と違う・チェックされていない AC がある |
 | C3 | 「テスト」「ドキュメント」のチェックボックスがすべてチェック済み | — | どちらかの節にチェックボックスがない・チェックされていないものがある |
 | C4 | 必須のチェック（`ci-ok`）が HEAD で成功し、失敗したチェックがない | 必須のチェックが未実行・実行中 | 必須のチェックが成功していない・ほかの check run が `failure`・`cancelled`・`timed_out`・`action_required`・ほかのステータスが `failure`・`error`（`merge-gate` と `merge-gate-evaluate` 自身は数えない） |
-| C5 | 信頼する作者（`trusted_authors`）のレビュー記録がある | 記録がない | — |
-| C6 | 最新のレビュー記録が HEAD に対する `approve` | 記録がない・最新の記録が古い SHA のもの（再レビュー待ち） | 最新の記録の verdict が `approve` ではない |
-| C7 | 重大な指摘が残っていない | 記録がない | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない |
-| C8 | レビュー役が `codex` か、正しいフォールバック | 記録がない | `reviewer` が認めない値・`allow_fallback` が false なのに `claude-fallback`・`fallback_reason` が `fallback_reasons` にない |
+| C5 | 信頼する作者（`trusted_authors`）のレビュー記録か、Codex の GitHub 連携（`codex_bot_authors`）の完了したレビューがある | どちらもない | — |
+| C6 | 最新のレビュー記録が HEAD に対する `approve`（`main` の取り込みだけなら、前の SHA の記録を引き継ぐ。[レビュー記録の引き継ぎ](#レビュー記録の引き継ぎmain-の取り込みだけのとき)） | 記録がない・最新の記録が古い SHA のもので、引き継げない（再レビュー待ち） | 最新の記録の verdict が `approve` ではない |
+| C7 | 重大な指摘が残っていない | 記録がない・最新が古い SHA の Codex のレビューで、引き継げない | 最新の記録に `open` の重大な指摘がある・前の round の重大な指摘が最新の記録にない、または `resolved` ではない・最新の Codex のレビューの SHA の行コメントに P0・P1 がある（指摘の 1 行目を出す）・最新の要約の `has_unresolved_findings` が `true` で、前の SHA の Codex の P0・P1 が Codex 以外の後の記録で `resolved` になっていない（最新のレビューが重大な指摘なしのときを除く。「Codex の GitHub 連携」の「前の SHA の Codex の指摘」の「重大な指摘なし」）・Codex のレビューが最新でも、Codex の GitHub 連携の変換ではない最新の記録で、それまでの重大な指摘（Codex の指摘。信頼する作者の行コメントに対応する `C<コメントの ID>` を除く）が `resolved` になっていない |
+| C8 | レビュー役が `codex` か、正しいフォールバック（Codex の GitHub 連携は `codex`） | 記録がない | `reviewer` が認めない値・`allow_fallback` が false なのに `claude-fallback`・`fallback_reason` が `fallback_reasons` にない |
 | C9 | コンフリクトがない | `mergeable` が未計算 | `mergeable=false`・`mergeable_state=dirty` |
-| C10 | ベースより遅れていない | — | 比較の結果がない・`main` より遅れている（`behind_by > 0`） |
+| C10 | ベースより遅れていない（設定 `merge.require_up_to_date` が `false` なら、遅れていてもよい） | — | 比較の結果がない・`behind_by` が不正・`main` より遅れている（`behind_by > 0`。`merge.require_up_to_date` が `true` か設定がないときだけ） |
 | C11 | 変更ファイルが Issue の範囲に収まる（名前を変えたファイルは前の名前も見る） | — | Issue がない・変更ファイルの一覧が不完全・「変更予定ファイル」がない・glob が不正（末尾の `/` など）・変更予定ファイルの外か変更禁止範囲のファイルがある |
-| C12 | 保護されたパス（`protected_paths`）の変更が確認済みで、ガードを弱めない | 保護されたパスの変更があり、記録がない | 最新の記録の `protected_paths_ack` が `reviewed: true`・`weakens_guards: false` ではない |
+| C12 | 保護されたパス（`protected_paths`）の変更が確認済みで、ガードを弱めない | 保護されたパスの変更があり、記録がない | 最新の記録の `protected_paths_ack` が `reviewed: true`・`weakens_guards: false` ではない・最新が Codex の GitHub 連携のレビュー（確認をしない） |
 
 - レビュー記録は、信頼する作者のコメントで、目印と JSON が正しく、同じ PR のものだけを数える。最新の記録は round、`created_at`、コメントの作成日時、コメントの ID の順で決める
+- Codex の GitHub 連携のレビュー（`codex_bot_authors` の要約のコメントで `code_review.status == "completed"`）も、レビュー記録の 1 つとして数える。`agent-review/v1` の最新の記録の `created_at` と、Codex の要約のコメントの `updated_at` のうち新しい方を「最新」とする。Codex が最新なら、その SHA が HEAD と一致すれば C6 は pass（古ければ C6・C7 は pending）、その SHA の行コメントに P0・P1 があれば C7 が fail。Codex のレビューでは前の指摘を `resolved` にできないので、Codex が最新でも（最新の記録が Codex の GitHub 連携の変換でも）、それより前の `agent-review/v1` の記録の重大な指摘が、Codex の GitHub 連携の変換ではない最新の記録で `resolved` になっていなければ C7 が fail
 - Merge Gate のワークフロー（[merge-gate.yml](../../.github/workflow-sources/merge-gate.yml)）は、PR の変更・コメント・CI の完了のたびに判定し、PR の HEAD にコミットステータス `merge-gate` を付け、Merge Gate のコメントを更新する。`--set-status` と `--comment` はこのワークフローだけが使う
 - `merge.sh` はマージの直前にもう一度 `agentctl gate` を実行し、pass のときだけ、判定した SHA を `--match-head-commit` に指定して squash merge する
+- C10 の厳しさは、設定 `.agents/config.json` の `merge.require_up_to_date`（真偽値）で決める（Issue #239）。`true`、または設定がない（古い `config.json`）ときは、今までどおり `main` より遅れていれば fail。`false` なら、遅れていても C10 は pass にし、遅れているコミット数を詳細に書く（「main より N コミット遅れている（merge.require_up_to_date=false のため許す）」）。リポジトリの設定は `false`（2026-11-08 のオーナーの判断。GitHub の Rulesets の「ブランチがベースに追いついていること」も外した）
+  - `false` でも、C9（コンフリクトがない）と C4（PR の HEAD の `ci-ok` が成功）は今までどおり求める。ベースとの比較の結果がない（API の失敗）・`behind_by` が不正なときは、設定によらず C10 は fail（安全側）
+  - 考え方: 1 本マージするたびに残りのすべての PR が `main` の取り込み・CI のやり直し・再レビューを待つと、全体が遅くなる。`false` では、PR どうしの組み合わせの不具合（それぞれの PR の CI は通るが、両方が入った `main` で壊れる）をマージの前には見つけない。マージ後の `main` の CI で見つけ、壊れたらすぐに原因の PR を戻す（revert する）
+  - `merge.sh` は Merge Gate の判定だけに従い、遅れを理由に別に止めない
+- C5〜C8 は、[小さな PR](#小さな-pr文書だけテストだけのレビューの省略) ならレビューを省いて pass にする（Issue #243）
+
+### 小さな PR（文書だけ・テストだけ）のレビューの省略
+
+文書だけ・テストだけの小さな PR は、Codex のレビューを待たず、CI だけでマージする（2026-11-08 のオーナーの判断。Issue #243）。Merge Gate は、次を**すべて**満たす PR を「小さな PR」とし、レビューの条件（C5・C6・C7・C8）を pass にする。それ以外の条件（C1〜C4・C9〜C12）は今までどおり判定する（判定は [smallpr.go](../../tools/agentctl/internal/gate/smallpr.go)）。
+
+1. 設定 `.agents/config.json` の `review.skip_small_prs` が `true`（設定がないときは `false`。リポジトリの設定は `true`）
+2. 変更ファイルがすべて、設定 `review.skip_paths` の glob のどれかに一致する。名前を変えたファイルは、前と後の両方の名前が一致するときだけ。`skip_paths` の既定（リポジトリの設定も同じ）は次のとおり
+   - `docs/**`
+   - `**/*_test.go`・`**/*.test.ts`・`**/*.test.tsx`
+   - `**/testdata/**`・`**/fixtures/**`
+3. `docs/adr/**` のファイルを変えていない（判断の記録なので、`skip_paths` に一致してもレビューを省かない。設定では外せない）
+4. 保護されたパス（`protected_paths`）を 1 つも変えていない
+5. 追加と削除の行数の合計（PR の `additions` + `deletions`）が、設定 `review.skip_max_lines`（既定 300）以下
+
+- 判定の材料が不完全なとき（変更ファイルの一覧が取れない・`changed_files` と一覧の件数が違う＝上限に達した・追加と削除の行数が分からない）は、小さな PR にしない（安全側。今までどおりレビューを求める）
+- レビューを省いたときは、C5〜C8 の詳細に「小さな PR なのでレビューを省いた（N ファイルがすべて review.skip_paths に一致・保護されたパスの変更なし・追加と削除が M 行（上限 300 行））」と出る。Merge Gate のコメント（PR の HEAD ごとに更新する表）にもこの文が残るので、あとからレビューを省いた PR と理由が分かる
+- 小さな PR でも、C2（AC の転記とチェック）・C3・C4（`ci-ok` の成功）・C11（変更予定ファイルの範囲）などは今までどおり求める
+- `merge-train.sh` は、C6 が pass の PR にはレビュー（`review.sh`）を依頼しないので、小さな PR にもレビューを依頼しない（Merge Gate が pass になればマージする）
 
 ローカルでの判定（GitHub の状態で、またはスナップショットで）:
 
@@ -282,6 +366,32 @@ go -C tools/agentctl run . gate --repo K-Kizuku/raft-game --pr 12 --json
 ```bash
 go -C tools/agentctl run . gate --repo K-Kizuku/raft-game --pr 12 --json --input "$PWD/tools/agentctl/internal/gate/testdata/pass.json"
 ```
+
+### レビュー記録の引き継ぎ（`main` の取り込みだけのとき）
+
+C10 があるので、PR を 1 つマージすると、ほかの開いた PR はすべて遅れる。`main` を取り込むと HEAD の SHA が変わるが、PR の自分の変更が変わっていなければ、レビューをやり直さず、前の SHA（以下 S）の最新のレビューを HEAD のものとして使う（Issue #120）。C6・C7・C12 が使う「最新のレビュー」を S のもので代えるのは、次を**すべて**確かめられたときだけ:
+
+1. HEAD から最初の親をたどると S に着き、その間のコミットはすべてマージコミットで、2 番目以降の親は `main` の履歴に含まれる（S のあとに PR の作者が自分の変更のコミットを足していない）
+2. PR の自分の変更（`main` とのマージベースから S までの差分と、マージベースから HEAD までの差分）が、正規化した patch-id で一致する。正規化は `git patch-id --stable` と同じ考え方で、ハンクの見出しの行番号と空白の違いだけを無視し、ファイル名と、ハンクの区切り・見出しの残り（関数名など）・文脈の行・変更行（`+`・`-`）の中身と順番で比べる（文脈の行も比べるので、変更行が同じでも変更の場所が違えば一致しない）。ファイルの一覧（追加・削除・名前の変更を含む）と、ファイルのモード（実行権限など。差分の両端のマージベースと先端のそれぞれ）も一致する。`patch` がない（大きすぎる・バイナリ・中身の変更がない）・ハンクの形が読めない（見出しの行数と中身が合わないなど）・モードを確かめられないファイルがあれば引き継がない
+3. S の最新のレビュー（`agent-review/v1` の記録か、Codex の GitHub 連携のレビュー）が `approve`（Codex なら重大な指摘がない）で、C7 と C8 を満たす
+4. PR が保護されたパス（`protected_paths`。名前を変えたファイルは前の名前も）を変えていない。保護されたパスを変える PR は、今までどおり HEAD での新しい記録を求める
+5. 設定 `.agents/config.json` の `review.carry_over_on_base_merge` が `true`（既定は `false`）
+
+- 引き継ぐのは**最新の**レビューだけ。それより新しい `request_changes` があれば、古い `approve` は使わない（HEAD のものなら C6 が fail、古い SHA のものなら pending）
+- コンフリクトを解消したマージコミットは、2 番目の親が `main` にあっても、差分が変われば条件 2 で引き継がない。PR が変えたファイルの、変更から離れた場所に `main` の変更が入った（行番号だけが変わった）なら引き継ぎ、新しい HEAD で C4（CI）が通ることで確かめる。変更のすぐ近く（差分の文脈の行）に `main` の変更が入ったときは、引き継がない（変更の場所が同じだと確かめられないので、レビューし直す）
+- 判定に要る材料（S から HEAD までのコミットとその親・マージベースから S までの差分・変更ファイルのモード）は、`agentctl gate` が GitHub の API（`git/commits`・`compare`・`git/trees`）から集め、スナップショットの `carry_over` 欄に入れる（`--input` でも判定できる。例は [carry-over.json](../../tools/agentctl/internal/gate/testdata/carry-over.json)）。集めるのに失敗した・材料が足りないときは引き継がない（C6 は fail ではなく pending）
+- 引き継いだときは、C6 の詳細（JSON とコメント）に「round N（S）を引き継いだ: main の取り込みだけ」のように出る。引き継がなかったときは、その理由が notes に出る
+- C4（CI）・C9（コンフリクト）・C10（遅れ）の判定は変わらない
+- `agentctl recover` は、`in-review` で HEAD のレビュー記録がなくても、同じ条件で引き継げる PR には `request-review` を出さない
+
+### マージは 1 つずつ
+
+並列に開いた PR は、1 つずつマージする。`merge.require_up_to_date` が `false`（今のリポジトリの設定）なら、遅れただけでは C10 は fail にならないので、`main` を取り込まずに次の PR をマージしてよい（コンフリクトが出た PR だけ、下の [Conflict の解消の手順](#conflict-の解消の手順) に進む）。`true` なら、1 つマージしたら、ほかの PR は C10 が fail（遅れ）になるので、次のようにする。
+
+1. 遅れた PR のブランチに `main` を**マージで**取り込む（`git merge origin/main`、または GitHub の「Update branch」のマージ）。rebase すると S が HEAD の祖先でなくなり、引き継げない
+2. 新しい HEAD で CI（C4）と Merge Gate が動くのを待つ。上の条件を満たせば、C6 はレビューをやり直さずに pass する。Orchestrator は `review.sh` を呼ばない（`agentctl recover` も `request-review` を出さない）
+3. C6 が pending のまま（notes に引き継がない理由が出る）なら、今までどおり `review.sh` で新しい HEAD をレビューする
+4. Merge Gate が pass になったら `merge.sh` でマージし、次の PR に進む
 
 ## Conflict の解消の手順
 

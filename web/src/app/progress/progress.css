@@ -1,0 +1,14 @@
+/* ステージのクリアの記録（T-703・T-703b）。色・余白・角丸・影はトークン（web/src/ui/theme/tokens.css）だけを使う。 */
+
+/* クリア済みの★。金の札。 */
+.stage-select .stage-select-cleared {
+  justify-self: start;
+  margin: 0 0 var(--space-3);
+  padding: 0 var(--space-2);
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-gold) 30%, var(--color-paper));
+  border: 1px solid var(--color-gold);
+  border-radius: var(--radius-s);
+  font-size: 0.875em;
+  font-weight: bold;
+}

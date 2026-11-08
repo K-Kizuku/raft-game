@@ -43,20 +43,99 @@ type Review struct {
 	FallbackReasons    []string `json:"fallback_reasons"`
 	BlockingSeverities []string `json:"blocking_severities"`
 	TrustedAuthors     []string `json:"trusted_authors"`
+	// CodexBotAuthors は、Codex の GitHub 連携の結果（要約のコメント・行コメント）として信頼する作者（Issue #82）。
+	CodexBotAuthors []string `json:"codex_bot_authors"`
+	// CarryOverOnBaseMerge は、HEAD より前の SHA のレビュー記録を、そのあとが既定のブランチの取り込みだけで
+	// PR の自分の変更が同じときに引き継ぐこと（Merge Gate の C6。Issue #120）。既定は false。
+	CarryOverOnBaseMerge bool `json:"carry_over_on_base_merge"`
+	// MaxRounds は、merge-train.sh がレビューを依頼する回数の上限（Issue #240）。この回数以上のレビューを
+	// 受けた PR にはもう依頼せず、ci-ok が pass なら「強制マージ待ち」にする。書かない（0）なら DefaultMaxRounds。
+	MaxRounds int `json:"max_rounds"`
+	// SkipSmallPRs は、小さな PR（変更ファイルがすべて SkipPaths に一致し、保護されたパスを変えず、
+	// 追加と削除の行数の合計が SkipMaxLines 以下）のレビューを省くこと（Merge Gate の C5〜C8。Issue #243）。既定は false。
+	SkipSmallPRs bool `json:"skip_small_prs"`
+	// SkipPaths は、小さな PR の変更ファイルとして認める glob。省略（null）は DefaultSkipPaths。
+	// NeverSkipPaths に一致するファイルは、ここに一致しても小さな PR にしない。
+	SkipPaths []string `json:"skip_paths,omitempty"`
+	// SkipMaxLines は、小さな PR の追加と削除の行数の合計の上限。省略（null）は DefaultSkipMaxLines。
+	SkipMaxLines *int `json:"skip_max_lines,omitempty"`
+}
+
+// DefaultMaxRounds は review.max_rounds を書かないときの値。
+const DefaultMaxRounds = 2
+
+// MaxReviewRounds は review.max_rounds（書かなければ DefaultMaxRounds）を返す。
+func (r Review) MaxReviewRounds() int {
+	if r.MaxRounds == 0 {
+		return DefaultMaxRounds
+	}
+	return r.MaxRounds
+}
+
+// DefaultSkipPaths は、review.skip_paths を省略したときの glob（Issue #243）。
+var DefaultSkipPaths = []string{
+	"docs/**",
+	"**/*_test.go", "**/*.test.ts", "**/*.test.tsx",
+	"**/testdata/**", "**/fixtures/**",
+}
+
+// NeverSkipPaths は、review.skip_paths に一致しても小さな PR にしないパス（判断の記録。Issue #243）。
+// 設定で外せないよう、コードに直接書く。
+var NeverSkipPaths = []string{"docs/adr/**"}
+
+// DefaultSkipMaxLines は、review.skip_max_lines を省略したときの上限。
+const DefaultSkipMaxLines = 300
+
+// SmallPRSkipPaths は、小さな PR の変更ファイルとして認める glob を返す（省略なら DefaultSkipPaths）。
+func (r Review) SmallPRSkipPaths() []string {
+	if r.SkipPaths == nil {
+		return DefaultSkipPaths
+	}
+	return r.SkipPaths
+}
+
+// SmallPRMaxLines は、小さな PR の追加と削除の行数の合計の上限を返す（省略なら DefaultSkipMaxLines）。
+func (r Review) SmallPRMaxLines() int {
+	if r.SkipMaxLines == nil {
+		return DefaultSkipMaxLines
+	}
+	return *r.SkipMaxLines
+}
+
+// Merge はマージに関する設定（Issue #239）。
+type Merge struct {
+	// RequireUpToDate は、Merge Gate の C10 でベース（既定のブランチ）より遅れている PR を fail にすること。
+	// 省略（null）は true（今までどおり）。false なら、遅れていても C10 は pass にする（遅れの数を detail に書く）。
+	// C9（コンフリクト）と C4（CI）の判定は変わらない。
+	RequireUpToDate *bool `json:"require_up_to_date"`
+}
+
+// GithubApp は AI の役割（Worker・Orchestrator）が GitHub の操作に使う GitHub App の設定（Issue #282）。
+// scripts/agents/lib.sh が、秘密鍵から JWT を作ってインストールのトークンを得るのに使う。
+// 秘密鍵そのものはリポジトリの外に置き、ここにはパスだけを書く。
+type GithubApp struct {
+	// AppID は GitHub App の App ID（正の整数）。
+	AppID int64 `json:"app_id"`
+	// KeyPath は秘密鍵（PEM）のパス。先頭の「~/」はホームディレクトリ。
+	KeyPath string `json:"key_path"`
 }
 
 // Config は `.agents/config.json` の内容。
 type Config struct {
-	Version           int      `json:"version"`
-	DefaultBranch     string   `json:"default_branch"`
-	BranchPrefix      string   `json:"branch_prefix"`
-	MaxWorkers        int      `json:"max_workers"`
-	RetryLimit        int      `json:"retry_limit"`
-	RequiredChecks    []string `json:"required_checks"`
-	Review            Review   `json:"review"`
+	Version        int      `json:"version"`
+	DefaultBranch  string   `json:"default_branch"`
+	BranchPrefix   string   `json:"branch_prefix"`
+	MaxWorkers     int      `json:"max_workers"`
+	RetryLimit     int      `json:"retry_limit"`
+	RequiredChecks []string `json:"required_checks"`
+	Review         Review   `json:"review"`
+	// Merge は省略できる（古い設定は今までどおりに扱う）。
+	Merge             *Merge   `json:"merge,omitempty"`
 	SharedAppendFiles []string `json:"shared_append_files"`
 	ProtectedPaths    []string `json:"protected_paths"`
 	DevSlots          int      `json:"dev_slots"`
+	// GithubApp は省略できる（省略すると AI の役割もオーナーのトークンを使う）。
+	GithubApp *GithubApp `json:"github_app,omitempty"`
 }
 
 // Parse は JSON を読み、検証する。未知のキーはエラーにする。
@@ -172,6 +251,26 @@ func (c *Config) Validate() error {
 			add("review.trusted_authors に空の値がある")
 		}
 	}
+	if len(r.CodexBotAuthors) == 0 {
+		add("review.codex_bot_authors は 1 件以上にする")
+	}
+	for _, a := range r.CodexBotAuthors {
+		if strings.TrimSpace(a) == "" {
+			add("review.codex_bot_authors に空の値がある")
+		}
+	}
+	if r.MaxRounds != 0 {
+		checkRange("review.max_rounds", r.MaxRounds, 1, 10)
+	}
+
+	for _, p := range r.SkipPaths {
+		if err := issuebody.ValidatePattern(p); err != nil {
+			add("review.skip_paths の %q: %v", p, err)
+		}
+	}
+	if r.SkipMaxLines != nil && *r.SkipMaxLines < 0 {
+		add("review.skip_max_lines は 0 以上にする（%d）", *r.SkipMaxLines)
+	}
 
 	for _, p := range c.ProtectedPaths {
 		if err := issuebody.ValidatePattern(p); err != nil {
@@ -184,10 +283,34 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if a := c.GithubApp; a != nil {
+		if a.AppID <= 0 {
+			add("github_app.app_id は正の整数にする（%d）", a.AppID)
+		}
+		kp := strings.TrimSpace(a.KeyPath)
+		switch {
+		case kp == "":
+			add("github_app.key_path が空")
+		case kp != a.KeyPath || strings.ContainsAny(a.KeyPath, "\n\r"):
+			add("github_app.key_path の前後に空白や改行を入れない（%q）", a.KeyPath)
+		case !strings.HasPrefix(a.KeyPath, "/") && !strings.HasPrefix(a.KeyPath, "~/"):
+			add("github_app.key_path は絶対パスか「~/」で始まるパスにする（%q）", a.KeyPath)
+		}
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("config: 設定が不正: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// RequireUpToDate は、Merge Gate の C10 でベースより遅れている PR を fail にするかを返す。
+// 設定がない（merge・require_up_to_date の省略）ときは true。
+func (c *Config) RequireUpToDate() bool {
+	if c == nil || c.Merge == nil || c.Merge.RequireUpToDate == nil {
+		return true
+	}
+	return *c.Merge.RequireUpToDate
 }
 
 // IsBlocking は、重大度が「重大な指摘」に当たるかを返す。
@@ -198,6 +321,16 @@ func (c *Config) IsBlocking(severity string) bool {
 // IsTrustedAuthor は、login が信頼する作者かを返す（GitHub の login は大文字と小文字を区別しない）。
 func (c *Config) IsTrustedAuthor(login string) bool {
 	for _, a := range c.Review.TrustedAuthors {
+		if strings.EqualFold(a, login) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCodexBot は、login が Codex の GitHub 連携の結果として信頼する作者かを返す（大文字と小文字を区別しない）。
+func (c *Config) IsCodexBot(login string) bool {
+	for _, a := range c.Review.CodexBotAuthors {
 		if strings.EqualFold(a, login) {
 			return true
 		}

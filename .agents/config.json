@@ -2,7 +2,7 @@
   "version": 1,
   "default_branch": "main",
   "branch_prefix": "agent/issue-",
-  "max_workers": 5,
+  "max_workers": 8,
   "retry_limit": 3,
   "required_checks": ["ci-ok"],
   "review": {
@@ -11,9 +11,22 @@
     "allow_fallback": true,
     "fallback_reasons": ["auth_error", "rate_limited", "service_unavailable", "not_installed"],
     "blocking_severities": ["critical", "high"],
-    "trusted_authors": ["K-Kizuku"]
+    "trusted_authors": ["K-Kizuku", "kizuku-claude[bot]"],
+    "codex_bot_authors": ["chatgpt-codex-connector[bot]"],
+    "carry_over_on_base_merge": true,
+    "max_rounds": 1,
+    "skip_small_prs": true,
+    "skip_paths": ["docs/**", "**/*_test.go", "**/*.test.ts", "**/*.test.tsx", "**/testdata/**", "**/fixtures/**"],
+    "skip_max_lines": 300
   },
-  "shared_append_files": ["CLAUDE.md", "docs/README.md", "docs/adr/README.md", "docs/08-implementation-plan.md"],
+  "merge": {
+    "require_up_to_date": false
+  },
+  "shared_append_files": ["CLAUDE.md", "docs/README.md", "docs/adr/README.md", "docs/08-implementation-plan.md", "docs/02-architecture.md", "docs/03-design-doc.md", "docs/04-game-design.md", "docs/06-protocol.md", "docs/07-data-spec.md"],
   "protected_paths": [".github/workflows/**", ".github/workflow-sources/**", ".github/rulesets/**", ".agents/config.json", ".claude/settings.json", ".claude/hooks/**", ".claude/agents/**", "tools/agentctl/**", "scripts/agents/**"],
-  "dev_slots": 10
+  "dev_slots": 15,
+  "github_app": {
+    "app_id": 5659452,
+    "key_path": "~/.config/raft-game/agent-app.pem"
+  }
 }

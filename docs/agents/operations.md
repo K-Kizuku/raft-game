@@ -18,6 +18,7 @@ AI の認証には `workflow` 権限がなく、Rulesets とシークレット�
 | 4 | Codex CLI を入れ、`codex login` する | ChatGPT のアカウントでログインする。API キーは使わない（[ADR-0021](../adr/0021-hootl-agent-development.md)） |
 | 5 | `gh auth login` | エージェントとオーナーが同じ認証情報を使う（`workflow` 権限は付けない） |
 | 6 | Claude Code を入れる | `claude` コマンド。Orchestrator はメインの作業ツリーで起動する |
+| 7 | AI 用の GitHub App を作り、秘密鍵を置く（#176・#282） | AI の役割（Orchestrator・Worker・Reviewer）の `gh`・`agentctl` が使う。API の上限をオーナーのトークンと分ける。手順は下の「[AI 用の GitHub App](#ai-用の-github-app)」。しなくても動く（オーナーのトークンを使う） |
 
 2・3 は `gh` を使うので、`gh` に未ログインなら 5 を先に行う。2 と 3 は、先に `--dry-run` で内容を確かめる。
 
@@ -46,6 +47,71 @@ gh auth login
 ```
 
 ほかに、`git`・`jq`・`go`・`timeout`（macOS は `gtimeout`）が要る。
+
+### bash の版
+
+hooks（`.claude/hooks/*.sh`）と `scripts/` の shell のスクリプトは、`#!/usr/bin/env bash` で PATH の先頭の bash を使い、macOS 標準の `/bin/bash`（3.2）でも動く書き方にしている（#107）。Homebrew などの bash 5 でもよい。
+
+- bash 3.2 と UTF-8 のロケール（`LANG=ja_JP.UTF-8` など）では、`"$t）"` のように変数の直後に ASCII 以外の文字があると、そのバイトまで変数名として読まれ、`set -u` で `t�: unbound variable` になる。変数の直後に ASCII 以外の文字が続くときは `${t}` と書く。[test_shell_scripts.py](../../scripts/tests/test_shell_scripts.py) が、Git が追跡する `*.sh` を検査する
+- hooks は fail-closed にしている。想定外のエラーで止まっても、終了コード 2 と `[guard] 拒否（内部エラー）: …` を出す（Claude Code は終了コード 2 だけを拒否として扱い、1 などでは操作を通してしまう）。拒否・許可は `deny`・`allow` で終える。bash 3.2 では、`set -u` などで止まったときの EXIT の trap の `$?` が 0 になることがあるので、終了コードではなく `deny`・`allow` を通ったかで見分ける
+  - 判定に使うデータを作るコマンド（`tr`・`jq`・`sed`・`grep`・`git` など）の失敗は `set -e` に頼らず、親のシェルで明示的に検査して `internal_error` で拒否する。プロセス置換 `< <(…)` の失敗は親に伝わらず、コマンド置換の中や `if` の中の関数では `set -e` が効かないので、いったん変数に受けて（`x="$(…)" || internal_error …`）から、`split_lines`・`split_fields`（`.claude/hooks/lib.sh`）で配列に分けて読む。here-string（`<<<`）とヒアドキュメント（`<<`）は使わない（一時ファイルを作れない環境ではリダイレクトが失敗し、検査を飛ばしたまま許可に着く）。一致の判定は `printf … | grep -q` ではなく `re_match`（`.claude/hooks/lib.sh`）を使い、grep のエラーを「一致しない」と区別する
+  - `git` の終了コード 128 は、Git の外のときだけでなく、git の設定の読み込みの失敗（`GIT_CONFIG_COUNT` が不正など）でも返る。終了コードだけで「Git の外」と扱わず、`git_not_repo`（`.claude/hooks/lib.sh`）で見分ける。それ以外の失敗は内部エラーで拒否する
+- 手元で bash 3.2 のときの動きを確かめるには、`/bin/bash` へのシンボリックリンクを置いたディレクトリを PATH の先頭に入れ、`LC_ALL=ja_JP.UTF-8` でテスト（下の「テスト」）を実行する
+
+### GitHub のトークン
+
+`agentctl` は `GITHUB_TOKEN` か `GH_TOKEN` からトークンを読む。どちらもないときは、[agentctl.sh](../../scripts/agents/agentctl.sh) と [lib.sh](../../scripts/agents/lib.sh) の `agentctl` がトークンを作って `GH_TOKEN` で渡す（#107・#282）。トークンは標準出力・ログに出さない。
+
+- 役割が AI（`worker`・`orchestrator`・`reviewer`）で、AI 用の GitHub App の鍵が使えれば、App のインストールのトークン（下の「AI 用の GitHub App」）。`merge.sh` のマージと `review.sh` の記録も App で行う（オーナーの判断。2026-11-08）
+- それ以外（役割が `human`、App の設定がない、鍵がない・作れない）は `gh auth token` の値（オーナーのトークン）。App の設定があるのに使えないときは、理由を標準エラーに 1 行出す
+- lib.sh の `agentctl` と `ghx`（lib.sh を読み込むスクリプトが直接呼ぶ `gh`。lib.sh の `gh` 関数が `ghx` に通す）は、呼ぶたびにトークンを作って子にだけ渡す（呼び出し側のシェルに export しない）。1 時間で切れる App のトークンが、長く動く `merge-train.sh` や `review.sh` の待ちの途中で切れないようにするため
+- `gh` がない・未ログインで App も使えなければ何もせず、`agentctl` が「トークンがない」で止まる（先に `gh auth login` する）
+- レビュー記録の作者は App（`kizuku-claude[bot]`）になる。Merge Gate の C5 が数えるように、[.agents/config.json](../../.agents/config.json) の `review.trusted_authors` に `kizuku-claude[bot]` を入れている（オーナーの `K-Kizuku` も残す）
+
+### AI 用の GitHub App
+
+AI の役割（Orchestrator・Worker・Reviewer）の GitHub の操作（CI の結果の待ち・PR の作成と更新・`agentctl`・`merge.sh` のマージ・`review.sh` の記録）は、すべて同じ AI 用の GitHub App（`kizuku-claude`）のインストールのトークンで行う（#282。[ADR-0021](../adr/0021-hootl-agent-development.md)）。インストールのトークンの上限は 1 時間に 5,000 回で、オーナーのトークンと別に数える。App は Rulesets の bypass に入れない（必須のチェックはそのまま効く）。
+
+オーナーが 1 回だけ行う（2026-11-08 に済み。App ID は `5659452`）。
+
+1. GitHub の Settings → Developer settings → GitHub Apps で App を作る。Webhook は使わない。リポジトリの権限は、AI の操作に要るもの（Metadata・Checks・Commit statuses・Actions は Read、Contents・Issues・Pull requests は Read and write。Contents の書き込みは `merge.sh` の squash merge とブランチの削除に要る）にする。`workflow`（Workflows）・Administration・Secrets は付けない
+2. `K-Kizuku/raft-game` だけにインストールする
+3. 秘密鍵（PEM）を作ってダウンロードし、リポジトリの外の `~/.config/raft-game/agent-app.pem` に置いて `chmod 600` にする（権限が 600 より広いと使わない）。秘密鍵はコミットしない
+4. App ID を [.agents/config.json](../../.agents/config.json) の `github_app.app_id` に、鍵のパスを `github_app.key_path` に書く（`~/` はホームディレクトリ）。環境変数 `AGENT_APP_ID`・`AGENT_APP_KEY` で上書きできる
+
+```bash
+mkdir -p ~/.config/raft-game && chmod 700 ~/.config/raft-game
+mv ~/Downloads/<ダウンロードした鍵>.pem ~/.config/raft-game/agent-app.pem
+chmod 600 ~/.config/raft-game/agent-app.pem
+```
+
+仕組み（[lib.sh](../../scripts/agents/lib.sh) の `app_token`・[gh-app.sh](../../scripts/agents/gh-app.sh)）:
+
+- 秘密鍵で JWT（RS256。`iat` は 60 秒前、`exp` は 9 分後）を `openssl` で作り、`gh api -H "Authorization: Bearer <JWT>"` でインストールを探してトークンを作る
+- トークンは `~/.config/raft-game/agent-app-token-<App ID>-<OWNER>_<NAME>` にキャッシュし（`umask 077`）、作ってから 50 分で作り直す
+- [spawn-worker.sh](../../scripts/agents/spawn-worker.sh) は、鍵が使えれば `gh-app.sh` を呼ぶ `gh`（`.agents/bin/gh-app/gh`）を Worker の PATH の先頭に置き、`GH_TOKEN`・`GITHUB_TOKEN` を Worker に渡さない。Worker の `gh` は呼ぶたびに有効なトークン（キャッシュか作り直したもの）を使うので、1 時間を超えて動いても切れない。鍵が使えなければ、理由を出して今までどおり起動する
+- `merge.sh`・`review.sh` と、見張り（`merge-train.sh`・`autospawn.sh`）・`spawn-worker.sh`・`status.sh`・`wt.sh` は、`agentctl` と `ghx`（lib.sh。直接の `gh` も lib.sh の `gh` 関数で `ghx` を通る）で呼ぶたびに App のトークンを渡す。オーナーのトークンが上限に達しても、見張りは App の残りで動く（`merge-train.sh` の上限の確かめも App のトークンの `gh api rate_limit`）。見張りは `gh` の標準エラーを捨てるので、App を使えない理由はそこでは出ない（`gh-app.sh` を手で実行して確かめる）。`review.sh` はトークンを export しないので、Reviewer（Claude Code）にもトークンは渡らない
+- `gh-app.sh` は、`GH_TOKEN`・`GITHUB_TOKEN` がすでにあるとき、`gh auth` のとき、役割が AI（`worker`・`orchestrator`・`reviewer`）でないときは、トークンを入れずに本物の `gh` を実行する。App のトークンを作れないときは、理由を標準エラーに 1 行出して、`gh` のログイン（オーナーのトークン）で実行する
+- Worker の `git push` は今までどおり SSH（オーナーの鍵）。HTTPS と App のトークンにそろえるかは、オーナーが決める（#176）
+- 手で App のトークンで `gh` を使うときは `scripts/agents/gh-app.sh <gh の引数…>`（`GH_TOKEN` を外して実行する）
+
+### GitHub の API の上限
+
+GitHub の REST API は、認証済みで 1 時間に 5,000 回まで。オーナーの `gh` のトークンを Orchestrator・Worker・見張りのスクリプト・レビューで共有するので、並行して動かすとすぐに達する（2026-11-07 に 30 分で 2 回達した。#135）。Worker の `gh`・`agentctl`、Orchestrator のスクリプトの `agentctl`、`merge.sh`・`review.sh` は、AI 用の GitHub App のトークン（上の「AI 用の GitHub App」。#282）に分けた。オーナーのトークンを使うのは、人の操作、App を使えないとき、`merge-train.sh`・`autospawn.sh`・`wt.sh` が直接呼ぶ `gh`（gh のログインを使う）になる。上限に達している間は、`agentctl gate`・`review.sh`・Worker の `gh` が 403 で失敗する。残りの回数と戻る時刻（`reset`、UNIX 時刻）は `gh api rate_limit --jq .resources.core` で見られる（この呼び出しは回数に数えない）。
+
+呼び出しの多い所の 1 つが、[review.sh](../../scripts/agents/review.sh) の Codex の GitHub 連携（`--via github`）の結果の待ち。`@codex review` を依頼したあと、次の間隔で PR のコメントを読み直す。間隔は環境変数で変えられる（秒、0 以上の整数）。
+
+| 環境変数 | 既定 | 意味 |
+|---|---|---|
+| `AGENT_CODEX_GITHUB_FIRST_WAIT` | 60 | 依頼したあと、最初に読むまで待つ秒数（`AGENT_CODEX_GITHUB_TIMEOUT` を超えない） |
+| `AGENT_CODEX_GITHUB_POLL` | 30 | その後に読み直す間隔。Codex の結果が出てから気づくまでの遅れは、最大でこの秒数 |
+| `AGENT_CODEX_GITHUB_TIMEOUT` | 900 | 待ちの全体の上限。超えたら `service_unavailable` として、ローカルの Codex CLI → Claude Code の経路に切り替える |
+| `AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT` | 60 | API の上限に達したとき、戻る時刻が読めない場合に待つ秒数 |
+
+- 待っている間に API の上限（`agentctl` のエラーの「（レート制限）」・`rate limit`）に達したら、`gh api rate_limit` の `reset` の時刻まで待ってから読み直す。失敗（`retry_limit` 回で切り替える連携の不調）としては数えない
+- `gh api rate_limit` が読めない、または `remaining` が 0 でない（二次的な上限など、`reset` が当てにならない）ときは、`AGENT_CODEX_GITHUB_RATE_LIMIT_WAIT` 秒待つ
+- 上限が戻るのが待ちの全体の上限（`AGENT_CODEX_GITHUB_TIMEOUT`）より後なら、待たずにタイムアウトと同じ理由（`service_unavailable`）で終わる
+- 呼び出しを減らしたいときは、`AGENT_CODEX_GITHUB_POLL` を大きくする（例: `AGENT_CODEX_GITHUB_POLL=60 scripts/agents/review.sh 12`）
 
 ### ブートストラップ（ワークフローを取り込む前）
 
@@ -106,6 +172,57 @@ scripts/agents/merge.sh 34 --dry-run
 ```bash
 scripts/agents/merge.sh 34
 ```
+
+### マージの列と Worker の自動起動（#154）
+
+上の 1 周のうち、Worker の起動と、レビューの依頼からマージまでを、2 つのスクリプトで自動で回せる。どちらも Orchestrator だけが、メインの作業ツリーで使う（Worker・Reviewer が実行すると hooks が拒否する）。終わらずに回り続けるので、バックグラウンドで動かす。
+
+```bash
+scripts/agents/merge-train.sh
+```
+
+```bash
+scripts/agents/autospawn.sh
+```
+
+[merge-train.sh](../../scripts/agents/merge-train.sh)（マージの列。GitHub の merge queue は個人のアカウントのリポジトリで使えないための代わり）:
+
+- 引数がなければ、周ごとに開いた PR（ブランチ `agent/issue-<n>`）を PR 番号の小さい順に見つける。`PR:Issue` を並べて渡すと、その PR だけを前から順に扱う。`.agents/run/train/skip` に書いた PR 番号は飛ばす。PR の Issue は一度だけ `in-review` にする（遷移に成功したか、すでに `in-review` 以降の状態のときだけ `.agents/run/train/inreview-<PR>` の印を作る。一時的に失敗したら次の周で試す）
+- 1 周で、前から順に Merge Gate を判定し、pass の最初の 1 つを、Issue を `ready-to-merge` にしてから `merge.sh` でマージする。マージしたら、メインの作業ツリーで `git pull --ff-only` を実行する（`.agents/config.json` などの変更を、`autospawn.sh` などの判定にすぐ反映するため）
+- 残りの PR は 1 歩ずつ進める
+
+| Merge Gate の結果 | 行うこと |
+|---|---|
+| C10 が fail | main の取り込みを依頼する（`PUT pulls/<PR>/update-branch`）。HTTP 422 の merge conflict は「止まった」。それ以外の失敗（通信・HTTP 5xx・API の上限など）は次の周で試す。成功したら次の周で判定し直す |
+| C9 が fail | 「止まった」（コンフリクト） |
+| 最新のレビュー記録の round が `review.max_rounds` 以上で、C6 が pass でないか C12 が fail | 強制マージ待ち（下の「レビューは 1 往復まで」）。`review.sh` を起動せず、「止まった」にもしない |
+| C6 が fail、または C6 が pass で C7 が fail | 「止まった」（`request_changes`・重大な指摘） |
+| C6 が pass でなく、C10 が pass | `review.sh` をバックグラウンドで起動する（PR ごとに 1 つまで。`.agents/run/train/review-<PR>.pid` で判定し、終わっていれば起動し直す） |
+| C6 が pass で C12 が fail、C10 が pass | 保護されたパスの確認の記録（`protected_paths_ack`）が足りない（最新の記録が Codex の GitHub 連携など）。`review.sh` を HEAD ごとに 1 回だけバックグラウンドで起動する（`.agents/run/train/review-c12-<PR>` に HEAD を記録する）。そのレビューのあとも C12 が fail なら「止まった」 |
+| C2 が fail で、`ci-ok` が pass | 本文の `` - [ ] AC-n: CI（`ci-ok`）が通る `` の行だけを `[x]` にする（行の末尾の「（…結果待ち）」は外す） |
+
+- 止まった PR は、ログに理由を出して、新しい PR か修正を待つ（終わらない）。Orchestrator が「指摘・CI の失敗・Conflict への対応」で直す
+- 判定の使い回し: PR の HEAD・更新時刻・コメントの数・チェックの状態と、Issue の更新時刻と main の HEAD が前の周と同じなら、前の判定を使う（`agentctl gate` は引き継ぎの判定で REST の API を 10 回以上呼ぶため。Issue の更新時刻は、Issue の側だけで AC・変更予定ファイルを直したときに判定し直すため。Issue を読めなければ、その周はその PR に何もしない）。ただし、目印に表れない一時的な pending（C9 の `mergeable` の未計算）を含む判定は 2 周まで使い、過ぎたら判定し直す
+- `agentctl gate` の結果が空・不正（API の上限など）のときは、その周はその PR に何もしない。`gh` が失敗しても止まらず、次の周で試す。`gh api rate_limit` の残りが 300 未満なら、戻る時刻まで休む
+- マージ済み・閉じた PR は列から外す（`merge.sh` がマージの後の処理で 0 以外を返したときも）
+- **凍結（#240）**: 保護されたパスの PR（C12 が fail・pending か、C12 の detail が「保護されたパスの変更（」で始まる）の `review.sh` を起動したら、それが動いている間は、ほかの PR を（Merge Gate が pass でも）マージしない。保護されたパスの PR はレビューの引き継ぎ（#120）が使えないので、レビューの間に main が進むと「取り込み → 再レビュー」を繰り返し、いつまでもマージできないため（#209・#214）。印は `.agents/run/train/freeze-<PR>`（起動した時刻）。`review.sh` が終わるか、`review.sh` の待ちの上限（`AGENT_CODEX_GITHUB_TIMEOUT`＋`AGENT_CODEX_TIMEOUT`、既定 900＋300 秒）を超えたら解く。凍結した PR 自身は pass ならマージする
+- **レビューは 1 往復まで（#240・#336）**: オーナーの決まり（2026-11-08。08:50 に 2 往復から 1 往復に変えた）。最新のレビュー記録（Merge Gate の `latest_review.round`）が `.agents/config.json` の `review.max_rounds`（今は 1。書かなければ 2）以上で、C6 が pass でない（か C12 が fail の）PR には、もう `review.sh` を起動しない。`ci-ok` が pass なら「強制マージ待ち」として `.agents/run/train/force-merge-<PR>.json`（`pr`・`issue`・`head_sha`・`round`・`max_rounds`・`ci_ok`・`failed`＝pass でない条件・`recorded_at`）に記録し、ログに「強制マージ待ち」と出す（同じ HEAD の間は「強制マージ待ちのまま」）。Orchestrator はこれをオーナーに知らせ、オーナーが強制マージする。`ci-ok` が pass でない間は記録を作らず、ログに「ci-ok が pass になるのを待つ」と出す。記録は、列から外したとき（マージ済み・閉じた）と、上限に当たらなくなったときに消す
+- **review.sh を子にしない（#240）**: `review.sh` は、`merge-train.sh` と別のセッション（`setsid` がなければ、ジョブ制御 `set -m` で別のプロセスグループ）で、二重の fork で起動する。`merge-train.sh` を止めても（TaskStop・Ctrl-C でプロセスグループごと止めても）、`review.sh` は止まらない
+
+[autospawn.sh](../../scripts/agents/autospawn.sh)（Worker の自動起動）:
+
+- 周ごとに `agentctl plan --json` の `ready` を出た順に、`capacity` の数まで `spawn-worker.sh <n> --background` で起動する。拒否された Issue（終了コード 4 など）は、その周は飛ばす
+- `deferred`（実装中の Issue と変更予定ファイルが重なる）は起動しない。`conflicts`・`deferred` の Issue と理由は、前の周と変わったときだけログに出す
+- **状態の自動の直し（#240）**: 周ごとに、`agentctl plan --json` の `active` のうち `status` が `in-progress` で、動いている Worker（`.agents/run/issue-<n>.json` の pid が生きているもの）がなく、開いた PR（ブランチ `agent/issue-<n>`）がある Issue を `in-review` に移す（`agentctl state <n> in-review --pr <PR>`）。Worker が終わったのに API の上限などで状態を移しそこねると、枠（`capacity`）を食い続けるため（#211・#213）。枠は次の周の `plan` で反映される。移せなければログに出して次の周で試す
+- **Worker を子にしない（#240）**: `spawn-worker.sh --background` は、`autospawn.sh` と別のセッション（`setsid` がなければ、ジョブ制御 `set -m` で別のプロセスグループ）で実行する。Worker はそのセッション・プロセスグループに入り、`spawn-worker.sh` が戻ると init の子になるので、`autospawn.sh` を止めても（プロセスグループごとでも）Worker は止まらない（#218）
+- 止めるには `.agents/run/autospawn.stop` を作る（次の周で終わる。始めるときと終わるときに消す）
+
+| 環境変数 | 既定 | 意味 |
+|---|---|---|
+| `AGENT_TRAIN_INTERVAL` | 180 | `merge-train.sh` の周の間隔（秒） |
+| `AGENT_TRAIN_CYCLES` | 0 | `merge-train.sh` がこの数の周で終わる（テスト用。0 は終わらない） |
+| `AGENT_CODEX_GITHUB_TIMEOUT`・`AGENT_CODEX_TIMEOUT` | 900・300 | `review.sh` の待ちの上限（秒）。`merge-train.sh` は、この和を超えたら凍結を解く |
+| `AGENT_AUTOSPAWN_INTERVAL` | 300 | `autospawn.sh` の周の間隔（秒） |
 
 ### 指摘・CI の失敗・Conflict への対応
 
@@ -270,7 +387,7 @@ git revert --no-edit <squash の SHA>
 ```
 
 - 急ぐときは、オーナーが GitHub の「Revert」で PR を作ってもよい。ただし Merge Gate は C2（`Closes #N` と AC）と C11（変更予定ファイル）を求めるので、Issue を用意する
-- 本番・デモの環境へのデプロイと、その rollback は CI だけが行う（[ADR-0019](../adr/0019-parallel-local-development.md)）。エージェントは直接行わない
+- 本番・デモの環境へのデプロイは CI だけが行い、前の版に戻すのは人が [docs/runbooks/deploy-rollback.md](../runbooks/deploy-rollback.md) の手順で行う。エージェントは直接行わない
 - データの破壊など、revert で元に戻せない変更は、人の判断を求める（下の条件）
 
 ## 人間が介入する条件

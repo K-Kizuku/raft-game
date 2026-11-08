@@ -1,0 +1,229 @@
+/* 全体の下地（T-420・docs/11-visual-design.md）。トークンは tokens.css。
+   ほかの部品の見た目を変えないよう、要素への規則は :where() で詳細度を 0 にし、
+   ボタン・パネル・吹き出しはクラス（.btn・.paper-panel・.speech-bubble）で使う。 */
+
+/* 紙の地色と墨の文字。紙の質感は、ごく薄いグラデーションの重ね合わせで出す（画像を使わない）。 */
+:where(body) {
+  color: var(--color-ink);
+  background-color: var(--color-paper);
+  background-image:
+    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.35), transparent 45%),
+    radial-gradient(circle at 80% 85%, rgba(217, 199, 154, 0.18), transparent 50%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(59, 58, 54, 0.015) 0,
+      rgba(59, 58, 54, 0.015) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  background-attachment: fixed;
+  font-family: var(--font-body);
+  font-size: var(--font-size-body);
+  line-height: 1.6;
+}
+
+/* 見出し */
+:where(h1, h2, h3) {
+  font-family: var(--font-body);
+  font-weight: bold;
+  line-height: 1.3;
+}
+
+:where(h1) {
+  font-size: var(--font-size-h1);
+}
+
+:where(h2) {
+  font-size: var(--font-size-h2);
+}
+
+:where(h3) {
+  font-size: var(--font-size-h3);
+}
+
+/* 入力の部品は、ブラウザの既定の文字ではなく本文の文字を使う。 */
+:where(button, input, select, textarea) {
+  font: inherit;
+}
+
+/* 時間・スコアなどの数字（桁がそろう等幅の数字）。 */
+.text-number {
+  font-family: var(--font-number);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 補足の文字。 */
+.text-muted {
+  color: var(--color-ink-muted);
+}
+
+/* リンク。深い海の青に下線（色だけに頼らない）。 */
+:where(a) {
+  color: var(--color-sea-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+:where(a:hover) {
+  color: var(--color-ink);
+}
+
+/* フォーカスの輪（T-425）。:focus-visible のときだけ、太さ 3px・地から 2px 離した輪を出す。
+   色は --focus-ring-color（紙の地は深い海の青）。海・夜の配色の上に置く部品は、その部品の CSS で
+   --focus-ring-color を --focus-ring-color-on-sea（墨）・--focus-ring-color-on-night（封筒の金）に変える。
+   部品の CSS で別の色・太さの輪を書かない（輪を書き直すときも、このトークンを使う）。 */
+:where(:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* キーボードで移ったとき、要素が画面や巻き取りの領域の端に貼り付かないよう、少し余白を取る。 */
+:where(a, button, input, select, textarea, summary, [tabindex]) {
+  scroll-margin-block: var(--space-6);
+}
+
+/* 線を太くする設定（prefers-contrast: more）のときは、輪を 1px 太くする。 */
+@media (prefers-contrast: more) {
+  :root {
+    --focus-ring-width: 4px;
+  }
+}
+
+/* ボタン。.btn に種類のクラスを 1 つ足して使う（T-426）。
+   - .btn-paper（紙のボタン）: 紙の札。ふつうの操作。.btn だけのときも同じ見た目
+   - .btn-primary（主ボタン）: 郵便の赤（白い文字）。その場でいちばん勧める操作
+   - .btn-quiet（控えめのボタン）: 地に溶け込む細い枠。やめる・閉じるなどの脇の操作 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font: inherit;
+  font-weight: bold;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease-out,
+    box-shadow 0.12s ease-out;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  color: var(--color-ink-muted);
+  background: var(--color-paper-deep);
+  border-color: var(--color-ink-muted);
+  box-shadow: none;
+  transform: none;
+  cursor: not-allowed;
+}
+
+.btn-paper {
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border-color: var(--color-ink);
+}
+
+.btn-paper:hover {
+  background: var(--color-paper-deep);
+}
+
+.btn-primary {
+  color: #ffffff;
+  background: var(--color-postal);
+  border-color: var(--color-postal);
+}
+
+/* 主ボタンは押したとき少し暗くする（郵便の赤に墨を混ぜる。白い文字のコントラストは上がる）。 */
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--color-postal) 88%, var(--color-ink));
+}
+
+/* 控えめのボタン。地は透明・細い枠・影なし。文字は墨（紙・パネルの地のどちらでも 4.5:1 以上。NFR-10）。
+   形（細い枠と影の有無）でも紙のボタンと区別する。 */
+.btn-quiet {
+  color: var(--color-ink);
+  background: transparent;
+  border-width: 1px;
+  border-color: var(--color-ink-muted);
+  box-shadow: none;
+  font-weight: normal;
+}
+
+.btn-quiet:hover {
+  background: var(--color-paper);
+  border-color: var(--color-ink);
+}
+
+/* 押せないボタンは、種類によらず同じ見た目にする（上の種類の規則より後ろに置く）。 */
+.btn-paper:disabled,
+.btn-paper[aria-disabled="true"],
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"],
+.btn-quiet:disabled,
+.btn-quiet[aria-disabled="true"] {
+  color: var(--color-ink-muted);
+  background: var(--color-paper-deep);
+  border-color: var(--color-ink-muted);
+  box-shadow: none;
+}
+
+/* パネル・カード。重なった紙。 */
+.paper-panel {
+  padding: var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper-deep);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-paper);
+}
+
+/* 通知の吹き出し（手紙の便箋）。下に小さなしっぽを付ける。 */
+.speech-bubble {
+  position: relative;
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-paper);
+}
+
+.speech-bubble::after {
+  position: absolute;
+  bottom: -10px;
+  left: var(--space-5);
+  width: 16px;
+  height: 16px;
+  content: "";
+  background: var(--color-paper);
+  border-right: 2px solid var(--color-ink);
+  border-bottom: 2px solid var(--color-ink);
+  transform: rotate(45deg);
+}
+
+/* 動きを減らす設定のときは、下地の動き（ボタンの浮き沈み）を止める。 */
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
+
+  .btn:hover,
+  .btn:active {
+    transform: none;
+  }
+}

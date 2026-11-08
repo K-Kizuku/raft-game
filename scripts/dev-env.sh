@@ -12,6 +12,8 @@
 # 環境変数:
 #   DEV_SLOT  0〜99（env・dev で必須。scripts/dev-slot.sh acquire で割り当てる。0 は人が手で使う）
 #   DOCKER    docker のコマンド（既定は docker。clean-docker で使う）
+#   DEV_BACKEND  dev で /api・/ws を受ける先（standalone か worker。未設定なら Go があれば standalone）。
+#                standalone は Vite から Go に中継し、worker は @cloudflare/vite-plugin（Worker）が受けて Go を起動しない（ADR-0026）
 #
 # ポート（それぞれ +1〜+9 はデバッグ用に予約）:
 #   DEV_SERVER_PORT = 18080 + DEV_SLOT×10（Go の standalone）
@@ -131,29 +133,54 @@ dev_cleanup() {
 }
 
 cmd_dev() {
-  local dry="$1" has_go=0 has_web=0 tmp
+  local dry="$1" has_go=0 has_web=0 tmp backend="${DEV_BACKEND:-}"
   check_slot
-  echo "dev: DEV_SLOT=$DEV_SLOT DEV_SERVER_PORT=$DEV_SERVER_PORT DEV_WEB_PORT=$DEV_WEB_PORT"
+  # DEV_BACKEND の誤りは、Go のビルドより前に止める（--dry-run でも同じ）。大文字・小文字を区別する。
+  case "$backend" in
+    "" | standalone | worker) ;;
+    *) die "DEV_BACKEND の値が不正: '$backend'（standalone か worker。未設定なら Go があれば standalone）" ;;
+  esac
   [ -f "$DEV_WORKTREE/server/cmd/server/main.go" ] && has_go=1
   [ -f "$DEV_WORKTREE/web/package.json" ] && has_web=1
+  if [ -z "$backend" ]; then
+    if [ "$has_go" = 1 ]; then backend=standalone; else backend=worker; fi
+  fi
+  if [ "$backend" = standalone ] && [ "$has_go" = 0 ]; then
+    die "DEV_BACKEND=standalone だが server/cmd/server/main.go がない"
+  fi
+  echo "dev: DEV_SLOT=$DEV_SLOT DEV_SERVER_PORT=$DEV_SERVER_PORT DEV_WEB_PORT=$DEV_WEB_PORT"
+  if [ "$backend" = standalone ]; then
+    echo "dev: /api・/ws は Vite から Go（standalone）の http://127.0.0.1:$DEV_SERVER_PORT に中継する（DEV_BACKEND=standalone）"
+  else
+    echo "dev: /api・/ws は Worker（@cloudflare/vite-plugin）が受ける（DEV_BACKEND=worker）"
+  fi
   if [ "$has_go" = 0 ] && [ "$has_web" = 0 ]; then
     die "起動するものがない（server/cmd/server/main.go も web/package.json もない）"
   fi
-  [ "$has_go" = 1 ] || echo "（対象なし: server/cmd/server がない。T-302 で作る）"
+  if [ "$backend" = worker ] && [ "$has_go" = 1 ]; then
+    # worker では Go をビルド・起動しない（/api・/ws は Worker が受ける）。
+    echo "（Go は起動しない: DEV_BACKEND=worker）"
+    has_go=0
+    [ "$has_web" = 1 ] || die "起動するものがない（web/package.json がなく、DEV_BACKEND=worker では Go を起動しない）"
+  elif [ "$has_go" = 0 ]; then
+    echo "（対象なし: server/cmd/server がない。T-302 で作る）"
+  fi
   [ "$has_web" = 1 ] || echo "（対象なし: web/package.json がない）"
+  # Go は作業ツリーの data/ を読み（make sync-data は要らない）、Vite の画面からの Origin を許す（T-302）。
+  local origins="http://127.0.0.1:$DEV_WEB_PORT,http://localhost:$DEV_WEB_PORT"
 
   if [ "$dry" = 1 ]; then
     if [ "$has_go" = 1 ]; then
       show mktemp -d
       show go -C "$DEV_WORKTREE/server" build -o "<tmp>/server" ./cmd/server
       if [ "$has_web" = 1 ]; then
-        show MODE=standalone "PORT=$DEV_SERVER_PORT" "<tmp>/server" "&"
+        show MODE=standalone "PORT=$DEV_SERVER_PORT" "DATA_DIR=$DEV_WORKTREE/data" "ALLOWED_ORIGINS=$origins" "<tmp>/server" "&"
       else
-        show MODE=standalone "PORT=$DEV_SERVER_PORT" "<tmp>/server"
+        show MODE=standalone "PORT=$DEV_SERVER_PORT" "DATA_DIR=$DEV_WORKTREE/data" "ALLOWED_ORIGINS=$origins" "<tmp>/server"
       fi
     fi
     if [ "$has_web" = 1 ]; then
-      show "DEV_SERVER_PORT=$DEV_SERVER_PORT" pnpm -C "$DEV_WORKTREE/web" exec vite --host 127.0.0.1 --port "$DEV_WEB_PORT" --strictPort
+      show "DEV_BACKEND=$backend" "DEV_SERVER_PORT=$DEV_SERVER_PORT" pnpm -C "$DEV_WORKTREE/web" exec vite --host 127.0.0.1 --port "$DEV_WEB_PORT" --strictPort
     fi
     return 0
   fi
@@ -176,12 +203,12 @@ cmd_dev() {
     tmp="$(mktemp -d)" || die "一時ディレクトリを作れない"
     DEV_TMP="$tmp"
     go -C "$DEV_WORKTREE/server" build -o "$tmp/server" ./cmd/server || die "Go のビルドに失敗した"
-    MODE=standalone PORT="$DEV_SERVER_PORT" "$tmp/server" &
+    MODE=standalone PORT="$DEV_SERVER_PORT" DATA_DIR="$DEV_WORKTREE/data" ALLOWED_ORIGINS="$origins" "$tmp/server" &
     DEV_GO_PID=$!
     pid="$DEV_GO_PID"
   fi
   if [ "$has_web" = 1 ]; then
-    DEV_SERVER_PORT="$DEV_SERVER_PORT" pnpm -C "$DEV_WORKTREE/web" exec vite --host 127.0.0.1 --port "$DEV_WEB_PORT" --strictPort &
+    DEV_BACKEND="$backend" DEV_SERVER_PORT="$DEV_SERVER_PORT" pnpm -C "$DEV_WORKTREE/web" exec vite --host 127.0.0.1 --port "$DEV_WEB_PORT" --strictPort &
     DEV_WEB_PID=$!
     pid="$DEV_WEB_PID"
   fi

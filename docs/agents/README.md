@@ -97,7 +97,7 @@ flowchart TB
 
 | 層 | 何を強制するか | 実体 | 限界 |
 |---|---|---|---|
-| 1. GitHub の Rulesets | `main` への直接の push・force push・削除の禁止、PR 経由・squash だけ、必須のステータス `ci-ok`・`merge-gate`（ベースに追いついていること） | [.github/rulesets/main.json](../../.github/rulesets/main.json)。オーナーが [apply-repo-settings.sh](../../scripts/github/apply-repo-settings.sh) で反映 | **誰がマージを実行するかは制限できない。** AI とオーナーが同じ GitHub の認証情報を使うため、条件を満たした PR は AI でもマージできる。オーナーが適用するまで効かない |
+| 1. GitHub の Rulesets | `main` への直接の push・force push・削除の禁止、PR 経由・squash だけ、必須のステータス `ci-ok`・`merge-gate`（ベースに追いついていること） | [.github/rulesets/main.json](../../.github/rulesets/main.json)。オーナーが [apply-repo-settings.sh](../../scripts/github/apply-repo-settings.sh) で反映 | **誰がマージを実行するかは制限できない。** AI の役割（Orchestrator・Worker・Reviewer）の `gh`・`agentctl`（`merge.sh` のマージ・`review.sh` の記録を含む）は AI 用の GitHub App（`kizuku-claude`）のトークンを使う（#282。API の上限をオーナーと分けるため）。App は Rulesets の bypass に入れないので必須のチェックは効くが、条件を満たした PR は AI でもマージできる。Worker の `git push` は今もオーナーの鍵の SSH で、App の鍵が使えないときはオーナーのトークンに戻る。同じ PC で動くので、AI はオーナーの認証情報にも手が届く。オーナーが適用するまで効かない |
 | 2. ワークフローの権限 | 有効な CI と Merge Gate（`.github/workflows/`）を AI が書き換えられない | AI の認証に `workflow` 権限がない。正本は [.github/workflow-sources/](../../.github/workflow-sources/ci.yml)、人が [install-workflows.sh](../../scripts/github/install-workflows.sh) で取り込む | 取り込むまでは CI と Merge Gate が GitHub で動かない（[ブートストラップ](./operations.md#ブートストラップワークフローを取り込む前)） |
 | 3. Merge Gate | Issue・AC・テスト・CI・レビュー・Conflict・変更の範囲・保護されたパスの 12 の条件（[C1〜C12](./workflow.md#merge-gate-の判定条件)） | `agentctl gate`。ワークフローは main のコードだけで判定し、PR の HEAD を実行しない | 判定の材料（PR の本文・レビュー記録）は AI が書く。記録が正直であることは、信頼する作者（`trusted_authors`）と再レビューに頼る |
 | 4. Claude Code の hooks と権限 | 役割ごとの禁止事項（[下の表](#hooks-と権限が拒否する操作)）。`merge.sh` は Orchestrator だけ | [.claude/settings.json](../../.claude/settings.json)、[.claude/hooks/](../../.claude/hooks/guard-bash.sh) | **役割の分離は疑似的。** 同じ PC・同じ認証情報で動くので、hooks を通らない経路（スクリプトのファイルの中での書き込み、`cd` してからの相対パス、変数で組み立てたパス）は見分けられない。最後の砦は層 1〜3 とレビュー |
@@ -110,7 +110,7 @@ PR の中の変更でガードを弱められないように、次の 2 つを�
 
 ### hooks と権限が拒否する操作
 
-[guard-bash.sh](../../.claude/hooks/guard-bash.sh)（Bash）・[guard-write.sh](../../.claude/hooks/guard-write.sh)（Edit・Write・MultiEdit・NotebookEdit）・[guard-mcp.sh](../../.claude/hooks/guard-mcp.sh)（GitHub の MCP）と、`settings.json` の `permissions.deny` の内容。拒否は終了コード 2 と、標準エラーの `[guard] 拒否（AGENT_ROLE=…）: 理由`。
+[guard-bash.sh](../../.claude/hooks/guard-bash.sh)（Bash）・[guard-write.sh](../../.claude/hooks/guard-write.sh)（Edit・Write・MultiEdit・NotebookEdit）・[guard-mcp.sh](../../.claude/hooks/guard-mcp.sh)（GitHub の MCP）と、`settings.json` の `permissions.deny` の内容。拒否は終了コード 2 と、標準エラーの `[guard] 拒否（AGENT_ROLE=…）: 理由`。hooks は fail-closed で、想定外のエラー（`set -e`・`set -u` での終了など）でも終了コード 2 と `[guard] 拒否（内部エラー）: …` を出す（Claude Code は終了コード 2 だけを拒否として扱うため。#107）。
 
 | 対象 | 拒否する操作 | 役割 |
 |---|---|---|
@@ -139,8 +139,10 @@ PR の中の変更でガードを弱められないように、次の 2 つを�
 | ファイル | すべての書き込み | Reviewer |
 | ファイル | 自分の Worktree の外・`.git/` の中への書き込み | Worker |
 | ファイル | 保護されたパス（`.agents/config.json` の `protected_paths`）への書き込み（Edit・Write と、Bash の書き込みのコマンド・リダイレクト・インタプリタのコードの中のパス）。`AGENT_ALLOW_PROTECTED=1` のときだけ許す | Worker |
-| ファイル | `.agents/`・`.claude/worktrees/` 以外への書き込み | Orchestrator |
+| ファイル | `.agents/`・`.claude/worktrees/` 以外への書き込み。ただし、リポジトリの外では Claude Code のこのプロジェクトのメモリのディレクトリ `$HOME/.claude/projects/<キー>/memory/` の下にだけ書ける（`<キー>` はメインの作業ツリーの絶対パスの `/` を `-` に置き換えたもの。例: `/Users/me/work/raft-game` → `-Users-me-work-raft-game`）。別のキー・`memory/` の外（`projects/<キー>/` の直下など）・`..` を含むパス・シンボリックリンク（`<キー>`・`memory` 自身を含む）は拒否する | Orchestrator |
 | 読み取り | `.env`・`.env.*`・`*.secrets*`（`permissions.deny`） | 全員 |
+
+`settings.json` の `permissions.allow` には、確認なしで実行できる操作として `Bash(scripts/agents/merge.sh:*)`（Orchestrator が Merge Gate を通してマージするため。auto mode の判定がマージの操作を拒否した）を入れている（#207）。`allow` は役割を分けないので、Worker・Reviewer が `merge.sh` を実行できないことは上の表のとおり hooks（`guard-bash.sh`）が守る。`curl` の許可は、接頭辞の一致なので外部の URL を足しても一致するため入れていない。
 
 `AGENT_ALLOW_PROTECTED=1` は、Issue の変更予定ファイルが保護されたパスと重なるときに `spawn-worker.sh` が付ける。Merge Gate の C12 で、保護されたパスの変更はレビューで「確認した・ガードを弱めない」と記録されていなければ fail になる。
 

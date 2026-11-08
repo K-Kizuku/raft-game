@@ -1,0 +1,112 @@
+/* タイムラインの図と一覧（T-701）。色・余白・文字は T-420 のトークン（web/src/ui/theme/tokens.css）を使う。
+   島の色（区間・丸）と Term の色（帯）は SVG の fill 属性で受け取るので、ここには書かない。
+   SVG の中の大きさは viewBox の単位（横 1000）。 */
+
+.timeline {
+  --timeline-rule: color-mix(in srgb, var(--color-ink-muted) 35%, transparent);
+  --timeline-track: color-mix(in srgb, var(--color-sea-light) 30%, transparent);
+}
+
+.timeline-figure {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0 0 var(--space-4);
+  font-family: var(--font-body);
+}
+
+.timeline-figure text {
+  fill: var(--color-ink);
+  font-size: 18px;
+}
+
+.timeline-figure .timeline-label {
+  font-weight: bold;
+}
+
+.timeline-figure .timeline-term-label,
+.timeline-figure .timeline-tick,
+.timeline-figure .timeline-commit-max {
+  font-family: var(--font-number);
+}
+
+.timeline-figure .timeline-term-label {
+  fill: var(--color-paper);
+  font-weight: bold;
+}
+
+.timeline-figure .timeline-tick,
+.timeline-figure .timeline-commit-max {
+  fill: var(--color-ink-muted);
+  font-size: 15px;
+}
+
+.timeline-figure .timeline-term-band {
+  stroke: var(--color-paper);
+  stroke-width: 1;
+}
+
+.timeline-figure .timeline-track {
+  fill: var(--timeline-track);
+}
+
+.timeline-figure .timeline-grid {
+  stroke: var(--timeline-rule);
+  stroke-width: 1;
+}
+
+.timeline-figure .timeline-leader-segment {
+  stroke: var(--color-ink);
+  stroke-width: 1;
+}
+
+.timeline-figure .timeline-open-edge {
+  stroke: var(--color-paper);
+  stroke-width: 3;
+  stroke-dasharray: 4 3;
+}
+
+.timeline-figure .timeline-commit-line {
+  fill: none;
+  stroke: var(--color-sea-deep);
+  stroke-width: 2;
+}
+
+.timeline-figure .timeline-commit-point {
+  fill: var(--color-sea-deep);
+}
+
+.timeline-figure .timeline-resync {
+  stroke: var(--color-danger);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.timeline-figure .timeline-resync-label {
+  fill: var(--color-danger);
+  font-size: 14px;
+}
+
+.timeline-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-lines li {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  border-bottom: 1px dotted var(--timeline-rule);
+}
+
+.timeline-lines time {
+  flex: none;
+  min-width: 3.5em;
+  font-family: var(--font-number);
+  color: var(--color-ink-muted);
+}
+
+.timeline-empty {
+  margin: 0;
+}

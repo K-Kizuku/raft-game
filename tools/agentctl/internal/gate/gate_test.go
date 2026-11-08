@@ -474,3 +474,73 @@ func TestDescriptionAndComment(t *testing.T) {
 		t.Errorf("description の長さ = %d", n)
 	}
 }
+
+// merge.require_up_to_date（Issue #239）: false なら遅れていても C10 は pass。C9・C4・比較の結果がないときは今までどおり。
+func TestC10RequireUpToDate(t *testing.T) {
+	behind := func(_ *testing.T, in *Input) { in.Compare.BehindBy = 3; in.Compare.Status = "diverged" }
+	setRequire := func(v *bool) func(*config.Config) {
+		return func(c *config.Config) { c.Merge = &config.Merge{RequireUpToDate: v} }
+	}
+	tests := []struct {
+		name      string
+		cfg       func(*config.Config)
+		mutate    func(*testing.T, *Input)
+		id        string
+		want      Verdict
+		detailHas string
+	}{
+		{name: "true で遅れている", cfg: setRequire(ptr(true)), mutate: behind,
+			id: "C10", want: Fail, detailHas: "3 コミット遅れている（最新の main を取り込む）"},
+		{name: "設定なしで遅れている", cfg: func(c *config.Config) { c.Merge = nil }, mutate: behind,
+			id: "C10", want: Fail, detailHas: "3 コミット遅れている（最新の main を取り込む）"},
+		{name: "require_up_to_date の省略で遅れている", cfg: setRequire(nil), mutate: behind,
+			id: "C10", want: Fail, detailHas: "3 コミット遅れている（最新の main を取り込む）"},
+		{name: "false で遅れている・コンフリクトなし", cfg: setRequire(ptr(false)), mutate: behind,
+			id: "C10", want: Pass, detailHas: "main より 3 コミット遅れている"},
+		{name: "false で遅れている・コンフリクトあり", cfg: setRequire(ptr(false)),
+			mutate: func(t *testing.T, in *Input) {
+				behind(t, in)
+				in.PullRequest.Mergeable = ptr(false)
+				in.PullRequest.MergeableState = "dirty"
+			},
+			id: "C9", want: Fail, detailHas: "コンフリクトがある"},
+		{name: "false で遅れている・CI が失敗", cfg: setRequire(ptr(false)),
+			mutate: func(t *testing.T, in *Input) { behind(t, in); in.CheckRuns[0].Conclusion = "failure" },
+			id:     "C4", want: Fail},
+		{name: "false で比較の結果がない", cfg: setRequire(ptr(false)),
+			mutate: func(_ *testing.T, in *Input) { in.Compare = nil },
+			id:     "C10", want: Fail, detailHas: "比較の結果がない"},
+		{name: "false で behind_by が不正", cfg: setRequire(ptr(false)),
+			mutate: func(_ *testing.T, in *Input) { in.Compare.BehindBy = -1 },
+			id:     "C10", want: Fail, detailHas: "不正"},
+		{name: "false で遅れていない", cfg: setRequire(ptr(false)),
+			id: "C10", want: Pass, detailHas: "OK"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := loadConfig(t)
+			tt.cfg(cfg)
+			in := loadInput(t)
+			if tt.mutate != nil {
+				tt.mutate(t, &in)
+			}
+			rep := Evaluate(cfg, in)
+			if rep.Verdict != tt.want {
+				t.Errorf("verdict = %s, want %s; results = %+v", rep.Verdict, tt.want, rep.Results)
+			}
+			res, ok := resultOf(rep, tt.id)
+			if !ok {
+				t.Fatalf("%s の結果がない: %+v", tt.id, rep.Results)
+			}
+			if res.Status != tt.want || !strings.Contains(res.Detail, tt.detailHas) {
+				t.Errorf("%s = %s (%s), want %s (%q を含む)", tt.id, res.Status, res.Detail, tt.want, tt.detailHas)
+			}
+			// 遅れていても、ほかの条件（C10 も含む）はすべて pass のまま
+			for _, r := range rep.Results {
+				if r.ID != tt.id && r.Status != Pass {
+					t.Errorf("%s 以外の %s も %s（%s）", tt.id, r.ID, r.Status, r.Detail)
+				}
+			}
+		})
+	}
+}
