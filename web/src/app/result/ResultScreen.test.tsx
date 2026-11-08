@@ -384,7 +384,7 @@ describe("ResultScreen", () => {
 
       const download = section("入力ログ");
       expect(within(download).getByRole("button", { name: LABEL })).toBeDefined();
-      expect(download.nextElementSibling).toBe(container.querySelector(".result-actions"));
+      expect(download.nextElementSibling).toBe(section("リプレイ"));
       expect(download.previousElementSibling).toBe(section("同じ条件で遊ぶ"));
       expect(container.innerHTML).not.toContain(SESSION.token);
     });
@@ -399,6 +399,48 @@ describe("ResultScreen", () => {
 
       expect(screen.queryByRole("button", { name: LABEL })).toBeNull();
       expect(screen.queryByRole("region", { name: "入力ログ" })).toBeNull();
+    });
+  });
+
+  describe("RB-6 このラウンドをリプレイ（T-720e）", () => {
+    const SESSION = { sessionId: "s_abc.def", token: "Tok_en-abcdefghijklmno", wsPath: "/ws/x" };
+    const LABEL = "このラウンドをリプレイ";
+
+    function renderWithSession(session: typeof SESSION | null) {
+      return render(
+        <ResultScreen
+          stage={STAGE}
+          nextStage={null}
+          onRetry={vi.fn()}
+          onNextStage={vi.fn()}
+          onStageSelect={vi.fn()}
+          session={session}
+        />,
+      );
+    }
+
+    it("結果に inputLogAvailable: true・session があれば、入力ログの直後・ボタンの列の直前にある", () => {
+      loadWorld(3);
+      setResult(FULL_RESULT);
+      const { container } = renderWithSession(SESSION);
+
+      const replay = section("リプレイ");
+      expect(within(replay).getByRole("button", { name: LABEL })).toBeDefined();
+      expect(replay.previousElementSibling).toBe(section("入力ログ"));
+      expect(replay.nextElementSibling).toBe(container.querySelector(".result-actions"));
+      expect(container.innerHTML).not.toContain(SESSION.token);
+    });
+
+    it.each<[string, RoundResult | null, typeof SESSION | null]>([
+      ["standalone（inputLogAvailable: false）", resultWith({ inputLogAvailable: false }), SESSION],
+      ["サーバーなし（session: null）", FULL_RESULT, null],
+      ["結果がない", null, SESSION],
+    ])("%s → ボタンを出さない", (_name, result, session) => {
+      if (result !== null) setResult(result);
+      renderWithSession(session);
+
+      expect(screen.queryByRole("button", { name: LABEL })).toBeNull();
+      expect(screen.queryByRole("region", { name: "リプレイ" })).toBeNull();
     });
   });
 

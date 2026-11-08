@@ -11,6 +11,7 @@ import type { SessionHandle, StageSummary } from "../types.ts";
 import { tokens } from "../../ui/theme/tokens.ts";
 import { Fireworks } from "./Fireworks.tsx";
 import { InputLogDownload } from "./InputLogDownload.tsx";
+import { ReplayButton } from "./ReplayButton.tsx";
 import { ResultEngineer } from "./ResultEngineer.tsx";
 import { ResultSeed } from "./ResultSeed.tsx";
 import {
@@ -46,7 +47,7 @@ export type ResultScreenProps = {
   onRetry: () => void;
   onNextStage: () => void;
   onStageSelect: () => void;
-  session?: SessionHandle | null; // T-714。入力ログのダウンロードに使う（サーバーなしなら null）
+  session?: SessionHandle | null; // T-714・T-720e。入力ログのダウンロードとリプレイに使う（サーバーなしなら null）
 };
 
 function starConditions(world: World | null): string[] {
@@ -328,6 +329,12 @@ export function ResultScreen({
       {view !== null && <ResultSeed stageId={stage.id} />}
       {view !== null && (
         <InputLogDownload
+          session={session ?? null}
+          available={roundResult?.inputLogAvailable === true}
+        />
+      )}
+      {view !== null && (
+        <ReplayButton
           session={session ?? null}
           available={roundResult?.inputLogAvailable === true}
         />
