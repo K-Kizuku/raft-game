@@ -318,3 +318,20 @@ describe("ActorHost の片付け", () => {
     expect(h.storage.deleted).toBe(0);
   });
 });
+
+describe("ActorHost の Container の準備", () => {
+  it("/healthz が 404（dtnactor は /ws だけを開く）でも、待ち受けているとみなしてつなぐ", async () => {
+    const h = await setup();
+    const fetchPort = h.container.getTcpPort.bind(h.container);
+    h.container.getTcpPort = (port) => {
+      const inner = fetchPort(port);
+      return {
+        fetch: async (input, init) =>
+          new URL(input).pathname === "/healthz"
+            ? new Response("not found", { status: 404 })
+            : inner.fetch(input, init),
+      };
+    };
+    expect(await start(h)).toEqual({ status: 200, body: { epoch: 1 } });
+  });
+});

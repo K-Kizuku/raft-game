@@ -237,5 +237,5 @@ Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けの
 
 - Session Front は `dispatch` の各要求について: 宛先がこのセッションの Actor か（違えば `unknown_actor`）・`sessionId` が自分のものか（違えば `session_mismatch`）を確かめ、`coordEpoch` を今の値で上書きし、`payload.contact` があれば Contact に署名する（このセッションの島と船の組だけ。違えば `contact_mismatch`）。同じ Actor への要求は `eventSeq` の順に 1 つずつ、Actor の間は並行に送る。Host の応答が失われたら同じ要求を 3 回まで送り直し、届かなければその要求の結果を `not_ready` にする
 - Coordinator の journal（persistence-and-recovery.md §4.2）は `{type: "dispatch", id, calls: [{actor, eventSeq, kind, reqDigest}]}`・`{type: "dispatch.result", id, results}`・`{type: "note", entry}` の列。`restore.*` の `entries` はこの列をそのまま送る
-- Container の準備: `PORT=8080` で起動し、`GET /healthz` が 200 になってから `/ws` に Upgrade でつなぐ（今の GameSession と同じ）。`dtnactor` は `/healthz` を持つこと（DTN-02〜05）
+- Container の準備: `PORT=8080` で起動し、`GET /healthz` に 500 未満の応答（`dtnactor` は `/ws` だけを開くので 404 でよい）が返ってから `/ws` に Upgrade でつなぐ
 - Host だけで処理する種類の結果（`transfer.prepare` の ACK・`transfer.status` など）は、応答の `result` に入れる（`host.status` は persistence-and-recovery.md §7.2 の `outputs` の形）

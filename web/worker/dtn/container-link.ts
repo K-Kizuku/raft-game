@@ -31,7 +31,9 @@ export function startContainer(
   }
 }
 
-// /healthz が 200 を返すまで待つ。stale() が true になったら "stale"。
+// Container が HTTP に答えるまで待つ（GET /healthz）。dtnactor は /ws だけを開くので（DTN-02）、500 未満の
+// どの応答（404 を含む）も「待ち受けている」とみなす。つながらない・500 以上なら待ち続ける。
+// stale() が true になったら "stale"。
 export async function waitHealthy(
   container: ContainerLike,
   deadline: number,
@@ -48,7 +50,7 @@ export async function waitHealthy(
         `${CONTAINER_ORIGIN}/healthz`,
         signal === undefined ? {} : { signal },
       );
-      ok = response.status === 200;
+      ok = response.status < 500;
       await response.body?.cancel();
     } catch {
       // 失敗として続ける
