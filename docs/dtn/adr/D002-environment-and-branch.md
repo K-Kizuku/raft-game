@@ -27,7 +27,11 @@ DTN は `sim`・`ferry`・Worker・Durable Object を大きく組み替える。
 ### ブランチ
 
 - `dtn/main` を、2026-11-08 の `main`（`55b942a`）から作った
-- DTN の設計書・実装はすべて `dtn/main` に入れる。作業のブランチは `dtn/main` から切り、PR の行き先も `dtn/main`
+- DTN の設計書・実装はすべて `dtn/main` に入れる
+- **`dtn/main` に直接コミットして push する**（2026-11-08 のオーナーの判断。できるだけ早く実装するため）
+  - 作業のブランチ・PR・Codex のレビュー・Merge Gate・Worktree と Worker の仕組み（[docs/agents/](../../agents/README.md)）は使わない
+  - `dtn/main` に Ruleset は設けない
+  - 品質は、push の前にローカルで回す検査（`go -C server test -race -count=1 ./...`・`pnpm -C web test`・`python3 scripts/check-docs.py` のうち変更に関係するもの）と、DTN-11 の同等性・障害の試験で担保する
 - MVP を凍結するとき、`main` にタグ（例: `mvp-final`）を付ける。そのあと `main` を `dtn/main` に 1 回取り込んでから、DTN-00 を始める
 - `dtn/main` から `main` へはマージしない
 
@@ -43,7 +47,8 @@ DTN は `sim`・`ferry`・Worker・Durable Object を大きく組み替える。
 
 - 良いこと: MVP（`main`・prod・demo）は DTN の作業の影響を受けない
 - 悪いこと・受け入れるリスク:
-  - 人の作業が要る（[environment.md §5](../environment.md#5-人がする作業)）。今の CI（`ci.yml`）は `main` への PR だけを対象にしているので、`dtn/main` への PR では CI が動かない
+  - 人の作業が要る（[environment.md §5](../environment.md#5-人がする作業)）。今の CI（`ci.yml`）は `main` だけを対象にしているので、`dtn/main` の push では CI が動かない（動かしたければ H2）
+  - レビューと Ruleset がないので、壊れた変更がそのまま `dtn/main` に入りうる。`main`・prod・demo には波及しないので受け入れる
   - 同じ Cloudflare のアカウントを使う場合、アカウント全体の上限（同時に動かせる Container の数など）を prod・demo と共有する（[open-questions.md](../open-questions.md) の Q-ACCOUNT）
 
 ## 差し替えるときの影響範囲

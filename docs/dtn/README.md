@@ -9,7 +9,7 @@
 - **MVP の後の技術的な拡張**。MVP の必須要件・リリース条件には含めない
 - **オーナーが実装する**。AI エージェント（Orchestrator・Worker）はこの Epic の Issue に着手しない。Issue はすべて `status:backlog` のまま
 - **MVP と完全に分ける**（[D002](./adr/D002-environment-and-branch.md)）
-  - ブランチ: `dtn/main`。`main`（MVP）は発表用に凍結し、DTN の変更を入れない
+  - ブランチ: `dtn/main`。`main`（MVP）は発表用に凍結し、DTN の変更を入れない。**`dtn/main` に直接コミットする**（PR・Codex のレビュー・Merge Gate・Ruleset は使わない）
   - デプロイ: prod・demo と別の新しい環境 `raft-dtn.kizuku-hackathon.work`。Worker・Durable Object・CostGuard・シークレットも別
 - この `docs/dtn/` は `dtn/main` にだけ置く。既存の docs（`02`・`03`・`08` など）は書き換えない。DTN が既存の仕様を上書きするところは、このディレクトリに差分として書く
 
@@ -62,6 +62,7 @@ ADR は MVP の `docs/adr/` と番号が衝突しないよう、`docs/dtn/adr/D0
 | 11 | 画面 | エンジニアモードに分散の表示を足す（DTN-16） | [architecture.md §6](./architecture.md#6-画面dtn-16) |
 | 12 | BPv7 | CBOR は `fxamacker/cbor`、BPv7 の構造は自前。EID は `ipn`。作成時刻は 0、仮想時間は Bundle Age ブロックで運ぶ | [D003](./adr/D003-bpv7-profile.md) |
 | 13 | 分離 | ブランチ `dtn/main`、新しいデプロイ環境、別の CostGuard（1 日 1 USD・1 か月 10 USD） | [D002](./adr/D002-environment-and-branch.md) |
+| 14 | 進め方 | `dtn/main` に直接コミットする。PR・Codex のレビュー・Merge Gate・Ruleset は使わない | [D002](./adr/D002-environment-and-branch.md) |
 
 ## Issue との対応
 

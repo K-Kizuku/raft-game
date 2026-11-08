@@ -1,6 +1,6 @@
 # ADR-D001: 1 島・1 隻を独立の Actor にし、島が自律して進み、Coordinator が時刻の上限と寄港だけを指示する
 
-- 状態: Proposed（DTN-01 #158 のレビューで Accepted にする）
+- 状態: Proposed（DTN-01 #158 でオーナーが確かめて Accepted にする）
 - 日付: 2026-11-08
 - 決めた人: オーナー（話し合いの記録: [README の「決まったこと」](../README.md#決まったこと2026-11-08オーナーとの話し合い)）
 - 関連: #157、[ADR-0004](../../adr/0004-virtual-time-discrete-event-simulation.md)（仮想時計）、[ADR-0005](../../adr/0005-deterministic-raft-rng-patch.md)（乱数のパッチ）、[ADR-0017](../../adr/0017-persist-input-log-in-durable-object.md)（入力ログ）、[ADR-0018](../../adr/0018-cost-guard.md)（費用）

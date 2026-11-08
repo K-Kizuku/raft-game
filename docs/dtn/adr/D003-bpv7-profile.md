@@ -1,6 +1,6 @@
 # ADR-D003: BPv7 は単一宛先・非フラグメントのプロファイルを自前で書き、CBOR だけライブラリを使う
 
-- 状態: Proposed（DTN-01 #158 のレビューで Accepted にする）
+- 状態: Proposed（DTN-01 #158 でオーナーが確かめて Accepted にする）
 - 日付: 2026-11-08
 - 決めた人: オーナー
 - 関連: #163（DTN-06）、[bpv7-profile.md](../bpv7-profile.md)、[RFC 9171](https://www.rfc-editor.org/rfc/rfc9171.html)

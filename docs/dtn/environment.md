@@ -57,9 +57,9 @@ AI エージェントには許されていない操作（ワークフロー・�
 
 | # | 作業 | いつまでに |
 |---|---|---|
-| H1 | `dtn/main` の Ruleset を決めて設定する（例: PR 必須・`ci-ok` 必須） | DTN-00 の前 |
-| H2 | `dtn/main` の `.github/workflows/ci.yml` の対象に `dtn/main` を足す（`dtn/main` の `workflow-sources` を直し、`install-workflows.sh` で取り込む） | DTN-00 の前 |
-| H3 | DTN の環境のデプロイのワークフロー（`dtn/main` の push → `cf deploy --prebuilt --mode dtn`、PR は `--dry-run`）を取り込む | DTN-12 |
+| ~~H1~~ | ~~`dtn/main` の Ruleset~~ → 設けない（[D002](./adr/D002-environment-and-branch.md)） | — |
+| H2 | （任意）`dtn/main` の push でも CI が動くよう、`dtn/main` の `.github/workflows/ci.yml` の対象に `dtn/main` を足す（`dtn/main` の `workflow-sources` を直し、`install-workflows.sh` で取り込む） | 必要になったら |
+| H3 | DTN の環境のデプロイのワークフロー（`dtn/main` の push → 検査（`make test`）→ `cf deploy --prebuilt --mode dtn`）を取り込む。PR を使わないので、検査に通らなければデプロイしない形にする | DTN-12 |
 | H4 | DTN の環境のシークレット（`SESSION_SIGNING_KEY`・`ADMIN_TOKEN`・`TURNSTILE_SECRET`・`DTN_CONTACT_KEY` の新しい値）を GitHub に登録する | DTN-12 |
 | H5 | `raft-dtn.kizuku-hackathon.work` の DNS・Turnstile のウィジェット・WAF のレート制限（**今の prod・demo のルールは変えず、DTN 用のルールを別に足す**）・予算アラート | DTN-12 |
 | H6 | MVP の凍結のタグ（例: `mvp-final`）を `main` に付ける | MVP の完成の後 |
