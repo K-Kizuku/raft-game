@@ -146,8 +146,12 @@ describe("GameScreen", () => {
     expect(island()).toBeNull();
     const panel = engineer();
     expect(panel).not.toBeNull();
-    // パネルはゲーム画面の直下（GameScreen.css が島の詳細の列に置く）で、マップの中には無い。
-    expect(panel?.parentElement?.className).toBe("game-screen");
+    // パネルは E ボタンと一緒に「状況」の帯の中（T-439。GameScreen.css が島の詳細の列に置く）で、
+    // マップの中には無い。
+    const hud = screen.getByRole("region", { name: "状況" });
+    expect(hud.className).toBe("game-hud");
+    expect(panel?.parentElement).toBe(hud);
+    expect(screen.getByRole("button", { name: "E エンジニアモード" }).parentElement).toBe(hud);
     expect(
       within(screen.getByRole("region", { name: "マップ" })).queryByRole("tablist"),
     ).toBeNull();
