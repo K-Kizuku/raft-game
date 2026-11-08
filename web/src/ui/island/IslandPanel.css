@@ -191,3 +191,9 @@
   color: var(--color-danger-text);
   font-weight: bold;
 }
+
+/* 依頼の進み具合（T-431）は、依頼の行の下に幅いっぱいで出す。 */
+.island-request-progress {
+  flex-basis: 100%;
+  min-width: 0;
+}

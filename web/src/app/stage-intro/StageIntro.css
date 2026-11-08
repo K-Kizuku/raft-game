@@ -152,3 +152,49 @@
   margin: var(--space-6) auto var(--space-5);
   font-size: var(--font-size-h3);
 }
+
+/* 広い画面（1024px 以上）では、島の紹介と学べることを横に並べて 1 画面に収める
+   （T-429。基準は 1470×860・docs/11 §15）。ほかの要素は 2 列にまたがる。 */
+@media (min-width: 64rem) {
+  .app-screen.stage-intro {
+    max-width: min(72rem, 100%);
+    padding-block: var(--space-4);
+  }
+
+  .stage-intro:has(> .stage-intro-learning) {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    column-gap: var(--space-5);
+    align-items: start;
+  }
+
+  .stage-intro:has(> .stage-intro-learning) > * {
+    grid-column: 1 / -1;
+  }
+
+  .stage-intro:has(> .stage-intro-learning) > .stage-intro-letter {
+    grid-column: 1;
+  }
+
+  .stage-intro:has(> .stage-intro-learning) > .stage-intro-learning {
+    grid-column: 2;
+  }
+
+  /* 切手は中身の幅だけにする（グリッドの中で全幅に伸ばさない）。 */
+  .stage-intro .stage-intro-region {
+    justify-self: start;
+  }
+
+  .stage-intro > h1 {
+    margin-block: var(--space-2) var(--space-4);
+  }
+
+  .stage-intro .stage-intro-depart {
+    justify-self: center;
+    margin-block: var(--space-2) var(--space-4);
+  }
+
+  .stage-intro > a {
+    justify-self: start;
+  }
+}

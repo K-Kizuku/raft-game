@@ -5,7 +5,12 @@ import { Container, Graphics, Text } from "pixi.js";
 import type { World } from "../../state/index.ts";
 import { withRaftTerm } from "../../ui/terms/glossary.ts";
 import { termsPreference } from "../../ui/terms/preference.ts";
-import { createExitTracker, effectFrame, planLetterEffects } from "../animations/letterEffects.ts";
+import {
+  createExitTracker,
+  effectFrame,
+  planCaptions,
+  planLetterEffects,
+} from "../animations/letterEffects.ts";
 import type { LetterEffect } from "../animations/letterEffects.ts";
 import { LETTER_EFFECT_STYLE } from "../animations/style.ts";
 import { MAP_ART_STYLE } from "../model/art/style.ts";
@@ -78,19 +83,16 @@ type EffectView = {
   root: Container;
   outgoing: Container;
   incoming: Container | null;
-  caption: Text | null;
 };
 
 function createView(parent: Container, effect: LetterEffect): EffectView {
   const root = new Container();
   const outgoing = envelope(effect, effect.kind === "drift");
   const incoming = effect.kind === "swap" ? envelope(effect, false) : null;
-  const caption = effect.caption === null ? null : captionText();
   if (incoming !== null) root.addChild(incoming);
   root.addChild(outgoing);
-  if (caption !== null) root.addChild(caption);
   parent.addChild(root);
-  return { root, outgoing, incoming, caption };
+  return { root, outgoing, incoming };
 }
 
 export function createLetterEffectsLayer(
@@ -100,6 +102,11 @@ export function createLetterEffectsLayer(
   const { reducedMotion } = options;
   const tracker = createExitTracker();
   const views = new Map<string, EffectView>();
+  // 封筒の層と、その上の文字の層。文字は同じ島・同じ種類ごとに 1 つ（planCaptions。T-428）。
+  const envelopeLayer = new Container();
+  const captionLayer = new Container();
+  parent.addChild(envelopeLayer, captionLayer);
+  const captions = new Map<string, Text>();
   let active: LetterEffect[] = [];
   let captionAt: ReadonlyMap<string, number> = new Map();
   let destroyed = false;
@@ -130,7 +137,7 @@ export function createLetterEffectsLayer(
         drawn.add(effect.id);
         let view = views.get(effect.id);
         if (view === undefined) {
-          view = createView(parent, effect);
+          view = createView(envelopeLayer, effect);
           views.set(effect.id, view);
         }
         view.outgoing.position.set(frame.at.x, frame.at.y);
@@ -149,18 +156,28 @@ export function createLetterEffectsLayer(
             view.incoming.scale.set(frame.incoming.scale * k);
           }
         }
-        if (view.caption !== null) {
-          if (frame.caption === null) {
-            view.caption.visible = false;
-          } else {
-            const text = withRaftTerm(frame.caption.text, effect.reason, showRaftTerms);
-            if (view.caption.text !== text) view.caption.text = text;
-            view.caption.visible = true;
-            view.caption.position.set(frame.caption.at.x, frame.caption.at.y);
-            view.caption.alpha = frame.caption.alpha;
-            view.caption.scale.set(k);
-          }
+      }
+      const k = scene.markScale ?? 1;
+      const shown = new Set<string>();
+      for (const c of planCaptions(active, scene, now, reducedMotion, (text, reason) =>
+        withRaftTerm(text, reason, showRaftTerms),
+      )) {
+        shown.add(c.key);
+        let text = captions.get(c.key);
+        if (text === undefined) {
+          text = captionText();
+          captionLayer.addChild(text);
+          captions.set(c.key, text);
         }
+        if (text.text !== c.text) text.text = c.text;
+        text.position.set(c.at.x, c.at.y);
+        text.alpha = c.alpha;
+        text.scale.set(k);
+      }
+      for (const [key, text] of captions) {
+        if (shown.has(key)) continue;
+        text.destroy();
+        captions.delete(key);
       }
       for (const [id, view] of views) {
         if (!drawn.has(id)) drop(id, view);
@@ -170,6 +187,9 @@ export function createLetterEffectsLayer(
       if (destroyed) return;
       destroyed = true;
       for (const [id, view] of views) drop(id, view);
+      captions.clear();
+      envelopeLayer.destroy({ children: true });
+      captionLayer.destroy({ children: true });
       active = [];
     },
   };

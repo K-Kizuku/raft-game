@@ -1,11 +1,20 @@
 // 世界の状態とゲーム内時刻から、マップに描くもの（MapScene）を作る純粋な関数（T-404 / DesignDoc §13.3）。
 // ストアに届いた値（node.state・route.*・ferry.*）を描くだけで、Raft の結果をここで決めない。
 // 引数を書き換えず、時刻は引数の simNow だけを使う。
+import { formatDuration } from "../../app/format.ts";
 import { portPiles } from "../../state/index.ts";
 import type { UiSelection, World } from "../../state/index.ts";
 import { ferryProgress, lerp } from "./ferry.ts";
 import { partitionOf } from "./partition.ts";
 import type { PartitionGroup } from "./partition.ts";
+import { layoutLabels, nameTagOffset, nameTagSize, pileKey } from "./placement.ts";
+import type {
+  FerryLabels,
+  LabelDockedFerry,
+  LabelPile,
+  LabelSailingFerry,
+  Placed,
+} from "./placement.ts";
 import { MAP_STYLE } from "./style.ts";
 import { layoutMap, toScreen } from "./viewport.ts";
 import type { MapTransform, Point, Size } from "./viewport.ts";
@@ -17,6 +26,8 @@ export type IslandNode = Readonly<{
   color: string;
   at: Point;
   roleMark: RoleMark;
+  // 名札の上辺の中央の、島の中心からのずれ（絵の拡大率 1 の px。描画は markScale を掛ける）。T-428 で重なりを避けて選ぶ。
+  tagOffset: Point;
   selected: boolean;
   candidate: boolean; // 選んだ船の行き先の候補
 }>;
@@ -46,6 +57,8 @@ export type FerrySprite = Readonly<{
   etaMs: number | null;
   broken: boolean;
   selected: boolean;
+  // 文字（名前・積み荷・到着まで）の置き方（T-428。placement.ts の ferryTextRows）。
+  labels: FerryLabels;
 }>;
 // 分断のグループの縁取り（T-704・FR-ENG-08）。islands はグループの島の中心、badgeAt は記号（A・B…）の位置。
 export type PartitionHalo = Readonly<{
@@ -64,6 +77,9 @@ export type MapScene = Readonly<{
   islands: readonly IslandNode[];
   piles: readonly LetterPile[];
   ferries: readonly FerrySprite[];
+  // 島・役のマーク・名札・手紙の山・停泊中の船とその文字の箱（画面の px。T-428 の placement.ts）。
+  // 手紙の処分・差し替えの文字の札がこれを避ける。buildMapScene はいつも入れる（省略されたら避けるものなし）。
+  labelBoxes?: readonly Placed[];
   // 島が分かれていないときは null。航路のつながりを示すだけで、代表・確定を決めない。
   partition: Readonly<{
     total: number;
@@ -104,11 +120,13 @@ export function stormOf(world: World, routeId: string, simNow: number): RouteLin
   return null;
 }
 
+// textScale は島の名前と船の文字の倍率（art/labelScale.ts。描画と同じ値を渡すと、札の重なりの見積もりが合う）。
 export function buildMapScene(
   world: World,
   selection: UiSelection,
   simNow: number,
   size: Size,
+  textScale = 1,
 ): MapScene {
   const { stage } = world;
   const present = stage.islandIds.filter((id) => stage.islands[id] !== undefined);
@@ -116,12 +134,7 @@ export function buildMapScene(
     present.map((id) => stage.islands[id]?.layout ?? { x: 0, y: 0 }),
     size,
   );
-  // 絵の拡大率を掛けた、島の周りに物を置く距離（px）。
-  const pileOffset = MAP_STYLE.pileOffset * k;
-  const pileStackStep = MAP_STYLE.pileStackStep * k;
-  const islandRadius = MAP_STYLE.islandRadius * k;
-  const dockOffset = MAP_STYLE.dockOffset * k;
-  const dockStep = MAP_STYLE.dockStep * k;
+  const ls = Number.isFinite(textScale) && textScale > 0 ? textScale : 1;
   const centers = new Map<number, Point>();
   for (const id of present) {
     const island = stage.islands[id];
@@ -158,64 +171,18 @@ export function buildMapScene(
     }
   }
 
-  const islands: IslandNode[] = [];
+  // 港の手紙の山（宛先ごと）と船の、位置を決める前の値。
+  const portPilesOf = new Map(present.map((id) => [id, portPiles(world, id)]));
+  const labelPiles: LabelPile[] = [];
   for (const id of present) {
-    const island = stage.islands[id];
-    const at = centers.get(id);
-    if (island === undefined || at === undefined) continue;
-    islands.push({
-      id,
-      name: island.name,
-      color: island.color,
-      at,
-      roleMark: roleMarkOf(world.nodes, id),
-      selected: selection.islandId === id,
-      candidate: candidates.has(id),
-    });
-  }
-
-  // 手紙の山（港の手紙だけ。宛先の島の方向に置く）。
-  const piles: LetterPile[] = [];
-  for (const id of present) {
-    const center = centers.get(id);
-    if (center === undefined) continue;
-    let stacked = 0;
-    for (const pile of portPiles(world, id)) {
-      const dest = centers.get(pile.to);
-      const destIsland = stage.islands[pile.to];
-      const dx = dest === undefined ? 0 : dest.x - center.x;
-      const dy = dest === undefined ? 0 : dest.y - center.y;
-      const dist = Math.hypot(dx, dy);
-      let at: Point;
-      if (dest !== undefined && dist > 0) {
-        at = {
-          x: center.x + (dx / dist) * pileOffset,
-          y: center.y + (dy / dist) * pileOffset,
-        };
-      } else {
-        at = {
-          x: center.x,
-          y: center.y + pileOffset + stacked * pileStackStep,
-        };
-        stacked++;
-      }
-      piles.push({
-        islandId: id,
-        to: pile.to,
-        at,
-        count: pile.letters.length,
-        color:
-          dest !== undefined && destIsland !== undefined
-            ? destIsland.color
-            : MAP_STYLE.colors.unknownIsland,
-        hasRequest: pile.letters.some((l) => l.kind === "request"),
-      });
+    for (const pile of portPilesOf.get(id) ?? []) {
+      labelPiles.push({ islandId: id, to: pile.to, known: centers.has(pile.to) && pile.to !== id });
     }
   }
-
-  // 船（島が分からない船は描かない）。
-  const ferries: FerrySprite[] = [];
-  const docked = new Map<number, number>();
+  type FerryBase = Omit<FerrySprite, "at" | "labels">;
+  const ferryBases: { base: FerryBase; at: Point | null }[] = [];
+  const docked: LabelDockedFerry[] = [];
+  const sailing: LabelSailingFerry[] = [];
   for (const id of world.ferryIds) {
     const ferry = world.ferries[id];
     if (ferry === undefined) continue;
@@ -227,34 +194,93 @@ export function buildMapScene(
       broken: ferry.brokenUntil !== null && ferry.brokenUntil > simNow,
       selected: selection.ferryId === id,
     };
+    const cargo = `${String(common.cargoCount)}/${String(common.capacity)}`;
     if (ferry.state === "sailing") {
+      // 島が分からない船は描かない。
       const from = ferry.from === undefined ? undefined : centers.get(ferry.from);
       const to = ferry.to === undefined ? undefined : centers.get(ferry.to);
       if (from === undefined || to === undefined) continue;
-      ferries.push({
-        ...common,
-        state: "sailing",
-        at: lerp(from, to, ferryProgress(ferry, simNow)),
-        heading: Math.atan2(to.y - from.y, to.x - from.x),
-        etaMs: Math.max(0, ferry.arriveAt - simNow),
+      const at = lerp(from, to, ferryProgress(ferry, simNow));
+      const etaMs = Math.max(0, ferry.arriveAt - simNow);
+      ferryBases.push({
+        base: {
+          ...common,
+          state: "sailing",
+          heading: Math.atan2(to.y - from.y, to.x - from.x),
+          etaMs,
+        },
+        at,
       });
+      sailing.push({ id, at, text: { name: ferry.name, cargo, eta: etaText(etaMs) } });
     } else {
       const islandId = ferry.islandId;
-      const center = islandId === undefined ? undefined : centers.get(islandId);
-      if (islandId === undefined || center === undefined) continue;
-      const n = docked.get(islandId) ?? 0;
-      docked.set(islandId, n + 1);
-      ferries.push({
-        ...common,
-        state: "docked",
-        at: {
-          x: center.x + islandRadius + dockOffset + n * dockStep,
-          y: center.y - islandRadius,
-        },
-        heading: 0,
-        etaMs: null,
+      if (islandId === undefined || !centers.has(islandId)) continue;
+      ferryBases.push({ base: { ...common, state: "docked", heading: 0, etaMs: null }, at: null });
+      docked.push({ id, islandId, text: { name: ferry.name, cargo, eta: null } });
+    }
+  }
+
+  // 札の位置（T-428。重なりを避けて候補から選ぶ）。
+  const labels = layoutLabels({
+    size,
+    k,
+    ls,
+    islands: present.flatMap((id) => {
+      const at = centers.get(id);
+      const island = stage.islands[id];
+      return at === undefined || island === undefined ? [] : [{ id, at, name: island.name }];
+    }),
+    piles: labelPiles,
+    docked,
+    sailing,
+  });
+
+  const islands: IslandNode[] = [];
+  for (const id of present) {
+    const island = stage.islands[id];
+    const at = centers.get(id);
+    if (island === undefined || at === undefined) continue;
+    islands.push({
+      id,
+      name: island.name,
+      color: island.color,
+      at,
+      roleMark: roleMarkOf(world.nodes, id),
+      tagOffset: labels.tags.get(id) ?? nameTagOffset("below", nameTagSize(island.name, ls)),
+      selected: selection.islandId === id,
+      candidate: candidates.has(id),
+    });
+  }
+
+  // 手紙の山（港の手紙だけ。宛先の島の方向に置き、重なるならずらす）。
+  const piles: LetterPile[] = [];
+  for (const id of present) {
+    const center = centers.get(id);
+    if (center === undefined) continue;
+    for (const pile of portPilesOf.get(id) ?? []) {
+      const dest = centers.get(pile.to);
+      const destIsland = stage.islands[pile.to];
+      piles.push({
+        islandId: id,
+        to: pile.to,
+        at: labels.piles.get(pileKey(id, pile.to)) ?? center,
+        count: pile.letters.length,
+        color:
+          dest !== undefined && destIsland !== undefined
+            ? destIsland.color
+            : MAP_STYLE.colors.unknownIsland,
+        hasRequest: pile.letters.some((l) => l.kind === "request"),
       });
     }
+  }
+
+  // 船（停泊中の船は、同じ港の船を島の周りに等間隔に並べる）。
+  const ferries: FerrySprite[] = [];
+  for (const { base, at } of ferryBases) {
+    const placed = labels.ferries.get(base.id);
+    const where = placed?.at ?? at;
+    if (where === null) continue;
+    ferries.push({ ...base, at: where, labels: placed?.labels ?? "split" });
   }
 
   return {
@@ -265,8 +291,14 @@ export function buildMapScene(
     islands,
     piles,
     ferries,
+    labelBoxes: labels.fixed,
     partition: partitionScene(present, routeEnds, centers),
   };
+}
+
+// 航行中の船の「あと 0:05」（描画の pixi/mapRenderer.ts と同じ書式。札の幅の見積もりに使う）。
+function etaText(etaMs: number): string {
+  return `あと ${formatDuration(Math.ceil(etaMs / 1000) * 1000)}`;
 }
 
 // 分断（T-704）: 嵐で止まっていない航路（storm !== "blocked"）で島をつないだ連結成分。分かれていなければ null。

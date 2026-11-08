@@ -1,0 +1,47 @@
+/* 効果音のオン・オフのボタン（T-434）。HUD の速度のボタンと同じ紙の札。色はトークンだけを使う。
+   オフは色だけでなく、絵（🔇）と破線の枠でも示す（NFR-10）。 */
+.sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 2.25rem;
+  padding: var(--space-1) var(--space-3);
+  white-space: nowrap;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 2px solid var(--color-ink);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  font: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease-out,
+    box-shadow 0.12s ease-out;
+}
+
+.sound-toggle:hover {
+  transform: translateY(-1px);
+}
+
+.sound-toggle:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.sound-toggle[aria-pressed="false"] {
+  color: var(--color-ink-muted);
+  background: var(--color-paper-deep);
+  border-style: dashed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sound-toggle {
+    transition: none;
+  }
+
+  .sound-toggle:hover,
+  .sound-toggle:active {
+    transform: none;
+  }
+}

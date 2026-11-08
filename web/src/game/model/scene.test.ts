@@ -185,7 +185,7 @@ describe("buildMapScene", () => {
     expectPoint(diag.at, c);
   });
 
-  it("SC-4 同じ島に停泊する船を dockStep ずつずらし、島が分からない船は描かない", () => {
+  it("SC-4 同じ島に停泊する船を島の周りに等間隔に並べ、島が分からない船は描かない", () => {
     const w = world({
       ferries: [
         dockedFerry("f1", 1, [7, 8]),
@@ -198,10 +198,6 @@ describe("buildMapScene", () => {
     expect(s.ferries.map((f) => f.id)).toEqual(["f1", "f2", "f3"]);
     const c1 = screenOf(1);
     const first = ferryOf(s, "f1");
-    expectPoint(first.at, {
-      x: c1.x + (MAP_STYLE.islandRadius + MAP_STYLE.dockOffset) * K,
-      y: c1.y - MAP_STYLE.islandRadius * K,
-    });
     expect(first).toMatchObject({
       heading: 0,
       etaMs: null,
@@ -210,15 +206,21 @@ describe("buildMapScene", () => {
       capacity: 4,
       name: "f1丸",
     });
-    expectPoint(ferryOf(s, "f2").at, {
-      x: c1.x + (MAP_STYLE.islandRadius + MAP_STYLE.dockOffset + MAP_STYLE.dockStep) * K,
-      y: c1.y - MAP_STYLE.islandRadius * K,
-    });
+    // 一の島の 2 隻（T-428）: 島の中心から同じ距離で、反対の向き（2 隻なら 180° ずつ）。
+    const second = ferryOf(s, "f2");
+    const r1 = Math.hypot(first.at.x - c1.x, first.at.y - c1.y);
+    const r2 = Math.hypot(second.at.x - c1.x, second.at.y - c1.y);
+    expect(r2).toBeCloseTo(r1);
+    expect(r1).toBeGreaterThan(MAP_STYLE.islandRadius * K);
+    expect(first.at.x + second.at.x).toBeCloseTo(2 * c1.x);
+    expect(first.at.y + second.at.y).toBeCloseTo(2 * c1.y);
+    // 二の島の 1 隻は、重なるものが無ければ今までどおり右上の桟橋。
     const c2 = screenOf(2);
     expectPoint(ferryOf(s, "f3").at, {
       x: c2.x + (MAP_STYLE.islandRadius + MAP_STYLE.dockOffset) * K,
       y: c2.y - MAP_STYLE.islandRadius * K,
     });
+    expect(ferryOf(s, "f3").labels).toBe("split");
   });
 
   it.each([
@@ -315,17 +317,26 @@ describe("buildMapScene", () => {
       { islandId: 1, to: 3, count: 2, hasRequest: true, color: COLORS[3] },
     ]);
     const c1 = screenOf(1);
-    for (const pile of s.piles) {
-      const dest = screenOf(pile.to);
-      const d = Math.hypot(dest.x - c1.x, dest.y - c1.y);
-      expectPoint(pile.at, {
-        x: c1.x + ((dest.x - c1.x) / d) * MAP_STYLE.pileOffset * K,
-        y: c1.y + ((dest.y - c1.y) / d) * MAP_STYLE.pileOffset * K,
-      });
-    }
+    const [toTwo, toThree] = s.piles;
+    // 二の島（右）への山は、宛先の島の向きに pileOffset。
+    const dest2 = screenOf(2);
+    const d2 = Math.hypot(dest2.x - c1.x, dest2.y - c1.y);
+    expectPoint(toTwo?.at, {
+      x: c1.x + ((dest2.x - c1.x) / d2) * MAP_STYLE.pileOffset * K,
+      y: c1.y + ((dest2.y - c1.y) / d2) * MAP_STYLE.pileOffset * K,
+    });
+    // 三の島（右下）への山は、その向きでは島の名札に重なるので、宛先の側のうちでずらす（T-428）。
+    const at3 = toThree?.at ?? c1;
+    const dest3 = screenOf(3);
+    const dot = (at3.x - c1.x) * (dest3.x - c1.x) + (at3.y - c1.y) * (dest3.y - c1.y);
+    expect(dot).toBeGreaterThan(0);
+    expect(Math.hypot(at3.x - c1.x, at3.y - c1.y)).toBeGreaterThanOrEqual(
+      MAP_STYLE.pileOffset * K - 1e-9,
+    );
+    expect(at3).not.toEqual(toTwo?.at);
   });
 
-  it("SC-6 宛先の島が stage に無い山は島の真下に並べ、色は unknownIsland", () => {
+  it("SC-6 宛先の島が stage に無い山は島の真下から並べ（名札と重なるならずらす）、色は unknownIsland", () => {
     const w = world({ letters: [portLetter(1, 2, 8), portLetter(2, 2, 9), portLetter(3, 2, 9)] });
     const s = scene(w);
     const c2 = screenOf(2);
@@ -343,11 +354,14 @@ describe("buildMapScene", () => {
       count: 2,
       color: MAP_STYLE.colors.unknownIsland,
     });
-    expectPoint(first?.at, { x: c2.x, y: c2.y + MAP_STYLE.pileOffset * K });
-    expectPoint(second?.at, {
-      x: c2.x,
-      y: c2.y + (MAP_STYLE.pileOffset + MAP_STYLE.pileStackStep) * K,
-    });
+    // 島の真下は名札があるので、重ならない位置にずらす（T-428）。2 つの山は違う位置。
+    for (const pile of [first, second]) {
+      const at = pile?.at ?? c2;
+      expect(Math.hypot(at.x - c2.x, at.y - c2.y)).toBeGreaterThanOrEqual(
+        MAP_STYLE.pileOffset * K - 1e-9,
+      );
+    }
+    expect(first?.at).not.toEqual(second?.at);
   });
 
   it("SC-7 選択と行き先の候補", () => {

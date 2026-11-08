@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- favicon（T-430・docs/11-visual-design.md）。丸い海の枠の中に、封蝋の付いた封筒。
+       色はトークン（web/src/ui/theme/tokens.css）と同じ値: 海 #3c6e8f・#8ec5d6・#bfdde6、紙 #f6efdf、墨 #3b3a36、郵便の赤 #c0503a。
+       PNG（favicon-32.png・apple-touch-icon.png）は scripts/render-brand-images.sh で、この SVG から作る。 -->
+  <clipPath id="sea">
+    <circle cx="32" cy="32" r="28" />
+  </clipPath>
+  <circle cx="32" cy="32" r="28" fill="#8ec5d6" />
+  <g clip-path="url(#sea)" fill="none" stroke-linecap="round">
+    <path d="M2 50 q6 -4 12 0 t12 0 t12 0 t12 0 t12 0" stroke="#bfdde6" stroke-width="3" />
+    <path d="M-4 57 q6 -4 12 0 t12 0 t12 0 t12 0 t12 0 t12 0" stroke="#3c6e8f" stroke-width="3" opacity="0.5" />
+  </g>
+  <circle cx="32" cy="32" r="28.5" fill="none" stroke="#3c6e8f" stroke-width="5" />
+  <g transform="rotate(-8 32 31)" stroke="#3b3a36" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="14" y="18" width="36" height="25" rx="4" fill="#f6efdf" stroke-width="3" />
+    <path d="M15.5 20 L32 33 L48.5 20" fill="none" stroke-width="3" />
+    <circle cx="32" cy="33" r="5.5" fill="#c0503a" stroke-width="2" />
+  </g>
+</svg>
