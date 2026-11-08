@@ -12,7 +12,8 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 | Actor Host ⇔ Actor Host（RPC CLA） | DO RPC | Go の関数呼び出し | JSON（Bundle は base64） |
 
 - Bundle の bytes は JSON の中で base64（RFC 4648 §4、パディングあり）
-- 1 つの電文の上限は 256 KiB。超えたら `too_large`
+- 1 つの電文の上限は 1 MiB（Workers の WebSocket の 1 メッセージの上限に合わせる）。超えたら `too_large`
+- digest と署名に使う「正準の JSON」は RFC 8785（JSON Canonicalization Scheme）。digest は `sha256:` ＋ 16 進の小文字
 
 ## 2. エンベロープ
 
@@ -35,7 +36,7 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 |---|---|
 | `v` | 電文の版（schemaVersion）。今は 1。違えば `unsupported_version` |
 | `sessionId` | 署名済みのセッション ID。Host が持つ値と違えば `session_mismatch` |
-| `actor` | `coordinator`・`island:<raftNodeId>`・`ferry:<ferryId>` |
+| `actor` | `coordinator`・`island:<raftNodeId>`（例: `island:2`）・`ferry:<ferryId>`（ステージ定義の `ferries[].id` の文字列。例: `ferry:f1`） |
 | `epoch` | Actor の世代。Actor Host が Container を起動するたびに 1 増やし、永続化する。Host → Actor の要求と Actor → Host の応答の両方に付ける。古ければ `stale_epoch` |
 | `coordEpoch` | Coordinator の世代。Session Front が Coordinator の Container を起動するたびに 1 増やす。Host は、受けた最大の値より古い要求を `stale_coord_epoch` で断る |
 | `eventSeq` | Coordinator が振る、ゲーム全体で単調に増える番号。Coordinator の journal の番号でもある |
@@ -93,13 +94,24 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 | kind | 送る側 | payload | 処理 |
 |---|---|---|---|
 | `contact.open`・`contact.close` | Session Front → 島と船の Host | `{contact}` | Contact を記録する・閉じた ID を保存する（[handoff-and-contact.md §2](./handoff-and-contact.md#2-contact寄港)） |
-| `transfer.prepare` | Session Front → 送り元の Host | `{transferId, to, contact, letterIds}` | [handoff-and-contact.md §3](./handoff-and-contact.md#3-handoff所有権の引き渡し) |
+| `transfer.prepare` | Session Front → 送り元の Host | `{transferId, t, to, contact, letterIds}`（`t` は送り出す仮想時刻。Bundle Age の計算に使う） | [handoff-and-contact.md §3](./handoff-and-contact.md#3-handoff所有権の引き渡し) |
 | `transfer.accept` | 送り元の Host → 受け取る Host（CLA） | `{transferId, from, contact, bundles: [{letterId, bundle, digest}]}` | 同上 |
 | `transfer.activate` | Session Front → 受け取る Host | `{transferId, then: {kind, payload}}` | 同上。`then` は Container に送る要求（`deliver`・`cargo.add` など） |
 | `transfer.gc` | Session Front → 送り元の Host | `{transferId, then: {kind, payload}}` | 同上。`then` は `port.remove`・`cargo.remove` など |
 | `transfer.abort` | Session Front → 両方の Host | `{transferId}` | 同上 |
 | `transfer.status` | Session Front → どちらかの Host | `{transferId}` | 状態を返す（状態は変えない） |
 | `host.status` | Session Front | `{}` | epoch・最後の `eventSeq`・Container の状態を返す |
+
+### 3.3 Coordinator が受ける
+
+Session Front → Coordinator の電文。Coordinator → Session Front は `dispatch{calls: [{actor, envelope}]}`（並行に送ってよい要求の組）と、ブラウザ向けのイベント。
+
+| kind | payload | 処理 |
+|---|---|---|
+| `init` | `{stage, stageHash, seed, sessionId}` | ゲームを作る。開幕式を手元で計算する |
+| `dispatch.result` | `{results: [応答…]}` | `dispatch` の応答 |
+| `command` | `{cmdId, type, payload}` | ブラウザのコマンド（今の外部の電文） |
+| `restore.begin`・`restore.chunk`・`restore.end` | `{stage, stageHash, seed, entries}`・`{index, entries}`・`{}` | journal を分けて受け取り、記録した応答で再計算する（[persistence-and-recovery.md §4.2](./persistence-and-recovery.md#42-coordinator-が止まったとき)） |
 
 ## 4. 出力（Actor → Coordinator）
 
@@ -138,12 +150,13 @@ Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けの
 | `too_large` | 上限を超えた | 同上 |
 | `not_ready` | Container の起動・復元の途中 | 仮想時間を止めて待つ（[simulation-time.md §2.3](./simulation-time.md#23-仮想時間を止める条件)） |
 | `contact_closed`・`contact_mismatch` | Contact の外の転送 | Handoff を取り消す（[handoff-and-contact.md](./handoff-and-contact.md)） |
+| `restore_failed` | 再生の応答の digest が記録と一致しない | ゲームを `dtn_restore_failed` で終える |
 | `internal` | Actor の中の失敗 | Container を作り直して復元する |
 
 | 上限（初期値。`docs/dtn/` と設定に置く） | 値 |
 |---|---|
-| 1 つの電文 | 256 KiB |
-| 1 つの Bundle | 64 KiB |
+| 1 つの電文 | 1 MiB |
+| 1 つの Bundle | 16 KiB（このゲームの Raft のメッセージは小さい。16 通 × 16 KiB を base64 にしても 1 つの電文に収まる） |
 | 1 回の `deliver`・`cargo.add` の手紙 | 船の積載の上限まで（最大 16） |
 | 1 回の応答の `outputs` | 4,096 |
 | 1 Actor の journal の行 | 20,000（上限の更新は上書きするので、ふつうは数千） |

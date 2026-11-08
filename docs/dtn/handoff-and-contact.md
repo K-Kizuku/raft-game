@@ -22,11 +22,11 @@ DTN-08（#165）・DTN-09（#166）・DTN-15（#172）の契約。判断は [ADR
   "contactId": "k1207",
   "sessionId": "s_…",
   "island": 2,
-  "ferry": 1,
+  "ferry": "f1",
   "islandEpoch": 1,
   "ferryEpoch": 2,
   "openedAt": 12500,
-  "sig": "base64url(HMAC-SHA256(DTN_CONTACT_KEY, 正準の JSON))"
+  "sig": "base64url(HMAC-SHA256(DTN_CONTACT_KEY, sig を除いた RFC 8785 の正準の JSON))"
 }
 ```
 

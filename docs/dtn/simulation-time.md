@@ -43,7 +43,7 @@
 
 ### 2.3 仮想時間を止める条件
 
-次のどれかのとき、Coordinator は `Now` を進めない（ブラウザには `notice` で「復旧中」と知らせる）。
+次のどれかのとき、Coordinator は `Now` を進めない。ブラウザには `dtn.status{state: "recovering" | "ok", actor?}` のイベントで知らせる（DTN の環境でだけ出す。形は DTN-16 #364 で [06-protocol.md](../06-protocol.md) の書き方に合わせて決める。今の `notice` は島のキャラクターの通知なので使わない）。
 
 - いずれかの Actor が応答しない・復元中（[persistence-and-recovery.md](./persistence-and-recovery.md)）
 - Handoff が確定していない
@@ -106,7 +106,7 @@
 3. **`global` の累積する値**: 同じ `t` ごとに、その時刻の最後の `score.updated` が一致する
 4. **最後の結果**: `round.result`、各島の台帳の内容、各依頼の最終の状態が一致する
 
-`simtrace.Compare(ref, got)` は、最初に食い違った列・`t`・イベントを返す。DTN-11 の試験は、失敗したときに seed・入力・食い違いを `server/testdata/dtn/failures/` に保存する。
+`simtrace.Compare(ref, got)` は、最初に食い違った列・`t`・イベントを返す。DTN-11 の試験は、失敗したときに seed・入力・食い違いを `server/.dtn-failures/`（`.gitignore` に入れる）に保存する。
 
 ### 5.4 比べる組み合わせ
 
@@ -118,6 +118,7 @@
 
 ## 6. 対象外のイベント
 
-- 故障（`breakdown`）・注文ラッシュ（`rush`）・漂流瓶（`drift`）・欠航（`cancellation`）を定義したステージは、分散モードで起動を断る（エラー `dtn_unsupported_stage`）。今のステージ（stage1・stage2・demo-goto・demo-izu）はどれも定義していないので、全ステージを遊べる
+- 故障（`breakdown`）・注文ラッシュ（`rush`）・漂流瓶（`drift`）・欠航（`cancellation`）を定義したステージは、分散モードで起動を断る（エラー `dtn_unsupported_stage`）
+- 2026-11-08 の `main` では、stage1・stage2・demo-goto・demo-izu は定義していないので遊べる。**stage3（伊豆諸島、#300）は欠航を定義しているので、#365 で欠航に対応するまで断る**
 - 漂流瓶は全島の配達の履歴を使うので、対応するには「送信元が自分の送った手紙の写しを持ち、そこから港に置き直す」形に変える必要がある（DTN-17）
 - 嵐・デモの嵐は航路の表だけを変える。航路の表は Coordinator が持つので、そのまま対応できる

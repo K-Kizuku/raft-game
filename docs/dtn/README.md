@@ -13,6 +13,20 @@
   - デプロイ: prod・demo と別の新しい環境 `raft-dtn.kizuku-hackathon.work`。Worker・Durable Object・CostGuard・シークレットも別
 - この `docs/dtn/` は `dtn/main` にだけ置く。既存の docs（`02`・`03`・`08` など）は書き換えない。DTN が既存の仕様を上書きするところは、このディレクトリに差分として書く
 
+## DTN の不変条件
+
+| ID | 不変条件 |
+|---|---|
+| D-1 | 島から島への Bundle の直接配送をしない（開幕式も通信しない） |
+| D-2 | 有効な寄港 Contact の外で、島と船の配送を確定しない |
+| D-3 | 各 Bundle の論理的な持ち主は常に 1 つ。移行中の物理的な写しは複数でよい |
+| D-4 | 同じ Bundle の再送・ACK の消失で、宛先への適用を二重にしない |
+| D-5 | 永続保存を確かめるまで、送り元の最後の有効な写しを消さない |
+| D-6 | seed・入力・仮想イベントの列が同じなら、実ネットワークの遅延によらず同じ結果になる |
+| D-7 | 復元・CLA の切断・古い epoch の応答が Raft の Safety を破らない |
+| D-8 | 終了・中断の後に動いている Actor を残さず、停止の処理は再実行できる |
+| D-9 | 島の状態と出力は、上限（horizon）の区切り方に依存しない |
+
 ## 読む順
 
 | 文書 | 内容 |
@@ -41,7 +55,7 @@ ADR は MVP の `docs/adr/` と番号が衝突しないよう、`docs/dtn/adr/D0
 | 4 | Coordinator の実行場所 | **Go の制御用 Container**（今の計画・スコア・航路のコードを使う） | [architecture.md](./architecture.md) |
 | 5 | 開幕式 | 各島が同じ seed で全ノードの開幕式を**手元で再計算**し、自島のノードだけ残す。通信しない | [simulation-time.md §4](./simulation-time.md#4-開幕式) |
 | 6 | 対象外のイベント | 故障・注文ラッシュ・漂流瓶・欠航は対象外。定義したステージは分散モードで起動を断る。嵐とデモの嵐は対応する | [simulation-time.md §6](./simulation-time.md#6-対象外のイベント) |
-| 7 | 起動できる人とステージ | DTN の環境で**誰でも**（Turnstile・レート制限あり）。**全ステージ**（demo-izu の 6 島 6 隻も含む） | [environment.md](./environment.md) |
+| 7 | 起動できる人とステージ | DTN の環境で**誰でも**（Turnstile・レート制限あり）。**全ステージ**（demo-izu の 6 島 6 隻も含む）。ただし欠航を定義した stage3 は、#365 で対応するまで断る | [environment.md](./environment.md) |
 | 8 | ローカルの Actor Host | **Go の SQLite adapter**。DO 版と同じ契約テスト（JSON の fixture）を両方に通す | [persistence-and-recovery.md](./persistence-and-recovery.md) |
 | 9 | 復元の単位 | **止まった Actor だけ**を復元する。その間は仮想時間を止める | [persistence-and-recovery.md §4](./persistence-and-recovery.md#4-復元) |
 | 10 | 所有権の確定 | **Coordinator の台帳**で CAS する | [handoff-and-contact.md](./handoff-and-contact.md) |

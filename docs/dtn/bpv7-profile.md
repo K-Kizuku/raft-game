@@ -23,7 +23,7 @@ DTN-06（#163）の契約。判断は [ADR-D003](./adr/D003-bpv7-profile.md)。�
 |---|---|
 | 島の Raft の窓口 | `ipn:<raftNodeId>.1` |
 | 島の依頼の窓口 | `ipn:<raftNodeId>.2` |
-| 船（中継のノード） | `ipn:<1000 + ferryId>.0`（Bundle の宛先にはならない） |
+| 船（中継のノード） | `ipn:<1000 + k>.0`。`k` はステージ定義の `ferries` の並びでの番号（1 から）。Bundle の宛先にはならない |
 | Report-to | `dtn:none` |
 
 - 送信元は、手紙を作った島の EID（Raft なら `.1`、依頼なら `.2`）
@@ -73,7 +73,7 @@ DTN-06（#163）の契約。判断は [ADR-D003](./adr/D003-bpv7-profile.md)。�
 | Bundle Age がない・2 つ以上ある | `bpv7_age` |
 | Bundle Age・Payload 以外のブロックがある（フラグに関係なく） | `bpv7_unsupported_block` |
 | Payload が最後でない・ブロック番号が重複 | `bpv7_structure` |
-| 64 KiB を超える | `bpv7_too_large` |
+| 16 KiB を超える | `bpv7_too_large` |
 
 RFC 9171 では、処理できないブロックの扱いをフラグで決めてよい。このプロファイルは閉じた系なので、より厳しく「すべて断る」にする（黙って読み飛ばさない）。
 

@@ -8,7 +8,7 @@ DTN-01（#158）で、この一覧の「DTN-01 で決める」ものに結論を
 | Q-COLD | 13 個の Container を並行に起動したときの起動時間（demo-izu）。`start_timeout` をいくつにするか | 今の起動の上限を Actor ごとに使い、全体の上限を別に置く | DTN-12 |
 | Q-ACCOUNT | 同じ Cloudflare のアカウントで、DTN の環境が Container の同時の数・メモリの合計などのアカウントの上限を使い切り、発表の prod・demo に影響しないか | 発表の前後は DTN の環境の受付を止める（管理用 API）。必要なら別のアカウントにする | DTN-12 の前にオーナーが決める |
 | Q-IMAGE | 1 つの image（`dtnactor`）を、複数の Durable Object のクラス（Coordinator 用・ActorHost 用）で使えるか | 使えなければ、役割ごとに image を分ける | DTN-12 |
-| Q-RPC | ActorHost どうしの DO RPC の、1 回の大きさの上限・遅さ | 1 つの transfer は積載の上限（最大 16 通 × 64 KiB 以下）に収まる | DTN-09 で概算、DTN-12 で実測 |
+| Q-RPC | ActorHost どうしの DO RPC の、1 回の大きさの上限・遅さ | 1 つの transfer は積載の上限（最大 16 通 × 16 KiB、base64 で約 342 KiB）で、1 つの電文（1 MiB）に収まる | DTN-09 で概算、DTN-12 で実測 |
 | Q-SQLITE | DO の SQLite の 1 行・1 トランザクション・合計の上限が、§6 の上限（8 MiB / Actor）に収まるか | 収まる前提 | DTN-12 |
 | Q-COORD | Coordinator を Container にする（C1）のでなく、DO の中の WASM（C2）にできるか | C1 で進める。C2 は費用を減らす後続の候補 | DTN-12 の後 |
 | Q-MOQ-1 | 利用時点の Cloudflare の MoQ の Relay が対応するドラフトと、Go のクライアント | 未調査 | DTN-14 |

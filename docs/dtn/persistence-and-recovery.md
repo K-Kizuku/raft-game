@@ -20,7 +20,7 @@ CREATE TABLE journal (
   event_seq   INTEGER PRIMARY KEY,
   kind        TEXT    NOT NULL,
   req_digest  TEXT    NOT NULL,          -- 要求の正準の JSON の SHA-256
-  payload     TEXT    NOT NULL,          -- 要求の JSON（bundle は letterId で bundles を指す）
+  payload     TEXT    NOT NULL,          -- 要求の JSON。bundle の bytes も送ったとおりに含める（再生はこれだけを使う）
   status      TEXT    NOT NULL,          -- 'intent' | 'applied'
   response    TEXT,                      -- 応答の JSON（bundle の bytes は除く）
   resp_digest TEXT,
@@ -29,7 +29,7 @@ CREATE TABLE journal (
 
 CREATE TABLE bundles (
   letter_id   INTEGER PRIMARY KEY,
-  bundle      BLOB,                      -- 'gone' になって collected の後は NULL にしてよい
+  bundle      BLOB,                      -- 今の版の bytes（送り出すたびに Bundle Age が変わるので上書きする）。collected の後は NULL にしてよい
   digest      TEXT    NOT NULL,
   size        INTEGER NOT NULL,
   state       TEXT    NOT NULL,          -- 'held' | 'prepared' | 'pending' | 'gone'
@@ -52,7 +52,10 @@ CREATE TABLE transfers (
 CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TEXT NOT NULL);
 ```
 
-- `advance` は、直前の journal の行も `advance` なら、その行を置き換える（島の進み方は上限の区切り方に依存しない。D-9）。置き換えた古い `eventSeq` が後から届いたら `stale_event`（上限は単調なので、古い上限は意味を持たない）
+- `bundles` は「今その Actor が持っている bytes」の表。同じ手紙が同じ Actor に戻ってくる（積む → 倉庫に下ろす → また積む）と、Bundle Age の違う bytes で上書きされる。**再生は `bundles` を使わず、`journal.payload` に入れた bytes だけを使う**。だから `bundles` の bytes は collected の後に消してよく、`journal` はセッションが終わるまで消さない
+- `advance` は、直前の journal の行も `advance` なら、2 つを 1 つの行にまとめる（島の進み方は上限の区切り方に依存しない。D-9）
+  - まとめた行は、新しい `event_seq`・新しい上限・**2 つの応答の `outputs` をつなげたもの**を持ち、`resp_digest` はつなげた `outputs` で計算し直す。再生では、まとめた上限への 1 回の `advance` が、つなげた `outputs` と同じ出力を出す（D-9）ので、digest が一致する
+  - まとめて消えた古い `eventSeq` が後から届いたら `stale_event`（上限は単調なので、古い上限は意味を持たない）
 - `inspect`・`transfer.status`・`host.status` は journal に入れない
 
 ## 3. 確定の順序
@@ -80,7 +83,7 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
 2. Host は、新しい要求に `not_ready` を返し始める。Coordinator は仮想時間を止める（[simulation-time.md §2.3](./simulation-time.md#23-仮想時間を止める条件)）
 3. 古い Container を止める（`destroy()`）。`epoch` を 1 増やして保存する
 4. 新しい Container を起動し、`meta.initPayload` で `init` を送る
-5. `journal` を `event_seq` の順に再生する。`applied` の行は `replay: true` を付けて送り、応答の digest が保存したものと一致することを確かめる（Actor の作る bundle の digest も一致すること）。一致しなければ `restore_failed`
+5. `journal` を `event_seq` の順に再生する（bundle の bytes は `journal.payload` のものを使う）。`applied` の行は `replay: true` を付けて送り、応答の digest が保存したものと一致することを確かめる（Actor の作る bundle の digest も一致すること）。一致しなければ `restore_failed` で、ゲームを `dtn_restore_failed` で終える
 6. 最後の `intent` の行（あれば）は、ふつうに処理して §3.1 の 5 から続ける
 7. `not_ready` をやめる
 
@@ -94,7 +97,7 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
   - 適用したプレイヤーのコマンド（`cmdId`・`t`・中身・結果）
   - `dispatch` ごとの `eventSeq`・宛先・要求の digest・応答
   - Handoff の台帳の段階・Contact・`Now`
-- Session Front は `coordEpoch` を 1 増やし、新しい Coordinator の Container に `restore{stage, seed, journal}` を送る
+- Session Front は `coordEpoch` を 1 増やし、新しい Coordinator の Container に journal を分けて送る（`restore.begin{stage, stageHash, seed, entries}` → `restore.chunk{index, entries}` を何回か → `restore.end{}`。1 つの電文の上限に収まるように分ける。[actor-protocol.md §3.3](./actor-protocol.md#33-coordinator-が受ける)）
 - Coordinator は、記録した応答を使って（Actor を呼ばずに）journal の最後まで再計算する。決定的なので同じ状態になる
 - 応答のない最後の `dispatch` は、同じ `eventSeq` で送り直す（Host の冪等で安全）。`proposed`・`persisted` の Handoff は [handoff-and-contact.md §3.3](./handoff-and-contact.md#33-止まったときの回復) のとおりに収束させる
 - 一時停止の状態で待ち、ブラウザに `snapshot` を送る（今の復元と同じ）
@@ -121,7 +124,10 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
 | 1 Actor の Container の起動の回数 | 4（最初の 1 回＋復元 3 回） | ゲームを `dtn_actor_lost` で終える |
 | 1 ゲームの Actor の復元の回数の合計 | 6 | 同上 |
 | 1 回の復元の実時間 | 60 秒 | 同上 |
+| 1 ゲームの Actor の復元にかかった実時間の合計 | 180 秒 | 同上 |
+| 1 ゲームの Coordinator の作り直しの回数 | 3 | 同上 |
 | 1 Actor の journal の行・保存の合計 | 20,000 行・8 MiB | `too_large` → `dtn_limit` で終える |
+| Coordinator の journal の行・保存の合計（Session Front） | 50,000 行・16 MiB | 同上 |
 
 - ゲームが終わったら（ラウンドの終了・時間の上限・切断・中断）、Session Front がすべての Host に `shutdown` を送り、Host は Container を止めてから保存をすべて消す（`deleteAll`）。止められなかったら、アラームで再試行する（[environment.md](./environment.md)）。片付けそのものも再実行できるようにする（D-8）
 - 送り元の写しは、`collected` になったら bytes を消してよい（tombstone の行は残す）。`pending`・`prepared`・`activated` の bytes は、ゲームの途中では消さない
