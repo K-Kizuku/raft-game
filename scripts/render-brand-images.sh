@@ -156,7 +156,7 @@ while IFS='=' read -r src name size bg; do
   fi
   got="$(png_size "$file")"
   if [ "$got" != "$size" ]; then
-    echo "$PROG: 大きさが違う: $name は $got（期待は $size）" >&2
+    echo "$PROG: 大きさが違う: ${name} は ${got}（期待は ${size}）" >&2
     failed=1
     continue
   fi
