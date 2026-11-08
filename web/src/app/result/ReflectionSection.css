@@ -1,0 +1,78 @@
+/* リザルトの振り返り（T-432）。温かい絵本・海図風（docs/11-visual-design.md）。.result の下にだけ効かせる。
+   数の帳簿（左）と、次に試すことのメモ（右）を横に並べて、縦の長さを増やしすぎない。
+   色はトークンと、ResultScreen.css のローカルの変数（--result-postal-ink など）を使う。 */
+.result .result-reflection-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+/* 数は 1 行で読めるよう、見出し（dt）の側を折り返す。数が長いときだけ数の側も折り返す。 */
+.result .result-list.result-reflection-counts {
+  grid-template-columns: minmax(8em, 1fr) minmax(0, max-content);
+}
+
+@media (max-width: 720px) {
+  .result .result-reflection-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 次に試すことは、航海日誌に挟んだ便せんのメモ。左の縁に海の色の帯、上に赤い見出し。 */
+.result .result-reflection-note {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-paper);
+  border: 2px dashed var(--color-sea-mid);
+  border-left: 6px solid var(--color-sea-deep);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-0.6deg);
+  animation: result-reflection-note-in 0.4s ease-out both;
+}
+
+.result .result-reflection-note h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--result-postal-ink);
+  font-size: var(--font-size-body);
+}
+
+.result .result-reflection-note p {
+  margin: 0;
+}
+
+.result .result-tips {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.result .result-tip-advice {
+  font-size: var(--font-size-h3);
+  font-weight: bold;
+  line-height: 1.4;
+}
+
+.result .result-tip-fact {
+  color: var(--color-ink-muted);
+}
+
+@keyframes result-reflection-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) rotate(-0.6deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(-0.6deg);
+  }
+}
+
+/* 動きを減らす設定では、メモは最初から見える。 */
+@media (prefers-reduced-motion: reduce) {
+  .result .result-reflection-note {
+    animation: none;
+  }
+}
