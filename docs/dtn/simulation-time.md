@@ -49,6 +49,8 @@
 - Handoff が確定していない
 - Coordinator 自身が復元中
 
+仮想時間を止めている間に届いたプレイヤーのコマンドは、適用せずエラー `dtn_recovering` で断る（入力ログ・journal に記録しない。記録すると参照モデルとの再生が食い違う）。ブラウザは復旧の後に送り直す。
+
 実時間の上限（初期値: 1 回の復旧につき 60 秒、1 ゲームの累計で 180 秒）を超えたら、ゲームを `dtn_actor_lost` で終える。遅延や再接続を「仮想的な手紙の欠落」に置き換えることはしない（D-6）。
 
 ### 2.4 一時停止・速度・「次の出来事まで」
@@ -94,8 +96,8 @@
 | `letter.dropped`（港の規則 R1〜R6 による破棄） | `island:<その港の島>` |
 | `letter.delivered` | `island:<宛先>` |
 | `letter.moved`（積む・下ろす・倉庫から積む） | `ferry:<船>` |
-| `ferry.departed`・`ferry.arrived` | `ferry:<船>` |
-| `phase.changed`・`route.blocked`・`route.unblocked`・`request.created`・`request.updated`・`letter.stale`・`island.updated` | `global`（累積しない） |
+| `ferry.departed`・`ferry.arrived`・`ferry.broken`・`ferry.repaired` | `ferry:<船>` |
+| `phase.changed`・`forecast`・`route.blocked`・`route.unblocked`・`request.created`・`request.updated`・`letter.stale`・`island.updated` | `global`（累積しない） |
 | `score.updated` | `global`（累積する） |
 | `round.result` | `final` |
 

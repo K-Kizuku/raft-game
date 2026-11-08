@@ -74,6 +74,7 @@ DTN-06（#163）の契約。判断は [ADR-D003](./adr/D003-bpv7-profile.md)。�
 | Bundle Age・Payload 以外のブロックがある（フラグに関係なく） | `bpv7_unsupported_block` |
 | Payload が最後でない・ブロック番号が重複 | `bpv7_structure` |
 | 16 KiB を超える | `bpv7_too_large` |
+| 依頼のペイロードの CBOR の map のキーが §4 と違う・足りない・余分 | `bpv7_malformed` |
 
 RFC 9171 では、処理できないブロックの扱いをフラグで決めてよい。このプロファイルは閉じた系なので、より厳しく「すべて断る」にする（黙って読み飛ばさない）。
 

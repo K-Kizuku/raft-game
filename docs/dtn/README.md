@@ -81,8 +81,8 @@ ADR は MVP の `docs/adr/` と番号が衝突しないよう、`docs/dtn/adr/D0
 | DTN-09 | #166 | Contact と RPC CLA | handoff-and-contact.md |
 | DTN-10 | #167 | 復元と fencing | persistence-and-recovery.md |
 | DTN-11 | #168 | ローカルでの分散実行と障害試験 | simulation-time.md §5・persistence-and-recovery.md |
-| DTN-12 | #169 | Cloudflare の Actor Host・費用の予約・全停止 | environment.md |
-| DTN-13 | #170 | 分散モードを DTN の環境の入り口・WS につなぐ | environment.md |
+| DTN-12 | #169 | Cloudflare の Actor Host・費用の予約・全停止・セッションを作る共通の処理と管理者用の試運転の口 | environment.md |
+| DTN-13 | #170 | 分散モードを DTN の環境の一般の入り口（`POST /api/sessions`）・WS につなぐ・運用の手順 | environment.md |
 | DTN-14 | #171 | MoQ の PoC | open-questions.md |
 | DTN-15 | #172 | MoQ の CLA | handoff-and-contact.md §5 |
 | DTN-16 | （新規） | エンジニアモードの分散の表示 | architecture.md §6 |

@@ -4,12 +4,15 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 
 ## 1. 経路と符号化
 
+「RPC CLA」の RPC は「要求と応答の呼び出し」という意味で、Cloudflare の Durable Object の RPC の機能は使わない（ADR-0023 のとおり `fetch` ハンドラで呼ぶ）。
+
+
 | 区間 | Cloudflare | ローカル | 符号化 |
 |---|---|---|---|
 | Coordinator ⇔ Session Front | DtnSession DO → Coordinator Container の `/ws` | `dtnfabric` → `dtnactor` の `/ws` | JSON テキストフレーム。1 フレーム = 1 つの JSON。`{"ch": "ctl" \| "browser", "msg": …}` で制御（§3.3）とブラウザの電文を分ける |
-| Session Front ⇔ Actor Host | DO RPC（`ActorHost` のメソッド） | Go の関数呼び出し | 同じ JSON の構造 |
+| Session Front ⇔ Actor Host | Durable Object の `fetch` ハンドラ（[ADR-0023](../adr/0023-durable-object-fetch-handler.md)） | Go の関数呼び出し | 同じ JSON の構造 |
 | Actor Host ⇔ Actor | ActorHost DO → Actor Container の `/ws` | Go の Host → `dtnactor` の `/ws` | JSON テキストフレーム |
-| Actor Host ⇔ Actor Host（RPC CLA） | DO RPC | Go の関数呼び出し | JSON（Bundle は base64） |
+| Actor Host ⇔ Actor Host（RPC CLA） | Durable Object の `fetch` ハンドラ | Go の関数呼び出し | JSON（Bundle は base64） |
 
 - Bundle の bytes は JSON の中で base64（RFC 4648 §4、パディングあり）
 - 1 つの電文の上限は 1 MiB（Workers の WebSocket の 1 メッセージの上限に合わせる）。超えたら `too_large`
@@ -90,7 +93,7 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 - 「手紙」は `{letterId, createdAt, digest, bundle}`（`createdAt` は手紙を作った仮想時刻。Bundle Age の計算に使う）
 - `deliver`・`unload`・`cargo.add` の bundle は、Handoff で所有権が確定したものだけ（[handoff-and-contact.md](./handoff-and-contact.md)）。Actor は、受けた bundle の digest を確かめる
 - `init` の応答には、開幕式の後の最初の出力（`node.state` など、t = 0）を入れる。Coordinator はこれを `cmd.game.start` のときに適用する（今の開幕式の役割の変化の再生と同じ）
-- コマンドが起こした出力（`deliver`・`unload` など）の `class` は 8（[simulation-time.md §2.1](./simulation-time.md#21-上限horizon) のコマンドの位置）。コードの `ClassCommandApplied = 0` は使われていないので使わない
+- 出力の `class`: `deliver`（到着の配達）は 1（`ClassFerryArrive`。同じ時刻の `RaftTick` より前）。プレイヤーのコマンドが起こした出力（`unload` など）は 8（[simulation-time.md §2.1](./simulation-time.md#21-上限horizon) のコマンドの位置）。コードの `ClassCommandApplied = 0` は使われていないので使わない
 - Actor の状態を変える要求は、Actor ごとに直列に処理する。並行した要求は届いた順に待たせる
 
 ### 3.2 Actor Host が受ける（Container には送らない）
@@ -123,15 +126,15 @@ Session Front → Coordinator の電文。Coordinator → Session Front は `dis
 
 | type | 出す Actor | data（今のドメインイベントの中身に足すもの） |
 |---|---|---|
-| `letter.created` | 島 | `digest`・`size`（Host への応答には `bundle` も入る） |
+| `letter.created` | 島 | `digest`・`size`・`msgTerm`（Raft のメッセージ自身の Term `m.GetTerm()`。古い手紙の検出に使う。今の中身の `term` は表示用の送信元の Term で、PreVote などで違うことがある）（Host への応答には `bundle` も入る） |
 | `letter.dropped` | 島 | `rule`（`R1`〜`R6`） |
 | `letter.delivered` | 島 | なし |
 | `bundle.exported` | 島・船 | `{letterId, digest, size}`（Host への応答には `bundle` も入る） |
 | `node.state`・`node.leader_elected`・`node.stepped_down` | 島 | 今のドメインイベントと同じ中身 |
 | `term.changed` | 島 | `{term}`（古い手紙の検出に使う） |
-| `ledger.applied` | 島 | `{reqId, outcome, index}`（`outcome`: `ok`・`rejected`・`duplicate`） |
+| `ledger.applied` | 島 | なし（今の中身 `islandId`・`index`・`reqId`・`result`・`reason` のまま） |
 | `request.routed` | 島 | `{reqId, action, to?}`（`action`: `proposed`・`forwarded`・`waiting`・`dropped`） |
-| `ferry.state` | 船 | `{state, at?, to?, arriveAt?, readyAt, cargo: [letterId…]}` |
+| `ferry.state` | 船 | `{state, at?, to?, arriveAt?, readyAt, cargo: [letterId…]}`。`t`・`class` は起こした要求のもの（`arrive` は 1、`depart`・`cargo.*` は 8） |
 
 Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けのドメインイベント（今と同じ型）を作る。
 

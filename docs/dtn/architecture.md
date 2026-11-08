@@ -11,7 +11,7 @@
 | **Island Actor** | 島の数 | Container（`ROLE=island`） | `dtnactor` プロセス | IslandCore を 1 つ（1 つの `RawNode`・台帳・港・積み替えの倉庫・依頼の窓口と再送） |
 | **Ferry Actor** | 船の数 | Container（`ROLE=ferry`） | `dtnactor` プロセス | 1 隻の状態と Cargo（Bundle の実データ） |
 | **Actor Host** | 島の数＋船の数 | Durable Object `ActorHost`（1 Actor に 1 つ） | `dtnfabric` の中の Go の SQLite adapter（Actor ごとに別のファイル） | Actor の Container の起動・停止・epoch・journal・inbox・outbox・Bundle の保存（正本）・RPC CLA の受け口 |
-| **CLA** | — | Actor Host の間の DO RPC（初期）、MoQ（DTN-15） | `dtnfabric` の中の呼び出し、MoQ | 寄港中の Bundle の bytes の運搬 |
+| **CLA** | — | Actor Host の間の Durable Object の呼び出し（`fetch` ハンドラ、ADR-0023。初期）、MoQ（DTN-15） | `dtnfabric` の中の呼び出し、MoQ | 寄港中の Bundle の bytes の運搬 |
 
 - Container の image は 1 つ（`server/cmd/dtnactor`）で、環境変数 `ROLE` で役割を変える。今の `server` の image とは別にする
 - Container の外向きの通信は今と同じく禁止する（`enableInternet: false`）。Container から Durable Object を呼ぶことはしない。Durable Object が Container の `/ws` に WebSocket をつなぐ（今の `GameSession` と同じ向き）
@@ -34,7 +34,7 @@
 | 船の状態・Cargo | 船 | Cargo の正本は船の Actor Host |
 | 積む・下ろす・倉庫から積む・出航・到着 | Coordinator が決め、Handoff で実行 | [handoff-and-contact.md](./handoff-and-contact.md) |
 | 自動の積み込み（`autoload`）の選択 | Coordinator | 手紙のメタデータの写しと航路の表（`NextHop`）で選び、ふつうの積み込みとして実行する |
-| 古い手紙の検出（`emitStale`） | Coordinator | 島が報告する Term の変化と、手紙のメタデータの Term で判定する |
+| 古い手紙の検出（`emitStale`） | Coordinator | 島が報告する Term の変化と、手紙のメタデータの `msgTerm` で判定する |
 | 航路の表・嵐 | Coordinator | 今のまま |
 | 手紙の ID（`Transport.lastID`） | 島 | `islandId × 10^9 + n`（[simulation-time.md §5.1](./simulation-time.md#51-手紙の-iddtn-00)） |
 | イベントの連番（`Engine.seq`） | Coordinator | ブラウザへ出す順で振る。正規化トレースでは比べない |
@@ -113,7 +113,7 @@ flowchart LR
 ## 5. 外部への契約
 
 - ブラウザとの WS の電文（[06-protocol.md](../06-protocol.md)）は変えない。Coordinator が、今の `snapshot`・`events`・`ack`・`node.detail` を作る
-- `internal.*` の電文は、今と同じくブラウザから届いたら捨てる。Actor の電文は、ブラウザから届かない経路（DO の RPC・Container の WS）にだけ置く
+- `internal.*` の電文は、今と同じくブラウザから届いたら捨てる。Actor の電文は、ブラウザから届かない経路（Durable Object の間の呼び出し・Container の WS）にだけ置く
 - 例外: DTN-16 のエンジニアモードの表示のために、`dtn.*` のイベント（[§6](#6-画面dtn-16)）を足す。DTN の環境でだけ出す
 
 ## 6. 画面（DTN-16）

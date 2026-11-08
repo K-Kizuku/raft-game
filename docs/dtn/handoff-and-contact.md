@@ -116,7 +116,7 @@ Coordinator は、今の `Transport` と同じ確認（停泊中か・Contact �
 
 ## 4. RPC CLA（初期）
 
-- `transfer.accept` を、送り元の Actor Host が受け取る Actor Host の DO RPC で呼ぶ（`ACTOR_HOST.get(idFromName("<sessionId>/<actor>"))`）。ローカルは `dtnfabric` の中の関数呼び出し
+- `transfer.accept` を、送り元の Actor Host が受け取る Actor Host の Durable Object を `fetch` ハンドラ（ADR-0023）で呼ぶ（`ACTOR_HOST.get(idFromName("<sessionId>/<actor>"))`）。ローカルは `dtnfabric` の中の関数呼び出し
 - bytes は Actor Host の間だけを動く。Session Front と Coordinator は digest だけを見る
 - Container の外向きの通信は使わない（`enableInternet: false` のまま）
 
@@ -124,7 +124,7 @@ Coordinator は、今の `Transport` と同じ確認（停泊中か・Contact �
 
 DTN-14 の PoC で採用と決めたときだけ実装する。CLA だけを差し替え、§2・§3 の契約は変えない。
 
-- 送り元の Host（または PoC で決めた接続の主体）が、Track `dtn/<sessionId>/<contactId>` に、1 つの transfer を 1 つの Group、1 つの Bundle を 1 つの Object として publish する
+- 送り元の Host（または PoC で決めた接続の主体）が、Track `dtn/<sessionId>/<contactId>/<from>-<to>`（例: `…/island:2-ferry:f1`。向きで分ける）に、1 つの transfer を 1 つの Group、1 つの Bundle を 1 つの Object として publish する
 - 受け取り側は Contact が開いている間だけ subscribe し、§2.2 の確認と digest の確認をしてから保存する。ACK は RPC の経路で返す（MoQ の配信の成功を ACK とみなさない）
 - Relay は永続の正本にしない。閉じた Contact の Object が後から届いても使わない
 - RPC CLA は残し、どちらを使うかはセッションの作成時に決めて記録する。障害時に自動で切り替えない
