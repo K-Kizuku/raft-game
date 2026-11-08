@@ -624,8 +624,12 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 	}
 }
 
-// ST-6 demo-izu・stage3 の航路の形（T-501e・T-718。ゲームデザイン §3.5・データ仕様 §4.5）。
-// 6 島のすべての組に航路が 1 本ずつあり、travelMs は「65 + 1.1 × 配置（layout）の距離」を 10 ms 単位に丸めた値で、
+// izuLayout20261108 は demo-izu・stage3 の 2026-11-08 の配置（T-428 で広げる前。島の並びの順）。
+// travelMs はこの配置の距離から計算した値に固定した（配置は表示のためだけに広げた。データ仕様 §4.5）。
+var izuLayout20261108 = [][2]int64{{160, 90}, {300, 70}, {300, 200}, {400, 250}, {560, 340}, {680, 400}}
+
+// ST-6 demo-izu・stage3 の航路の形（T-501e・T-718・T-428。ゲームデザイン §3.5・データ仕様 §4.5）。
+// 6 島のすべての組に航路が 1 本ずつあり、travelMs は「65 + 1.1 × 2026-11-08 の配置の距離」を 10 ms 単位に丸めた値で、
 // 一番短い航路と一番長い航路の比が 4 倍以内。小数を使わないよう、距離は 2 乗のまま整数で比べる。
 func TestRepoStagesDemoIzuFullMesh(t *testing.T) {
 	t.Parallel()
@@ -634,6 +638,37 @@ func TestRepoStagesDemoIzuFullMesh(t *testing.T) {
 			t.Parallel()
 			checkIzuFullMesh(t, repoStage(t, id))
 		})
+	}
+}
+
+// ST-8 demo-izu・stage3 の配置（T-428）: 広げたあとも、どの 2 島も東西（x）・南北（y）の並びが
+// 2026-11-08 の配置と同じ（並びが逆にならず、同じ座標だったものは同じ座標のまま）。
+func TestRepoStagesIzuLayoutKeepsOrder(t *testing.T) {
+	t.Parallel()
+	sign := func(v int64) int {
+		switch {
+		case v > 0:
+			return 1
+		case v < 0:
+			return -1
+		}
+		return 0
+	}
+	for _, id := range []string{"demo-izu", "stage3"} {
+		st := repoStage(t, id)
+		if len(st.Islands) != len(izuLayout20261108) {
+			t.Fatalf("%s: 島の数 = %d, want %d", id, len(st.Islands), len(izuLayout20261108))
+		}
+		for i := range st.Islands {
+			for j := i + 1; j < len(st.Islands); j++ {
+				a, b := st.Islands[i], st.Islands[j]
+				oa, ob := izuLayout20261108[i], izuLayout20261108[j]
+				if sign(b.X-a.X) != sign(ob[0]-oa[0]) || sign(b.Y-a.Y) != sign(ob[1]-oa[1]) {
+					t.Errorf("%s: %s と %s の並びが変わった: (%d,%d)-(%d,%d), 2026-11-08 は %v-%v",
+						id, a.Ref, b.Ref, a.X, a.Y, b.X, b.Y, oa, ob)
+				}
+			}
+		}
 	}
 }
 
@@ -670,8 +705,11 @@ func checkIzuFullMesh(t *testing.T, st *stage.Stage) {
 			t.Errorf("routes[%d]: %d-%d が 2 本ある", i, a, b)
 		}
 		seen[[2]uint64{a, b}] = true
-		ia, ib := st.Islands[a-1], st.Islands[b-1]
-		dx, dy := ia.X-ib.X, ia.Y-ib.Y
+		if a < 1 || int(b) > len(izuLayout20261108) {
+			t.Fatalf("routes[%d]: %d-%d が 2026-11-08 の配置の島の範囲の外", i, a, b)
+		}
+		ia, ib := izuLayout20261108[a-1], izuLayout20261108[b-1]
+		dx, dy := ia[0]-ib[0], ia[1]-ib[1]
 		d2 := dx*dx + dy*dy
 		// |travelMs - 65 - 1.1 × d| ≤ 5 ⇔ (travelMs - 70)² × 100 ≤ 121 × d² ≤ (travelMs - 60)² × 100（travelMs > 70 のとき）
 		lo, hi := rt.TravelMs-70, rt.TravelMs-60

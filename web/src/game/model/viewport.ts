@@ -18,8 +18,9 @@ export const MAP_VIEW = {
   // 島の配置の外接矩形の周りの余白（絵の拡大率 1 のときの px。絵の拡大率を掛けて使う）。
   // 左右は、端の島の右上に停泊した船とその名前が切れない幅（MAP_STYLE.padding の 56 では切れた）。
   // 上下は、島の上の役のマークと下の名札が切れない幅。
-  paddingX: 84,
-  paddingY: 60,
+  // T-428 で 84・60 から広げた（端の島に船が何隻も停泊しても、船と文字を島の周りに並べる場所が残るように）。
+  paddingX: 110,
+  paddingY: 76,
   // 下の余白に足す高さ（px。拡大しない）。マップの左下に重ねる島のボタンの列（MapView の .map-view__islands）に
   // 島と名札が隠れないようにする。
   bottomReserve: 44,
@@ -31,7 +32,8 @@ export const MAP_VIEW = {
   maxMarkScale: 2, // プロジェクターなどの大きな画面でも、絵が大きくなりすぎない上限
   // 絵の拡大率 1 のとき、隣り合う島の中心どうしに要る間隔（px）。島の絵・名札・手紙の山が重ならない幅。
   // 島が近い配置では、この間隔に収まるまで絵の拡大率を下げる。
-  islandSpacing: 130,
+  // T-428 で 130 から広げた（島の周りに、手紙の山・停泊中の船とその文字を重ねずに並べる場所を残す）。
+  islandSpacing: 150,
 } as const;
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -133,6 +135,8 @@ function nearestGap(points: readonly Point[], t: MapTransform): number | null {
 // 1. 描画領域の大きさから絵の拡大率を決め、余白（mapInsets）もその倍率で広げる（端の島の名札・船が切れない）
 // 2. 島の配置の外接矩形を、その余白の内側に縦横比を保って収める
 // 3. 島どうしが近くて名札・手紙の山が重なるなら、絵の拡大率を下げる（minMarkScale より下げない）
+// 4. 3. で下げたら、余白も下げた倍率で作り直し、島の配置をもう一度収める（T-428。余白が狭くなる分だけ島が
+//    広がる。島どうしの間は広がるだけなので、3. の間隔の条件は保たれる）
 export function layoutMap(points: readonly Point[], size: Size): MapLayout {
   const base = markScaleFor(size);
   const transform = fitIslands(points, size, mapInsets(base));
@@ -141,7 +145,8 @@ export function layoutMap(points: readonly Point[], size: Size): MapLayout {
     gap === null
       ? base
       : clamp(Math.min(base, gap / MAP_VIEW.islandSpacing), MAP_VIEW.minMarkScale, base);
-  return { transform, markScale };
+  if (markScale >= base) return { transform, markScale };
+  return { transform: fitIslands(points, size, mapInsets(markScale)), markScale };
 }
 
 export function toScreen(t: MapTransform, p: Point): Point {

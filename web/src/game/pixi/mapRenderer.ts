@@ -23,6 +23,8 @@ import { hitTest } from "../model/hitTest.ts";
 import { buildRaftTags } from "../model/raftLabels.ts";
 import { buildMapScene } from "../model/scene.ts";
 import type { FerrySprite, IslandNode, LetterPile, MapScene, RouteLine } from "../model/scene.ts";
+import { ferryTextRows } from "../model/placement.ts";
+import type { FerryLabels, TextRow } from "../model/placement.ts";
 import { MAP_STYLE } from "../model/style.ts";
 import { smoothSimTime } from "../model/time.ts";
 import { MAP_VIEW } from "../model/viewport.ts";
@@ -333,11 +335,10 @@ type IslandView = {
 function createIsland(layers: Layers): IslandView {
   const root = new Container();
   const body = new Graphics();
+  // 名札の位置は IslandNode.tagOffset（T-428。重なりを避けて選んだ位置）で毎フレーム合わせる。
   const tag = new Graphics();
-  tag.y = S.islandRadius + D.labelGap;
   const name = label({ size: D.labelFontSize, bold: true, fill: S.colors.nameTagStroke });
   name.anchor.set(0.5, 0);
-  name.y = tag.y + A.nameTagPadY;
   const mark = glyph(D.markFontSize);
   mark.anchor.set(0.5, 1);
   mark.y = -S.islandRadius;
@@ -419,6 +420,8 @@ function drawNameTag(view: IslandView): void {
 function updateIsland(view: IslandView, island: IslandNode, k: number, ls: number): void {
   view.root.position.set(island.at.x, island.at.y);
   view.root.scale.set(k);
+  view.tag.position.set(island.tagOffset.x, island.tagOffset.y);
+  view.name.position.set(island.tagOffset.x, island.tagOffset.y + A.nameTagPadY);
   const key = `${island.id}|${island.color}|${island.selected}|${island.candidate}`;
   if (view.key !== key) {
     view.key = key;
@@ -496,6 +499,8 @@ type FerryView = {
   broken: Text;
   selected: boolean | null;
   seed: number;
+  // 文字の並びの鍵（置き方・行の数・文字の倍率・積み荷の文字）。変わったときだけ並べ直す。
+  textKey: string;
 };
 
 // 郵便船のシルエット（右向き・中心が原点）。船ごとに 1 回だけ描く。
@@ -552,8 +557,6 @@ function createFerry(layers: Layers, id: string): FerryView {
   const ship = drawShip(new Graphics());
   hull.addChild(ship);
   const name = label({ size: D.ferryLabelFontSize, bold: true, halo: true });
-  name.anchor.set(0.5, 1);
-  name.y = -D.ferryRingRadius;
   const cargoIcon = drawEnvelope(new Graphics(), {
     color: S.colors.postal,
     width: A.cargoIconWidth,
@@ -561,11 +564,7 @@ function createFerry(layers: Layers, id: string): FerryView {
   });
   const cargo = label({ size: D.ferryLabelFontSize, font: "number", bold: true, halo: true });
   cargo.anchor.set(0, 0);
-  cargo.y = D.ferryRingRadius;
-  cargoIcon.y = D.ferryRingRadius + D.ferryLineHeight / 2;
   const eta = label({ size: D.ferryLabelFontSize, font: "number", bold: true, halo: true });
-  eta.anchor.set(0.5, 0);
-  eta.y = D.ferryRingRadius + D.ferryLineHeight;
   const broken = glyph(D.brokenFontSize);
   broken.position.set(D.ferryRingRadius, -D.ferryRingRadius / 2);
   broken.text = "🔧";
@@ -583,22 +582,39 @@ function createFerry(layers: Layers, id: string): FerryView {
     broken,
     selected: null,
     seed: seedOf(id),
+    textKey: "",
   };
 }
 
-// 積み荷の封筒の印と「3/5」を、まとめて船の真下にそろえる（文字が変わったときだけ）。
-function layoutCargo(view: FerryView): void {
-  const total = A.cargoIconWidth + A.cargoIconGap + view.cargo.width;
-  const left = -total / 2;
-  view.cargoIcon.x = left + A.cargoIconWidth / 2;
-  view.cargo.x = left + A.cargoIconWidth + A.cargoIconGap;
+const ANCHOR_X: Record<TextRow["align"], number> = { center: 0.5, left: 0, right: 1 };
+
+// 1 行の文字を、行の位置（上端と align の基準）に置く。
+function placeRow(text: Text, row: TextRow): void {
+  text.anchor.set(ANCHOR_X[row.align], 0);
+  text.position.set(row.x, row.y);
 }
 
-// 船の文字（名前・積み荷・到着まで）を文字の倍率で拡大し、行の間隔もその分だけ広げる。
-function scaleFerryText(view: FerryView, ls: number): void {
-  for (const text of [view.name, view.cargo, view.eta]) text.scale.set(ls);
-  view.cargoIcon.y = D.ferryRingRadius + (D.ferryLineHeight * ls) / 2;
-  view.eta.y = D.ferryRingRadius + D.ferryLineHeight * ls;
+// 船の文字（名前・積み荷・到着まで）を、置き方（T-428。model/placement.ts の ferryTextRows）に並べる。
+// 積み荷の行は、封筒の印と「3/5」をまとめて行の基準にそろえる。到着までが無いときは 2 行として並べる。
+function layoutFerryText(view: FerryView, labels: FerryLabels, ls: number): void {
+  const hasEta = view.eta.text !== "";
+  const [nameRow, cargoRow, etaRow] = ferryTextRows(labels, hasEta ? 3 : 2, ls);
+  if (nameRow !== undefined) placeRow(view.name, nameRow);
+  if (cargoRow !== undefined) {
+    const total = A.cargoIconWidth + A.cargoIconGap + view.cargo.width;
+    const left =
+      cargoRow.align === "center"
+        ? cargoRow.x - total / 2
+        : cargoRow.align === "left"
+          ? cargoRow.x
+          : cargoRow.x - total;
+    view.cargoIcon.x = left + A.cargoIconWidth / 2;
+    view.cargoIcon.y = cargoRow.y + (D.ferryLineHeight * ls) / 2;
+    view.cargo.position.set(left + A.cargoIconWidth + A.cargoIconGap, cargoRow.y);
+  }
+  if (etaRow !== undefined) placeRow(view.eta, etaRow);
+  // 故障の 🔧 は、文字が右にあるときだけ船の左に置く（文字と重ねない）。
+  view.broken.x = labels === "right" ? -D.ferryRingRadius : D.ferryRingRadius;
 }
 
 function updateFerry(
@@ -610,9 +626,10 @@ function updateFerry(
 ): void {
   view.root.position.set(ferry.at.x, ferry.at.y);
   view.root.scale.set(k);
-  // 文字の倍率が変わったとき（画面の大きさが変わったとき）だけ、文字の大きさと並びを直す。
-  const rescaled = view.name.scale.x !== ls;
-  if (rescaled) scaleFerryText(view, ls);
+  // 文字の倍率が変わったとき（画面の大きさが変わったとき）だけ、文字の大きさを直す。
+  if (view.name.scale.x !== ls) {
+    for (const text of [view.name, view.cargo, view.eta]) text.scale.set(ls);
+  }
   if (view.selected !== ferry.selected) {
     view.selected = ferry.selected;
     view.ring.clear();
@@ -632,12 +649,18 @@ function updateFerry(
   view.hull.y = bob.y;
   view.hull.rotation = bob.rotation;
   setText(view.name, ferry.name);
-  if (setText(view.cargo, `${ferry.cargoCount}/${ferry.capacity}`) || rescaled) layoutCargo(view);
+  setText(view.cargo, `${ferry.cargoCount}/${ferry.capacity}`);
   const eta =
     ferry.state === "sailing" && ferry.etaMs !== null
       ? `あと ${formatDuration(Math.ceil(ferry.etaMs / 1000) * 1000)}`
       : "";
   setText(view.eta, eta);
+  // 並びが変わったとき（置き方・到着までの有無・文字の倍率・積み荷の文字の幅）だけ並べ直す。
+  const textKey = `${ferry.labels}|${eta === "" ? 2 : 3}|${ls}|${view.cargo.text}`;
+  if (view.textKey !== textKey) {
+    view.textKey = textKey;
+    layoutFerryText(view, ferry.labels, ls);
+  }
   view.broken.visible = ferry.broken;
 }
 
@@ -773,7 +796,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     const { world, selection } = deps.store.getState();
     if (world === null) return;
     shown = smoothSimTime(shown, estimateSimTime(world.clock, now));
-    const scene = buildMapScene(world, selection, shown, size);
+    const scene = buildMapScene(world, selection, shown, size, textScale);
     lastScene = scene;
     const k = markScaleOf(scene);
     syncViews(

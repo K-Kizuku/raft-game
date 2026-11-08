@@ -20,7 +20,7 @@ export const MAP_STYLE = {
   ferryHitRadius: 18,
   pileOffset: 52, // 島の中心から手紙の山までの距離（px）
   pileStackStep: 20, // 宛先の島が分からない山を縦に並べる間隔（px）
-  dockOffset: 12, // 停泊中の船を島の右上に並べる余白（px）
+  dockOffset: 20, // 停泊中の船を島の右上に並べる余白（px。積み荷の文字が島の絵に重ならない幅。T-428）
   dockStep: 40, // 同じ島に停泊する 2 隻目以降のずらし（px）
   dash: 10, // 嵐の航路の点線（px）
   dashGap: 8,
@@ -96,5 +96,28 @@ export const MAP_STYLE = {
     ferryLineHeight: 13, // 船の下に並べる文字（積み荷・到着まで）の行の高さ
     ferryRingWidth: 3,
     brokenFontSize: 13,
+  },
+  // 札（島の名札・手紙の山・船とその文字）の位置の候補（T-428。./placement.ts）。px は絵の拡大率 1 のときの値。
+  placement: {
+    // 文字の幅と高さの見積もり（文字の大きさに対する割合）。半角は asciiWidth、それ以外（かな・漢字）は wideWidth。
+    asciiWidth: 0.62,
+    wideWidth: 1,
+    lineHeight: 1.3,
+    // 船の文字を船の左右に置くときの、船の絵との間（px）。
+    ferryTextGap: 3,
+    // 手紙の山の候補: 島の中心からの距離を pileOffset から pileRingStep ずつ pileRings 段、
+    // 向きを宛先の島の向きから 2π / pileAngles ずつ回す。
+    pileRingStep: 30,
+    pileRings: 3,
+    pileAngles: 16,
+    // 停泊中の船の候補: 島の中心からの距離を、右上の桟橋の位置から dockRingStep ずつ dockRings 段、
+    // 並びの向きを dockAngles 通り（1 隻のとき。n 隻なら 2π / n の間を dockAngles / n 通り）回す。
+    dockRingStep: 18,
+    dockRings: 9,
+    dockAngles: 32,
+    // 一周に並べると重なるときの、弧の角度（一周に対する割合。大きい順に試す）。
+    dockArcs: [0.75, 0.5, 0.3],
+    // 停泊中の船どうしの中心の、最低限の間（px）。
+    dockMinGap: 36,
   },
 } as const;

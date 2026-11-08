@@ -12,24 +12,24 @@ durationMs: 240000
 unlock: stage2
 
 islands:                        # 島・配置・色・郵便局長は demo-izu と同じ（repo_postmaster_test.go）
-  - ref: tokyo-oshima
-    layout: { x: 160, y: 90 }
+  - ref: tokyo-oshima           # 配置は並び順だけを残した見やすい配置（creative。T-428 で広げた。データ仕様 §4.5）
+    layout: { x: 0, y: 120 }
     color: "#E07A5F"
     postmaster: { name: はまかぜ局長, tone: casual, provenance: creative }
   - ref: tokyo-toshima
-    layout: { x: 300, y: 70 }
+    layout: { x: 220, y: 0 }
     color: "#3D85C6"
     postmaster: { name: しまかげ局長, tone: polite, provenance: creative }
   - ref: tokyo-miyakejima
-    layout: { x: 300, y: 200 }
+    layout: { x: 220, y: 250 }
     color: "#81B29A"
     postmaster: { name: あかつき局長, tone: elder, provenance: creative }
   - ref: tokyo-mikurajima
-    layout: { x: 400, y: 250 }
+    layout: { x: 480, y: 290 }
     color: "#F2CC8F"
     postmaster: { name: いさりび局長, tone: casual, provenance: creative }
   - ref: tokyo-hachijojima
-    layout: { x: 560, y: 340 }
+    layout: { x: 740, y: 340 }
     color: "#9C6ADE"
     postmaster:               # 名前は計画書の記述にちなむ（ゲームデザイン §7.3）
       name: フルーツレモン局長
@@ -37,12 +37,13 @@ islands:                        # 島・配置・色・郵便局長は demo-izu 
       provenance: derived
       source: { dataset: mlit-ritou-2026, region: 伊豆諸島地域, field: LOCAL_INDUSTRY_TOURISM, quote: "八丈フルーツレモン" }
   - ref: tokyo-aogashima
-    layout: { x: 680, y: 400 }
+    layout: { x: 1000, y: 400 }
     color: "#5FB3B3"
     postmaster: { name: ほしぞら局長, tone: elder, provenance: creative }
 
 routes:                         # 6 島のすべての組（15 本）。航路の形＝Raft のネットワーク（ゲームデザイン §3.5）
-                                # travelMs = 65 + 1.1 × 配置（layout）の距離、10 ms 単位（demo-izu と同じ。データ仕様 §4.5）
+                                # travelMs = 65 + 1.1 × 2026-11-08 の配置（T-428 で広げる前）の距離、10 ms 単位（demo-izu と同じ。データ仕様 §4.5）
+                                # 配置は表示のためだけに広げたので、travelMs は広げる前の値のまま固定する
   - { a: tokyo-oshima, b: tokyo-toshima, travelMs: 220, provenance: creative }
   - { a: tokyo-oshima, b: tokyo-miyakejima, travelMs: 260, provenance: creative }
   - { a: tokyo-oshima, b: tokyo-mikurajima, travelMs: 380, provenance: creative }
