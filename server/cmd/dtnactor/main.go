@@ -1,7 +1,7 @@
 // Command dtnactor は DTN 版の Actor の Container のエントリ（DTN-02 #159、architecture.md §1・§3）。
 // image は 1 つで、環境変数 ROLE で役割を変える。
 //
-//	ROLE=island dtnactor        島の Actor（DTN-03 で登録する）
+//	ROLE=island dtnactor        島の Actor（DTN-03。server/internal/dtn/island）
 //	ROLE=ferry dtnactor         船の Actor（DTN-04。server/internal/dtn/ferryactor）
 //	ROLE=coordinator dtnactor   Coordinator（DTN-05 で登録する）
 //
@@ -48,9 +48,10 @@ type roleFactory func(env Env) (runtime.Actor, error)
 // knownRoles は ROLE に書ける値。
 var knownRoles = []string{"coordinator", "island", "ferry"}
 
-// roles は実装のある役割。island・coordinator は DTN-03・05 で登録する。
+// roles は実装のある役割。coordinator は DTN-05 で登録する。
 var roles = map[string]roleFactory{
-	"ferry": newFerryActor, // DTN-04（ferry.go）
+	"island": newIslandActor, // DTN-03（island.go）
+	"ferry":  newFerryActor,  // DTN-04（ferry.go）
 }
 
 func main() {

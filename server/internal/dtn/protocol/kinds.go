@@ -11,6 +11,7 @@ const (
 	KindPortRemove   Kind = "port.remove"
 	KindUnload       Kind = "unload"
 	KindRelayRemove  Kind = "relay.remove"
+	KindRequestsNote Kind = "requests.note" // 依頼の発生と結果を、依頼元でない島に知らせる（DTN-03 #160）
 	KindArrive       Kind = "arrive"
 	KindDepart       Kind = "depart"
 	KindCargoAdd     Kind = "cargo.add"
@@ -60,6 +61,7 @@ var kindTable = []KindInfo{
 	{KindPortRemove, RoleIsland, false, true, func() payload { return new(LetterIDsPayload) }},
 	{KindUnload, RoleIsland, false, true, func() payload { return new(UnloadPayload) }},
 	{KindRelayRemove, RoleIsland, false, true, func() payload { return new(LetterIDsPayload) }},
+	{KindRequestsNote, RoleIsland, false, true, func() payload { return new(RequestsNotePayload) }},
 	{KindArrive, RoleFerry, false, true, func() payload { return new(ArrivePayload) }},
 	{KindDepart, RoleFerry, false, true, func() payload { return new(DepartPayload) }},
 	{KindCargoAdd, RoleFerry, false, true, func() payload { return new(LettersPayload) }},

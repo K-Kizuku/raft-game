@@ -127,3 +127,51 @@ func (c *Core) Route(t int64, i, hops int) {
 func (c *Core) AddWait(i, hops int) {
 	c.waits = append(c.waits, Wait{Req: i, Hops: hops, Seq: c.nextSeq()})
 }
+
+// LearnRequest は、計画にない依頼 r を窓口に足す（分散版の島が、依頼の手紙が運ぶ台帳のコマンドから知る。
+// bpv7-profile.md §4）。足したら true。既に知っている reqId なら、台帳のコマンドの中身（ID・Origin・Kind・
+// Resource）が同じなら何もせず false、違えばエラーで何も変えない。足した依頼は、まだ発生も結果も知らない状態。
+func (c *Core) LearnRequest(r game.Request) (bool, error) {
+	if r.ID == "" {
+		return false, errors.New("islandcore: learn request with empty id")
+	}
+	if i, ok := c.byID[r.ID]; ok {
+		if !sameCommand(c.reqs[i].req, r) {
+			return false, fmt.Errorf("islandcore: island %d: request %s differs from the known one", c.id, r.ID)
+		}
+		return false, nil
+	}
+	c.byID[r.ID] = len(c.reqs)
+	c.reqs = append(c.reqs, reqState{req: r})
+	return true, nil
+}
+
+// sameCommand は、2 つの依頼の台帳のコマンドが同じか（Command が作る値で比べる）。
+func sameCommand(a, b game.Request) bool { return a.Command() == b.Command() }
+
+// Request は reqID の依頼を返す（計画のものと LearnRequest で足したもの）。知らなければ false。
+func (c *Core) Request(reqID string) (game.Request, bool) {
+	i, ok := c.byID[reqID]
+	if !ok {
+		return game.Request{}, false
+	}
+	return c.reqs[i].req, true
+}
+
+// RequestInfo は窓口の依頼 1 件の状態（観察用。分散版の島の stateDigest・inspect）。
+type RequestInfo struct {
+	Request  game.Request
+	Created  bool
+	Resolved bool
+	Gen      uint64
+}
+
+// Requests は窓口の依頼の状態を、窓口に入れた順（計画の順、そのあと LearnRequest の順）に返す。
+// 添字は Event.Req・Wait.Req・RequestRoutedOut.Req と同じ。
+func (c *Core) Requests() []RequestInfo {
+	out := make([]RequestInfo, len(c.reqs))
+	for i, r := range c.reqs {
+		out[i] = RequestInfo{Request: r.req, Created: r.created, Resolved: r.resolved, Gen: r.gen}
+	}
+	return out
+}

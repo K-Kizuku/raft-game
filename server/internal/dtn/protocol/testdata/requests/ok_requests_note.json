@@ -1,0 +1,24 @@
+{
+  "description": "requests.note",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 42,
+    "kind": "requests.note",
+    "payload": {
+      "t": 12500,
+      "created": [
+        "stage2-0003"
+      ],
+      "resolved": [
+        "stage2-0001",
+        "stage2-0002"
+      ]
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:886712c12a9b3d3339b89b08a49c1ca5324d2413ebda69cf58ef41c60370b461"
+}

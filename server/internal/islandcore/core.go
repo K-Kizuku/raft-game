@@ -478,3 +478,6 @@ func (c *Core) PostRequest(t int64, to uint64, note ferry.RequestNote) (ferry.Le
 // Propose はノードに data を提案する。Leader でなければ raft.ErrProposalDropped（包まない）。
 // Process は呼ばない（呼び出し側の後処理で出力になる）。
 func (c *Core) Propose(data []byte) error { return c.node.Propose(data) }
+
+// LetterCount は、島で作った手紙の数を返す（Config.NewLetterID が nil のとき。次の手紙の n はこれ + 1）。
+func (c *Core) LetterCount() uint64 { return c.letterN }
