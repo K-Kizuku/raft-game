@@ -158,14 +158,15 @@ describe("GameScreen", () => {
       screen.getAllByRole("status").find((el) => el.textContent?.includes(text));
 
     m.setStatus("connecting");
-    expect(statusWith("サーバーに接続しています…")).toBeDefined();
+    expect(statusWith("出航の準備をしています…")).toBeDefined();
 
     m.setStatus("ready");
-    expect(screen.queryByText("サーバーに接続しています…")).toBeNull();
+    expect(screen.queryByText("出航の準備をしています…")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
 
     m.setStatus("reconnecting");
     expect(statusWith("接続が切れました。つなぎ直しています…")).toBeDefined();
+    expect(document.querySelector(".departure-art")).toBeNull();
 
     m.setStatus("failed", "replaced");
     const alert = screen.getByRole("alert");
@@ -175,6 +176,35 @@ describe("GameScreen", () => {
     const link = within(alert).getByRole("link", { name: "ステージ選択へ" });
     expect(link.getAttribute("href")).toBe("/stages");
     expect(screen.queryByText("接続が切れました。つなぎ直しています…")).toBeNull();
+  });
+
+  it("GM-3b 接続中は出港の絵と文言をマップの中央に出し、つながると消す（T-436）", () => {
+    const m = manualConnector();
+    render(<GameScreen round={withSession} onRoundEnd={() => {}} connector={m.connector} />);
+    const map = screen.getByRole("region", { name: "マップ" });
+    const departure = () => map.querySelector(".game-departure");
+
+    // 接続の準備中（idle）・接続中は、出港の絵（飾り）と文言を 1 つの status に出す
+    for (const state of ["idle", "connecting"] as const) {
+      m.setStatus(state);
+      const card = departure();
+      expect(card?.getAttribute("role")).toBe("status");
+      expect(card?.textContent).toBe("出航の準備をしています…");
+      const art = card?.querySelector("svg.departure-art");
+      expect(art?.getAttribute("aria-hidden")).toBe("true");
+      expect(art?.querySelectorAll(".departure-art-ship")).toHaveLength(1);
+    }
+
+    m.setStatus("ready");
+    expect(departure()).toBeNull();
+    expect(screen.queryByText("出航の準備をしています…")).toBeNull();
+
+    // つながらないときは、絵を消して今までのエラーの文言を出す
+    m.setStatus("connecting");
+    expect(departure()).not.toBeNull();
+    m.setStatus("failed", "unreachable");
+    expect(departure()).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("サーバーに接続できませんでした。");
   });
 
   it("GM-4 ready・syncing のときだけパネルからコマンドを送れる", () => {
