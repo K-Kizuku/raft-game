@@ -2,7 +2,7 @@
 // image は 1 つで、環境変数 ROLE で役割を変える。
 //
 //	ROLE=island dtnactor        島の Actor（DTN-03 で登録する）
-//	ROLE=ferry dtnactor         船の Actor（DTN-04 で登録する）
+//	ROLE=ferry dtnactor         船の Actor（DTN-04。server/internal/dtn/ferryactor）
 //	ROLE=coordinator dtnactor   Coordinator（DTN-05 で登録する）
 //
 // PORT があればそのポート（全てのアドレス。Cloudflare の Container）、なければ 127.0.0.1:0 で待ち受け、
@@ -48,8 +48,10 @@ type roleFactory func(env Env) (runtime.Actor, error)
 // knownRoles は ROLE に書ける値。
 var knownRoles = []string{"coordinator", "island", "ferry"}
 
-// roles は実装のある役割。island・ferry・coordinator は DTN-03・04・05 で登録する。
-var roles = map[string]roleFactory{}
+// roles は実装のある役割。island・coordinator は DTN-03・05 で登録する。
+var roles = map[string]roleFactory{
+	"ferry": newFerryActor, // DTN-04（ferry.go）
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

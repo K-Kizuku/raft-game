@@ -102,7 +102,7 @@ func TestDtnactorListenLine(t *testing.T) {
 }
 
 func TestDtnactorUnknownRole(t *testing.T) {
-	for _, role := range []string{"", "boat", "ISLAND", "island", "ferry", "coordinator"} {
+	for _, role := range []string{"", "boat", "ISLAND", "island", "coordinator"} {
 		var stdout, stderr bytes.Buffer
 		if c := run(context.Background(), env(map[string]string{"ROLE": role}), &stdout, &stderr, roles); c != 2 {
 			t.Errorf("ROLE=%q: exit code %d, want 2", role, c)
