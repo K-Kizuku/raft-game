@@ -358,7 +358,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 |---|---|---|
 | `v` | 双方向 | プロトコルバージョン。一致しなければサーバーは `error` を返して切断する |
 | `type` | 双方向 | メッセージの種類 |
-| `seq` | サーバー → クライアント | サーバーからのメッセージの連番（1 から）。Go のサーバーは接続ごとに 1 から数える（つなぎ直した接続の最初の電文は `snapshot`）。抜けを検出したらクライアントは `cmd.sync` を送る。規則は [§10.2](#102-seq) |
+| `seq` | サーバー → クライアント | サーバーからのメッセージの連番（1 から）。Go のサーバーは接続ごとに 1 から数える（つなぎ直した接続の最初の電文は `snapshot`）。`internal.*`（DO だけが読み、ブラウザに送らない）には付けず、数えもしない（ブラウザに届く電文の `seq` に抜けを作らないため）。抜けを検出したらクライアントは `cmd.sync` を送る。規則は [§10.2](#102-seq) |
 | `cmdId` | クライアント → サーバー | クライアントが付けるコマンドの ID（任意の文字列）。`ack` で返る |
 | `payload` | 双方向 | 種類ごとの中身 |
 
@@ -688,7 +688,7 @@ Durable Object とコンテナの間だけの電文です。ブラウザから�
 | `internal.restore` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "autoFerry": true, "inputLog": InputLog, "until": 61200 }`（`autoFerry` は `internal.init` と同じ） | コンテナが止まった後の復元。コンテナは `sim.Replay` で入力ログの最後の時刻（`until` があればその時刻）まで進め、一時停止の状態で `snapshot`（`session.restored: true`）を返す |
 | `internal.result` | コンテナ → DO | `RoundResult`（§5.5） | ラウンドの終了時。DO が SQLite に保存する（ブラウザには別に `round.result` が届く） |
 | `internal.ping` / `internal.pong` | 双方向 | `{}` | 死活監視（5 秒ごと）。3 回続けて応答がなければ、DO はコンテナが止まったとみなして復元する |
-| `internal.input` | コンテナ → DO | `{ "t": 3000, "cmd": { "type": "cmd.ferry.depart", "payload": { "ferryId": "f2", "to": 3 } } }`（入力ログの 1 件） | 自動航行の船のボットが適用したコマンド 1 件（T-724）。DO が入力ログに追記する（ブラウザには送らない）。適用した順に送るので、`ack` と合わせた記録の順は Engine の入力ログと同じ。`standalone` は送らない |
+| `internal.input` | コンテナ → DO | `{ "t": 3000, "cmd": { "type": "cmd.ferry.depart", "payload": { "ferryId": "f2", "to": 3 } } }`（入力ログの 1 件） | 自動航行の船のボットが適用したコマンド 1 件（T-724）。DO が入力ログに追記する（ブラウザには送らない。`seq` を持たない。§3）。適用した順に送るので、`ack` と合わせた記録の順は Engine の入力ログと同じ。`standalone` は送らない |
 
 `InputLog` の形式は [DesignDoc §10.1](./03-design-doc.md) のとおりです。`until` は省略できます（ゲーム内のミリ秒。0 か省略なら入力ログの最後のコマンドの `t`）。DO は最後に中継した `clock.t` を入れます。入力ログの `stageHash`・`build` は、コンテナが `snapshot` の `session.stageHash`・`session.build`（§5.1）で知らせた値を DO が保存して入れます。
 

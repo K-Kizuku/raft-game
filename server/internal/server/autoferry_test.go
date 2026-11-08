@@ -274,6 +274,57 @@ func TestAutoFerryBotAndRestore(t *testing.T) {
 	}
 }
 
+// AF-1b: ボットが動いている間も、ブラウザに届く電文（internal.* 以外）の seq は 1 から抜けなくつながる。
+// internal.input は seq を持たない（DO はブラウザに送らないので、seq を使うとブラウザが抜けとみなして
+// cmd.sync を繰り返す）。
+func TestAutoFerrySeqHasNoGaps(t *testing.T) {
+	t.Parallel()
+	ts := newAutoServer(t, ModeSingle, false)
+	c := ts.dialSingle(t)
+	initP := protocol.InternalInitPayload{SessionID: "s_auto.seq", StageID: autoStage, Seed: autoSeed, AutoFerry: true}
+	c.send(protocol.MessageTypeInternalInit, "", initP)
+	if env := c.expect(protocol.MessageTypeSnapshot, nil); env.Seq != 1 {
+		t.Fatalf("snapshot の seq = %d, want 1", env.Seq)
+	}
+	sess := ts.singleSession(t)
+	last := uint64(1)
+	inputs := 0
+	// drain は ping を送り、pong までに届いた電文の seq を確かめる。
+	drain := func() {
+		t.Helper()
+		c.send(protocol.MessageTypePing, "", protocol.PingPayload{ClientTime: 1})
+		for {
+			env := c.recv()
+			if isInternal(env.Type) {
+				if env.Seq != 0 {
+					t.Errorf("%s の seq = %d（internal.* は seq を持たない）", env.Type, env.Seq)
+				}
+				if env.Type == protocol.MessageTypeInternalInput {
+					inputs++
+				}
+				continue
+			}
+			if env.Seq != last+1 {
+				t.Errorf("%s の seq = %d, want %d（抜けがある）", env.Type, env.Seq, last+1)
+			}
+			last = env.Seq
+			if env.Type == protocol.MessageTypePong {
+				return
+			}
+		}
+	}
+	c.send(protocol.MessageTypeCmdFerryAuto, "a-1", ferryAuto("f2", true))
+	c.send(protocol.MessageTypeCmdGameStart, "c-1", struct{}{})
+	drain()
+	stepFor(sess, 60)
+	drain()
+	c.send(protocol.MessageTypeInternalPing, "", struct{}{}) // internal.pong も seq を持たない
+	drain()
+	if inputs == 0 {
+		t.Fatal("ボットの操作（internal.input）が届かない")
+	}
+}
+
 // AF-3: 一時停止中はボットを動かさない。
 func TestAutoFerryPaused(t *testing.T) {
 	t.Parallel()

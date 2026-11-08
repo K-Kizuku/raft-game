@@ -168,6 +168,8 @@ func (w *wsConn) finish() {
 }
 
 // writeLoop は送信キューを順に書き込む。seq は 1 から付ける。
+// internal.*（DO だけが読み、ブラウザには届かない）は seq を付けず、数えもしない。数えると、DO が
+// ブラウザに送る電文の seq に抜けができ、ブラウザが cmd.sync を繰り返すため。
 func (w *wsConn) writeLoop() {
 	defer close(w.done)
 	var seq uint64
@@ -180,8 +182,12 @@ func (w *wsConn) writeLoop() {
 			_ = w.c.Close(code, "")
 			return
 		case m := <-w.out:
-			seq++
-			b, err := protocol.EncodeEnvelope(m.typ, seq, "", m.payload)
+			var s uint64 // 0 は seq を省く（omitempty）
+			if !isInternal(m.typ) {
+				seq++
+				s = seq
+			}
+			b, err := protocol.EncodeEnvelope(m.typ, s, "", m.payload)
 			if err != nil {
 				// 自分で組み立てた payload なので起きないはず。送らずに閉じる。
 				w.log.Error("encode", "type", string(m.typ), "err", err.Error())
