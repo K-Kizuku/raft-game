@@ -2,7 +2,7 @@
 // ストアに届いた値（node.state・route.*・ferry.*）を描くだけで、Raft の結果をここで決めない。
 // 引数を書き換えず、時刻は引数の simNow だけを使う。
 import { formatDuration } from "../../app/format.ts";
-import { portPiles } from "../../state/index.ts";
+import { isAutoFerry, portPiles } from "../../state/index.ts";
 import type { UiSelection, World } from "../../state/index.ts";
 import { ferryProgress, lerp } from "./ferry.ts";
 import { partitionOf } from "./partition.ts";
@@ -56,6 +56,7 @@ export type FerrySprite = Readonly<{
   capacity: number;
   etaMs: number | null;
   broken: boolean;
+  auto: boolean; // 自動航行（cmd.ferry.auto。T-725）の船か。名前の札に「自動」を付ける（ferryMapName）
   selected: boolean;
   // 文字（名前・積み荷・到着まで）の置き方（T-428。placement.ts の ferryTextRows）。
   labels: FerryLabels;
@@ -192,9 +193,11 @@ export function buildMapScene(
       cargoCount: ferry.cargo.length,
       capacity: ferry.capacity,
       broken: ferry.brokenUntil !== null && ferry.brokenUntil > simNow,
+      auto: isAutoFerry(world, id),
       selected: selection.ferryId === id,
     };
     const cargo = `${String(common.cargoCount)}/${String(common.capacity)}`;
+    const mapName = ferryMapName(ferry.name, common.auto);
     if (ferry.state === "sailing") {
       // 島が分からない船は描かない。
       const from = ferry.from === undefined ? undefined : centers.get(ferry.from);
@@ -211,12 +214,12 @@ export function buildMapScene(
         },
         at,
       });
-      sailing.push({ id, at, text: { name: ferry.name, cargo, eta: etaText(etaMs) } });
+      sailing.push({ id, at, text: { name: mapName, cargo, eta: etaText(etaMs) } });
     } else {
       const islandId = ferry.islandId;
       if (islandId === undefined || !centers.has(islandId)) continue;
       ferryBases.push({ base: { ...common, state: "docked", heading: 0, etaMs: null }, at: null });
-      docked.push({ id, islandId, text: { name: ferry.name, cargo, eta: null } });
+      docked.push({ id, islandId, text: { name: mapName, cargo, eta: null } });
     }
   }
 
@@ -294,6 +297,11 @@ export function buildMapScene(
     labelBoxes: labels.fixed,
     partition: partitionScene(present, routeEnds, centers),
   };
+}
+
+// マップの船の名前の札（T-725）。自動航行の船は「ごとう丸・自動」にする（描画の pixi/mapRenderer.ts と札の幅の見積もりで同じ文字を使う）。
+export function ferryMapName(name: string, auto: boolean): string {
+  return auto ? `${name}・自動` : name;
 }
 
 // 航行中の船の「あと 0:05」（描画の pixi/mapRenderer.ts と同じ書式。札の幅の見積もりに使う）。

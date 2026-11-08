@@ -3,7 +3,7 @@
 // 送っても明らかに失敗するものだけ。満載・行き先宛ての手紙が無い・故障はサーバーの ack で知らせる。
 // 引数を書き換えず、呼ぶたびに新しい配列を返す（React では useMemo の中で呼ぶ）。時刻は引数の simNow。
 import type { Letter, Route } from "../../protocol/index.ts";
-import { portPiles } from "../../state/index.ts";
+import { isAutoFerry, portPiles } from "../../state/index.ts";
 import type { FerryView, UiSelection, World } from "../../state/index.ts";
 
 export type FerryTab = Readonly<{
@@ -16,6 +16,7 @@ export type FerryTab = Readonly<{
   cargoCount: number;
   capacity: number;
   broken: boolean;
+  auto: boolean; // 自動航行（cmd.ferry.auto。T-725）の船か
 }>;
 export type PortGroup = Readonly<{
   to: number;
@@ -63,6 +64,7 @@ export type FerryDetail = Readonly<{
   name: string;
   state: "docked" | "sailing";
   broken: boolean;
+  auto: boolean; // 自動航行（cmd.ferry.auto。T-725）の船か。自動の船は手で操作しない
   islandId: number | null; // docked のときだけ
   islandName: string | null;
   toName: string | null; // sailing のときだけ
@@ -124,6 +126,7 @@ export function ferryTabs(world: World, selection: UiSelection, simNow: number):
       cargoCount: ferry.cargo.length,
       capacity: ferry.capacity,
       broken: isBroken(ferry, simNow),
+      auto: isAutoFerry(world, id),
     });
   }
   return tabs;
@@ -299,6 +302,7 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
   const ferry = getFerry(world, ferryId);
   if (ferry === undefined) return null;
   const broken = isBroken(ferry, simNow);
+  const auto = isAutoFerry(world, ferryId);
   const relayCap = world.stage.relayCap ?? 0;
   if (ferry.state === "sailing") {
     return {
@@ -306,6 +310,7 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
       name: ferry.name,
       state: "sailing",
       broken,
+      auto,
       islandId: null,
       islandName: null,
       toName: ferry.to === undefined ? null : islandName(world, ferry.to),
@@ -342,6 +347,7 @@ export function ferryDetail(world: World, ferryId: string, simNow: number): Ferr
     name: ferry.name,
     state: "docked",
     broken,
+    auto,
     islandId,
     islandName: islandId === null ? null : islandName(world, islandId),
     toName: null,

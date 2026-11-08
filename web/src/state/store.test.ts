@@ -201,6 +201,32 @@ describe("createGameStore", () => {
     expect(count()).toBe(0);
   });
 
+  it("SO-AUTO setAutoFerry は world.session.autoFerries を直し、知らない船・world が無いときは何もしない（T-725）", () => {
+    const store = createGameStore();
+    const s = store.getState;
+    s().setAutoFerry("f1", true);
+    expect(s().world).toBeNull();
+
+    s().applySnapshot(loadMiniRound().snapshot, 0);
+    const { count } = counted(store);
+    s().setAutoFerry("f1", true);
+    expect(s().world?.session.autoFerries).toEqual(["f1"]);
+    expect(count()).toBe(1);
+    s().setAutoFerry("f1", true); // すでに自動なら通知しない
+    expect(count()).toBe(1);
+    s().setAutoFerry("f9", true); // ステージに無い船
+    expect(s().world?.session.autoFerries).toEqual(["f1"]);
+    expect(count()).toBe(1);
+    s().setAutoFerry("f1", false);
+    expect(s().world?.session).not.toHaveProperty("autoFerries");
+    expect(count()).toBe(2);
+
+    // snapshot（つなぎ直し・復元）は届いた値で置き換える。
+    s().setAutoFerry("f1", true);
+    s().applySnapshot(loadMiniRound().snapshot, 0);
+    expect(s().world?.session).not.toHaveProperty("autoFerries");
+  });
+
   it("SO-7 2 つのストアは互いに影響しない", () => {
     const a = createGameStore();
     const b = createGameStore();

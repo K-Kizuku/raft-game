@@ -13,10 +13,12 @@ export type {
 export { applyEvent, applyEvents, withClock, worldFromSnapshot } from "./applyEvent.ts";
 export {
   estimateSimTime,
+  isAutoFerry,
   leaderId,
   lettersAtPort,
   lettersOnFerry,
   portPiles,
+  withAutoFerry,
 } from "./selectors.ts";
 export { createGameStore, gameStore, useGameStore } from "./store.ts";
 export {

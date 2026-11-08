@@ -31,6 +31,7 @@ function ferry(id: string, at: Point): FerrySprite {
     capacity: 4,
     etaMs: null,
     broken: false,
+    auto: false,
     selected: false,
     labels: "split",
   };

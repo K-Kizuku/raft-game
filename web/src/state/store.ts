@@ -8,6 +8,7 @@ import type { StoreApi } from "zustand";
 
 import type { Clock, NodeDetail, RoundResult, ServerEvent, Snapshot } from "../protocol/index.ts";
 import { applyEvents, withClock, worldFromSnapshot } from "./applyEvent.ts";
+import { withAutoFerry } from "./selectors.ts";
 import { EMPTY_TIMELINE, appendTimelineEvents, timelineFromSnapshot } from "./timeline.ts";
 import type { Timeline } from "./timeline.ts";
 import type { World } from "./world.ts";
@@ -26,6 +27,9 @@ export type GameState = Readonly<{
   setNodeDetail(detail: NodeDetail | null): void;
   selectIsland(islandId: number | null): void;
   selectFerry(ferryId: string | null): void;
+  // 自動航行の切り替え（cmd.ferry.auto。T-725）が ok の ack で返ったときに、world.session.autoFerries を直す。
+  // サーバーは切り替えをイベントで知らせないので、ack を受けた側が呼ぶ（つなぎ直しでは snapshot が正しい値を持つ）。
+  setAutoFerry(ferryId: string, enabled: boolean): void;
   reset(): void;
 }>;
 export type GameStore = StoreApi<GameState>;
@@ -103,6 +107,13 @@ export function createGameStore(): GameStore {
       if (ferryId !== null && !hasFerry(world, ferryId)) return;
       if (selection.ferryId === ferryId) return;
       set({ selection: { ...selection, ferryId } });
+    },
+
+    setAutoFerry(ferryId, enabled) {
+      const { world } = get();
+      if (world === null || !hasFerry(world, ferryId)) return;
+      const next = withAutoFerry(world, ferryId, enabled);
+      if (next !== world) set({ world: next });
     },
 
     reset() {

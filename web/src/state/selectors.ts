@@ -59,3 +59,20 @@ export function leaderId(world: World): number | null {
   }
   return best === null ? null : best.id;
 }
+
+// isAutoFerry は船 ferryId が自動航行（cmd.ferry.auto。T-724・T-725）か。snapshot の session.autoFerries
+// （と、切り替えの ok の ack で直した値）から読む。
+export function isAutoFerry(world: World, ferryId: string): boolean {
+  return world.session.autoFerries?.includes(ferryId) ?? false;
+}
+
+// withAutoFerry は船 ferryId の自動航行を enabled にした world（T-725）。変わらなければ同じ world を返す。
+// 一覧は ID の昇順にし、ひとつもなければキーを省く（snapshot の session.autoFerries と同じ形。プロトコル §5.1）。
+export function withAutoFerry(world: World, ferryId: string, enabled: boolean): World {
+  if (isAutoFerry(world, ferryId) === enabled) return world;
+  const current = world.session.autoFerries ?? [];
+  const next = enabled ? [...current, ferryId].sort() : current.filter((id) => id !== ferryId);
+  const session = { ...world.session };
+  delete session.autoFerries;
+  return { ...world, session: next.length === 0 ? session : { ...session, autoFerries: next } };
+}

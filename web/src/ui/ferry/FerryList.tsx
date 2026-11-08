@@ -1,5 +1,6 @@
 // 船の一覧（T-426）。フェリー操作（FerryPanel）で何も選んでいないときに、船のタブの代わりに出す紙のカードの列。
 // 名前・場所・積み荷を出し、押すとその船を選ぶ（ストアの selectFerry。マップで選ぶのと同じ）。
+// 自動航行（T-725）の船は「自動」の印を出す（切り替えは船を選んだ後の操作の欄）。
 // 中身は ferryTabs（./ferryView.ts）が作る FerryTab で、文言は船のタブと同じ。
 // チュートリアル（T-409）が指す ferry-panel__tabs（DesignDoc §13.8）を外枠に付けたままにする。
 import type { ReactElement } from "react";
@@ -48,6 +49,14 @@ export function FerryList({ tabs }: { tabs: readonly FerryTab[] }): ReactElement
             <PlaceText tab={tab} />
           </span>{" "}
           <span className="ferry-list__cargo">{`積み荷 ${String(tab.cargoCount)}/${String(tab.capacity)}`}</span>
+          {tab.auto && (
+            <>
+              {" "}
+              <span className="ferry-list__auto">
+                <span aria-hidden="true">🧭</span> 自動
+              </span>
+            </>
+          )}
           {tab.broken && (
             <>
               {" "}

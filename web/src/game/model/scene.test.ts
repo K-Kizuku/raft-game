@@ -13,7 +13,7 @@ import {
   portLetter,
   sailingFerry,
 } from "../testing/snapshot.ts";
-import { buildMapScene } from "./scene.ts";
+import { buildMapScene, ferryMapName } from "./scene.ts";
 import type { MapScene } from "./scene.ts";
 import { MAP_STYLE } from "./style.ts";
 import { layoutMap, toScreen } from "./viewport.ts";
@@ -232,6 +232,27 @@ describe("buildMapScene", () => {
       { seq: 1, t: 14000, type: "ferry.broken", ferryId: "f1", until: 16000 },
     ]);
     expect(ferryOf(scene(w, simNow), "f1").broken).toBe(broken);
+  });
+
+  it("SC-AUTO session.autoFerries の船だけ auto、名前の札は「・自動」付き（T-725）", () => {
+    const w = world({
+      session: {
+        id: "s-map",
+        stageId: "stage-map",
+        seed: 1,
+        demo: false,
+        restored: false,
+        autoFerries: ["f2"],
+      },
+      ferries: [dockedFerry("f1", 1), dockedFerry("f2", 2)],
+    });
+    const s = scene(w);
+    expect(ferryOf(s, "f1").auto).toBe(false);
+    expect(ferryOf(s, "f2").auto).toBe(true);
+    // name は船の名前のまま（描くときに ferryMapName で「・自動」を付ける）。
+    expect(ferryOf(s, "f2").name).toBe("f2丸");
+    expect(ferryMapName("しまかぜ", true)).toBe("しまかぜ・自動");
+    expect(ferryMapName("しまかぜ", false)).toBe("しまかぜ");
   });
 
   it.each([

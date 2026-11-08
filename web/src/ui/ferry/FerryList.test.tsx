@@ -28,6 +28,7 @@ function tab(overrides: Partial<FerryTab>): FerryTab {
     cargoCount: 0,
     capacity: 4,
     broken: false,
+    auto: false,
     ...overrides,
   };
 }
@@ -72,6 +73,12 @@ describe("FerryList", () => {
     expect(card("f1").querySelector(".ferry-list__broken")).toBeNull();
     expect(card("f3").querySelector(".ferry-list__place")?.textContent).toBe("停泊中");
     expect(card("f1").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("FL-AUTO 自動航行の船のカードに「自動」の印（T-725）", () => {
+    render(<FerryList tabs={[tab({}), tab({ id: "f2", name: "しまかぜ", auto: true })]} />);
+    expect(card("f1").querySelector(".ferry-list__auto")).toBeNull();
+    expect(card("f2").querySelector(".ferry-list__auto")?.textContent).toBe("🧭 自動");
   });
 
   it("FL-2 船が 0 隻なら「船がありません。」", () => {

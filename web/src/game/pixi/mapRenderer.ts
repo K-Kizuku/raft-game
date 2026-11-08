@@ -22,7 +22,7 @@ import type { GameStore, World } from "../../state/index.ts";
 import { dashSegments } from "../model/dash.ts";
 import { hitTest } from "../model/hitTest.ts";
 import { buildRaftTags } from "../model/raftLabels.ts";
-import { buildMapScene } from "../model/scene.ts";
+import { buildMapScene, ferryMapName } from "../model/scene.ts";
 import type { FerrySprite, IslandNode, LetterPile, MapScene, RouteLine } from "../model/scene.ts";
 import { ferryTextRows } from "../model/placement.ts";
 import type { FerryLabels, TextRow } from "../model/placement.ts";
@@ -659,7 +659,7 @@ function updateFerry(
       : { y: 0, rotation: 0 };
   view.hull.y = bob.y;
   view.hull.rotation = bob.rotation;
-  setText(view.name, ferry.name);
+  setText(view.name, ferryMapName(ferry.name, ferry.auto));
   setText(view.cargo, `${ferry.cargoCount}/${ferry.capacity}`);
   const eta =
     ferry.state === "sailing" && ferry.etaMs !== null

@@ -70,6 +70,7 @@ describe("ferryTabs", () => {
         cargoCount: 0,
         capacity: 4,
         broken: false,
+        auto: false,
       },
       {
         id: "f2",
@@ -81,8 +82,17 @@ describe("ferryTabs", () => {
         cargoCount: 1,
         capacity: 4,
         broken: false,
+        auto: false,
       },
     ]);
+  });
+
+  it("FV-AUTO session.autoFerries の船だけ auto（タブと詳細。T-725）", () => {
+    const base = makeFerrySnapshot();
+    const world = worldOf({ ...base, session: { ...base.session, autoFerries: ["f2"] } });
+    expect(ferryTabs(world, NO_SELECTION, 29000).map((t) => t.auto)).toEqual([false, true]);
+    expect(detailOf(world, "f1").auto).toBe(false);
+    expect(detailOf(world, "f2").auto).toBe(true);
   });
 
   it("FV-1 selection.ferryId の船だけ selected", () => {

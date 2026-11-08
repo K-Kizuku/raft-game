@@ -101,6 +101,65 @@
   font-weight: bold;
 }
 
+/* 自動航行の船の印（T-725）。海図の羅針の 🧭 と「自動」の文字の札（色だけで示さない）。
+   海の淡い青の地に墨の文字（約 8:1）と深い海の青の縁。 */
+.ferry-panel__auto-mark,
+.ferry-list__auto {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  font-size: 0.85em;
+  font-weight: bold;
+  line-height: 1.5;
+  color: var(--color-ink);
+  background: var(--color-sea-light);
+  border: 1px solid var(--color-sea-deep);
+  border-radius: 999px;
+}
+
+/* 選んだ船の名前の行。右に自動航行の切り替えを置き、行を増やさない（1470×860 でスクロールしない）。 */
+.ferry-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+}
+
+/* 自動航行の切り替え（紙の札の上の小さなスイッチ）。オン・オフは文字の札でも示す。 */
+.ferry-panel .ferry-panel__auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 2px 4px 2px var(--space-3);
+  border-width: 1px;
+  border-radius: 999px;
+  font-size: 0.9em;
+}
+
+.ferry-panel__auto-toggle-state {
+  min-width: 2.6em;
+  padding: 2px var(--space-2);
+  font-weight: bold;
+  text-align: center;
+  color: var(--color-ink-muted);
+  background: var(--color-paper-deep);
+  border: 1px dashed var(--color-ink-muted);
+  border-radius: 999px;
+}
+
+.ferry-panel .ferry-panel__auto-toggle[aria-checked="true"] {
+  background: var(--color-sea-light);
+  border-width: 2px;
+  padding: 1px 3px 1px calc(var(--space-3) - 1px);
+}
+
+.ferry-panel__auto-toggle[aria-checked="true"] .ferry-panel__auto-toggle-state {
+  color: var(--color-paper);
+  background: var(--color-sea-deep);
+  border: 1px solid var(--color-sea-deep);
+}
+
 .ferry-panel__detail {
   display: flex;
   flex-direction: column;
