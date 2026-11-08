@@ -34,6 +34,12 @@ const REQUIRED: Record<DeployMode, string[]> = {
     "CF_SECRET_ADMIN_TOKEN",
   ],
   demo: ["CF_SECRET_SESSION_SIGNING_KEY_DEMO", "CF_SECRET_TURNSTILE_SECRET"],
+  dtn: [
+    "CF_SECRET_SESSION_SIGNING_KEY_DTN",
+    "CF_SECRET_TURNSTILE_SECRET_DTN",
+    "CF_SECRET_ADMIN_TOKEN_DTN",
+    "CF_SECRET_DTN_CONTACT_KEY",
+  ],
 };
 
 /** process.stdout.write・process.stderr.write を差し替えて集める */
@@ -193,6 +199,41 @@ describe("buildSecrets", () => {
       expect(errors[0]).not.toContain("SENTINEL");
     });
 
+    describe("dtn（DTN-12）", () => {
+      const DTN_ENV: Env = {
+        CF_SECRET_SESSION_SIGNING_KEY_DTN: "s".repeat(48),
+        CF_SECRET_TURNSTILE_SECRET_DTN: TURNSTILE,
+        CF_SECRET_ADMIN_TOKEN_DTN: "t".repeat(48),
+        CF_SECRET_DTN_CONTACT_KEY: "k".repeat(48),
+      };
+
+      it("4 つのキー（DTN_CONTACT_KEY を含む）を DTN 用の変数から作る", () => {
+        const r = buildSecrets("dtn", { ...fullEnv(), ...DTN_ENV });
+        expect(r).toEqual({
+          ok: true,
+          secrets: {
+            SESSION_SIGNING_KEY: "s".repeat(48),
+            TURNSTILE_SECRET: TURNSTILE,
+            ADMIN_TOKEN: "t".repeat(48),
+            DTN_CONTACT_KEY: "k".repeat(48),
+          },
+        });
+      });
+
+      it.each(REQUIRED.dtn)("%s がなければ誤り（prod・demo の変数で代わりにしない）", (name) => {
+        const env: Env = { ...fullEnv(), ...DTN_ENV };
+        delete env[name];
+        expect(errorsOf("dtn", env).some((e) => e.startsWith(name))).toBe(true);
+      });
+
+      it.each([PROD_KEY, DEMO_KEY])("署名の鍵が prod・demo と同じなら誤り", (key) => {
+        const env: Env = { ...fullEnv(), ...DTN_ENV, CF_SECRET_SESSION_SIGNING_KEY_DTN: key };
+        expect(errorsOf("dtn", env)).toEqual([
+          "CF_SECRET_SESSION_SIGNING_KEY_DTN: prod・demo と同じ値は使えない",
+        ]);
+      });
+    });
+
     describe("main", () => {
       let dir: string;
       beforeEach(() => {
@@ -260,6 +301,41 @@ describe("buildSecrets", () => {
       env["CF_SECRET_SESSION_SIGNING_KEY_DEMO"] = "bad value";
       expect(errorsOf("production", env)).toEqual([]);
     });
+  });
+});
+
+describe("dtn（DTN-12）", () => {
+  const DTN_ENV: Env = {
+    CF_SECRET_SESSION_SIGNING_KEY_DTN: "s".repeat(48),
+    CF_SECRET_TURNSTILE_SECRET_DTN: TURNSTILE,
+    CF_SECRET_ADMIN_TOKEN_DTN: "t".repeat(48),
+    CF_SECRET_DTN_CONTACT_KEY: "k".repeat(48),
+  };
+
+  it("4 つのキー（DTN_CONTACT_KEY を含む）を DTN 用の変数から作る", () => {
+    const r = buildSecrets("dtn", { ...fullEnv(), ...DTN_ENV });
+    expect(r).toEqual({
+      ok: true,
+      secrets: {
+        SESSION_SIGNING_KEY: "s".repeat(48),
+        TURNSTILE_SECRET: TURNSTILE,
+        ADMIN_TOKEN: "t".repeat(48),
+        DTN_CONTACT_KEY: "k".repeat(48),
+      },
+    });
+  });
+
+  it.each(REQUIRED.dtn)("%s がなければ誤り（prod・demo の変数で代わりにしない）", (name) => {
+    const env: Env = { ...fullEnv(), ...DTN_ENV };
+    delete env[name];
+    expect(errorsOf("dtn", env).some((e) => e.startsWith(name))).toBe(true);
+  });
+
+  it.each([PROD_KEY, DEMO_KEY])("署名の鍵が prod・demo と同じなら誤り", (key) => {
+    const env: Env = { ...fullEnv(), ...DTN_ENV, CF_SECRET_SESSION_SIGNING_KEY_DTN: key };
+    expect(errorsOf("dtn", env)).toEqual([
+      "CF_SECRET_SESSION_SIGNING_KEY_DTN: prod・demo と同じ値は使えない",
+    ]);
   });
 });
 

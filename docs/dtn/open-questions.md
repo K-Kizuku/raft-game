@@ -17,3 +17,15 @@ DTN-01（#158）で、この一覧の「DTN-01 で決める」ものに結論を
 | Q-TRACE | 正規化トレースの `global` の比べ方（時刻ごとの集合）で、見逃すずれがないか | [simulation-time.md §5](./simulation-time.md#5-正規化トレース同等性の基準) のとおり | DTN-00 で参照モデルどうしを壊して確かめた（`server/internal/simtrace` の試験）。検出する: 1 つの島の列の中の順の入れ替え・手紙の時刻のずれ・`global` のイベントの時刻のずれ・欠け・重複・中身の違い・スコアの違い。見逃す（設計どおり）: 同じ時刻の中の `global` の順、同じ時刻の途中の `score.updated`、列をまたぐ同じ時刻の前後。同じ時刻の中の順の違いが最後の状態に効く依頼と島は、§5.3 の 4. の最終の状態で検出する（島の最後の `island.updated` を DTN-00 で足した） |
 | Q-SCORE | 同じ時刻に複数の島で依頼の結果が出たときのスコアの途中経過が、参照モデルと一致するか | [simulation-time.md §3](./simulation-time.md#3-島の出力をまとめる順序) の順で一致する見込み | DTN-05 の試験 |
 | Q-AGE | Bundle Age の更新のために `bundle.export` を挟むことで、積む操作の往復が 1 つ増える。許容できるか | 許容する（積む操作は人の操作の速さ） | DTN-08 |
+
+## DTN-12 の実測（2026-11-08 の時点）
+
+実環境（`raft-dtn.kizuku-hackathon.work`）はまだない（H3〜H5 はオーナーの作業、`server/cmd/dtnactor` の Coordinator は DTN-05）。下の測定は**未実施**。測り方は [environment.md §7](./environment.md#7-計測の入口管理者だけdtn-12) の計測の入口で、stage1 と demo-izu を 5 回ずつ。
+
+| ID | 測るもの（計測の入口の値） | 結果 |
+|---|---|---|
+| Q-COLD | `startup.readyMs`・`startup.hosts`（demo-izu の 13 個の並行起動）。`DTN_START_TIMEOUT_MS` の既定は仮に 90 秒 | 未実施 |
+| Q-IMAGE | 2 つの Container のアプリケーション（`raft-dtn-coordinator`・`raft-dtn-actor`）が、同じ `Dockerfile.dtnactor` から作った image を共有できるか（`cf deploy` の出力・ダッシュボード） | 未実施。ローカルの `cf build --mode dtn` は本物の image を作れず（Docker Hub の 429・`cmd/dtnactor` の Coordinator が未完成）、出力の形と `cf deploy --prebuilt --dry-run` だけを確かめた |
+| Q-RPC | `handoff`（`transfer.prepare` の dispatch の実時間）と、16 通 × 16 KiB の transfer が通るか | 未実施 |
+| Q-SQLITE | `storage.hosts[].status.storedBytes`・`journalRows` が §6 の上限（8 MiB・20,000 行）に収まるか | 未実施 |
+| Q-PERF | `dispatch.p50Ms`・`p95Ms`（等倍・速度 2 倍） | 未実施 |

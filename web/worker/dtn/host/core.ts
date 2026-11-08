@@ -1,9 +1,11 @@
-// ActorHost の中身（DTN-12・docs/dtn/persistence-and-recovery.md・actor-protocol.md・handoff-and-contact.md）。
+// ActorHost の中身（DTN-12・docs/dtn/persistence-and-recovery.md（§7 は DTN-07 の Go の実装の細部）・
+// actor-protocol.md・handoff-and-contact.md）。
 //
 // 1 Actor に 1 つ（idFromName("<sessionId>/<actor>")）。正本は ctx.storage.sql（schema.ts）。Container の
-// メモリとディスクは正本にしない。Go の SQLite adapter（DTN-07）と同じ契約（同じ JSON の fixture を通す）。
+// メモリとディスクは正本にしない。Go の SQLite adapter（server/internal/dtn/host）と同じ契約で、同じ fixture
+// （server/internal/dtn/host/testdata/contract/*.json）を通す（contract.test.ts）。
 //
-//   POST /start      {sessionId, actor, deadlineAt, maxAlarms}  → 200 {epoch}・409 session_mismatch・503 start_failed
+//   POST /start      {sessionId, actor, deadlineAt, maxAlarms, initialEpoch?} → 200 {epoch}・409・503 start_failed
 //   POST /host       要求のエンベロープ（§2.1）                 → 200 応答のエンベロープ（§2.2。エラーも 200）
 //   POST /cla/accept transfer.accept のエンベロープ（RPC CLA）   → 200 応答のエンベロープ
 //   POST /shutdown   {sessionId}                                → 200 {}・500 destroy_failed（アラームで再試行）
@@ -11,11 +13,11 @@
 //
 // 確定の順序（§3.1）: エンベロープの確認 → 冪等の確認 → journal に intent → Container に送る →
 // 1 つのトランザクションで bundles・then の効果・journal の applied → 応答（bundle の bytes を除く）。
-// Host の確定の前に、応答を返さない。
+// Host の確定の前に、応答を返さない。確定するのは ok と Actor の決定的な誤り（invalid・too_large）だけ（§7.2）。
 
 import type { ContainerInstance } from "../../admin/guards.ts";
 import type { SqlValue } from "../../admin/cf-types.ts";
-import { decodeBase64, digestOf, sha256Hex } from "../codec.ts";
+import { decodeBase64, digestOf, parseStrictJson, sha256Hex, utf8Bytes } from "../codec.ts";
 import {
   connectSocket,
   errorName,
@@ -39,19 +41,14 @@ import {
   CONTAINER_KINDS,
   CONTAINER_PORT,
   CONTAINER_RESPONSE_TIMEOUT_MS,
-  EPOCH_FREE,
+  DEFAULT_HOST_LIMITS,
   errorResponse,
-  exceedsMessageLimit,
   GC_THEN,
   HOST_KINDS,
   isLetterId,
   isObject,
   isSafeNonNegative,
-  MAX_ACTOR_STORAGE_BYTES,
-  MAX_BUNDLE_BYTES,
   MAX_CONTAINER_STARTS,
-  MAX_JOURNAL_ROWS,
-  MAX_LETTERS_PER_CALL,
   MAX_RESTORE_MS,
   NOT_JOURNALED,
   okResponse,
@@ -59,6 +56,8 @@ import {
   outputLetterId,
   parseEnvelope,
   parseLetterIds,
+  parseResponse,
+  PROTOCOL_VERSION,
   ProtocolError,
   requestDigestBody,
   responseDigestBody,
@@ -68,13 +67,27 @@ import {
   TRANSFER_ID_PATTERN,
   type Envelope,
   type ErrorCode,
+  type HostLimits,
   type JsonObject,
+  type Output,
   type ResponseEnvelope,
 } from "../protocol.ts";
 import { ActorChannel, ChannelLost, type SetTimer } from "./channel.ts";
+import { checkLetters, checkPayload } from "./payload.ts";
 import { ensureHostSchema, HOST_SCHEMA_VERSION } from "./schema.ts";
 
 export const DEFAULT_ACTOR_START_TIMEOUT_MS = 60_000;
+
+// 止める位置（契約テストの crashAt。persistence-and-recovery.md §7.3）。
+export type HostPoint = "afterIntent" | "afterActorReply" | "afterCommit";
+
+// deps.at が投げると、Host はそこで処理をやめて応答を返さない（プロセスが止まったのと同じ扱い）。
+export class HostStopped extends Error {
+  constructor(point: HostPoint) {
+    super(`host stopped at ${point}`);
+    this.name = "HostStopped";
+  }
+}
 
 export interface ActorHostDeps extends LinkDeps {
   readonly log: (line: string) => void;
@@ -83,6 +96,8 @@ export interface ActorHostDeps extends LinkDeps {
   readonly contactKey: string | undefined; // DTN_CONTACT_KEY（なければ Contact を使う要求はすべて断る）
   readonly startTimeoutMs: number;
   readonly responseTimeoutMs: number;
+  readonly limits?: Partial<HostLimits>;
+  readonly at?: (point: HostPoint) => void; // テスト用（止める位置）
   // 他の ActorHost の fetch（RPC CLA。ADR-0023）。idFromName("<sessionId>/<actor>")
   readonly callHost: (
     sessionId: string,
@@ -100,7 +115,14 @@ export const DEFAULT_HOST_DEPS = {
 } as const;
 
 type HostState =
-  "idle" | "starting" | "running" | "lost" | "restoring" | "failed" | "stopping" | "deleted";
+  | "idle" // この DO のインスタンスでは、まだ Container につないでいない（作り直された DO を含む）
+  | "starting"
+  | "running"
+  | "lost"
+  | "restoring"
+  | "failed"
+  | "stopping"
+  | "deleted";
 
 interface JournalRow {
   readonly eventSeq: number;
@@ -125,7 +147,7 @@ interface TransferRow {
 
 interface BundleRow {
   readonly letterId: number;
-  readonly bundle: string | null;
+  readonly bundle: string | null; // base64（DO の SQLite では TEXT で入れる。Go は BLOB）
   readonly digest: string;
   readonly size: number;
   readonly state: string;
@@ -139,8 +161,13 @@ interface Base {
   readonly eventSeq: number;
 }
 
-// 応答をつなげた advance の行で、最後の要求の outputs が始まる位置（persistence-and-recovery.md §2 の追記）。
-const OUTPUTS_FROM = "outputsFrom";
+interface CheckedBundle {
+  readonly bundle: string;
+  readonly digest: string;
+  readonly size: number;
+}
+
+const HOST_STATUS_OUTPUT = "host.status";
 
 function str(value: SqlValue | undefined): string | null {
   return typeof value === "string" ? value : null;
@@ -161,9 +188,26 @@ function json(status: number, body: unknown): Response {
   });
 }
 
+// 誤りの応答の宛先（電文の actor・eventSeq。読めなければ空と 0）。
+function rawBase(raw: unknown): { actor: string; eventSeq: number } {
+  if (!isObject(raw)) return { actor: "", eventSeq: 0 };
+  return {
+    actor: typeof raw["actor"] === "string" ? raw["actor"] : "",
+    eventSeq: isSafeNonNegative(raw["eventSeq"]) ? raw["eventSeq"] : 0,
+  };
+}
+
+// Container の応答を確定するか（§7.2）。ok と、Actor が決定的に出した誤り（invalid・too_large）。
+function commitsResponse(response: ResponseEnvelope): boolean {
+  if (response.status === "ok") return true;
+  const code = response.error?.code;
+  return code === "invalid" || code === "too_large";
+}
+
 export class ActorHostCore {
   readonly #ctx: DtnStateLike;
   readonly #deps: ActorHostDeps;
+  readonly #limits: HostLimits;
   readonly #signer: ContactSigner | null;
   #state: HostState = "idle";
   #channel: ActorChannel | null = null;
@@ -177,6 +221,7 @@ export class ActorHostCore {
   constructor(ctx: DtnStateLike, deps: ActorHostDeps) {
     this.#ctx = ctx;
     this.#deps = deps;
+    this.#limits = { ...DEFAULT_HOST_LIMITS, ...deps.limits };
     this.#signer = deps.contactKey === undefined ? null : createContactSigner(deps.contactKey);
     ensureHostSchema(ctx.storage.sql);
   }
@@ -242,11 +287,11 @@ export class ActorHostCore {
   }
 
   #actor(): string {
-    return this.#meta("actor") ?? "coordinator";
+    return this.#meta("actor") ?? "";
   }
 
-  #base(eventSeq: number): Base {
-    return { actor: this.#actor(), epoch: this.#epoch(), eventSeq };
+  #base(env: { readonly actor: string; readonly eventSeq: number }): Base {
+    return { actor: env.actor, epoch: this.#epoch(), eventSeq: env.eventSeq };
   }
 
   #log(level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>): void {
@@ -276,6 +321,10 @@ export class ActorHostCore {
     return run;
   }
 
+  #at(point: HostPoint): void {
+    this.#deps.at?.(point);
+  }
+
   // ---- /start ----
 
   async #start(text: string): Promise<Response> {
@@ -287,6 +336,7 @@ export class ActorHostCore {
     }
     if (!isObject(body)) return json(400, { code: "invalid" });
     const { sessionId, actor, deadlineAt, maxAlarms } = body;
+    const initialEpoch = body["initialEpoch"] ?? 1;
     if (
       typeof sessionId !== "string" ||
       !SESSION_ID_PATTERN.test(sessionId) ||
@@ -295,7 +345,9 @@ export class ActorHostCore {
       actor === "coordinator" ||
       !isSafeNonNegative(deadlineAt) ||
       !isSafeNonNegative(maxAlarms) ||
-      maxAlarms < 1
+      maxAlarms < 1 ||
+      !isSafeNonNegative(initialEpoch) ||
+      initialEpoch < 1
     ) {
       return json(400, { code: "invalid" });
     }
@@ -309,9 +361,11 @@ export class ActorHostCore {
         this.#setMeta("schemaVersion", HOST_SCHEMA_VERSION);
         this.#setMeta("sessionId", sessionId);
         this.#setMeta("actor", actor);
-        this.#setMeta("epoch", 0);
+        this.#setMeta("epoch", initialEpoch - 1); // 最初の起動で initialEpoch になる
         this.#setMeta("maxCoordEpoch", 0);
-        this.#setMeta("createdAt", this.#deps.now());
+        this.#setMeta("createdAt", new Date(this.#deps.now()).toISOString());
+        this.#setMeta("journalRows", 0);
+        this.#setMeta("storedBytes", 0);
         this.#setMeta("deadlineAt", deadlineAt);
         this.#setMeta("maxAlarms", maxAlarms);
         this.#setMeta("alarmCount", 0);
@@ -355,17 +409,7 @@ export class ActorHostCore {
     }
     const startedAt = this.#deps.now();
     this.#log("info", "container.start", { starts: starts + 1 });
-    const watchGen = ++this.#watchGen;
-    let exit: Promise<void>;
-    try {
-      exit = container.monitor();
-    } catch {
-      exit = Promise.resolve();
-    }
-    void exit.then(
-      () => this.#onContainerExit(watchGen),
-      () => this.#onContainerExit(watchGen),
-    );
+    const watchGen = this.#watch();
     const ready = await waitHealthy(
       container,
       startedAt + this.#deps.startTimeoutMs,
@@ -373,15 +417,57 @@ export class ActorHostCore {
       () => watchGen !== this.#watchGen,
     );
     if (ready !== "ready") throw new Error(`container not ready: ${ready}`);
+    if (!(await this.#connect(epoch))) throw new Error("container connect failed");
+    this.#log("info", "container.ready", { startMs: this.#deps.now() - startedAt });
+    return epoch;
+  }
+
+  #watch(): number {
+    const watchGen = ++this.#watchGen;
+    const container = this.#ctx.container;
+    let exit: Promise<void>;
+    try {
+      exit = container?.monitor() ?? Promise.resolve();
+    } catch {
+      exit = Promise.resolve();
+    }
+    void exit.then(
+      () => this.#onContainerExit(watchGen),
+      () => this.#onContainerExit(watchGen),
+    );
+    return watchGen;
+  }
+
+  async #connect(epoch: number): Promise<boolean> {
+    const container = this.#ctx.container;
+    if (container === undefined) return false;
     const socket = await connectSocket(container);
-    if (socket === null) throw new Error("container connect failed");
+    if (socket === null) return false;
     this.#channel = new ActorChannel(socket, epoch, {
       setTimer: this.#deps.setTimer,
       timeoutMs: this.#deps.responseTimeoutMs,
       onLost: (cause) => this.#onLost(cause),
+      maxBytes: this.#limits.maxMessageBytes,
     });
-    this.#log("info", "container.ready", { startMs: this.#deps.now() - startedAt });
-    return epoch;
+    return true;
+  }
+
+  // 作り直された DO のインスタンス（state が idle）: 動いている Container につなぎ直す（epoch は変えない）。
+  // Container が動いていなければ、止まったとみなして復元を始める。
+  async #ensureConnected(): Promise<void> {
+    if (this.#state !== "idle" || this.#meta("sessionId") === null) return;
+    const container = this.#ctx.container;
+    if (container?.running === true) {
+      this.#state = "starting";
+      this.#watch();
+      if (await this.#connect(this.#epoch())) {
+        this.#state = "running";
+        this.#log("info", "container.reattached", {});
+        return;
+      }
+    }
+    this.#state = "running";
+    this.#onLost("not_attached");
   }
 
   #onContainerExit(watchGen: number): void {
@@ -399,17 +485,47 @@ export class ActorHostCore {
     this.#track(this.#restore());
   }
 
+  // host.status の container（§7.2: running・lost・stopped）。
+  #containerStatus(): "running" | "lost" | "stopped" {
+    switch (this.#state) {
+      case "stopping":
+      case "deleted":
+        return "stopped";
+      case "lost":
+      case "restoring":
+      case "failed":
+        return "lost";
+      default:
+        return "running";
+    }
+  }
+
   // ---- /host・/cla/accept ----
 
   async #hostText(text: string, cla: boolean): Promise<ResponseEnvelope> {
-    const unknownBase = this.#base(0);
-    if (exceedsMessageLimit(text)) return errorResponse(unknownBase, "too_large");
+    let raw: unknown;
+    if (
+      text.length > this.#limits.maxMessageBytes ||
+      utf8Bytes(text) > this.#limits.maxMessageBytes
+    ) {
+      return errorResponse({ actor: "", epoch: this.#epoch(), eventSeq: 0 }, "too_large");
+    }
+    try {
+      raw = parseStrictJson(text);
+    } catch {
+      return errorResponse(
+        { actor: "", epoch: this.#epoch(), eventSeq: 0 },
+        "invalid",
+        "malformed JSON",
+      );
+    }
+    const fallback = { ...rawBase(raw), epoch: this.#epoch() };
     let env: Envelope;
     try {
-      env = parseEnvelope(JSON.parse(text) as unknown);
+      env = parseEnvelope(raw);
     } catch (error) {
       return errorResponse(
-        unknownBase,
+        fallback,
         error instanceof ProtocolError ? error.code : "invalid",
         "malformed envelope",
       );
@@ -418,45 +534,47 @@ export class ActorHostCore {
       if (cla !== (env.kind === "transfer.accept")) fail("invalid", "kind not allowed here");
       return await this.#handle(env);
     } catch (error) {
-      if (error instanceof ProtocolError) {
-        return errorResponse(this.#base(env.eventSeq), error.code, error.message);
-      }
+      if (error instanceof HostStopped) throw error;
+      if (error instanceof ProtocolError)
+        return errorResponse(this.#base(env), error.code, error.message);
       this.#log("error", "host.error", { op: "handle", kind: env.kind, error: errorName(error) });
-      return errorResponse(this.#base(env.eventSeq), "internal");
+      return errorResponse(this.#base(env), "internal");
     }
   }
 
-  // 版・セッション・宛先・coordEpoch・epoch の確認（§2.1・persistence-and-recovery.md §5）。
+  // セッション・宛先・coordEpoch の確認と、coordEpoch の更新（persistence-and-recovery.md §5・§7.2）。
+  // 要求の epoch は照合しない（Container に送るときに meta.epoch で上書きする。§7.2）。
   #checkEnvelope(env: Envelope): void {
-    const sessionId = this.#meta("sessionId");
-    if (sessionId === null || env.sessionId !== sessionId) fail("session_mismatch");
+    if (env.sessionId !== this.#meta("sessionId")) fail("session_mismatch");
     if (env.actor !== this.#actor()) fail("unknown_actor");
     const maxCoordEpoch = Number(this.#meta("maxCoordEpoch") ?? "0");
     if (env.coordEpoch < maxCoordEpoch) fail("stale_coord_epoch");
     if (env.coordEpoch > maxCoordEpoch) this.#setMeta("maxCoordEpoch", env.coordEpoch);
-    if (!EPOCH_FREE.has(env.kind)) {
-      const epoch = this.#epoch();
-      if (env.epoch < epoch) fail("stale_epoch");
-      if (env.epoch > epoch) fail("invalid", "epoch from the future");
-    }
   }
 
   async #handle(env: Envelope): Promise<ResponseEnvelope> {
-    if (env.kind === "transfer.accept") {
-      this.#checkEnvelope(env);
-      return this.#accept(env);
+    if (this.#state === "deleted" || this.#meta("sessionId") === null) {
+      // 保存を消した後（D-8）: shutdown だけ成功、ほかは not_ready
+      if (env.kind === "shutdown") return okResponse(this.#base(env));
+      fail("not_ready", "shut down");
     }
+    this.#checkEnvelope(env);
+    if (env.kind === "transfer.accept") return this.#accept(env);
+    if (env.kind === "shutdown") return this.#lock(() => this.#shutdownKind(env));
     if (!CONTAINER_KINDS.has(env.kind) && !HOST_KINDS.has(env.kind))
       fail("invalid", "unknown kind");
-    this.#checkEnvelope(env);
-    if (env.kind === "host.status") return okResponse(this.#base(env.eventSeq), this.#status());
+    if (env.kind === "host.status") return this.#hostStatus(env);
     if (env.kind === "transfer.status") {
-      return okResponse(this.#base(env.eventSeq), this.#transferStatus(env.payload));
+      return okResponse(this.#base(env), this.#transferStatus(env.payload));
     }
+    const journaled = !NOT_JOURNALED.has(env.kind);
+    if (journaled && env.eventSeq < 1) fail("invalid", "eventSeq must be 1 or more");
+    await checkPayload(env.kind, env.payload, this.#limits);
     if (this.#meta("shutdownPending") === "1") fail("not_ready", "shutting down");
-    if (NOT_JOURNALED.has(env.kind)) {
+    if (!journaled) {
       return this.#lock(async () => {
-        this.#requireRunning();
+        await this.#ensureConnected();
+        this.#requireLive();
         return stripBundles(await this.#send(env));
       });
     }
@@ -464,26 +582,31 @@ export class ActorHostCore {
     return this.#lock(() => this.#journaled(env, reqDigest));
   }
 
-  #requireRunning(): void {
+  #requireLive(): void {
     if (this.#state === "failed") fail(this.#failedCode);
-    if (this.#state !== "running" || this.#channel === null) fail("not_ready");
+    if (this.#state !== "running" || this.#channel === null) fail("not_ready", "actor lost");
   }
 
   async #journaled(env: Envelope, reqDigest: string): Promise<ResponseEnvelope> {
     const row = this.#journalRow(env.eventSeq);
     if (row !== null) {
       if (row.reqDigest !== reqDigest) fail("conflict");
-      if (row.status === "applied") return this.#storedResponse(row);
+      if (row.status === "applied") return JSON.parse(row.response ?? "{}") as ResponseEnvelope;
+      // intent: 止まった後の送り直し。§3.1 の 4 から続ける
     } else {
-      const last = this.#lastEventSeq();
-      if (last !== null && env.eventSeq < last) fail("stale_event");
+      const last = this.#lastRow();
+      if (last !== null && env.eventSeq < last.eventSeq) fail("stale_event");
+      if (last?.status === "intent")
+        fail("not_ready", `eventSeq ${last.eventSeq} is pending; resend it first`);
     }
     // contact.* と transfer.abort は Container を使わない（復元の途中でも受ける）
-    if (env.kind === "contact.open" || env.kind === "contact.close") {
+    if (env.kind === "contact.open" || env.kind === "contact.close")
       return this.#contact(env, reqDigest);
-    }
     if (env.kind === "transfer.abort") return this.#abort(env, reqDigest);
-    this.#requireRunning();
+    if (row === null) {
+      if (this.#state === "failed") fail(this.#failedCode);
+      if (this.#state !== "running" && this.#state !== "idle") fail("not_ready", "actor lost");
+    }
     switch (env.kind) {
       case "transfer.prepare":
         return this.#prepare(env, reqDigest, row);
@@ -492,7 +615,8 @@ export class ActorHostCore {
       case "transfer.gc":
         return this.#gc(env, reqDigest, row);
       default:
-        if (row === null) this.#writeIntent(env, reqDigest, env);
+        if (row === null) this.#writeIntent(env, reqDigest, env.payload);
+        this.#at("afterIntent");
         return this.#runContainer(env, env, null);
     }
   }
@@ -518,41 +642,67 @@ export class ActorHostCore {
     };
   }
 
-  #lastEventSeq(): number | null {
-    const [row] = this.#ctx.storage.sql.exec("SELECT MAX(event_seq) AS m FROM journal").toArray();
-    const value = row?.["m"];
-    return typeof value === "number" ? value : null;
+  #lastRow(): JournalRow | null {
+    const [row] = this.#ctx.storage.sql
+      .exec("SELECT * FROM journal ORDER BY event_seq DESC LIMIT 1")
+      .toArray();
+    return row === undefined ? null : this.#toJournalRow(row);
   }
 
-  #storageStats(): { rows: number; bytes: number } {
+  #lastAppliedSeq(): number {
+    const [row] = this.#ctx.storage.sql
+      .exec("SELECT MAX(event_seq) AS m FROM journal WHERE status = 'applied'")
+      .toArray();
+    return num(row?.["m"]);
+  }
+
+  // 保存の量（§7.1: journalRows と storedBytes = bundles の bytes ＋ journal の payload ＋ response の長さ）。
+  #stats(): { rows: number; bytes: number } {
     const sql = this.#ctx.storage.sql;
     const [j] = sql
       .exec(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(payload) + COALESCE(LENGTH(response), 0)), 0) AS b FROM journal",
+        `SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(CAST(payload AS BLOB)) +
+           COALESCE(LENGTH(CAST(response AS BLOB)), 0)), 0) AS b FROM journal`,
       )
       .toArray();
     const [b] = sql
-      .exec("SELECT COALESCE(SUM(COALESCE(LENGTH(bundle), 0)), 0) AS b FROM bundles")
+      .exec(
+        "SELECT COALESCE(SUM(CASE WHEN bundle IS NULL THEN 0 ELSE size END), 0) AS b FROM bundles",
+      )
       .toArray();
     return { rows: num(j?.["n"]), bytes: num(j?.["b"]) + num(b?.["b"]) };
   }
 
-  // intent の行を書く（§3.1 の 3）。上限（20,000 行・8 MiB）を超えるなら too_large。
-  #writeIntent(env: Envelope, reqDigest: string, stored: Envelope): void {
-    const payload = JSON.stringify(stored);
-    const stats = this.#storageStats();
-    if (stats.rows >= MAX_JOURNAL_ROWS || stats.bytes + payload.length > MAX_ACTOR_STORAGE_BYTES) {
+  // meta の journalRows・storedBytes を表から数え直す（トランザクションの中で呼ぶ）。上限を超えたら too_large。
+  #recount(): void {
+    const stats = this.#stats();
+    if (stats.bytes > this.#limits.maxStoredBytes) fail("too_large", "actor storage limit");
+    this.#setMeta("journalRows", stats.rows);
+    this.#setMeta("storedBytes", stats.bytes);
+  }
+
+  // intent の行を書く（§3.1 の 3）。行の数＋1・合計＋payload が上限を超えるなら too_large（何も書かない）。
+  #writeIntent(env: Envelope, reqDigest: string, payload: JsonObject): void {
+    const text = JSON.stringify(payload);
+    const stats = this.#stats();
+    if (stats.rows + 1 > this.#limits.maxJournalRows) fail("too_large", "journal row limit");
+    if (stats.bytes + utf8Bytes(text) > this.#limits.maxStoredBytes)
       fail("too_large", "actor storage limit");
-    }
-    this.#ctx.storage.sql.exec(
-      `INSERT INTO journal (event_seq, kind, req_digest, payload, status, response, resp_digest, epoch)
-       VALUES (?, ?, ?, ?, 'intent', NULL, NULL, ?)`,
-      env.eventSeq,
-      env.kind,
-      reqDigest,
-      payload,
-      this.#epoch(),
-    );
+    this.#ctx.storage.transactionSync(() => {
+      this.#ctx.storage.sql.exec(
+        `INSERT INTO journal (event_seq, kind, req_digest, payload, status, response, resp_digest, epoch)
+         VALUES (?, ?, ?, ?, 'intent', NULL, NULL, ?)`,
+        env.eventSeq,
+        env.kind,
+        reqDigest,
+        text,
+        this.#epoch(),
+      );
+      // 復元（§4.1 の 4）はこれで init を送る（intent のまま止まっても）
+      if (env.kind === "init" && this.#meta("initPayload") === null)
+        this.#setMeta("initPayload", text);
+      this.#recount();
+    });
   }
 
   #markApplied(eventSeq: number, response: ResponseEnvelope, respDigest: string): void {
@@ -565,16 +715,6 @@ export class ActorHostCore {
     );
   }
 
-  #storedResponse(row: JournalRow): ResponseEnvelope {
-    const parsed = JSON.parse(row.response ?? "{}") as Record<string, unknown>;
-    const from = parsed[OUTPUTS_FROM];
-    delete parsed[OUTPUTS_FROM];
-    if (typeof from === "number" && Array.isArray(parsed["outputs"])) {
-      parsed["outputs"] = (parsed["outputs"] as unknown[]).slice(from);
-    }
-    return parsed as unknown as ResponseEnvelope;
-  }
-
   // Host だけで処理した要求を applied で保存して返す（§3.2）。
   async #finishHostOnly(
     env: Envelope,
@@ -583,107 +723,159 @@ export class ActorHostCore {
     effects: () => void,
   ): Promise<ResponseEnvelope> {
     const respDigest = await digestOf(responseDigestBody(response));
+    if (this.#journalRow(env.eventSeq) === null) this.#writeIntent(env, reqDigest, env.payload);
     this.#ctx.storage.transactionSync(() => {
-      if (this.#journalRow(env.eventSeq) === null) this.#writeIntent(env, reqDigest, env);
       effects();
       this.#markApplied(env.eventSeq, response, respDigest);
+      this.#recount();
     });
     return response;
   }
 
   // ---- Container ----
 
-  // Container に送って応答を待つ。止まっていたら（ChannelLost）not_ready（intent は残り、復元の後の送り直しで続ける）。
+  // Container に送って応答を待つ（epoch は meta.epoch で上書きする）。応答の epoch が違えば stale_epoch
+  // （確定しない・失ったとみなさない）。応答しない・壊れた応答・別の要求の応答は not_ready（失ったとみなす）。
   async #send(request: Envelope): Promise<ResponseEnvelope> {
+    await this.#ensureConnected();
     const channel = this.#channel;
-    if (channel === null) fail("not_ready");
-    const sent = { ...request, epoch: channel.epoch };
-    let response: ResponseEnvelope;
+    if (channel === null || this.#state !== "running") fail("not_ready", "actor lost");
+    const epoch = this.#epoch();
+    const sent: Record<string, unknown> = { ...request, epoch };
+    let raw: unknown;
     try {
-      response = await channel.request(sent);
+      raw = await channel.request(sent as Record<string, unknown> & { eventSeq: number });
     } catch (error) {
-      if (error instanceof ChannelLost) fail("not_ready", "container lost");
+      if (error instanceof ChannelLost) fail("not_ready", "actor did not answer");
       throw error;
     }
-    if (response.status === "error" && response.error?.code === "internal") {
-      // Actor の中の失敗: Container を作り直して復元する（§6）
-      this.#onLost("actor_internal");
-      fail("not_ready", "actor internal error");
+    let response: ResponseEnvelope;
+    try {
+      response = parseResponse(raw);
+    } catch {
+      this.#onLost("malformed_response");
+      fail("not_ready", "actor returned a malformed response");
+    }
+    if (response.epoch !== epoch)
+      fail("stale_epoch", `response epoch ${response.epoch} is not ${epoch}`);
+    if (response.actor !== request.actor || response.eventSeq !== request.eventSeq) {
+      this.#onLost("mismatched_response");
+      fail("not_ready", "actor returned a response for another request");
+    }
+    if (response.outputs.length > this.#limits.maxOutputs) {
+      this.#onLost("too_many_outputs");
+      fail("not_ready", "actor returned too many outputs");
     }
     return response;
   }
 
   // §3.1 の 4〜6。request は Container に送る要求、env は受けた要求（journal の行の番号・種類）。
+  // extra は確定のトランザクションの中で行う追加の効果（transfer の状態）。
   async #runContainer(
     env: Envelope,
     request: Envelope,
-    extra: ((response: ResponseEnvelope) => void) | null,
+    extra: (() => void) | null,
   ): Promise<ResponseEnvelope> {
     const response = await this.#send(request);
-    const bundles = await this.#checkBundles(response);
-    let stored: ResponseEnvelope & { [OUTPUTS_FROM]?: number } = stripBundles(response);
-    let digestTarget = response;
-    let merge: JournalRow | null = null;
-    if (env.kind === "advance" && response.status === "ok") {
-      merge = this.#mergeCandidate(env.eventSeq);
-      if (merge !== null) {
-        const prev = JSON.parse(merge.response ?? "{}") as { outputs?: unknown[] };
-        const prevOutputs = (prev.outputs ?? []) as ResponseEnvelope["outputs"];
-        const outputs = [...prevOutputs, ...stored.outputs];
-        stored = { ...stored, outputs, [OUTPUTS_FROM]: prevOutputs.length };
-        digestTarget = { ...response, outputs };
-      }
+    this.#at("afterActorReply");
+    const stored = stripBundles(response);
+    if (!commitsResponse(response)) {
+      // Container が処理しなかった（not_ready など）か、作り直しが要る（internal）。行は intent のまま
+      if (response.error?.code === "internal") this.#onLost("actor_internal");
+      return stored;
     }
-    const respDigest = await digestOf(responseDigestBody(digestTarget));
+    const ok = response.status === "ok";
+    const bundles = ok
+      ? await this.#checkOutputBundles(response.outputs)
+      : new Map<number, CheckedBundle>();
+    const letters =
+      ok && ACTIVATE_THEN.has(request.kind)
+        ? await checkLetters(request.kind, request.payload, this.#limits)
+        : [];
+    const respDigest = await digestOf(responseDigestBody(stored));
+    const merge = ok && env.kind === "advance" ? await this.#mergePlan(env.eventSeq, stored) : null;
     this.#ctx.storage.transactionSync(() => {
-      if (response.status === "ok") {
-        this.#applyOutputs(response, bundles, env.eventSeq);
-        this.#applyKind(request.kind, request.payload, env.eventSeq);
-        extra?.(response);
-        if (request.kind === "init") this.#setMeta("initPayload", JSON.stringify(request.payload));
+      const intent = this.#journalRow(env.eventSeq);
+      if (intent?.status !== "intent") fail("internal", "journal row is not an intent");
+      if (ok) {
+        this.#applyRequest(request.kind, request.payload, letters, env.eventSeq);
+        this.#applyOutputs(response.outputs, bundles, env.eventSeq);
+        extra?.();
       }
       if (merge !== null) {
-        this.#ctx.storage.sql.exec("DELETE FROM journal WHERE event_seq = ?", merge.eventSeq);
+        this.#ctx.storage.sql.exec("DELETE FROM journal WHERE event_seq = ?", merge.prevSeq);
+        this.#markApplied(env.eventSeq, merge.response, merge.digest);
+      } else {
+        this.#markApplied(env.eventSeq, stored, respDigest);
       }
-      this.#markApplied(env.eventSeq, stored, respDigest);
+      this.#recount();
     });
-    return stripBundles(response);
+    this.#at("afterCommit");
+    // まとめた行でも、返すのはこの要求の応答
+    return stored;
   }
 
-  // 直前の journal の行が applied の advance なら、それをまとめる（persistence-and-recovery.md §2・D-9）。
-  #mergeCandidate(eventSeq: number): JournalRow | null {
+  // 直前の行も applied の ok の advance なら、まとめる（§2・D-9）。まとめた上限への 1 回の再生の応答が
+  // 上限（outputs の数・電文の長さ。bytes は data.size を base64 にした長さで見積もる）を超えるときはまとめない。
+  async #mergePlan(
+    eventSeq: number,
+    stored: ResponseEnvelope,
+  ): Promise<{ prevSeq: number; response: ResponseEnvelope; digest: string } | null> {
     const [row] = this.#ctx.storage.sql
       .exec("SELECT * FROM journal WHERE event_seq < ? ORDER BY event_seq DESC LIMIT 1", eventSeq)
       .toArray();
     if (row === undefined) return null;
     const prev = this.#toJournalRow(row);
     if (prev.kind !== "advance" || prev.status !== "applied") return null;
-    const response = JSON.parse(prev.response ?? "{}") as { status?: unknown };
-    return response.status === "ok" ? prev : null;
+    const prevResponse = JSON.parse(prev.response ?? "{}") as Partial<ResponseEnvelope>;
+    if (prevResponse.status !== "ok") return null;
+    const outputs = [...(prevResponse.outputs ?? []), ...stored.outputs];
+    if (outputs.length > this.#limits.maxOutputs) return null;
+    const merged: ResponseEnvelope = { ...stored, outputs };
+    let size = utf8Bytes(JSON.stringify(merged));
+    for (const output of outputs) {
+      const s = output.data["size"];
+      if (
+        (output.type === "letter.created" || output.type === "bundle.exported") &&
+        isSafeNonNegative(s) &&
+        s > 0
+      ) {
+        size += 4 * Math.ceil(s / 3) + ',"bundle":""'.length;
+      }
+    }
+    if (size > this.#limits.maxMessageBytes) return null;
+    return {
+      prevSeq: prev.eventSeq,
+      response: merged,
+      digest: await digestOf(responseDigestBody(merged)),
+    };
   }
 
-  // 応答の Bundle を確かめる（digest の SHA-256・16 KiB）。bytes は解釈しない。
-  async #checkBundles(
-    response: ResponseEnvelope,
-  ): Promise<Map<number, { bundle: string; digest: string; size: number }>> {
-    const out = new Map<number, { bundle: string; digest: string; size: number }>();
-    for (const output of response.outputs) {
-      const bundle = outputBundle(output);
-      if (bundle === null) continue;
+  // 出力の Bundle を確かめる（§7.2: letter.created は bytes が要る・上限・digest・data.size）。不正なら invalid。
+  async #checkOutputBundles(outputs: readonly Output[]): Promise<Map<number, CheckedBundle>> {
+    const out = new Map<number, CheckedBundle>();
+    for (const [i, output] of outputs.entries()) {
+      if (output.type !== "letter.created" && output.type !== "bundle.exported") continue;
       const letterId = outputLetterId(output);
+      if (letterId === null) fail("invalid", `outputs[${i}]: needs data.letterId`);
+      const bundle = outputBundle(output);
+      if (bundle === null) fail("invalid", `outputs[${i}]: without bundle`);
       const bytes = decodeBase64(bundle);
-      if (letterId === null || bytes === null) fail("invalid", "bundle");
-      if (bytes.byteLength > MAX_BUNDLE_BYTES) fail("too_large", "bundle");
+      if (bytes === null) fail("invalid", `outputs[${i}]: bundle is not base64`);
+      if (bytes.byteLength > this.#limits.maxBundleBytes)
+        fail("invalid", `outputs[${i}]: bundle too large`);
       const digest = await sha256Hex(bytes);
-      if (output.data["digest"] !== undefined && output.data["digest"] !== digest) {
-        fail("invalid", "bundle digest");
-      }
+      if (output.data["digest"] !== digest)
+        fail("invalid", `outputs[${i}]: data.digest does not match`);
+      const size = output.data["size"];
+      if (size !== undefined && size !== bytes.byteLength)
+        fail("invalid", `outputs[${i}]: data.size`);
       out.set(letterId, { bundle, digest, size: bytes.byteLength });
     }
     return out;
   }
 
-  #upsertBundle(row: BundleRow, seq: number): void {
+  #putBundle(row: BundleRow, seq: number): void {
     this.#ctx.storage.sql.exec(
       `INSERT INTO bundles (letter_id, bundle, digest, size, state, place, transfer_id, updated_seq)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -701,90 +893,97 @@ export class ActorHostCore {
     );
   }
 
-  #setBundleState(
-    letterId: number,
-    state: string,
-    place: string,
-    seq: number,
-    keepBytes: boolean,
-  ): void {
+  // 行があれば state・place を変える（drop なら bytes を NULL にする）。行が無ければ何もしない。
+  #markBundle(letterId: number, state: string, place: string, seq: number, drop: boolean): void {
     this.#ctx.storage.sql.exec(
       `UPDATE bundles SET state = ?, place = ?, updated_seq = ?,
-         bundle = CASE WHEN ? = 1 THEN bundle ELSE NULL END,
-         transfer_id = CASE WHEN ? = 'held' THEN NULL ELSE transfer_id END
+         bundle = CASE WHEN ? = 1 THEN NULL ELSE bundle END
        WHERE letter_id = ?`,
       state,
       place,
       seq,
-      keepBytes ? 1 : 0,
-      state,
+      drop ? 1 : 0,
       letterId,
     );
   }
 
-  // 出力の効果: 作った手紙の bytes を保存し、捨てた・配達した手紙の bytes を消す。
-  #applyOutputs(
-    response: ResponseEnvelope,
-    bundles: ReadonlyMap<number, { bundle: string; digest: string; size: number }>,
+  // 要求の効果（§7.2 の表。出力の効果より先）。
+  #applyRequest(
+    kind: string,
+    payload: JsonObject,
+    letters: readonly {
+      letterId: number;
+      bundle: string;
+      digest: string;
+      size: number;
+      place: "port" | "relay" | null;
+    }[],
     seq: number,
   ): void {
-    for (const output of response.outputs) {
+    if (GC_THEN.has(kind)) {
+      for (const id of letterIdsOf(payload)) this.#markBundle(id, "gone", "moved", seq, true);
+      return;
+    }
+    for (const l of letters) {
+      const [state, place] =
+        kind === "deliver"
+          ? ["gone", "delivered"]
+          : kind === "cargo.add"
+            ? ["held", "cargo"]
+            : ["held", l.place ?? "port"];
+      this.#putBundle(
+        {
+          letterId: l.letterId,
+          bundle: l.bundle,
+          digest: l.digest,
+          size: l.size,
+          state,
+          place,
+          transferId: null,
+        },
+        seq,
+      );
+    }
+  }
+
+  // 出力の効果（出力の順）: letter.created の bytes を保存し、捨てた・配達した手紙の行を gone にする。
+  #applyOutputs(
+    outputs: readonly Output[],
+    bundles: ReadonlyMap<number, CheckedBundle>,
+    seq: number,
+  ): void {
+    for (const output of outputs) {
       const letterId = outputLetterId(output);
       if (letterId === null) continue;
       if (output.type === "letter.created") {
         const b = bundles.get(letterId);
         if (b === undefined) continue;
-        this.#upsertBundle(
-          {
-            letterId,
-            bundle: b.bundle,
-            digest: b.digest,
-            size: b.size,
-            state: "held",
-            place: "port",
-            transferId: null,
-          },
-          seq,
-        );
+        this.#putBundle({ letterId, ...b, state: "held", place: "port", transferId: null }, seq);
       } else if (output.type === "letter.dropped") {
-        this.#setBundleState(letterId, "gone", "dropped", seq, false);
+        this.#markBundle(letterId, "gone", "dropped", seq, false);
       } else if (output.type === "letter.delivered") {
-        this.#setBundleState(letterId, "gone", "delivered", seq, false);
+        this.#markBundle(letterId, "gone", "delivered", seq, false);
       }
-    }
-  }
-
-  // 要求の種類ごとの bundles の効果（then の効果を含む）。
-  #applyKind(kind: string, payload: JsonObject, seq: number): void {
-    if (GC_THEN.has(kind)) {
-      for (const id of letterIdsOf(payload)) this.#setBundleState(id, "gone", "moved", seq, false);
-      return;
-    }
-    if (!ACTIVATE_THEN.has(kind)) return;
-    const letters = Array.isArray(payload["letters"]) ? (payload["letters"] as unknown[]) : [];
-    for (const letter of letters) {
-      if (!isObject(letter) || !isLetterId(letter["letterId"])) continue;
-      const id = letter["letterId"];
-      if (kind === "deliver") this.#setBundleState(id, "gone", "delivered", seq, false);
-      else if (kind === "cargo.add") this.#setBundleState(id, "held", "cargo", seq, true);
-      else
-        this.#setBundleState(id, "held", letter["place"] === "relay" ? "relay" : "port", seq, true);
     }
   }
 
   // ---- 状態の照会（journal に入れない）----
 
-  #status(): JsonObject {
-    const stats = this.#storageStats();
-    return {
+  // §7.2: outputs: [{type: "host.status", data: {epoch, lastEventSeq, container}}]（DTN-12 は data に数を足す）。
+  #hostStatus(env: Envelope): ResponseEnvelope {
+    const stats = this.#stats();
+    const data = {
       epoch: this.#epoch(),
-      lastEventSeq: this.#lastEventSeq(),
-      maxCoordEpoch: Number(this.#meta("maxCoordEpoch") ?? "0"),
-      container: this.#state,
+      lastEventSeq: this.#lastAppliedSeq(),
+      container: this.#containerStatus(),
       starts: Number(this.#meta("starts") ?? "0"),
       journalRows: stats.rows,
-      storageBytes: stats.bytes,
+      storedBytes: stats.bytes,
       restoreMs: Number(this.#meta("restoreMs") ?? "0"),
+    };
+    return {
+      ...okResponse(this.#base(env)),
+      outputs: [{ t: 0, class: 0, seq: 0, type: HOST_STATUS_OUTPUT, data }],
     };
   }
 
@@ -801,7 +1000,7 @@ export class ActorHostCore {
     };
   }
 
-  // ---- Contact（§2）----
+  // ---- Contact（handoff-and-contact.md §2）----
 
   async #verifyContact(raw: unknown): Promise<Contact> {
     const contact = parseContact(raw);
@@ -822,7 +1021,7 @@ export class ActorHostCore {
 
   async #contact(env: Envelope, reqDigest: string): Promise<ResponseEnvelope> {
     const contact = await this.#verifyContact(env.payload["contact"]);
-    const base = this.#base(env.eventSeq);
+    const base = this.#base(env);
     const body = JSON.stringify(contact);
     if (env.kind === "contact.open") {
       if (this.#contactState(contact.contactId) === "closed") {
@@ -861,7 +1060,7 @@ export class ActorHostCore {
     );
   }
 
-  // §2.2 の 1〜5（署名・セッション・当事者・epoch・閉じていない）。相手の名前を返す。
+  // handoff-and-contact.md §2.2 の 1〜5（署名・セッション・当事者・epoch・閉じていない）。
   async #checkTransferContact(raw: unknown, peer: string): Promise<Contact> {
     const contact = await this.#verifyContact(raw);
     if (counterpartOf(contact, this.#actor()) !== peer) fail("contact_mismatch", "peer");
@@ -938,13 +1137,15 @@ export class ActorHostCore {
       }
       if (transfer.state === "aborted") fail("conflict", "transfer aborted");
     }
+    const base = this.#base(env);
     if (transfer === null) {
       // §2.2 の 6: 対象の手紙をすべて持っていて、別の transfer の途中でない
       for (const id of letterIds) {
         const b = this.#bundle(id);
         if (b === null || b.state !== "held") fail("invalid", "letter not held");
       }
-      if (row === null) this.#writeIntent(env, reqDigest, env);
+      if (row === null) this.#writeIntent(env, reqDigest, env.payload);
+      this.#at("afterIntent");
       // Bundle Age と CRC を更新した bytes を Actor から受け取る（bpv7-profile.md §3）
       const exported = await this.#send({
         ...env,
@@ -952,14 +1153,10 @@ export class ActorHostCore {
         payload: { t, letterIds },
       });
       if (exported.status !== "ok") {
-        return this.#finishHostOnly(
-          env,
-          reqDigest,
-          stripBundles({ ...exported, eventSeq: env.eventSeq }),
-          () => undefined,
-        );
+        if (!commitsResponse(exported)) return stripBundles(exported);
+        return this.#finishHostOnly(env, reqDigest, stripBundles(exported), () => undefined);
       }
-      const bundles = await this.#checkBundles(exported);
+      const bundles = await this.#checkOutputBundles(exported.outputs);
       if (!letterIds.every((id) => bundles.has(id)))
         fail("invalid", "bundle.export missing letters");
       const digests = letterIds.map((id) => ({
@@ -980,23 +1177,13 @@ export class ActorHostCore {
           const b = bundles.get(id);
           const current = this.#bundle(id);
           if (b === undefined || current === null) continue;
-          this.#upsertBundle(
-            {
-              ...current,
-              bundle: b.bundle,
-              digest: b.digest,
-              size: b.size,
-              state: "prepared",
-              transferId,
-            },
-            env.eventSeq,
-          );
+          this.#putBundle({ ...current, ...b, state: "prepared", transferId }, env.eventSeq);
         }
+        this.#recount();
       });
       transfer = this.#transfer(transferId);
     }
     if (transfer === null) fail("internal", "transfer missing");
-    const base = this.#base(env.eventSeq);
     if (transfer.ack !== null) {
       return this.#finishHostOnly(
         env,
@@ -1011,7 +1198,7 @@ export class ActorHostCore {
       return { letterId: id, bundle: b?.bundle ?? "", digest: b?.digest ?? "" };
     });
     const acceptEnv = {
-      v: env.v,
+      v: PROTOCOL_VERSION,
       sessionId: env.sessionId,
       actor: to,
       epoch: contactEpochOf(contact, to) ?? 0,
@@ -1030,27 +1217,21 @@ export class ActorHostCore {
       });
       fail("not_ready", "peer unreachable"); // intent のまま。同じ eventSeq の送り直しで accept からやり直す
     }
-    let ack: ResponseEnvelope;
-    try {
-      ack = parseAckResponse(result);
-    } catch {
-      fail("not_ready", "peer response");
-    }
+    const ack = parseAck(result);
+    if (ack === null) fail("not_ready", "peer response");
     if (ack.status !== "ok") {
       // 受け取り側が断った（Contact の外など）。prepared のまま（Coordinator が transfer.abort で取り消す）
-      const code = ack.error?.code ?? "internal";
-      return this.#finishHostOnly(
-        env,
-        reqDigest,
-        { ...errorResponse(base, "invalid"), error: { code, message: ack.error?.message ?? code } },
-        () => undefined,
-      );
+      const code = ack.code;
+      const refused: ResponseEnvelope = {
+        ...errorResponse(base, "invalid"),
+        error: { code, message: code },
+      };
+      return this.#finishHostOnly(env, reqDigest, refused, () => undefined);
     }
-    const ackBody = ack.result ?? null;
-    return this.#finishHostOnly(env, reqDigest, okResponse(base, ackBody), () => {
+    return this.#finishHostOnly(env, reqDigest, okResponse(base, ack.result), () => {
       this.#ctx.storage.sql.exec(
         "UPDATE transfers SET ack = ? WHERE transfer_id = ?",
-        JSON.stringify(ackBody),
+        JSON.stringify(ack.result),
         transferId,
       );
     });
@@ -1070,11 +1251,11 @@ export class ActorHostCore {
       typeof from !== "string" ||
       !ACTOR_PATTERN.test(from) ||
       !Array.isArray(rawBundles) ||
-      rawBundles.length < 1 ||
-      rawBundles.length > MAX_LETTERS_PER_CALL
+      rawBundles.length < 1
     ) {
       fail("invalid", "accept payload");
     }
+    if (rawBundles.length > this.#limits.maxLetters) fail("too_large", "too many bundles");
     const contact = await this.#checkTransferContact(p["contact"], from);
     const bundles: { letterId: number; bundle: string; digest: string; size: number }[] = [];
     for (const raw of rawBundles as unknown[]) {
@@ -1083,7 +1264,7 @@ export class ActorHostCore {
       }
       const bytes = decodeBase64(raw["bundle"]);
       if (bytes === null) fail("invalid", "bundle base64");
-      if (bytes.byteLength > MAX_BUNDLE_BYTES) fail("too_large", "bundle");
+      if (bytes.byteLength > this.#limits.maxBundleBytes) fail("too_large", "bundle");
       const digest = await sha256Hex(bytes);
       if (raw["digest"] !== digest) fail("invalid", "bundle digest");
       bundles.push({
@@ -1097,7 +1278,7 @@ export class ActorHostCore {
     if (new Set(letterIds).size !== letterIds.length) fail("invalid", "duplicate letter");
     const digests = bundles.map((b) => ({ letterId: b.letterId, digest: b.digest }));
     const ack = { transferId, digests };
-    const base = this.#base(env.eventSeq);
+    const base = this.#base(env);
     return this.#ctx.storage.transactionSync(() => {
       if (this.#contactState(contact.contactId) === "closed") fail("contact_closed");
       const existing = this.#transfer(transferId);
@@ -1116,9 +1297,6 @@ export class ActorHostCore {
         const b = this.#bundle(id);
         if (b !== null && b.state !== "gone") fail("conflict", "letter already here");
       }
-      const stats = this.#storageStats();
-      const adding = bundles.reduce((sum, b) => sum + b.bundle.length, 0);
-      if (stats.bytes + adding > MAX_ACTOR_STORAGE_BYTES) fail("too_large", "actor storage limit");
       this.#ctx.storage.sql.exec(
         `INSERT INTO transfers (transfer_id, role, peer, contact_id, letter_ids, digests, state, ack)
          VALUES (?, 'dest', ?, ?, ?, ?, 'pending', ?)`,
@@ -1130,22 +1308,23 @@ export class ActorHostCore {
         JSON.stringify(ack),
       );
       const place = roleOf(this.#actor()) === "ferry" ? "cargo" : "port";
-      for (const b of bundles) {
-        this.#upsertBundle({ ...b, state: "pending", place, transferId }, env.eventSeq);
-      }
+      for (const b of bundles)
+        this.#putBundle({ ...b, state: "pending", place, transferId }, env.eventSeq);
+      this.#recount();
       return okResponse(base, ack);
     });
   }
 
   // 受け取り側: committed の後に then（deliver・cargo.add・unload）を Container に送る。
+  // journal の payload には、Container に送る bytes を埋めた then を入れる（再生はこれだけを使う）。
   async #activate(
     env: Envelope,
     reqDigest: string,
     row: JournalRow | null,
   ): Promise<ResponseEnvelope> {
-    let stored: Envelope;
+    let payload: JsonObject;
     if (row !== null) {
-      stored = JSON.parse(row.payload) as Envelope;
+      payload = JSON.parse(row.payload) as JsonObject;
     } else {
       const { transferId, then } = parseThen(env.payload, ACTIVATE_THEN);
       const transfer = this.#transfer(transferId);
@@ -1173,17 +1352,14 @@ export class ActorHostCore {
       ) {
         fail("invalid", "letters differ from transfer");
       }
-      // journal の payload には Container に送る bytes も入れる（再生はこれだけを使う）
-      stored = {
-        ...env,
-        payload: {
-          ...env.payload,
-          then: { kind: then.kind, payload: { ...then.payload, letters: filled } },
-        },
+      payload = {
+        ...env.payload,
+        then: { kind: then.kind, payload: { ...then.payload, letters: filled } },
       };
-      this.#writeIntent(env, reqDigest, stored);
+      this.#writeIntent(env, reqDigest, payload);
     }
-    const { transferId, then } = parseThen(stored.payload, ACTIVATE_THEN);
+    this.#at("afterIntent");
+    const { transferId, then } = parseThen(payload, ACTIVATE_THEN);
     return this.#runContainer(env, { ...env, kind: then.kind, payload: then.payload }, () => {
       this.#ctx.storage.sql.exec(
         "UPDATE transfers SET state = 'activated' WHERE transfer_id = ?",
@@ -1202,8 +1378,9 @@ export class ActorHostCore {
       }
       if (!sameIds(letterIdsOf(then.payload), transfer.letterIds))
         fail("invalid", "letters differ from transfer");
-      this.#writeIntent(env, reqDigest, env);
+      this.#writeIntent(env, reqDigest, env.payload);
     }
+    this.#at("afterIntent");
     return this.#runContainer(env, { ...env, kind: then.kind, payload: then.payload }, () => {
       this.#ctx.storage.sql.exec(
         "UPDATE transfers SET state = 'collected' WHERE transfer_id = ?",
@@ -1217,7 +1394,7 @@ export class ActorHostCore {
     const transferId = env.payload["transferId"];
     if (typeof transferId !== "string" || !TRANSFER_ID_PATTERN.test(transferId)) fail("invalid");
     const transfer = this.#transfer(transferId);
-    const base = this.#base(env.eventSeq);
+    const base = this.#base(env);
     if (
       transfer !== null &&
       transfer.state !== "prepared" &&
@@ -1313,7 +1490,7 @@ export class ActorHostCore {
       .map((row) => this.#toJournalRow(row));
     let replayed = 0;
     for (const row of rows) {
-      const request = replayRequest(row);
+      const request = this.#replayRequest(row);
       if (request === null) continue;
       if (this.#deps.now() - startedAt > MAX_RESTORE_MS) {
         this.#giveUp("not_ready", "restore_timeout");
@@ -1323,7 +1500,9 @@ export class ActorHostCore {
       try {
         const channel = this.#channel;
         if (channel === null) throw new ChannelLost("closed");
-        response = await channel.request({ ...request, epoch: channel.epoch, replay: true });
+        response = parseResponse(
+          await channel.request({ ...request, epoch: channel.epoch, replay: true }),
+        );
       } catch (error) {
         this.#log("error", "host.error", { op: "replay", error: errorName(error) });
         this.#giveUp("not_ready", "replay_lost");
@@ -1343,6 +1522,28 @@ export class ActorHostCore {
     this.#log("info", "host.restored", { replayed, restoreMs: elapsed });
   }
 
+  // journal の applied の行から、再生で Container に送る要求を作る（Host だけの種類は null）。
+  // エンベロープの残りは列と meta から作る（§7.1）。
+  #replayRequest(row: JournalRow): Envelope | null {
+    const payload = JSON.parse(row.payload) as JsonObject;
+    const base = {
+      v: PROTOCOL_VERSION,
+      sessionId: this.#meta("sessionId") ?? "",
+      actor: this.#actor(),
+      epoch: this.#epoch(),
+      coordEpoch: Number(this.#meta("maxCoordEpoch") ?? "0"),
+      eventSeq: row.eventSeq,
+    };
+    if (CONTAINER_KINDS.has(row.kind)) return { ...base, kind: row.kind, payload };
+    if (row.kind === "transfer.activate" || row.kind === "transfer.gc") {
+      const response = JSON.parse(row.response ?? "{}") as { status?: unknown };
+      const then = payload["then"];
+      if (response.status !== "ok" || !isObject(then) || !isObject(then["payload"])) return null;
+      return { ...base, kind: String(then["kind"]), payload: then["payload"] };
+    }
+    return null;
+  }
+
   #giveUp(code: ErrorCode, cause: string, eventSeq?: number): void {
     this.#state = "failed";
     this.#failedCode = code;
@@ -1354,7 +1555,23 @@ export class ActorHostCore {
     });
   }
 
-  // ---- 終わり・片付け（persistence-and-recovery.md §6・environment.md §4）----
+  // ---- 終わり・片付け（persistence-and-recovery.md §6・§7.2・environment.md §4）----
+
+  // 要求の shutdown（§7.2）: Container に shutdown を送り（応答が無くても続ける）、止めてから保存を消す。
+  async #shutdownKind(env: Envelope): Promise<ResponseEnvelope> {
+    const channel = this.#channel;
+    if (channel !== null && this.#state === "running") {
+      try {
+        await channel.request({ ...env, epoch: this.#epoch() });
+      } catch {
+        // 応答が無くても続ける（失ったとはみなさない）
+      }
+    }
+    const base = this.#base(env);
+    return (await this.#shutdown())
+      ? okResponse(base)
+      : errorResponse(base, "internal", "destroy failed");
+  }
 
   async #shutdownRequest(text: string): Promise<Response> {
     let body: unknown;
@@ -1457,36 +1674,15 @@ function parseThen(
   return { transferId, then: { kind: then["kind"], payload: then["payload"] } };
 }
 
-function parseAckResponse(result: CallResult): ResponseEnvelope {
-  if (result.status !== 200 || !isObject(result.body)) throw new Error("bad ack");
+// 受け取る Host の応答（ACK）。読めなければ null。
+function parseAck(
+  result: CallResult,
+): { status: "ok"; result: unknown } | { status: "error"; code: string } | null {
+  if (result.status !== 200 || !isObject(result.body)) return null;
   const body = result.body;
-  if (body["status"] !== "ok" && body["status"] !== "error") throw new Error("bad ack");
-  const error = isObject(body["error"]) ? body["error"] : null;
-  return {
-    v: 1,
-    actor: typeof body["actor"] === "string" ? body["actor"] : "",
-    epoch: 0,
-    eventSeq: 0,
-    status: body["status"],
-    outputs: [],
-    error:
-      error === null
-        ? null
-        : { code: String(error["code"]), message: String(error["message"] ?? "") },
-    result: body["result"],
-  };
-}
-
-// journal の applied の行から、再生で Container に送る要求を作る（Host だけの種類は null）。
-function replayRequest(row: JournalRow): Envelope | null {
-  const env = JSON.parse(row.payload) as Envelope;
-  if (CONTAINER_KINDS.has(row.kind)) return env;
-  if (row.kind === "transfer.activate" || row.kind === "transfer.gc") {
-    const response = JSON.parse(row.response ?? "{}") as { status?: unknown };
-    if (response.status !== "ok") return null;
-    const then = (env.payload as { then?: { kind: string; payload: JsonObject } }).then;
-    if (then === undefined) return null;
-    return { ...env, kind: then.kind, payload: then.payload };
+  if (body["status"] === "ok") return { status: "ok", result: body["result"] ?? null };
+  if (body["status"] === "error" && isObject(body["error"])) {
+    return { status: "error", code: String(body["error"]["code"]) };
   }
   return null;
 }

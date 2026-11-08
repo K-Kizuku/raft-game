@@ -867,7 +867,10 @@ export class DtnSessionCore {
             kind: "host.status",
             payload: {},
           });
-          const status = isObject(result.body) ? result.body["result"] : null;
+          // host.status の応答は outputs: [{type: "host.status", data}]（persistence-and-recovery.md §7.2）
+          const outputs = isObject(result.body) ? result.body["outputs"] : null;
+          const first: unknown = Array.isArray(outputs) ? outputs[0] : null;
+          const status = isObject(first) ? first["data"] : null;
           return { actor: actor.name, state: actor.state, startMs: actor.startMs, status };
         } catch {
           return { actor: actor.name, state: actor.state, startMs: actor.startMs, status: null };

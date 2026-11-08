@@ -1,10 +1,13 @@
 // 環境変数から、cf deploy --secrets-file に渡す JSON をモードごとに作る（T-603 / #67）。
 // .github/workflow-sources/deploy.yml のデプロイの手順だけが使う。
 //
-//   node web/scripts/deploy-secrets.ts --mode <production|demo> --out <絶対パス>
+//   node web/scripts/deploy-secrets.ts --mode <production|demo|dtn> --out <絶対パス>
 //
 // 読む環境変数: CF_SECRET_SESSION_SIGNING_KEY_PRODUCTION・CF_SECRET_SESSION_SIGNING_KEY_DEMO・
 //               CF_SECRET_ADMIN_TOKEN・CF_SECRET_TURNSTILE_SECRET
+//               dtn（DTN-12・docs/dtn/environment.md §5 の H3・H4）: CF_SECRET_SESSION_SIGNING_KEY_DTN・
+//               CF_SECRET_TURNSTILE_SECRET_DTN・CF_SECRET_ADMIN_TOKEN_DTN・CF_SECRET_DTN_CONTACT_KEY
+//               （prod・demo と別の値。SESSION_SIGNING_KEY は prod・demo と同じ値を断る）
 // 成功: --out に JSON を権限 0600 で書き、{"ok":true,"mode":"<モード>","keys":[<キー名>…]} を標準出力に出して 0。
 // 失敗: 理由を 1 行ずつ（変数名で始める）標準エラーに出して 1。ファイルを作らない。
 // 引数の誤り（モード・--out がない・相対パス・既にある・親のディレクトリがない）→ 2。
@@ -16,7 +19,7 @@ import { existsSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const DEPLOY_MODES = ["production", "demo"] as const;
+export const DEPLOY_MODES = ["production", "demo", "dtn"] as const;
 export type DeployMode = (typeof DEPLOY_MODES)[number];
 
 type Env = Record<string, string | undefined>;
@@ -47,6 +50,7 @@ interface Source {
 
 const SIGNING_KEY_PRODUCTION = "CF_SECRET_SESSION_SIGNING_KEY_PRODUCTION";
 const SIGNING_KEY_DEMO = "CF_SECRET_SESSION_SIGNING_KEY_DEMO";
+const SIGNING_KEY_DTN = "CF_SECRET_SESSION_SIGNING_KEY_DTN";
 
 /** モードごとの出力のキー（この順に並べる） */
 const SOURCES: Record<DeployMode, Source[]> = {
@@ -84,6 +88,32 @@ const SOURCES: Record<DeployMode, Source[]> = {
       rule: TURNSTILE_RULE,
     },
   ],
+  dtn: [
+    {
+      key: "SESSION_SIGNING_KEY",
+      variable: SIGNING_KEY_DTN,
+      secretName: "DTN_SESSION_SIGNING_KEY",
+      rule: KEY_RULE,
+    },
+    {
+      key: "TURNSTILE_SECRET",
+      variable: "CF_SECRET_TURNSTILE_SECRET_DTN",
+      secretName: "DTN_TURNSTILE_SECRET",
+      rule: TURNSTILE_RULE,
+    },
+    {
+      key: "ADMIN_TOKEN",
+      variable: "CF_SECRET_ADMIN_TOKEN_DTN",
+      secretName: "DTN_ADMIN_TOKEN",
+      rule: KEY_RULE,
+    },
+    {
+      key: "DTN_CONTACT_KEY",
+      variable: "CF_SECRET_DTN_CONTACT_KEY",
+      secretName: "DTN_CONTACT_KEY",
+      rule: KEY_RULE,
+    },
+  ],
 };
 
 /** 値の誤り（なければ undefined）。文に値も値の長さも入れない */
@@ -113,6 +143,13 @@ export function buildSecrets(mode: DeployMode, env: Env): BuildResult {
       env[SIGNING_KEY_PRODUCTION] === value
     ) {
       errors.push(`${SIGNING_KEY_DEMO}: 一般公開と同じ値は使えない`);
+      continue;
+    }
+    if (
+      src.variable === SIGNING_KEY_DTN &&
+      [env[SIGNING_KEY_PRODUCTION], env[SIGNING_KEY_DEMO]].some((other) => other === value)
+    ) {
+      errors.push(`${SIGNING_KEY_DTN}: prod・demo と同じ値は使えない`);
       continue;
     }
     secrets[src.key] = value as string;

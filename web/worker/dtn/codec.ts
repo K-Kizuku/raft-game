@@ -11,14 +11,15 @@ import { decodeBase64Url, encodeBase64Url } from "../security/base64url.ts";
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 // RFC 8785 の正準の JSON。undefined の値を持つキーは JSON.stringify と同じく除く。
-// 有限でない数・孤立したサロゲート・関数などは TypeError。
+// DTN の電文の数は安全な整数だけ（Go の dtnproto と同じ。actor-protocol.md §7.1）。それ以外の数・
+// 孤立したサロゲート・関数などは TypeError。
 export function canonicalJson(value: unknown): string {
   if (value === null) return "null";
   switch (typeof value) {
     case "boolean":
       return value ? "true" : "false";
     case "number":
-      if (!Number.isFinite(value)) throw new TypeError("canonicalJson: non-finite number");
+      if (!Number.isSafeInteger(value)) throw new TypeError("canonicalJson: not a safe integer");
       return JSON.stringify(value);
     case "string":
       if (LONE_SURROGATE.test(value)) throw new TypeError("canonicalJson: lone surrogate");
@@ -112,4 +113,79 @@ export function createHmac(key: string): Hmac {
       return crypto.subtle.verify("HMAC", await hmacKey(), sig, utf8(text));
     },
   };
+}
+
+// 厳密な JSON の読み込み（Go の dtnproto の読み込みと同じ規則）: 重複したキー（エスケープの違いを含む）・
+// 小数・指数・安全でない整数・孤立したサロゲートは SyntaxError。ほかは JSON.parse の規則。
+export function parseStrictJson(text: string): unknown {
+  const value: unknown = JSON.parse(text); // 文法の誤り（末尾のカンマ・制御文字・先頭の 0 など）
+  let pos = 0;
+  const ws = () => {
+    while (pos < text.length && " \t\n\r".includes(text.charAt(pos))) pos += 1;
+  };
+  const str = (): string => {
+    const start = pos;
+    pos += 1;
+    while (text.charAt(pos) !== '"') pos += text.charAt(pos) === "\\" ? 2 : 1;
+    pos += 1;
+    const decoded = JSON.parse(text.slice(start, pos)) as string;
+    if (LONE_SURROGATE.test(decoded)) throw new SyntaxError("lone surrogate");
+    return decoded;
+  };
+  const walk = (): void => {
+    ws();
+    const c = text.charAt(pos);
+    if (c === "{") {
+      pos += 1;
+      const keys = new Set<string>();
+      ws();
+      if (text.charAt(pos) === "}") {
+        pos += 1;
+        return;
+      }
+      for (;;) {
+        ws();
+        const key = str();
+        if (keys.has(key)) throw new SyntaxError(`duplicate key ${JSON.stringify(key)}`);
+        keys.add(key);
+        ws();
+        pos += 1; // :
+        walk();
+        ws();
+        const next = text.charAt(pos);
+        pos += 1;
+        if (next === "}") return;
+      }
+    }
+    if (c === "[") {
+      pos += 1;
+      ws();
+      if (text.charAt(pos) === "]") {
+        pos += 1;
+        return;
+      }
+      for (;;) {
+        walk();
+        ws();
+        const next = text.charAt(pos);
+        pos += 1;
+        if (next === "]") return;
+      }
+    }
+    if (c === '"') {
+      str();
+      return;
+    }
+    const m = /^-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/.exec(text.slice(pos));
+    if (m !== null) {
+      if (m[1] !== undefined || m[2] !== undefined) throw new SyntaxError("not an integer");
+      if (!Number.isSafeInteger(Number(m[0]))) throw new SyntaxError("unsafe integer");
+      pos += m[0].length;
+      return;
+    }
+    const lit = /^(true|false|null)/.exec(text.slice(pos));
+    pos += lit?.[0].length ?? 1;
+  };
+  walk();
+  return value;
 }

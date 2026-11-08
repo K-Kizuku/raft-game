@@ -153,10 +153,10 @@ describe("ActorHost の起動", () => {
     expect(h.container.starts).toHaveLength(0);
   });
 
-  it("起動していない Host への /host は session_mismatch", async () => {
+  it("起動していない Host への /host は not_ready", async () => {
     const h = await setup();
     const res = await post(h.host, "/host", env(1, "init"));
-    expect((res.body["error"] as Obj)["code"]).toBe("session_mismatch");
+    expect((res.body["error"] as Obj)["code"]).toBe("not_ready");
   });
 });
 
@@ -168,7 +168,7 @@ describe("ActorHost の上限", () => {
     expect((res.body["error"] as Obj)["code"]).toBe("too_large");
   });
 
-  it("16 KiB を超える Bundle は too_large", async () => {
+  it("Actor の出力の 16 KiB を超える Bundle は invalid（確定しない）", async () => {
     const h = await setup();
     await start(h);
     const big = encodeBase64(new Uint8Array(16 * 1024 + 1));
@@ -191,7 +191,10 @@ describe("ActorHost の上限", () => {
       error: null,
     });
     const res = await post(h.host, "/host", env(1, "advance", { horizon: [1, 1] }));
-    expect((res.body["error"] as Obj)["code"]).toBe("too_large");
+    expect((res.body["error"] as Obj)["code"]).toBe("invalid");
+    expect(h.storage.sql.exec("SELECT status FROM journal").toArray()).toEqual([
+      { status: "intent" },
+    ]);
   });
 
   it("journal が 20,000 行なら too_large", async () => {
@@ -239,7 +242,7 @@ describe("ActorHost の Container が止まったとき", () => {
     expect(again.body["epoch"]).toBe(2);
   });
 
-  it("Actor の internal エラーでも作り直す", async () => {
+  it("Actor の internal エラーは確定せずに返し、作り直す", async () => {
     const h = await setup();
     await start(h);
     h.container.responder = (request) => ({
@@ -252,7 +255,7 @@ describe("ActorHost の Container が止まったとき", () => {
       error: { code: "internal", message: "panic" },
     });
     const res = await post(h.host, "/host", env(1, "init"));
-    expect((res.body["error"] as Obj)["code"]).toBe("not_ready");
+    expect((res.body["error"] as Obj)["code"]).toBe("internal");
     await flush();
     await h.host.drain();
     expect(h.container.starts).toHaveLength(2);

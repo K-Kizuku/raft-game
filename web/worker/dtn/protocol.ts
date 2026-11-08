@@ -25,6 +25,25 @@ export const CONTAINER_PORT = 8080; // env PORT
 export const IMAGE_NAME = "dtnactor"; // ctx.container.images["dtnactor"]
 export const CLEANUP_RETRY_MS = 30_000; // 止められなかったものを再試行する間隔（environment.md §4）
 
+// Actor Host の上限（fixture の limits で上書きできる。persistence-and-recovery.md §7.3）。
+export interface HostLimits {
+  readonly maxMessageBytes: number;
+  readonly maxBundleBytes: number;
+  readonly maxLetters: number;
+  readonly maxOutputs: number;
+  readonly maxJournalRows: number;
+  readonly maxStoredBytes: number;
+}
+
+export const DEFAULT_HOST_LIMITS: HostLimits = {
+  maxMessageBytes: MAX_MESSAGE_BYTES,
+  maxBundleBytes: MAX_BUNDLE_BYTES,
+  maxLetters: MAX_LETTERS_PER_CALL,
+  maxOutputs: MAX_OUTPUTS,
+  maxJournalRows: MAX_JOURNAL_ROWS,
+  maxStoredBytes: MAX_ACTOR_STORAGE_BYTES,
+};
+
 // ---- 種類（§3）----
 // Actor（Container）が受ける
 export const CONTAINER_KINDS: ReadonlySet<string> = new Set([
@@ -202,10 +221,13 @@ export function requestDigestBody(env: Envelope): JsonObject {
   };
 }
 
+// 足りない t・class・seq は 0 とみなす（Go の dtnproto.Output のゼロ値と同じ）。
 function parseOutput(value: unknown): Output {
   if (!isObject(value)) throw new ProtocolError("invalid", "output");
-  const { t, seq, type, data, bundle } = value;
-  const cls = value["class"];
+  const { type, data, bundle } = value;
+  const t = value["t"] ?? 0;
+  const seq = value["seq"] ?? 0;
+  const cls = value["class"] ?? 0;
   if (!isSafeNonNegative(t) || !isSafeNonNegative(cls) || !isSafeNonNegative(seq)) {
     throw new ProtocolError("invalid", "output t/class/seq");
   }
@@ -271,6 +293,7 @@ export function errorResponse(
     eventSeq: base.eventSeq,
     status: "error",
     outputs: [],
+    cursor: null,
     error: { code, message },
   };
 }
@@ -286,32 +309,35 @@ export function okResponse(
     eventSeq: base.eventSeq,
     status: "ok",
     outputs: [],
+    cursor: null,
     error: null,
     ...(result === undefined ? {} : { result }),
   };
 }
 
-// 応答から Bundle の bytes を取り除く（Session Front と Coordinator には digest と長さだけを返す）。
+// 応答から Bundle の bytes（outputs[].bundle）を取り除く（Session Front と Coordinator には digest と長さだけを返す）。
 export function stripBundles(response: ResponseEnvelope): ResponseEnvelope {
   return {
     ...response,
-    outputs: response.outputs.map((output) => {
-      const { bundle: _bundle, ...rest } = output;
-      void _bundle;
-      if (isObject(rest.data) && Object.hasOwn(rest.data, "bundle")) {
-        const { bundle: _inner, ...data } = rest.data;
-        void _inner;
-        return { ...rest, data };
-      }
-      return rest;
-    }),
+    cursor: response.cursor ?? null,
+    outputs: response.outputs.map((output) => ({
+      t: output.t,
+      class: output.class,
+      seq: output.seq,
+      type: output.type,
+      data: output.data,
+    })),
   };
 }
 
-// 応答の digest の対象（epoch・actor・eventSeq を除く。復元の再生と照合する）。
+// 応答の digest の対象（Go の dtnproto.ResponseDigest と同じ: {v, actor, eventSeq, status, outputs, cursor, error}。
+// epoch と outputs[].bundle を含めない。actor-protocol.md §7.2）。
 export function responseDigestBody(response: ResponseEnvelope): JsonObject {
   const stripped = stripBundles(response);
   return {
+    v: stripped.v,
+    actor: stripped.actor,
+    eventSeq: stripped.eventSeq,
     status: stripped.status,
     outputs: stripped.outputs,
     cursor: stripped.cursor ?? null,
@@ -339,18 +365,13 @@ export function parseLetterIds(value: unknown): number[] {
   return [...(ids as readonly number[])];
 }
 
-// 出力の手紙の ID（letter.created は data.letter.id、ほかは data.letterId）。なければ null。
+// 出力の手紙の ID（data.letterId）。なければ null。
 export function outputLetterId(output: Output): number | null {
-  const direct = output.data["letterId"];
-  if (isLetterId(direct)) return direct;
-  const letter = output.data["letter"];
-  if (isObject(letter) && isLetterId(letter["id"])) return letter["id"];
-  return null;
+  const id = output.data["letterId"];
+  return isLetterId(id) ? id : null;
 }
 
-// 出力の Bundle の bytes（outputs[].bundle、なければ outputs[].data.bundle）。
+// 出力の Bundle の bytes（outputs[].bundle。actor-protocol.md §2.2）。
 export function outputBundle(output: Output): string | null {
-  if (typeof output.bundle === "string") return output.bundle;
-  const inner = output.data["bundle"];
-  return typeof inner === "string" ? inner : null;
+  return typeof output.bundle === "string" ? output.bundle : null;
 }
