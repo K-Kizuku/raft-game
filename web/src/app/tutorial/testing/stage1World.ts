@@ -69,12 +69,12 @@ export function stage1Snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
   };
 }
 
-// stage1Ferry は小豆島に停泊した「せとうち丸」（定員 4）。
+// stage1Ferry は小豆島に停泊した「せとうち丸」（定員 6）。
 export function stage1Ferry(overrides: Partial<Ferry> = {}): Ferry {
   return {
     id: FERRY_ID,
     name: "せとうち丸",
-    capacity: 4,
+    capacity: 6,
     state: "docked",
     islandId: LEADER,
     departAt: 0,
@@ -126,7 +126,7 @@ export function stage1Request(
     resource: "stall:main",
     critical: false,
     createdAt: 500,
-    deadline: 60000,
+    deadline: 90000,
     status,
     expired: false,
     result: null,
