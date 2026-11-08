@@ -41,8 +41,28 @@
   padding-bottom: calc(var(--font-size-body) * 2.25 + 2 * var(--space-2));
 }
 
+/* 状況の帯。HUD の並び（HudBar）の右に、エンジニアモードの切り替えを並べる（T-439）。 */
 .game-hud {
   grid-area: hud;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.game-hud > .hud {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* エンジニアモードの切り替え（EngineerPanel.css）は、マップの上に重ねず HUD の並びに置く（T-439）。
+   マップの右下の隅に固定する指定（position: fixed・アンカー配置）を打ち消す。開いたパネルはマップの上のまま。
+   紙のパネルの上なので、フォーカスの輪は親（紙の地の既定の色）を受け継ぐ。 */
+.game-hud > .engineer-toggle {
+  --focus-ring-color: inherit;
+
+  position: static;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 /* マップは、重ねる部品（エンジニアパネル・チュートリアル・嵐の紹介）がアンカー配置で位置を合わせる基準。
@@ -55,7 +75,7 @@
   --focus-ring-color: var(--focus-ring-color-on-sea);
 }
 
-/* お知らせ（右上）。右下のエンジニアパネルの切り替えに届かない高さまで（古いものから隠れる）。 */
+/* お知らせ（右上）。下の端に少し余白を残した高さまで（古いものから隠れる）。 */
 .game-notifications {
   position: absolute;
   top: var(--space-3);

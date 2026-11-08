@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Snapshot } from "../../protocol/index.ts";
 import { gameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
-import { makeSnapshot, portLetter } from "../hud/testing/world.ts";
+import { island, makeSnapshot, portLetter } from "../hud/testing/world.ts";
 import { IslandList } from "./IslandList.tsx";
 import { IslandPanel } from "./IslandPanel.tsx";
 
@@ -76,6 +76,35 @@ describe("IslandList", () => {
     const world = load({ ...base, stage: { ...base.stage, islands: [], routes: [] } });
     const { container } = render(<IslandList world={world} />);
     expect(container.innerHTML).toBe("");
+  });
+
+  it("IL-5 6 島（Stage 3）でも、1 枚を 1 行（色の丸・名前・数）にして情報を減らさずに出す", () => {
+    const base = makeSnapshot();
+    const names = ["大島", "利島", "三宅島", "御蔵島", "八丈島", "青ヶ島"];
+    const islands = names.map((name, i) => island(i + 1, name, "#123456", 100 * i, 100));
+    const world = load({
+      ...base,
+      stage: { ...base.stage, islands, routes: [] },
+      routesState: [],
+      letters: [portLetter(1, 6, 1), portLetter(2, 6, 2)],
+      islandsState: islands.map((is) => ({ id: is.id, satisfaction: 60, lastDeliveredAt: null })),
+    });
+    render(<IslandList world={world} />);
+    const list = screen.getByRole("list", { name: "島を選ぶ" });
+    expect(within(list).getAllByRole("button")).toHaveLength(6);
+    names.forEach((name, i) => {
+      const el = card(i + 1);
+      // 1 行の並び: 色の丸・名前・数（港の手紙・満足度）。
+      expect(Array.from(el.children).map((c) => c.className)).toEqual([
+        "island-list__dot",
+        "island-list__name",
+        "island-list__stats",
+      ]);
+      expect(el.querySelector(".island-list__name")?.textContent).toBe(name);
+      expect(el.querySelector(".island-list__satisfaction")?.textContent).toBe("満足度 60");
+    });
+    expect(card(6).querySelector(".island-list__letters")?.textContent).toBe("港の手紙 2 通");
+    expect(card(5).querySelector(".island-list__letters")?.textContent).toBe("港の手紙 0 通");
   });
 
   it("IL-4 島の詳細: 何も選んでいないときは案内と一覧、押すと詳細に替わる", () => {
