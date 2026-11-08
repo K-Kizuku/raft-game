@@ -42,6 +42,7 @@
 | [bpv7-profile.md](./bpv7-profile.md) | Bundle の wire format |
 | [environment.md](./environment.md) | DTN の環境の構成・費用・人がする作業 |
 | [open-questions.md](./open-questions.md) | 未確定のこと・測定や PoC が要ること |
+| [progress.md](./progress.md) | 実装の進み具合と残りの作業（再開のための記録） |
 
 ADR は MVP の `docs/adr/` と番号が衝突しないよう、`docs/dtn/adr/D001` のように `D` を付けた別の番号にする。
 
