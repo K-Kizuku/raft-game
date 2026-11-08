@@ -141,7 +141,7 @@ describe("HudBar", () => {
     const rows = [...list.querySelectorAll<HTMLElement>(".hud-critical-request")];
     expect(rows.map((row) => row.getAttribute("data-request"))).toEqual(["a-1", "b-1"]);
     const [a, b] = rows;
-    expect(a?.querySelector(".hud-critical-request-label")?.textContent).toBe("🎆大花火 A");
+    expect(a?.querySelector(".hud-critical-request-label")?.textContent).toBe("大花火 A");
     expect(a?.querySelectorAll(".request-step")).toHaveLength(5);
     expect(a?.querySelector('[aria-current="step"]')?.getAttribute("data-step")).toBe("append");
     expect(a?.querySelector(".request-progress-reason")?.textContent).toBe(

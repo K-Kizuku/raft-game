@@ -94,7 +94,7 @@ function CriticalRequests({ world }: { world: World }): ReactElement | null {
         return (
           <li key={request.id} className="hud-critical-request" data-request={request.id}>
             <span className="hud-critical-request-label">
-              <span aria-hidden="true">🎆</span>
+              <FireworkIcon />
               {label}
             </span>
             <RequestStepper status={request.status} compact />
