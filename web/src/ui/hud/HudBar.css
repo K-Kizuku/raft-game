@@ -176,7 +176,14 @@
   text-align: center;
 }
 
+/* 効果音のオン・オフ（T-434）は右の隅に置く。失敗の文（.hud-status）はその下の行。 */
+.hud-sound {
+  order: 1;
+  margin-left: auto;
+}
+
 .hud-status {
+  order: 2;
   flex-basis: 100%;
   margin: 0;
   color: var(--color-danger-text);

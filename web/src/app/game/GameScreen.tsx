@@ -15,6 +15,7 @@ import { Notifications } from "../../ui/hud/Notifications.tsx";
 import { IslandPanel } from "../../ui/island/IslandPanel.tsx";
 import { OpeningCeremony } from "../../ui/opening/index.ts";
 import { GameShortcuts } from "../../ui/shortcuts/GameShortcuts.tsx";
+import { useGameSounds } from "../../ui/sound/useGameSounds.ts";
 import { Link } from "../router/Link.tsx";
 import { ReplaySkipButton } from "../replay/ReplaySkipButton.tsx";
 import { TutorialOverlay } from "../tutorial/TutorialOverlay.tsx";
@@ -36,6 +37,8 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
     connector,
     onRoundEnd,
   });
+  // 出航・到着・配達・確定・嵐の予報で効果音を鳴らす（T-434）。リプレイでも同じストアなので鳴る。
+  useGameSounds();
   const notice = connectionNotice(view);
   const mock = mockNotice(view);
   const replay = replayNotice(view);

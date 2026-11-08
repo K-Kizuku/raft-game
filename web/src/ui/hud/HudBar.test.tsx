@@ -8,6 +8,7 @@ import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
 import { gameStore } from "../../state/index.ts";
 import { GameCommandProvider } from "../commands/GameCommands.tsx";
 import type { GameCommandSender } from "../commands/GameCommands.tsx";
+import { soundPreference } from "../sound/preference.ts";
 import { setShowRaftTerms } from "../terms/preference.ts";
 import { HudBar } from "./HudBar.tsx";
 import { Notifications } from "./Notifications.tsx";
@@ -363,6 +364,29 @@ describe("HudBar", () => {
       fireEvent.click(screen.getByRole("button", { name: "遅くする" }));
     });
     expect(send).toHaveBeenCalledWith("cmd.game.speed", { speed: 4 });
+  });
+
+  it("HB-9 隅に効果音のオン・オフのボタンがあり、押すとブラウザに保存する（T-434）", () => {
+    localStorage.clear();
+    act(() => {
+      soundPreference.reload();
+    });
+    load();
+    const { container } = renderHud();
+    const button = screen.getByRole("button", { name: "効果音" });
+    expect(button.classList.contains("hud-sound")).toBe(true);
+    expect(container.querySelector(".hud")?.contains(button)).toBe(true);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(localStorage.getItem("raft-game.sound")).toBe('{"v":1,"enabled":false}');
+
+    localStorage.clear();
+    act(() => {
+      soundPreference.reload();
+    });
+    expect(button.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("reset() されたら「状況（準備中）」に戻る", () => {

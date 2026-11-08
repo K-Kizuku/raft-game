@@ -119,6 +119,11 @@
   }
 }
 
+/* 効果音（T-434）。用語のトグルと同じ紙のパネル。 */
+.app-settings .settings-sound {
+  margin: var(--space-4) 0 0;
+}
+
 /* ステージの進み具合（T-703）。紙のパネルに件数と「進み具合を消す」を置く。 */
 .app-settings .settings-progress {
   margin: var(--space-5) 0 0;

@@ -1,5 +1,5 @@
 // ゲーム画面のスロット「状況」（T-406・ゲームデザイン §7.2 の上部）。
-// 残り時間・スコア・確定した依頼の数・フェス準備度と重要な資源・一時停止と速度を出す。
+// 残り時間・スコア・確定した依頼の数・フェス準備度と重要な資源・一時停止と速度・効果音のオン・オフ（T-434）を出す。
 // 値はストア（T-403）から読むだけで、速度と一時停止もサーバーの時計が変わるまで表示を変えない（ADR-0009）。
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
@@ -8,6 +8,7 @@ import type { Ack } from "../../protocol/index.ts";
 import { useGameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { useGameCommand } from "../commands/GameCommands.tsx";
+import { SoundToggle } from "../sound/SoundToggle.tsx";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
 import {
   adjacentSpeeds,
@@ -72,6 +73,7 @@ function HudContent({ world }: { world: World }): ReactElement {
         )}
       </span>
       <SpeedControls world={world} />
+      <SoundToggle className="hud-sound" />
     </div>
   );
 }
