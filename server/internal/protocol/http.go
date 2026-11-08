@@ -10,7 +10,13 @@ type HealthzResponse struct {
 
 // StagesResponse は GET /api/stages の応答。
 type StagesResponse struct {
-	Stages []StageSummary `json:"stages"`
+	Stages   []StageSummary `json:"stages"`
+	Features Features       `json:"features"`
+}
+
+// Features は、その Worker（standalone ではプロセス）で有効な任意の機能（T-724）。画面が切り替えを出すかを決める。
+type Features struct {
+	AutoFerry bool `json:"autoFerry"` // 自動航行（cmd.ferry.auto）。Worker の変数 AUTO_FERRY が "1"、standalone は --auto-ferry
 }
 
 // StageSummary はステージ選択の 1 行。

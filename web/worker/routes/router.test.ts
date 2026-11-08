@@ -208,7 +208,7 @@ describe("router", () => {
       const res = await createHandler(() => ({ stages: STAGES }))(req("GET", "/api/stages"), {});
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ stages: STAGES });
+      expect(await res.json()).toEqual({ stages: STAGES, features: { autoFerry: false } });
     });
 
     it("既定の STAGE_CATALOG から demo を除いたもの", async () => {
@@ -218,7 +218,10 @@ describe("router", () => {
       );
 
       expect(await res.text()).toBe(
-        JSON.stringify({ stages: STAGE_CATALOG.filter((stage) => !stage.demo) }),
+        JSON.stringify({
+          stages: STAGE_CATALOG.filter((stage) => !stage.demo),
+          features: { autoFerry: false },
+        }),
       );
     });
   });

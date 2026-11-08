@@ -29,9 +29,12 @@ type Config struct {
 	AllowedOrigins []string // standalone だけ。ALLOWED_ORIGINS を読んだもの（有効な要素だけ）
 	DemoControls   bool     // standalone だけ。true なら demo: true のセッションを作れ、/api/stages にデモ用のステージを出す
 	MaxSessions    int      // standalone だけ
-	Invariants     bool     // sim.Options.CheckInvariants
-	LogLevel       slog.Level
-	Build          string // BuildID の結果。ParseConfig は設定しない（main が入れる）
+	// AutoFerry は自動航行（cmd.ferry.auto。T-724）を受け付けるか。standalone だけ（既定 true）。
+	// single では Durable Object が internal.init・internal.restore の autoFerry で決める（Worker の変数 AUTO_FERRY）。
+	AutoFerry  bool
+	Invariants bool // sim.Options.CheckInvariants
+	LogLevel   slog.Level
+	Build      string // BuildID の結果。ParseConfig は設定しない（main が入れる）
 }
 
 // ErrUsage は起動の設定の誤り（main は終了コード 2 にする）。
@@ -59,6 +62,7 @@ func ParseConfig(args []string, getenv func(string) string) (Config, error) {
 		dataDir        = fs.String("data", "", "ステージ定義のディレクトリ（DATA_DIR。既定: 埋め込み）")
 		allowedOrigins = fs.String("allowed-origins", "", "許可する Origin のカンマ区切り（ALLOWED_ORIGINS。standalone だけ）")
 		demoControls   = fs.Bool("demo-controls", false, "デモ操作を有効にする（DEMO_CONTROLS=1。standalone だけ）")
+		autoFerry      = fs.Bool("auto-ferry", true, "自動航行（cmd.ferry.auto）を受け付ける（AUTO_FERRY。既定 1。--auto-ferry=false・AUTO_FERRY=0 で無効。standalone だけ）")
 		maxSessions    = fs.String("max-sessions", "", "セッションの数の上限 1〜256（MAX_SESSIONS。既定 16。standalone だけ）")
 		invariants     = fs.Bool("invariants", false, "Engine の不変条件を検査する（SIM_INVARIANTS=1）")
 		logLevel       = fs.String("log-level", "", "debug・info・warn・error（LOG_LEVEL。既定 info）")
@@ -141,6 +145,13 @@ func ParseConfig(args []string, getenv func(string) string) (Config, error) {
 	}
 	if cfg.Invariants, err = boolValue("invariants", "SIM_INVARIANTS", *invariants); err != nil {
 		return Config{}, usageErr(err)
+	}
+	// AUTO_FERRY は未設定なら有効（ほかの真偽値の環境変数と既定が逆）。
+	cfg.AutoFerry = true
+	if set["auto-ferry"] || getenv("AUTO_FERRY") != "" {
+		if cfg.AutoFerry, err = boolValue("auto-ferry", "AUTO_FERRY", *autoFerry); err != nil {
+			return Config{}, usageErr(err)
+		}
 	}
 
 	cfg.MaxSessions = defaultMaxSessions

@@ -109,16 +109,16 @@ func TestMessageTypesAndAckCodes(t *testing.T) {
 	wantTypes := []protocol.MessageType{
 		"hello", "cmd.game.start", "cmd.game.pause", "cmd.game.speed", "cmd.game.skip",
 		"cmd.ferry.load", "cmd.ferry.unload", "cmd.ferry.autoload", "cmd.ferry.depart",
-		"cmd.relay.load", "cmd.sync", "sub.engineer", "demo.trigger", "ping",
+		"cmd.relay.load", "cmd.ferry.auto", "cmd.sync", "sub.engineer", "demo.trigger", "ping",
 		"snapshot", "events", "ack", "node.detail", "round.result", "error", "pong",
-		"internal.init", "internal.restore", "internal.result", "internal.ping", "internal.pong",
+		"internal.init", "internal.restore", "internal.result", "internal.ping", "internal.pong", "internal.input",
 	}
 	if got := protocol.MessageTypes(); !slices.Equal(got, wantTypes) {
 		t.Errorf("MessageTypes() = %v, want %v", got, wantTypes)
 	}
 	wantCodes := []protocol.AckCode{
 		"ferry_not_docked", "ferry_not_ready", "ferry_broken", "capacity_exceeded", "letter_not_here",
-		"no_route", "route_blocked", "relay_full", "phase_invalid", "rate_limited", "bad_request",
+		"no_route", "route_blocked", "relay_full", "phase_invalid", "rate_limited", "bad_request", "feature_disabled",
 	}
 	if got := protocol.AckCodes(); !slices.Equal(got, wantCodes) {
 		t.Errorf("AckCodes() = %v, want %v", got, wantCodes)

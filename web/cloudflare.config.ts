@@ -20,6 +20,8 @@ const PRODUCTION_INSTANCE = "lite";
 const DEMO_INSTANCE = "standard-1";
 // SESSION_RATE_LIMIT の simple.limit と GUARDS.rateLimit.perIpPerMinute に使う（ADR-0024）
 const SESSION_RATE_LIMIT_PER_MINUTE = 10;
+// 自動航行（cmd.ferry.auto。T-724）のスイッチ。"1" で有効。切り戻すときは "0" にしてデプロイする
+const AUTO_FERRY = "1";
 
 // worker/ の中のファイルを（cf-worker の entrypoint 以外で）import しない（cf dev が読めなくなる。spike で確認）。
 // process を直接書かない（生成した型から読まれ、Node の型のない検査にも入るため。spike と同じ）。
@@ -145,6 +147,7 @@ export default defineConfig((ctx) => {
       env: {
         ALLOWED_ORIGINS: m.host === undefined ? undefined : bindings.text(ALLOWED_ORIGINS),
         DEMO_CONTROLS: bindings.text(m.demoControls),
+        AUTO_FERRY: bindings.text(AUTO_FERRY),
         BUILD_ID: bindings.text(buildId),
         CONTAINER_INSTANCE: bindings.text(m.instance),
         GAME_SESSION:

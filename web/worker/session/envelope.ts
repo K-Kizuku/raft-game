@@ -102,8 +102,16 @@ export interface ForwardMessage {
   readonly build: string | null; // snapshot の payload.session.build
 }
 
+// internal.input の payload（入力ログの 1 件 {t, cmd: {type, payload}}。T-724）。形が違えば input は null。
+export interface BotInput {
+  readonly t: number;
+  readonly type: string;
+  readonly payload: unknown;
+}
+
 export type ContainerMessage =
   | { readonly kind: "result"; readonly seq: number | null; readonly payload: unknown }
+  | { readonly kind: "input"; readonly seq: number | null; readonly input: BotInput | null }
   | { readonly kind: "ping"; readonly seq: number | null }
   | { readonly kind: "pong"; readonly seq: number | null }
   | { readonly kind: "internal"; readonly seq: number | null } // ほかの internal.*（何もしない）
@@ -127,6 +135,15 @@ function ackOf(type: unknown, payload: unknown): AckInfo | null {
     return null;
   }
   return { cmdId, ok, t };
+}
+
+function botInputOf(payload: unknown): BotInput | null {
+  if (!isPlainObject(payload)) return null;
+  const { t, cmd } = payload;
+  if (!isNonNegativeSafeInteger(t) || !isPlainObject(cmd)) return null;
+  const { type, payload: cmdPayload } = cmd;
+  if (typeof type !== "string" || !isPlainObject(cmdPayload)) return null;
+  return { t, type, payload: cmdPayload };
 }
 
 function clockTOf(type: unknown, payload: unknown): number | null {
@@ -176,6 +193,7 @@ export function classifyContainerText(text: string): ContainerMessage {
   const payload = envelope["payload"];
   if (typeof type === "string" && isInternalType(type)) {
     if (type === "internal.result") return { kind: "result", seq, payload: payload ?? null };
+    if (type === "internal.input") return { kind: "input", seq, input: botInputOf(payload) };
     if (type === "internal.ping") return { kind: "ping", seq };
     if (type === "internal.pong") return { kind: "pong", seq };
     return { kind: "internal", seq };

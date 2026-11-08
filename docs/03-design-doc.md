@@ -668,6 +668,7 @@ CI と `make lint` では、golangci-lint の `forbidigo`（設定は `server/.g
 - `payload` の形はプロトコル（[06-protocol.md §4](./06-protocol.md)）のとおりで、キーは `type`・`payload` の順です（`cmd.game.start` は `{}`、`cmd.ferry.load`・`cmd.ferry.unload`・`cmd.relay.load` は `ferryId`・`letterIds`、`cmd.ferry.depart`・`cmd.ferry.autoload` は `ferryId`・`to`、`demo.trigger` は `event`）
 - T-301（`protocol`）ができるまで、JSON との変換は `server/cmd/simcli`（`inputlog.go`）が持ちます。`simcli` は 1 行目にヘッダーと `"commands":[`、続けてコマンドを 1 件 1 行、最後の行に `]}` と書きます（件数が 0 なら 1 行）。読み込みは厳密で、必須のキー（`format`・`stageId`・`stageHash`・`seed`・`commands`、`payload` の各キー）がない・`t` が 0 以上の整数でない・JSON の後ろに余分なデータがあるときは、場所（例: `commands[3].cmd.payload.to`）を書いて誤りにします。`build` は読みますが使いません
 - **保存先**: 入力ログは Durable Object の SQLite に保存します。コンテナはコマンドを適用したら `ack` に適用時刻 `t` を入れて返し、Durable Object が `(t, cmd)` を追記します（[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)）
+  - 自動航行の船のボットの操作（§12.4「自動航行」。T-724）は、ブラウザからの `cmdId` がないので `ack` では知らせません。コンテナが 1 件ずつ内部の電文 `internal.input`（payload は入力ログの 1 件 `{t, cmd}`）で知らせ、Durable Object がそのまま追記します。`ack` と `internal.input` は同じソケットに Engine で適用した順に流れるので、記録の順は `Engine.InputLog()` と同じになります。記録の中身はプレイヤーのコマンドと同じ形なので、復元・リプレイ（`simcli`・ブラウザ）・ダウンロードはボットなしで同じ結果になります
 - **復元**: コンテナが止まったら、Durable Object が新しいコンテナに入力ログを渡し、`Replay` で同じ状態に戻します
 - **リプレイ** = 同じステージ・シードで `Engine` を作り、各コマンドの `t` まで `RunUntil` してから `Apply` することの繰り返し
 - **`sim.Replay`** が受けるのは、`format`・`stageHash`・`seed`・コマンドの列（`ReplayLog`）です（`stageId`・`build` は受けない。JSON の読み書きとプロトコルの型からの変換は呼び出し側）
@@ -767,6 +768,7 @@ Go サーバーの起動の設定（`server/internal/server` の `ParseConfig`�
 | `--allowed-origins` | `ALLOWED_ORIGINS` | `""`（`standalone` だけ。規則はプロトコル §2 の「`Origin` の規則」） |
 | `--demo-controls` | `DEMO_CONTROLS` | `false`（`standalone` だけ。環境変数は `1` だけが真。真のときだけ `demo: true` のセッションを作れ、`/api/stages` にデモ用のステージ（定義に `demo` がある）を出して `POST /api/sessions` で受け付ける。Worker の `DEMO_CONTROLS` と同じ規則） |
 | `--max-sessions` | `MAX_SESSIONS` | `16`（`standalone` だけ。`1`〜`256`） |
+| `--auto-ferry` | `AUTO_FERRY` | `true`（`standalone` だけ。自動航行 `cmd.ferry.auto` を受け付け、`/api/stages` の `features.autoFerry` に出す。環境変数は `1` が真・`0` が偽で、未設定なら真。`--auto-ferry=false` か `AUTO_FERRY=0` で無効。`single` は Durable Object が `internal.init` の `autoFerry` で決める。T-724） |
 | `--invariants` | `SIM_INVARIANTS` | `false`（`sim.Options.CheckInvariants`） |
 | `--log-level` | `LOG_LEVEL` | `info` |
 
@@ -866,6 +868,8 @@ ctx.container.start({
 
 DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"payload":{"code":…,"message":…,"fatal":true}}` です（プロトコル §2）。DO が自分で作る電文は、この `error`・`internal.init`・`internal.restore`・`internal.ping`・`internal.pong` だけです。
 
+**コンテナからの `internal.input`**（T-724）は、ブラウザに送らず、上の「入力ログと復元」の「ボットの操作」のとおり記録します。
+
 **アラーム**（`session/alarm.ts` の `desiredAlarmAt`）
 
 - 鳴らしたい時刻は、接続中なら `deadline_at`、接続がなければ `min(deadline_at, idle_since + 5 分)`（`idle_since` が NULL で接続もなければ、いまを `idle_since` とみなす）
@@ -875,7 +879,7 @@ DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"paylo
 
 **入力ログと復元**（T-308b。FR-GAME-09・FR-LOG-01・NFR-06、[ADR-0017](./adr/0017-persist-input-log-in-durable-object.md)。上限は `session/limits.ts`、純粋な部分は `session/restore.ts`・`session/pending.ts`）
 
-- **記録する種類**: `type` が `hello`・`ping`・`cmd.sync`・`sub.engineer` のどれでもなく、`cmdId` のキーがあるブラウザの電文。コンテナへ**送る直前**（溜めた電文はつながった後に送る直前）に、上から順に判定する
+- **記録する種類**: `type` が `hello`・`ping`・`cmd.sync`・`sub.engineer`・`cmd.ferry.auto`（Engine に触れない。T-724）のどれでもなく、`cmdId` のキーがあるブラウザの電文。コンテナへ**送る直前**（溜めた電文はつながった後に送る直前）に、上から順に判定する
   1. 記録する種類でない → そのまま送る（覚えない）
   2. `cmdId` が 1〜128 文字の文字列でない → 捨てる（Go は 129 文字以上でも適用するので、覚えられない電文を送らない）
   3. 同じ `cmdId` が `ack` を待っている → 捨てる
@@ -885,7 +889,9 @@ DO が送る `error` は `{"v":1,"type":"error","seq":<最後の seq + 1>,"paylo
 
   捨てるときは返事をしない（記録とコンテナの状態を食い違わせないため）。捨てた数は `session.disconnect` の `dropped`（`malformed`・`duplicate`・`pending_full`・`log_full`）に出す
 - **`ack` の扱い**: 待ちは接続ごとではなく **DO に 1 つ**。コンテナの `ack`（`payload.cmdId` が文字列・`ok` が真偽値・`t` が 0 以上の整数）を受けたら、その `cmdId` を待ちから外し、`ok: true` なら `input_log` に `(t, cmd)` を追記する（`t` が最後に記録した `t` より小さければ記録せず `warn`）。置き換えた・ブラウザが閉じた接続のソケットから届いた `ack` も、いまのコンテナ（見張りの世代が同じ）のものなら記録に使う（Go は `ack` を「いまの接続」に送るので、どちらのソケットにも届きうる）。待っていない `cmdId` の `ack` は何もしない（中継はする）。行数・バイト数は DO のインスタンスで最初に要るときに SQLite から読み、以後はメモリで足す
+- **ボットの操作**（`internal.input`。T-724）: コンテナの `internal.input`（`payload.t` が 0 以上の整数・`payload.cmd` が `{type, payload}` のオブジェクト）は、`ack` と同じく、置き換えた・ブラウザが閉じた接続のソケットから届いても、いまのコンテナ（見張りの世代が同じ）のものなら `input_log` に `(t, JSON.stringify({type, payload}))` を追記する。ブラウザには送らない。`type` は `cmd.ferry.load`・`cmd.ferry.unload`・`cmd.ferry.autoload`・`cmd.ferry.depart`・`cmd.relay.load` だけ（ほかと形の誤りは記録せず `warn` の `session.error`（`op: "input_log_bot"`））。`t` が最後に記録した `t` より小さい・行数かバイト数の上限（待ちの分を含む）を超えるときは、`ack` と同じく記録せずに `warn` を出す（コンテナでは適用済みなので、送る前に止めることはできない）
 - **保存するもの**: `stage_hash`・`build`（いまの接続の `snapshot` の `payload.session.stageHash`・`build`。1〜128 文字の文字列で、保存した値と違うときだけ上書きする。読めない値では消さない）。`last_clock_t`（いまの接続の `snapshot`・`events` の `payload.clock.t` をメモリに持ち、SQLite には前に書いてから 5 秒以上たったとき・ブラウザの接続が閉じたとき・止まったと判断したとき・「終わり」の最初にだけ書く。DO が作り直されたら `last_clock_t` から始める）
+- **`internal.init`・`internal.restore` の `autoFerry`**（T-724）: Worker の変数 `AUTO_FERRY` が `"1"` のときだけ `"autoFerry": true` を入れる（それ以外はキーを入れない。コンテナは省略を無効とみなし、`cmd.ferry.auto` を `feature_disabled` の `ack` で断る）。断る `ack` を DO が作らないのは、DO が `seq` を持つ電文を作れないため（作るとコンテナの電文と `seq` が重なる）
 - **`internal.restore` の中身**: `{ sessionId, stageId, seed, demo, inputLog: { format: 1, build: build ?? "", stageId, stageHash: stage_hash, seed, commands: [{t, cmd}]（seq の順。cmd は保存した JSON をそのまま） }, until }`。`until = max(最後の clock.t ?? 0, 最後の input_log の t ?? 0)`、0 なら省く。送るたびにログ `session.restore`（`commands`・`until`・`bytes`）。最大の入力ログ（10,000 行・512 KiB）でも 1 MiB（Go の `single` の受信の上限）に収まる。`build` が違っても試す（T-302 が `warn` を出して続ける）
 - **止まったと判断する場合**（`cause`）: `monitor`（見張っている `monitor()` が終わり、`running` が偽）・`socket_closed`（いまの接続のコンテナへのソケットが閉じ、`running` が偽。真ならブラウザを `1011` で閉じるだけ）・`ping_timeout`（下の死活監視）・`start_timeout`（起動し直したコンテナの `/healthz` の期限切れ）・`not_running`（`/connect` の後でコンテナが動いていない）。`monitor()` が終わっても `running` が真なら判断せず、`warn` のログ `container.monitor_ended` を出して見張りがない状態に戻す（DO が作り直されたときの `monitor()` の振る舞いはクラウドで未確認のため）。見張りの世代（`#watch()` のたびと、止まったと判断したときに 1 増やす）で、自分で `destroy()` した古いコンテナの `monitor()` の終わり・古いソケットからの知らせを無視する
 - **止まったときの処理**（1 つずつ動く）: `last_clock_t` を書く → 試し直さない場合は「終わり」（`deadline_at` を過ぎた → `time_limit`、`container_starts >= 3` → `container_lost`、`stage_hash` がないのに記録がある → `container_lost`）→ ブラウザを `1011`（`"container restarting"`）で閉じる（`error` は送らない。ブラウザはつなぎ直す）→ 動いていれば `destroy()`（失敗したら `container_lost` で終わり、後始末のやり直しに任せる）→ `run_ms` に動いた時間を足し、`container_started_at`・`ready_at` を NULL にし、`ack` の待ちを捨てる → ログ `container.stopped`（`cause`・`containerStarts`）
@@ -1036,6 +1042,16 @@ func (s *session) step(now time.Time) {
 - `single` の自動一時停止は、Durable Object がコンテナへの接続を閉じたときに働きます（ブラウザが切れたことを、Go はその接続の切断で知る）
 - `internal.restore` を受けたら、`sim.Replay` で入力ログの最後の時刻（`until` があればその時刻）まで一気に進め、`Replay` の Engine に残ったイベントを捨て、一時停止の状態で `snapshot`（`session.restored: true`）を返します。入力ログの `build` が違っても復元を試みます（食い違えば `restore_failed`。T-302。検査の順序は[プロトコル §9](./06-protocol.md#9-内部の電文durable-object--コンテナ)）
 
+#### 自動航行（T-724）
+
+船が複数あるステージで、一部の船を初心者のボット `novice`（`internal/bot`。着いてから約 3 秒待つ、人に近い強さ。強さは選べない）に任せ、プレイヤーの操作と組み合わせられるようにします。実装は `server/internal/server/autoferry.go`。
+
+- **切り替え**: `cmd.ferry.auto`（`{ferryId, enabled}`。[プロトコル §4](./06-protocol.md#4-クライアント--サーバー)）で船ごとに切り替えます。セッションは自動の船ごとに `bot.NewFor("novice", seed, [ferryId])`（その船だけを担当するボット。T-723）を持ちます。ほかの船を切り替えても、自動のままの船のボットの記憶（着いた時刻・来た島）は消えません。切り替えは Engine に触れないので入力ログに入りません（Durable Object も記録しない）。自動の船は `snapshot` の `session.autoFerries` に載せ、つなぎ直した画面が状態を取り直せるようにします
+- **ボットを動かす時機**: ステップ（`step`）で Engine を進めた後に、自動の船の ID の昇順でボットの `Act` を呼びます。一時停止中・ラウンドの終わり・Intro はステップが進めないので、ボットも動きません。積めない・出航できない（嵐・故障など）ときの失敗の `Ack` はボットの誤りにせず（`debug` のログだけ）、次のステップでもう一度試させます
+- **入力ログへの記録**: ボットは `Engine.Apply` でコマンドを適用するので、プレイヤーのコマンドと同じく `Engine.InputLog()` に載ります。`Act` の前後で `InputLog()` の件数を比べ、増えた分を 1 件ずつ `internal.input`（`{t, cmd}`）で Durable Object に知らせ、DO が `input_log` に追記します（§10.1・§12.3）。`standalone` は入力ログを持たないので送りません。ボットの操作は記録から再生されるので、ボットの判断（ステップの刻み方に依存する）が決定的でなくても、復元・リプレイ・ダウンロードは記録と同じ結果になります（`autoferry_test.go` で、DO と同じ規則で組み立てた入力ログが `Engine.InputLog()` と一致し、そこから復元した状態とトレースのハッシュが一致することを確かめる）
+- **復元**: 自動航行の状態（どの船が自動か・ボットの記憶）は入力ログに入らないので、`internal.restore` で作り直したセッションでは全部の船が手動に戻ります（画面は `snapshot` の `session.autoFerries` がないことで知る）
+- **スイッチ `AUTO_FERRY`**（切り戻し用）: Worker の変数（`web/cloudflare.config.ts`、既定 `"1"`）。DO は `"1"` のときだけ `internal.init`・`internal.restore` に `autoFerry: true` を入れ、コンテナはそれがなければ `cmd.ferry.auto` を `feature_disabled` の `ack` で断ります。`GET /api/stages` は `features.autoFerry`（`AUTO_FERRY` が `"1"`）を返し、画面は偽なら切り替えを出しません。`standalone`（`make dev`）では `--auto-ferry`（既定 有効）。切り戻すときは `AUTO_FERRY` を `"0"` にしてデプロイする（`web/scripts/check-build-output.ts` の `AUTO_FERRY` も同じ値にする）か、この機能の PR を revert します
+
 ### 12.5 寿命と上限
 
 | 項目 | 値 | どこで守るか |
@@ -1084,6 +1100,7 @@ func (s *session) step(now time.Time) {
 | `COST_GUARD` | 自分の `CostGuard` | `raft-game` の `CostGuard` | 自分の `CostGuard` | 自分の `CostGuard` |
 | `GUARDS` | 既定値（§12.3.1。`cpuMs` は `limits.cpuMs` と同じ値） | なし | 既定値 | 既定値 |
 | `DEMO_CONTROLS` | `"0"` | `"1"` | `"1"` | `"1"` |
+| `AUTO_FERRY` | `"1"`（自動航行のスイッチ。§12.4「自動航行」。T-724） | 同じ | 同じ | 同じ |
 | `CONTAINER_INSTANCE` | `"lite"`（仮。T-007（#15）で見直す） | `"standard-1"` | `"lite"` | `"lite"` |
 | `ALLOWED_ORIGINS` | `"https://raft.kizuku-hackathon.work,https://raft-demo.kizuku-hackathon.work"`（両方のホスト名。#130） | 同じ | 書かない（同じオリジンだけ） | 書かない |
 | `BUILD_ID` | ビルドの時の環境変数 `BUILD_ID`（未設定・空なら `"dev"`） | 同じ | 同じ | 同じ |

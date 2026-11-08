@@ -24,12 +24,12 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "single の既定値",
 			args: []string{"--mode", "single"},
-			want: Config{Mode: ModeSingle, Host: "", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo},
+			want: Config{Mode: ModeSingle, Host: "", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo, AutoFerry: true},
 		},
 		{
 			name: "standalone の既定値",
 			env:  map[string]string{"MODE": "standalone"},
-			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo},
+			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo, AutoFerry: true},
 		},
 		{
 			name: "環境変数",
@@ -41,7 +41,7 @@ func TestParseConfig(t *testing.T) {
 			want: Config{
 				Mode: ModeStandalone, Host: "0.0.0.0", Port: 18080, DataDir: "/data",
 				AllowedOrigins: []string{"http://127.0.0.1:15173", "http://localhost:15173"},
-				DemoControls:   true, MaxSessions: 256, Invariants: true, LogLevel: slog.LevelDebug,
+				DemoControls:   true, MaxSessions: 256, Invariants: true, LogLevel: slog.LevelDebug, AutoFerry: true,
 			},
 		},
 		{
@@ -49,10 +49,11 @@ func TestParseConfig(t *testing.T) {
 			args: []string{
 				"--mode", "single", "--host", "::1", "--port", "0", "--data", "d", "--allowed-origins", "https://a.example",
 				"--demo-controls=false", "--max-sessions", "1", "--invariants=false", "--log-level", "error",
+				"--auto-ferry=false",
 			},
 			env: map[string]string{
 				"MODE": "standalone", "HOST": "x", "PORT": "1", "DATA_DIR": "e", "ALLOWED_ORIGINS": "http://b.example",
-				"DEMO_CONTROLS": "1", "MAX_SESSIONS": "9", "SIM_INVARIANTS": "1", "LOG_LEVEL": "debug",
+				"DEMO_CONTROLS": "1", "MAX_SESSIONS": "9", "SIM_INVARIANTS": "1", "LOG_LEVEL": "debug", "AUTO_FERRY": "1",
 			},
 			want: Config{
 				Mode: ModeSingle, Host: "::1", Port: 0, DataDir: "d", AllowedOrigins: []string{"https://a.example"},
@@ -63,16 +64,27 @@ func TestParseConfig(t *testing.T) {
 			name: "環境変数の空は未設定と同じ",
 			env: map[string]string{
 				"MODE": "standalone", "HOST": "", "PORT": "", "DATA_DIR": "", "ALLOWED_ORIGINS": "",
-				"DEMO_CONTROLS": "", "MAX_SESSIONS": "", "SIM_INVARIANTS": "", "LOG_LEVEL": "",
+				"DEMO_CONTROLS": "", "MAX_SESSIONS": "", "SIM_INVARIANTS": "", "LOG_LEVEL": "", "AUTO_FERRY": "",
 			},
-			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo},
+			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo, AutoFerry: true},
 		},
 		{
 			name: "DEMO_CONTROLS=0 と真偽値のフラグ",
 			args: []string{"--demo-controls", "--invariants"},
 			env:  map[string]string{"MODE": "standalone", "DEMO_CONTROLS": "0", "LOG_LEVEL": "warn"},
 			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, DemoControls: true, Invariants: true,
-				MaxSessions: 16, LogLevel: slog.LevelWarn},
+				MaxSessions: 16, LogLevel: slog.LevelWarn, AutoFerry: true},
+		},
+		{
+			name: "AUTO_FERRY=0 で自動航行を無効にする（T-724）",
+			env:  map[string]string{"MODE": "standalone", "AUTO_FERRY": "0"},
+			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo},
+		},
+		{
+			name: "--auto-ferry は AUTO_FERRY=0 に勝つ（T-724）",
+			args: []string{"--mode", "standalone", "--auto-ferry"},
+			env:  map[string]string{"AUTO_FERRY": "0"},
+			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo, AutoFerry: true},
 		},
 		{
 			name: "ALLOWED_ORIGINS の読めない要素は無視する",
@@ -81,14 +93,14 @@ func TestParseConfig(t *testing.T) {
 				"ALLOWED_ORIGINS": " HTTP://Example.COM/path/ ,ftp://x, notaurl,,http://localhost:80,https://a.example:443,http://[::1]:5173,http://localhost:80",
 			},
 			want: Config{
-				Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo,
+				Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo, AutoFerry: true,
 				AllowedOrigins: []string{"http://example.com", "http://localhost", "https://a.example", "http://[::1]:5173"},
 			},
 		},
 		{
 			name: "ALLOWED_ORIGINS がすべて読めない",
 			env:  map[string]string{"MODE": "standalone", "ALLOWED_ORIGINS": "x, ftp://y"},
-			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo},
+			want: Config{Mode: ModeStandalone, Host: "127.0.0.1", Port: 8080, MaxSessions: 16, LogLevel: slog.LevelInfo, AutoFerry: true},
 		},
 	}
 	for _, tt := range tests {
@@ -130,6 +142,7 @@ func TestParseConfigErrors(t *testing.T) {
 		{"--max-sessions 257", []string{"--mode", "standalone", "--max-sessions", "257"}, nil},
 		{"LOG_LEVEL=trace", nil, map[string]string{"MODE": "single", "LOG_LEVEL": "trace"}},
 		{"--demo-controls=x", []string{"--mode", "standalone", "--demo-controls=x"}, nil},
+		{"AUTO_FERRY=true", nil, map[string]string{"MODE": "standalone", "AUTO_FERRY": "true"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

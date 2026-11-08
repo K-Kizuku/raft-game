@@ -24,6 +24,8 @@ func (s *session) buildSnapshot() protocol.Snapshot {
 		Restored:  s.restored,
 		StageHash: s.st.Hash,
 		Build:     s.build,
+		// 自動航行の船（T-724）。つなぎ直した画面が切り替えの状態を取り直せるように載せる
+		AutoFerries: s.autos.list(),
 	}
 	c := s.clock()
 	p.Clock.Speed = c.Speed

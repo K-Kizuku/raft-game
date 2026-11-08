@@ -3,13 +3,28 @@
 import { MAX_CMD_ID_LENGTH } from "./limits.ts";
 import type { SessionRow } from "./store.ts";
 
-// 記録しない種類（cmdId を持っていても覚えない）。
+// 記録しない種類（cmdId を持っていても覚えない）。cmd.ferry.auto（T-724）は Engine に触れないので記録しない
+// （入力ログに入れると、リプレイ・simcli が知らない種類として断る）。自動の船のボットの操作は internal.input で届く。
 const UNRECORDED_TYPES: ReadonlySet<string> = new Set([
   "hello",
   "ping",
   "cmd.sync",
   "sub.engineer",
+  "cmd.ferry.auto",
 ]);
+
+// internal.input（コンテナ → DO。ボットが適用したコマンド。T-724）で記録してよい種類（ボットが出す Engine のコマンド）。
+const BOT_COMMAND_TYPES: ReadonlySet<string> = new Set([
+  "cmd.ferry.load",
+  "cmd.ferry.unload",
+  "cmd.ferry.autoload",
+  "cmd.ferry.depart",
+  "cmd.relay.load",
+]);
+
+export function isBotCommandType(type: string): boolean {
+  return BOT_COMMAND_TYPES.has(type);
+}
 
 export type RecordDecision = "record" | "forward" | "drop";
 
@@ -49,14 +64,25 @@ export function buildInputLogJson(row: SessionRow, commands: LogEntries): string
   return `${logHead.slice(0, -1)},"commands":[${entries.join(",")}]}`;
 }
 
-// internal.restore の電文。cmd は保存した JSON をそのまま埋め込む。until が 0 ならキーを省く。
-export function buildRestoreMessage(row: SessionRow, commands: LogEntries, until: number): string {
-  const head = JSON.stringify({
+// internal.init・internal.restore の共通の部分。autoFerry（T-724）は有効なときだけキーを入れる（Go は省くと無効）。
+export function initPayload(row: SessionRow, autoFerry: boolean): Record<string, unknown> {
+  return {
     sessionId: row.sessionId,
     stageId: row.stageId,
     seed: row.seed,
     demo: row.demo,
-  });
+    ...(autoFerry ? { autoFerry: true } : {}),
+  };
+}
+
+// internal.restore の電文。cmd は保存した JSON をそのまま埋め込む。until が 0 ならキーを省く。
+export function buildRestoreMessage(
+  row: SessionRow,
+  commands: LogEntries,
+  until: number,
+  autoFerry = false,
+): string {
+  const head = JSON.stringify(initPayload(row, autoFerry));
   const inputLog = buildInputLogJson(row, commands);
   const untilPart = until > 0 ? `,"until":${String(until)}` : "";
   const payload = `${head.slice(0, -1)},"inputLog":${inputLog}${untilPart}}`;

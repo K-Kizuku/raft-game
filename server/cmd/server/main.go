@@ -52,9 +52,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stderr 
 	log = log.With("build", cfg.Build)
 
 	if cfg.Mode == server.ModeSingle &&
-		(len(cfg.AllowedOrigins) > 0 || cfg.DemoControls || cfg.MaxSessions != defaultMaxSessions) {
+		(len(cfg.AllowedOrigins) > 0 || cfg.DemoControls || cfg.MaxSessions != defaultMaxSessions || !cfg.AutoFerry) {
+		// single の自動航行は Durable Object が internal.init の autoFerry で決める（T-724）
 		log.Warn("standalone-only settings are ignored in single mode",
-			"allowedOrigins", len(cfg.AllowedOrigins), "demoControls", cfg.DemoControls, "maxSessions", cfg.MaxSessions)
+			"allowedOrigins", len(cfg.AllowedOrigins), "demoControls", cfg.DemoControls, "maxSessions", cfg.MaxSessions,
+			"autoFerry", cfg.AutoFerry)
 	}
 
 	fsys, desc, err := server.OpenData(cfg.DataDir)

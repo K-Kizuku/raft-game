@@ -165,6 +165,7 @@ func newStandaloneEntry(sess *session, token string) *standaloneEntry {
 
 // stageSummaries は /api/stages の本文を作る。形は stageconv.Summaries（Worker の一覧と同じ。#113）、
 // デモ用のステージ（demo のあるステージ）は --demo-controls のときだけ出す（Worker の visibleStages と同じ規則）。
+// features.autoFerry は --auto-ferry（Worker では AUTO_FERRY が "1"。T-724）。
 func (s *Server) stageSummaries() protocol.StagesResponse {
 	all := s.cat.Stages()
 	visible := make([]*stage.Stage, 0, len(all))
@@ -173,7 +174,10 @@ func (s *Server) stageSummaries() protocol.StagesResponse {
 			visible = append(visible, st)
 		}
 	}
-	return protocol.StagesResponse{Stages: stageconv.Summaries(visible)}
+	return protocol.StagesResponse{
+		Stages:   stageconv.Summaries(visible),
+		Features: protocol.Features{AutoFerry: s.cfg.AutoFerry},
+	}
 }
 
 // stageVisible は、st を /api/stages に出し、POST /api/sessions で受け付けるかを返す。

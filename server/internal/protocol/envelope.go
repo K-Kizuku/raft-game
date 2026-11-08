@@ -25,6 +25,7 @@ const (
 	MessageTypeCmdFerryAutoload MessageType = "cmd.ferry.autoload"
 	MessageTypeCmdFerryDepart   MessageType = "cmd.ferry.depart"
 	MessageTypeCmdRelayLoad     MessageType = "cmd.relay.load"
+	MessageTypeCmdFerryAuto     MessageType = "cmd.ferry.auto"
 	MessageTypeCmdSync          MessageType = "cmd.sync"
 	MessageTypeSubEngineer      MessageType = "sub.engineer"
 	MessageTypeDemoTrigger      MessageType = "demo.trigger"
@@ -43,6 +44,7 @@ const (
 	MessageTypeInternalResult  MessageType = "internal.result"
 	MessageTypeInternalPing    MessageType = "internal.ping"
 	MessageTypeInternalPong    MessageType = "internal.pong"
+	MessageTypeInternalInput   MessageType = "internal.input"
 )
 
 // MessageTypes は電文の種類をすべて、定義の順に返す。呼ぶたびに新しいスライスを返す。
@@ -58,6 +60,7 @@ func MessageTypes() []MessageType {
 		MessageTypeCmdFerryAutoload,
 		MessageTypeCmdFerryDepart,
 		MessageTypeCmdRelayLoad,
+		MessageTypeCmdFerryAuto,
 		MessageTypeCmdSync,
 		MessageTypeSubEngineer,
 		MessageTypeDemoTrigger,
@@ -74,6 +77,7 @@ func MessageTypes() []MessageType {
 		MessageTypeInternalResult,
 		MessageTypeInternalPing,
 		MessageTypeInternalPong,
+		MessageTypeInternalInput,
 	}
 }
 

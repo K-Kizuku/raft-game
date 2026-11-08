@@ -33,21 +33,22 @@ type attachReq struct {
 
 // sessionParams はセッションを作る値。
 type sessionParams struct {
-	id       string
-	st       *stage.Stage
-	islands  []stage.IslandDisplay // st の島の表示用の値（Catalog.islands）。テストで直接作るときは nil でよい
-	seed     uint64
-	demo     bool
-	restored bool
-	paused   bool
-	mode     Mode
-	build    string
-	engine   *sim.Engine
-	log      *slog.Logger
-	now      func() time.Time
-	clock    loopClock               // セッションループの実時間。nil なら realClock
-	hook     func(protocol.Envelope) // テスト用。handle の最初に呼ぶ
-	onBroken func()                  // Engine が panic したとき（run の goroutine から呼ぶ）
+	id        string
+	st        *stage.Stage
+	islands   []stage.IslandDisplay // st の島の表示用の値（Catalog.islands）。テストで直接作るときは nil でよい
+	seed      uint64
+	demo      bool
+	restored  bool
+	paused    bool
+	autoFerry bool // 自動航行（cmd.ferry.auto）を受け付ける（T-724）
+	mode      Mode
+	build     string
+	engine    *sim.Engine
+	log       *slog.Logger
+	now       func() time.Time
+	clock     loopClock               // セッションループの実時間。nil なら realClock
+	hook      func(protocol.Envelope) // テスト用。handle の最初に呼ぶ
+	onBroken  func()                  // Engine が panic したとき（run の goroutine から呼ぶ）
 }
 
 // session は 1 ゲーム。Engine に触れるのは run の goroutine だけ（DesignDoc §12.4）。
@@ -89,6 +90,7 @@ type session struct {
 	stepHook      func()            // テスト用。ステップの最初に呼ぶ
 	notices       *noticer          // 通知（notice）と seq の振り直し。run の goroutine だけが触れる
 	eng           engineerSub       // エンジニアモードの購読（engineer.go。T-407b）
+	autos         autoPilot         // 自動航行の船とボット（autoferry.go。T-724）
 
 	inbox  chan inbound
 	attach chan attachReq
@@ -141,6 +143,7 @@ func newSession(parent context.Context, p sessionParams) *session {
 	s.pendingLimit = pendingEventLimit
 	s.highWater = eventsHighWater
 	s.notices = newNoticer(p.st)
+	s.autos.enabled = p.autoFerry
 	if p.engine != nil {
 		s.notices.resync(p.engine.Snapshot())
 	}
@@ -371,6 +374,9 @@ func (s *session) handleEnvelope(env protocol.Envelope) {
 		return
 	case protocol.MessageTypeSubEngineer:
 		s.handleSubEngineer(env)
+		return
+	case protocol.MessageTypeCmdFerryAuto:
+		s.handleFerryAuto(env)
 		return
 	}
 

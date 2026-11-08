@@ -165,6 +165,8 @@ type Session struct {
 	StageHash string `json:"stageHash" yaml:"stageHash,omitempty"`
 	// Build はコンテナのビルドの識別子（/healthz の build と同じ）。DO が保存して入力ログの build に入れる。
 	Build string `json:"build" yaml:"build,omitempty"`
+	// AutoFerries は自動航行（cmd.ferry.auto）にしている船の ID（昇順。T-724）。ひとつもなければキーを出さない。
+	AutoFerries []string `json:"autoFerries,omitempty"`
 }
 
 // StageView は Snapshot の stage（§5.1）。

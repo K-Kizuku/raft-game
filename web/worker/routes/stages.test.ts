@@ -69,7 +69,27 @@ describe("ST-2 GET /api/stages", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toEqual({ stages: [STAGES[1], STAGES[3]] });
+    expect(await res.json()).toEqual({
+      stages: [STAGES[1], STAGES[3]],
+      features: { autoFerry: false },
+    });
     expect(calls).toEqual([]);
+  });
+
+  // T-724: AUTO_FERRY が "1" のときだけ features.autoFerry が true（"1" 以外・未設定は false）。
+  it.each<[string, Record<string, string>, boolean]>([
+    ["AUTO_FERRY が 1", { AUTO_FERRY: "1" }, true],
+    ["AUTO_FERRY が 0", { AUTO_FERRY: "0" }, false],
+    ["AUTO_FERRY が true", { AUTO_FERRY: "true" }, false],
+    ["AUTO_FERRY が空", { AUTO_FERRY: "" }, false],
+    ["AUTO_FERRY がない", {}, false],
+  ])("%s: features.autoFerry は %s", async (_name, env, want) => {
+    const res = await createHandler(() => ({ stages: STAGES }))(
+      new Request(`${ORIGIN}/api/stages`),
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ features: { autoFerry: want } });
   });
 });

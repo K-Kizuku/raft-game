@@ -146,6 +146,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	params.islands, _ = s.cat.islands(body.stage.ID)
 	params.seed = body.seed
 	params.demo = body.demo
+	params.autoFerry = s.cfg.AutoFerry
 	params.engine = e
 	params.onBroken = func() { s.standalone.remove(id) }
 	sess := newSession(s.baseCtx, params)
