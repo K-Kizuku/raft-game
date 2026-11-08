@@ -3,11 +3,13 @@
 // 「出航する」でのセッションの作成は App が行う（T-413）。
 import type { ReactElement } from "react";
 
+import { LearningArt } from "../../ui/art/learning/LearningArt.tsx";
 import { ProvenanceLabel } from "../../ui/provenance/ProvenanceLabel.tsx";
 import { formatDuration } from "../format.ts";
 import { Link } from "../router/Link.tsx";
 import type { StageCatalogEntry } from "../types.ts";
 import { learningView } from "./introView.ts";
+import { LearningCaption } from "./LearningCaption.tsx";
 import { StageIntroText } from "./StageIntroText.tsx";
 import "./StageIntro.css";
 
@@ -77,11 +79,18 @@ function StageLearning({
       {view.status === "hidden" ? (
         <p>遊び終わったあとで種明かしします。</p>
       ) : (
-        // 学べることは Raft の用語そのものなので、設定に関係なく両方を出す。
+        // 学べることの名前は Raft の用語そのものなので、設定に関係なく両方を出す。
+        // 名前の横に小さな図（T-433）と、図の場面の説明（用語は設定に従う）を添える。
         <ul>
           {view.items.map((item) => (
-            <li key={item.key}>
-              {item.game}（<span lang="en">{item.raft}</span>）
+            <li key={item.key} className="stage-intro-learning-item">
+              <LearningArt learningKey={item.key} className="stage-intro-learning-art" />
+              <span className="stage-intro-learning-body">
+                <span className="stage-intro-learning-name">
+                  {item.game}（<span lang="en">{item.raft}</span>）
+                </span>
+                <LearningCaption learningKey={item.key} className="stage-intro-learning-caption" />
+              </span>
             </li>
           ))}
         </ul>

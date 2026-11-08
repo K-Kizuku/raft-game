@@ -130,18 +130,50 @@
   margin: 0;
 }
 
+/* 学べることは 1 行に 1 つ。左に小さな図（T-433・web/src/ui/art/learning/）、右に名前と図の説明。
+   図が印の代わりになるので、リストの印は出さない。 */
 .stage-intro .stage-intro-learning ul {
   margin: 0;
-  padding-left: var(--space-5);
-  list-style-type: "✉ ";
+  padding: 0;
+  list-style: none;
 }
 
 .stage-intro .stage-intro-learning li {
-  margin: var(--space-1) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-1) 0;
 }
 
-.stage-intro .stage-intro-learning li::marker {
-  color: var(--color-postal);
+.stage-intro .stage-intro-learning li + li {
+  border-top: 1px dashed color-mix(in srgb, var(--color-land) 70%, transparent);
+}
+
+.stage-intro .stage-intro-learning-art {
+  flex: none;
+  width: 5.5em;
+  padding: 2px;
+  background: var(--color-paper);
+  border-radius: var(--radius-m);
+}
+
+.stage-intro .stage-intro-learning-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stage-intro .stage-intro-learning-name {
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+
+.stage-intro .stage-intro-learning-caption {
+  color: var(--color-ink-muted);
+  font-size: 0.875em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 /* 「出航する」は大きな主ボタン（.btn-primary）。 */
@@ -161,9 +193,12 @@
     padding-block: var(--space-4);
   }
 
+  /* 学べることには図（T-433）があって縦に長いので、右の列の高さいっぱいに置き、
+     「出航する」と戻るリンクは左の列の島の紹介の下に置く（DOM の順は変えない）。 */
   .stage-intro:has(> .stage-intro-learning) {
     display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto 1fr;
     column-gap: var(--space-5);
     align-items: start;
   }
@@ -174,10 +209,26 @@
 
   .stage-intro:has(> .stage-intro-learning) > .stage-intro-letter {
     grid-column: 1;
+    grid-row: 4;
   }
 
   .stage-intro:has(> .stage-intro-learning) > .stage-intro-learning {
     grid-column: 2;
+    grid-row: 4 / span 3;
+  }
+
+  .stage-intro:has(> .stage-intro-learning) > .stage-intro-depart {
+    grid-column: 1;
+    grid-row: 5;
+  }
+
+  .stage-intro:has(> .stage-intro-learning) > a {
+    grid-column: 1;
+    grid-row: 6;
+  }
+
+  .stage-intro .stage-intro-learning-art {
+    width: 8em;
   }
 
   /* 切手は中身の幅だけにする（グリッドの中で全幅に伸ばさない）。 */

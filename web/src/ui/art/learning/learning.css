@@ -1,0 +1,110 @@
+/* 学べることの小さな図（T-433・docs/11-visual-design.md §7）。色はトークンだけを使う（16 進の色を直接書かない）。
+   図は小さく表示するので、線の太さは拡大・縮小に関係なく画面の上で同じ太さにする。 */
+.learning-art {
+  width: 100%;
+  height: auto;
+}
+
+.learning-art :is(path, circle, rect, ellipse, polygon) {
+  vector-effect: non-scaling-stroke;
+}
+
+.learning-art
+  :is(.art-line, .art-paper, .art-sand, .art-green, .art-hull, .art-gold, .art-sea-deep) {
+  stroke-width: 1.25;
+}
+
+/* 退いた・連絡の途切れた島と定期便（色だけでなく淡さで示す） */
+.learning-art .learning-faded {
+  opacity: 0.45;
+}
+
+/* 航路（海図の点線） */
+.learning-art .learning-route {
+  fill: none;
+  stroke: var(--color-postal);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 5;
+  opacity: 0.8;
+}
+
+/* 過半数のまとまり（金の破線の囲み） */
+.learning-art .learning-group {
+  fill: color-mix(in srgb, var(--color-gold) 18%, transparent);
+  stroke: var(--color-gold);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+/* 定期便（灰の丸い手紙。docs/04 §2.1 の「お元気ですか？」） */
+.learning-art .learning-beat {
+  fill: var(--color-ink-muted);
+  stroke: var(--color-paper);
+  stroke-width: 1.25;
+}
+
+/* 途切れた航路の印（×） */
+.learning-art .learning-break {
+  fill: none;
+  stroke: var(--color-danger-text);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* 嵐の雲と雨（docs/11 §9） */
+.learning-art .learning-cloud {
+  fill: var(--color-storm);
+  stroke: var(--color-storm-deep);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+}
+
+.learning-art .learning-rain {
+  fill: none;
+  stroke: var(--color-storm-deep);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+/* 動き（動きを減らす設定のときは動かさない。docs/11 §10） */
+@media (prefers-reduced-motion: no-preference) {
+  .learning-art .learning-bob {
+    animation: learning-bob 2.4s ease-in-out infinite;
+  }
+
+  .learning-art .learning-beat:not(.learning-faded) {
+    animation: learning-beat 1.8s ease-in-out infinite;
+  }
+
+  .learning-art .learning-beat-2 {
+    animation-delay: 0.3s;
+  }
+
+  .learning-art .learning-beat-3 {
+    animation-delay: 0.6s;
+  }
+}
+
+@keyframes learning-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes learning-beat {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
