@@ -1,0 +1,31 @@
+{
+  "description": "deliver: 2 letters in the given order",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:3",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "deliver",
+    "payload": {
+      "t": 5000,
+      "letters": [
+        {
+          "letterId": 2000000005,
+          "createdAt": 4000,
+          "digest": "sha256:9796ec37589942359620e67abc552f62f2a2eda1e9c63eade123e3d85479716c",
+          "bundle": "m6KpsLe+xczT2uHo7/b9BAsSGSAnLjU8Q0pRWF9mbXR7gomQl56lrA=="
+        },
+        {
+          "letterId": 1000000001,
+          "createdAt": 100,
+          "digest": "sha256:8ebde99462ec72b43a7e722b62361594fa41c6de9c3c91311663f42594b97f47",
+          "bundle": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fj/Bg0UGyIpMA=="
+        }
+      ]
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:5447bc1023a578039fa9d90106b45ec791b36281f545cc4ec3c20176a242b96b"
+}

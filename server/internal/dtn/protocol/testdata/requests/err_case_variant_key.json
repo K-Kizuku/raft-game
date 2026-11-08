@@ -1,0 +1,19 @@
+{
+  "description": "key differing only in case (Kind)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1207,
+    "payload": {
+      "horizon": [
+        12500,
+        1
+      ]
+    },
+    "Kind": "advance"
+  },
+  "expect": "invalid"
+}

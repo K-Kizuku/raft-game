@@ -1,0 +1,158 @@
+{
+  "name": "C03-stale-event",
+  "description": "保存した最大の eventSeq より小さく、行の無い要求は stale_event",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 5,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 2,
+            "type": "term.changed",
+            "data": {
+              "term": 1
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 5
+        }
+      }
+    },
+    {
+      "note": "eventSeq 3 < 5",
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            50,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "stale_event"
+          },
+          "eventSeq": 3
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "eventSeq 5 again",
+      "request": {
+        "eventSeq": 5,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 5,
+          "outputs": [
+            {
+              "t": 100,
+              "class": 4,
+              "seq": 2,
+              "type": "term.changed",
+              "data": {
+                "term": 1
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

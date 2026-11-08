@@ -1,0 +1,15 @@
+{
+  "description": "shutdown",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 99,
+    "kind": "shutdown",
+    "payload": {}
+  },
+  "expect": "ok",
+  "digest": "sha256:a5597cc05727fd16bf0e3560751e4f9cd2c1ee3d1917778a75817d39ae02c414"
+}

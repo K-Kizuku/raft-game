@@ -1,0 +1,5 @@
+{
+  "description": "raw control character in a string",
+  "input": "\"a\u0001b\"",
+  "error": "invalid"
+}

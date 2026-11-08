@@ -1,0 +1,6 @@
+{
+  "description": "empty array, empty object, nested",
+  "input": "{\"a\": [], \"b\": {}, \"c\": [[], [{}]]}",
+  "canonical": "{\"a\":[],\"b\":{},\"c\":[[],[{}]]}",
+  "digest": "sha256:2fba421b1a2d42660f8ac2dc2042332924c2911b7d8b4111d4ccb1998d6861c0"
+}

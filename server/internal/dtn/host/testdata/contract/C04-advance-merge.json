@@ -1,0 +1,460 @@
+{
+  "name": "C04-advance-merge",
+  "description": "続く advance を 1 行にまとめる（outputs をつなげ、resp_digest を計算し直す。古い番号は stale_event。D-9）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 2,
+            "type": "term.changed",
+            "data": {
+              "term": 1
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "outputs": [
+            {
+              "t": 100,
+              "class": 4,
+              "seq": 2,
+              "type": "term.changed",
+              "data": {
+                "term": 1
+              }
+            }
+          ]
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "applied"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "merged with 2",
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 200,
+            "class": 4,
+            "seq": 3,
+            "type": "term.changed",
+            "data": {
+              "term": 2
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            200,
+            0
+          ],
+          "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3,
+          "outputs": [
+            {
+              "t": 200,
+              "class": 4,
+              "seq": 3,
+              "type": "term.changed",
+              "data": {
+                "term": 2
+              }
+            }
+          ],
+          "cursor": {
+            "horizon": [
+              200,
+              0
+            ],
+            "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 3,
+              "kind": "advance",
+              "status": "applied",
+              "payload": {
+                "horizon": [
+                  200,
+                  0
+                ]
+              },
+              "req_digest": "sha256:6cfa245a0ca96a9bdd79d4b76f52c733ef7ff6224da16a1793864a6d918ad338",
+              "response": {
+                "eventSeq": 3,
+                "outputs": [
+                  {
+                    "t": 100,
+                    "class": 4,
+                    "seq": 2,
+                    "type": "term.changed",
+                    "data": {
+                      "term": 1
+                    }
+                  },
+                  {
+                    "t": 200,
+                    "class": 4,
+                    "seq": 3,
+                    "type": "term.changed",
+                    "data": {
+                      "term": 2
+                    }
+                  }
+                ],
+                "cursor": {
+                  "horizon": [
+                    200,
+                    0
+                  ],
+                  "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+                }
+              },
+              "resp_digest": "sha256:d14390776be5680dc8160f5b23b194d6e081669a195c590bef7e9c212fa16d02"
+            }
+          ],
+          "meta": {
+            "journalRows": "2"
+          }
+        }
+      }
+    },
+    {
+      "note": "merged-away eventSeq 2",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "stale_event"
+          }
+        }
+      }
+    },
+    {
+      "note": "eventSeq 3 again returns the merged response",
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3,
+          "outputs": [
+            {
+              "t": 100,
+              "class": 4,
+              "seq": 2,
+              "type": "term.changed",
+              "data": {
+                "term": 1
+              }
+            },
+            {
+              "t": 200,
+              "class": 4,
+              "seq": 3,
+              "type": "term.changed",
+              "data": {
+                "term": 2
+              }
+            }
+          ],
+          "cursor": {
+            "horizon": [
+              200,
+              0
+            ],
+            "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+          }
+        }
+      }
+    },
+    {
+      "note": "merged again",
+      "request": {
+        "eventSeq": 4,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            300,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [],
+        "cursor": {
+          "horizon": [
+            300,
+            0
+          ],
+          "stateDigest": "sha256:0303030303030303030303030303030303030303030303030303030303030303"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "outputs": []
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 4,
+              "response": {
+                "outputs": [
+                  {
+                    "t": 100,
+                    "class": 4,
+                    "seq": 2,
+                    "type": "term.changed",
+                    "data": {
+                      "term": 1
+                    }
+                  },
+                  {
+                    "t": 200,
+                    "class": 4,
+                    "seq": 3,
+                    "type": "term.changed",
+                    "data": {
+                      "term": 2
+                    }
+                  }
+                ],
+                "cursor": {
+                  "horizon": [
+                    300,
+                    0
+                  ],
+                  "stateDigest": "sha256:0303030303030303030303030303030303030303030303030303030303030303"
+                }
+              },
+              "resp_digest": "sha256:c9318171b3e2321b4550c1116ddcb48ceb9d94fca3cf7b1b931a1f261d3c5507"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 5,
+        "kind": "port.remove",
+        "payload": {
+          "letterIds": [
+            9
+          ]
+        }
+      },
+      "actorReply": {
+        "cursor": {
+          "horizon": [
+            300,
+            0
+          ],
+          "stateDigest": "sha256:0404040404040404040404040404040404040404040404040404040404040404"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        }
+      }
+    },
+    {
+      "note": "not merged across port.remove",
+      "request": {
+        "eventSeq": 6,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            400,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 400,
+            "class": 4,
+            "seq": 4,
+            "type": "term.changed",
+            "data": {
+              "term": 3
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            400,
+            0
+          ],
+          "stateDigest": "sha256:0505050505050505050505050505050505050505050505050505050505050505"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 4
+            },
+            {
+              "event_seq": 5,
+              "kind": "port.remove"
+            },
+            {
+              "event_seq": 6,
+              "response": {
+                "outputs": [
+                  {
+                    "t": 400,
+                    "class": 4,
+                    "seq": 4,
+                    "type": "term.changed",
+                    "data": {
+                      "term": 3
+                    }
+                  }
+                ]
+              },
+              "resp_digest": "sha256:44257597b7acec18fb0e1faa2a48a2daa777eb3430f0c80137e2a9698833db8a"
+            }
+          ],
+          "meta": {
+            "journalRows": "4"
+          }
+        }
+      }
+    }
+  ]
+}

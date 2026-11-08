@@ -1,0 +1,6 @@
+{
+  "description": "a request's digest object",
+  "input": "{\n \"payload\": {\n  \"horizon\": [\n   12500,\n   1\n  ]\n },\n \"kind\": \"advance\",\n \"eventSeq\": 1207,\n \"actor\": \"island:2\",\n \"sessionId\": \"s_0123456789abcdef\",\n \"v\": 1\n}",
+  "canonical": "{\"actor\":\"island:2\",\"eventSeq\":1207,\"kind\":\"advance\",\"payload\":{\"horizon\":[12500,1]},\"sessionId\":\"s_0123456789abcdef\",\"v\":1}",
+  "digest": "sha256:e906bf2428b48fa527ba3656219aa04c87ebd483cd2b2f9a589aa05e6e667849"
+}

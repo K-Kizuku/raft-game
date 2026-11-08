@@ -1,0 +1,17 @@
+{
+  "description": "transfer.abort",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.abort",
+    "payload": {
+      "transferId": "x1300"
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:be958aa954da3c113617f718191c62590a623c012bc523fd46cb43eefd72d9ef"
+}

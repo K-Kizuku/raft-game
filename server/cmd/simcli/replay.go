@@ -9,11 +9,12 @@ import (
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 )
 
-const replaySynopsis = "simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH] [--trace FILE]"
+const replaySynopsis = "simcli replay --data DIR --input FILE [--invariants=BOOL] [--expect HASH] [--trace FILE] [--normalized-trace FILE]"
 
 // runReplay は replay サブコマンド。入力ログを最初から適用し直し、結果の行を stdout に 1 行出す。
 // Engine の公開 API（New・Snapshot・Apply・RunUntil・DrainEvents）で行う（T-304 の sim.Replay に置き換えるのは後のタスク）。
 // --trace があれば、成功したとき（終了コードが 0 のとき）だけ、作り直したトレースを record と同じ記録の形式で書く。
+// --normalized-trace があれば、同じく成功したときだけ、正規化トレース（simtrace）を JSON で書く。
 func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := newFlagSet("replay")
 	data := fs.String("data", "", "データのディレクトリ（DIR/islands.json と DIR/stages/*.yaml）（必須）")
@@ -21,6 +22,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	invariants := fs.Bool("invariants", true, "不変条件の検査（テストモード）。結果は変わらない")
 	expect := fs.String("expect", "", "traceHash が HASH（sha256:<64 桁の 16 進の小文字>）と違えば失敗にする")
 	trace := fs.String("trace", "", "入力ログから作り直したトレースを、record と同じ記録の形式で FILE に書く")
+	normalized := fs.String("normalized-trace", "", normalizedTraceUsage)
 	if code, done := parseFlags(fs, args, stderr, replaySynopsis, "data", "input"); done {
 		return code
 	}
@@ -30,6 +32,10 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if *trace == "-" {
 		_, _ = fmt.Fprintln(stderr, "simcli: --trace に - は使えない（標準出力は結果の行に使う）")
+		return exitUsage
+	}
+	if *normalized == "-" {
+		_, _ = fmt.Fprintln(stderr, "simcli: --normalized-trace に - は使えない（標準出力は結果の行に使う）")
 		return exitUsage
 	}
 
@@ -55,6 +61,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var (
 		snap   sim.Snapshot
 		events []sim.DomainEvent
+		result *sim.RoundResult
 	)
 	e, err := newEngine(st, l.Seed, *invariants)
 	if err != nil {
@@ -64,6 +71,7 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		end := sim.SimTime(st.DurationMs)
 		stack, err := safely(func() error { return applyInputs(e, l.Commands, l.Pos, end) })
 		events = e.DrainEvents()
+		result = engineResult(e)
 		res.OK = true
 		res.observe(e, len(events), len(e.InputLog()))
 		if err != nil {
@@ -86,7 +94,12 @@ func runReplay(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	if *trace != "" {
-		return writeTrace(*trace, replaykit.NewRecordHeader(buildID(), st, l.Seed, "", len(events), res.TraceHash), snap, events, stderr)
+		if code := writeTrace(*trace, replaykit.NewRecordHeader(buildID(), st, l.Seed, "", len(events), res.TraceHash), snap, events, stderr); code != exitOK {
+			return code
+		}
+	}
+	if *normalized != "" {
+		return writeNormalizedTrace("replay", *normalized, events, result, stderr)
 	}
 	return exitOK
 }

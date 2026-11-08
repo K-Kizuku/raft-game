@@ -1,0 +1,32 @@
+{
+  "description": "unload letters not in ascending id order",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "unload",
+    "payload": {
+      "t": 7000,
+      "letters": [
+        {
+          "letterId": 3000000002,
+          "createdAt": 100,
+          "digest": "sha256:7b68a23fe05672689fd6253aea6662402347f342e63d8305cbdfad906e888e5e",
+          "bundle": "PkVMU1phaG92fYSLkpmgp661vMPK0djf5u30+wIJEBceJSwzOkFITw==",
+          "place": "relay"
+        },
+        {
+          "letterId": 1000000001,
+          "createdAt": 100,
+          "digest": "sha256:8ebde99462ec72b43a7e722b62361594fa41c6de9c3c91311663f42594b97f47",
+          "bundle": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fj/Bg0UGyIpMA==",
+          "place": "port"
+        }
+      ]
+    }
+  },
+  "expect": "invalid"
+}

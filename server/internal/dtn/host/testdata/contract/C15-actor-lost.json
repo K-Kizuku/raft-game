@@ -1,0 +1,153 @@
+{
+  "name": "C15-actor-lost",
+  "description": "Container が上限の時間までに応答しなければ not_ready。以後の要求も not_ready（復元は DTN-10）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "actorTimeoutMs": 50,
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": "timeout",
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "not_ready"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "intent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 0,
+        "kind": "host.status",
+        "payload": {}
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "outputs": [
+            {
+              "type": "host.status",
+              "data": {
+                "epoch": 1,
+                "lastEventSeq": 1,
+                "container": "lost"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "resend while lost",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "not_ready"
+          }
+        }
+      }
+    },
+    {
+      "note": "applied responses are still served",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "description": "invalid actor ferry:",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1207,
+    "kind": "advance",
+    "payload": {
+      "horizon": [
+        12500,
+        1
+      ]
+    }
+  },
+  "expect": "invalid"
+}

@@ -1,0 +1,15 @@
+{
+  "description": "inspect with eventSeq 0 (not journaled)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 0,
+    "kind": "inspect",
+    "payload": {}
+  },
+  "expect": "ok",
+  "digest": "sha256:34341448fbade510cf3ae509f46ef5860c2faed4dda63fe6eaa2a44c866c711c"
+}

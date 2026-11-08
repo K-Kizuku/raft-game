@@ -1,0 +1,6 @@
+{
+  "description": "only quote, backslash and control characters are escaped",
+  "input": "\"\\u0041\\/\\\"\\\\\\b\\f\\n\\r\\t\\u0000\\u001f\\u007f é \\u00e9 \\u2028 <>&\"",
+  "canonical": "\"A/\\\"\\\\\\b\\f\\n\\r\\t\\u0000\\u001f é é   <>&\"",
+  "digest": "sha256:ad10eb5d1da22f77dca599bf4fea06a35dca72fc86a11e4053489e3dbcb1f45f"
+}

@@ -1,0 +1,24 @@
+{
+  "description": "transfer.gc then port.remove on a ferry",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.gc",
+    "payload": {
+      "transferId": "x1",
+      "then": {
+        "kind": "port.remove",
+        "payload": {
+          "letterIds": [
+            1
+          ]
+        }
+      }
+    }
+  },
+  "expect": "invalid"
+}

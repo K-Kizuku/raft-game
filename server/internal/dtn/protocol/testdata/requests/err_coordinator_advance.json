@@ -1,0 +1,19 @@
+{
+  "description": "coordinator kinds are not defined yet (DTN-05)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "coordinator",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "advance",
+    "payload": {
+      "horizon": [
+        1,
+        1
+      ]
+    }
+  },
+  "expect": "invalid"
+}

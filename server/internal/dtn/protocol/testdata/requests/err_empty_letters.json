@@ -1,0 +1,17 @@
+{
+  "description": "deliver with no letters",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "deliver",
+    "payload": {
+      "t": 50,
+      "letters": []
+    }
+  },
+  "expect": "invalid"
+}

@@ -1,0 +1,18 @@
+{
+  "description": "arrive",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "arrive",
+    "payload": {
+      "t": 12500,
+      "island": 2
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:941eba98c914f63a7247a1d3b0f4edc8b25db57f0fb8b2453c3f180bc4f8e711"
+}

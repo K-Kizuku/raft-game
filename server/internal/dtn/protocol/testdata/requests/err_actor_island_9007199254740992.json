@@ -1,0 +1,19 @@
+{
+  "description": "invalid actor island:9007199254740992",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:9007199254740992",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1207,
+    "kind": "advance",
+    "payload": {
+      "horizon": [
+        12500,
+        1
+      ]
+    }
+  },
+  "expect": "invalid"
+}

@@ -1,0 +1,263 @@
+{
+  "name": "C09b-limit-bundle",
+  "description": "Bundle の上限（ここでは 32 bytes）: 受け取りは too_large、Actor の出力は invalid（確定しない）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "limits": {
+    "maxBundleBytes": 32
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "note": "incoming bundle of 33 bytes",
+      "request": {
+        "eventSeq": 2,
+        "kind": "deliver",
+        "payload": {
+          "t": 50,
+          "letters": [
+            {
+              "letterId": 11,
+              "createdAt": 10,
+              "digest": "sha256:5d8fcfefa9aeeb711fb8ed1e4b7d5c8a9bafa46e8e76e68aa18adce5a10df6ab",
+              "bundle": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "too_large"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "output bundle of 33 bytes",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 2,
+            "type": "letter.created",
+            "data": {
+              "letterId": 12,
+              "digest": "sha256:5d8fcfefa9aeeb711fb8ed1e4b7d5c8a9bafa46e8e76e68aa18adce5a10df6ab",
+              "size": 33
+            },
+            "bundle": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g"
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "invalid"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "intent"
+            }
+          ],
+          "bundles": []
+        }
+      }
+    },
+    {
+      "note": "letter.created without bundle",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 2,
+            "type": "letter.created",
+            "data": {
+              "letterId": 12,
+              "digest": "sha256:84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7882",
+              "size": 10
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "invalid"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "intent"
+            }
+          ],
+          "bundles": []
+        }
+      }
+    },
+    {
+      "note": "a valid reply commits",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 2,
+            "type": "letter.created",
+            "data": {
+              "letterId": 12,
+              "digest": "sha256:84d89877f0d4041efb6bf91a16f0248f2fd573e6af05c19f96bedb9f882f7882",
+              "size": 10
+            },
+            "bundle": "MDEyMzQ1Njc4OQ=="
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "applied"
+            }
+          ],
+          "bundles": [
+            {
+              "letter_id": 12,
+              "bundle": "MDEyMzQ1Njc4OQ=="
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

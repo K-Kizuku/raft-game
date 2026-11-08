@@ -1,0 +1,6 @@
+{
+  "description": "keys sorted, whitespace removed",
+  "input": " { \"b\" : 2,\n\t\"a\": 1, \"c\": {\"z\": true, \"y\": null, \"x\": false} } ",
+  "canonical": "{\"a\":1,\"b\":2,\"c\":{\"x\":false,\"y\":null,\"z\":true}}",
+  "digest": "sha256:bcf927f055ab4b6329b6ae0be079d2c2665bf79811de976435eb60fc634f0c8f"
+}

@@ -1,0 +1,20 @@
+{
+  "description": "bundle.export (not journaled)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "bundle.export",
+    "payload": {
+      "t": 9000,
+      "letterIds": [
+        1000000001
+      ]
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:52afd4d1e6424cd101301f9f86c84e667ad8d188bb2ff40b7ad611ff962db0fe"
+}

@@ -1,0 +1,6 @@
+{
+  "description": "escaped surrogate pair becomes the UTF-8 character",
+  "input": "\"\\ud83d\\ude00\"",
+  "canonical": "\"😀\"",
+  "digest": "sha256:7a0c50b92434b015545fe93ab723db2d4b2cdd14a441405624a9ce8be29f1d5a"
+}

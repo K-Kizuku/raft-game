@@ -1,0 +1,19 @@
+{
+  "description": "cargo.remove",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "cargo.remove",
+    "payload": {
+      "letterIds": [
+        1000000001
+      ]
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:a792572f21596f6aa0aa90ca81f881c07ecc30d0a3d2a1db183bbcded0cbb9af"
+}
