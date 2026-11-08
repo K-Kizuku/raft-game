@@ -116,3 +116,27 @@ func TestRepoGreedyDemoIzu(t *testing.T) {
 		})
 	}
 }
+
+// izuNoviceStar2 は、demo-izu（嵐なし）をシード 1..n で初心者のボット novice に遊ばせ、★2 以上で終わったシードの数を返す。
+func izuNoviceStar2(t *testing.T, n int) int {
+	t.Helper()
+	st := repoStage(t, "demo-izu")
+	k := 0
+	for _, r := range playIzuSeeds(t, "novice", st, n, 0) {
+		if r.star2 {
+			k++
+		}
+	}
+	t.Logf("novice/demo-izu: ★2 %d/%d", k, n)
+	return k
+}
+
+// GR-5 demo-izu: 初心者のボット novice でも、★2 で終わるシードが 5 割以上（T-501h #333。進行表 §8）。
+// シード 1〜200 の確認は repo_greedy_balance_test.go（ビルドタグ balance）にある。
+func TestRepoNoviceDemoIzu(t *testing.T) {
+	t.Parallel()
+	n := otherGreedySeeds
+	if k := izuNoviceStar2(t, n); k*2 < n {
+		t.Errorf("novice: ★2 で終わったシード = %d / %d（5 割未満）", k, n)
+	}
+}

@@ -207,7 +207,7 @@ var wantStages = []wantStage{
 		id: "demo-izu", title: "嵐の離島共和国（デモ・伊豆版）", durationMs: 120000, unlock: "", tutorial: "",
 		refs:          izuRefs,
 		weights:       izuWeights,
-		electionTick:  28, // T-501e で 16 から 28 に
+		electionTick:  39, // T-501e で 16 から 28 に、T-501h（#333）で novice が★2 に届くよう 39 に
 		routes:        izuRoutes,
 		ferries:       izuFerries,
 		critical:      []string{fwA, fwB},
@@ -504,7 +504,7 @@ func TestRepoStagesSources(t *testing.T) {
 }
 
 // ST-4 警告。5 つのステージとも、なし（demo-goto は T-501b で electionTick を 32 に、demo-izu は T-501e で
-// 航路をフルメッシュにして electionTick を 28 にし、警告が消えた。stage3 は T-718 で作った。データ仕様 §5.4）。
+// 航路をフルメッシュにして electionTick を 28 にし、警告が消えた。T-501h で 39 にした。stage3 は T-718 で作った。データ仕様 §5.4）。
 func TestRepoStagesWarnings(t *testing.T) {
 	t.Parallel()
 	for _, id := range []string{"stage1", "stage2", "stage3", "demo-goto", "demo-izu"} {
@@ -578,7 +578,7 @@ func TestRepoStagesEventsAndDemo(t *testing.T) {
 		routes     [][2]uint64
 		durationMs int64
 	}{
-		{"demo-izu", [][2]uint64{{1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}}, 40000}, // T-501e で大島を孤立させる 5 本・40 秒に
+		{"demo-izu", [][2]uint64{{1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}}, 50000}, // T-501e で大島を孤立させる 5 本・40 秒に、T-501h（#333）で 50 秒に
 		{"demo-goto", [][2]uint64{{1, 2}, {1, 3}}, 40000},                        // T-501b で 40 秒に延ばした
 	} {
 		id, routes, durationMs := d.id, d.routes, d.durationMs

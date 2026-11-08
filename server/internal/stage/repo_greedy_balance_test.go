@@ -156,3 +156,16 @@ func TestRepoGreedyStage3Balance(t *testing.T) {
 		})
 	}
 }
+
+// izuNoviceSeeds は、伊豆版のデモの難しさを確かめるシードの数（シード 1〜200。T-501h #333）。
+const izuNoviceSeeds = 200
+
+// 伊豆版のデモ（嵐なし）は、初心者の代わりのボット novice でも★2 で終わる割合が 50% 以上（T-501h #333。進行表 §8）。
+//
+//	go -C server test -tags balance -count=1 -run NoviceDemoIzu -v ./internal/stage/...
+func TestRepoNoviceDemoIzuBalance(t *testing.T) {
+	t.Parallel()
+	if k := izuNoviceStar2(t, izuNoviceSeeds); k*2 < izuNoviceSeeds {
+		t.Fatalf("novice: ★2 で終わったシード = %d / %d（50%% 未満）", k, izuNoviceSeeds)
+	}
+}
