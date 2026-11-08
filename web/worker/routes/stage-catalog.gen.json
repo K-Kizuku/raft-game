@@ -95,6 +95,32 @@
         "state_machine_replication"
       ],
       "demo": false
+    },
+    {
+      "id": "stage3",
+      "title": "嵐の離島共和国",
+      "region": "伊豆諸島（東京都）",
+      "islands": 6,
+      "ferries": 6,
+      "durationMs": 240000,
+      "unlock": "stage2",
+      "intro": {
+        "text": "伊豆諸島の 6 つの島。令和 2 年の定期貨客船の欠航率は、利島 17%、御蔵島・青ヶ島 41% です。ヘリコミューターでつながる島々を、6 隻の郵便船で結びます。船の名前は計画書に記載された船名を使用しており、運航会社とは関係ありません。",
+        "provenance": "derived",
+        "source": {
+          "dataset": "mlit-ritou-2026",
+          "region": "伊豆諸島地域",
+          "field": "MARITIME_TRANSPORT",
+          "quote": "令和2(2020)年利島17%、御蔵島・青ヶ島41%"
+        }
+      },
+      "learning": [
+        "network_partition",
+        "quorum",
+        "leader_election",
+        "check_quorum"
+      ],
+      "demo": false
     }
   ]
 }
