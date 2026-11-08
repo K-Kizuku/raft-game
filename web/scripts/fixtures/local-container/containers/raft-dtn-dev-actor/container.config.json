@@ -1,5 +1,5 @@
 {
-  "name": "raft-game-dev-server",
+  "name": "raft-dtn-dev-actor",
   "schedulingPolicy": "durable-object",
   "observability": {
     "enabled": true,
@@ -8,8 +8,8 @@
     }
   },
   "images": {
-    "server": {
-      "localReference": "cloudflare-build/000000000000/raft-game-dev-server-server:fixture"
+    "dtnactor": {
+      "localReference": "cloudflare-build/000000000000/raft-dtn-dev-actor-dtnactor:fixture"
     }
   }
 }

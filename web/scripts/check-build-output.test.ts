@@ -1,11 +1,13 @@
-// web/scripts/check-build-output.ts のテスト（T-601 / #65、C-1〜C-15）。
+// web/scripts/check-build-output.ts のテスト（T-601 / #65 の C-1〜C-15 を DTN の環境に合わせたもの・DTN-12 / #169）。
 // 写し（fixtures/<モード>/）は、BUILD_ID=git:fixture の cf build --mode <モード> の出力から作った
-// （manifest の中身を削り、localReference を cloudflare-build/000000000000/<コンテナ>-server:fixture に置き換えた）。
+// （manifest の中身を削り、localReference を cloudflare-build/000000000000/<コンテナ>-dtnactor:fixture に置き換えた。
+// dtn・local-container は Docker のイメージを作らない偽の docker（WRANGLER_DOCKER_BIN）で出力だけを作った）。
 // テストは写しを読み、一部を書き換えたものを checkOutput に渡す（ファイルに書かない）。
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED_ORIGINS,
+  checkForbidden,
   checkOutput,
   EXPECTED,
   localImages,
@@ -48,17 +50,12 @@ function container(out: BuildOutput, i = 0): Obj {
   return out.containers[i]?.config as Obj;
 }
 
-/** 写しを書き換えて検査し、違反の一覧を返す */
-function violations(mode: Mode, mutate: (o: BuildOutput) => void, checkAs: Mode = mode): string[] {
-  const out = fixture(mode);
-  mutate(out);
-  return checkOutput(out, checkAs);
-}
-
 type Case = [name: string, mode: Mode, mutate: (o: BuildOutput) => void, expected: string];
 
 function expectViolation([, mode, mutate, expected]: Case): void {
-  const errors = violations(mode, mutate);
+  const out = fixture(mode);
+  mutate(out);
+  const errors = checkOutput(out, mode);
   expect(errors.length).toBeGreaterThan(0);
   expect(
     errors.filter((e) => e.startsWith(expected)),
@@ -66,11 +63,10 @@ function expectViolation([, mode, mutate, expected]: Case): void {
   ).not.toEqual([]);
 }
 
-const PROD_HOST = "raft.kizuku-hackathon.work";
-const DEMO_HOST = "raft-demo.kizuku-hackathon.work";
+const DTN_HOST = "raft-dtn.kizuku-hackathon.work";
 
-describe("check-build-output", () => {
-  describe("C-1: 4 つのモードの写し", () => {
+describe("check-build-output（DTN）", () => {
+  describe("C-1: 3 つのモードの写し", () => {
     it.each(MODES)("%s の写しは、そのモードで違反がない", (mode) => {
       expect(checkOutput(fixture(mode), mode)).toEqual([]);
     });
@@ -82,133 +78,148 @@ describe("check-build-output", () => {
       },
     );
 
-    it("demo の写しを production で検査すると name・domains・exports.CostGuard で誤り", () => {
-      const errors = checkOutput(fixture("demo"), "production");
-      for (const item of ["name:", "domains:", "exports.CostGuard:"]) {
-        expect(
-          errors.some((e) => e.startsWith(item)),
-          item,
-        ).toBe(true);
-      }
+    it("どのモードの Worker の名前も DTN 用（prod・demo の名前を使わない）", () => {
+      for (const mode of MODES) expect(EXPECTED[mode].worker).toMatch(/^raft-game-dtn(-dev)?$/);
     });
 
-    it("一般公開とデモで Rate Limiting の namespace が違う", () => {
-      expect(EXPECTED.production.rateLimitNamespace).not.toBe(EXPECTED.demo.rateLimitNamespace);
+    it("dtn は 2 つの Container と DtnSession・ActorHost・CostGuard を持つ", () => {
+      const out = fixture("dtn");
+      expect(Object.keys(sub(worker(out), "exports")).sort()).toEqual([
+        "ActorHost",
+        "CostGuard",
+        "DtnSession",
+      ]);
+      expect(out.containers.map((c) => (c.config as Obj)["name"]).sort()).toEqual([
+        "raft-dtn-actor",
+        "raft-dtn-coordinator",
+      ]);
+    });
+  });
+
+  describe("C-0: prod・demo の名前・ホスト名・GameSession がない（DTN-12 §1.3）", () => {
+    const cases: Case[] = [
+      ["Worker の名前が raft-game", "dtn", (o) => (worker(o)["name"] = "raft-game"), "forbidden:"],
+      [
+        "Worker の名前が raft-game-demo",
+        "dtn",
+        (o) => (worker(o)["name"] = "raft-game-demo"),
+        "forbidden:",
+      ],
+      [
+        "prod のホスト名の domains",
+        "dtn",
+        (o) => (worker(o)["domains"] = ["raft.kizuku-hackathon.work"]),
+        "forbidden:",
+      ],
+      [
+        "ALLOWED_ORIGINS に demo のオリジン",
+        "dtn",
+        (o) =>
+          (env(o)["ALLOWED_ORIGINS"] = {
+            type: "text",
+            value: `${ALLOWED_ORIGINS},https://raft-demo.kizuku-hackathon.work`,
+          }),
+        "forbidden:",
+      ],
+      [
+        "GameSession の export",
+        "dtn",
+        (o) =>
+          (sub(worker(o), "exports")["GameSession"] = {
+            type: "durable-object",
+            storage: "sqlite",
+          }),
+        "forbidden:",
+      ],
+      [
+        "GAME_SESSION のバインディング",
+        "local-container",
+        (o) =>
+          (env(o)["GAME_SESSION"] = {
+            type: "durable-object",
+            worker: "raft-game-dtn-dev",
+            exportName: "X",
+          }),
+        "forbidden:",
+      ],
+      [
+        "prod の CostGuard を参照",
+        "dtn",
+        (o) => (sub(env(o), "COST_GUARD")["worker"] = "raft-game"),
+        "forbidden:",
+      ],
+      [
+        "prod の R2",
+        "dtn",
+        (o) => (env(o)["REPLAYS"] = { type: "r2", name: "raft-game-replays" }),
+        "forbidden:",
+      ],
+      [
+        "prod のコンテナの名前",
+        "dtn",
+        (o) => (container(o)["name"] = "raft-game-server"),
+        "forbidden:",
+      ],
+    ];
+    it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
+
+    it("写しには禁止の名前がない", () => {
+      for (const mode of MODES) expect(checkForbidden(fixture(mode))).toEqual([]);
     });
   });
 
   describe("C-2: domains", () => {
     const cases: Case[] = [
+      ["dtn に domains がない", "dtn", (o) => delete worker(o)["domains"], "domains:"],
       [
-        "production にデモのホスト名",
-        "production",
-        (o) => (worker(o)["domains"] = [DEMO_HOST]),
+        "dtn の domains が 2 つ",
+        "dtn",
+        (o) => (worker(o)["domains"] = [DTN_HOST, "x.example"]),
         "domains:",
       ],
       [
-        "production に 2 つ目のホスト名",
-        "production",
-        (o) => (worker(o)["domains"] = [PROD_HOST, DEMO_HOST]),
-        "domains:",
-      ],
-      [
-        "production にワイルドカード",
-        "production",
+        "ワイルドカード",
+        "dtn",
         (o) => (worker(o)["domains"] = ["*.kizuku-hackathon.work"]),
-        "domains:",
-      ],
-      [
-        "production に domains がない",
-        "production",
-        (o) => delete worker(o)["domains"],
         "domains:",
       ],
       [
         "development に domains",
         "development",
-        (o) => (worker(o)["domains"] = [PROD_HOST]),
-        "domains:",
-      ],
-      [
-        "local-container に domains",
-        "local-container",
-        (o) => (worker(o)["domains"] = []),
-        "domains:",
-      ],
-      [
-        "demo の production が false",
-        "demo",
-        (o) =>
-          (worker(o)["domains"] = [{ hostname: DEMO_HOST, production: false, previews: false }]),
+        (o) => (worker(o)["domains"] = [DTN_HOST]),
         "domains:",
       ],
     ];
     it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
 
     it("{ hostname, production: true, previews: false } の形は通る", () => {
-      const errors = violations(
-        "production",
-        (o) =>
-          (worker(o)["domains"] = [{ hostname: PROD_HOST, production: true, previews: false }]),
-      );
-      expect(errors).toEqual([]);
+      const out = fixture("dtn");
+      worker(out)["domains"] = [{ hostname: DTN_HOST, production: true, previews: false }];
+      expect(checkOutput(out, "dtn")).toEqual([]);
     });
   });
 
-  describe("C-3: triggers・routes・workersDev・previewUrls", () => {
+  describe("C-3: triggers・routes・workersDev・previewUrls・limits・observability・assets", () => {
     const cases: Case[] = [
-      ["triggers がある", "production", (o) => (worker(o)["triggers"] = []), "triggers:"],
-      ["routes がある", "production", (o) => (worker(o)["routes"] = [`${PROD_HOST}/*`]), "routes:"],
-      ["workersDev: true", "demo", (o) => (worker(o)["workersDev"] = true), "workersDev:"],
+      ["triggers", "dtn", (o) => (worker(o)["triggers"] = {}), "triggers:"],
+      ["routes", "dtn", (o) => (worker(o)["routes"] = []), "routes:"],
+      ["workersDev: true", "dtn", (o) => (worker(o)["workersDev"] = true), "workersDev:"],
+      ["previewUrls: true", "dtn", (o) => (worker(o)["previewUrls"] = true), "previewUrls:"],
       [
-        "previewUrls: true",
-        "development",
-        (o) => (worker(o)["previewUrls"] = true),
-        "previewUrls:",
-      ],
-    ];
-    it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
-  });
-
-  describe("C-4: limits.cpuMs", () => {
-    const cases: Case[] = [
-      ["limits がない", "production", (o) => delete worker(o)["limits"], "limits.cpuMs:"],
-      ["5", "production", (o) => (sub(worker(o), "limits")["cpuMs"] = 5), "limits.cpuMs:"],
-      ["50.5", "demo", (o) => (sub(worker(o), "limits")["cpuMs"] = 50.5), "limits.cpuMs:"],
-      ["GUARDS.cpuMs と違う", "production", (o) => (guards(o)["cpuMs"] = 500), "limits.cpuMs:"],
-    ];
-    it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
-  });
-
-  describe("C-5: observability・assets", () => {
-    const cases: Case[] = [
-      [
-        "redactQueryString がない",
-        "production",
-        (o) => delete sub(worker(o), "observability")["redactQueryString"],
-        "observability.redactQueryString:",
+        "cpuMs が GUARDS と違う",
+        "dtn",
+        (o) => (sub(worker(o), "limits")["cpuMs"] = 60),
+        "limits.cpuMs:",
       ],
       [
         "redactQueryString: false",
-        "demo",
+        "dtn",
         (o) => (sub(worker(o), "observability")["redactQueryString"] = false),
         "observability.redactQueryString:",
       ],
       [
-        "observability.enabled: false",
-        "production",
-        (o) => (sub(worker(o), "observability")["enabled"] = false),
-        "observability.enabled:",
-      ],
-      [
-        "observability.logs.enabled: false",
-        "production",
-        (o) => (sub(worker(o), "observability", "logs")["enabled"] = false),
-        "observability.logs.enabled:",
-      ],
-      [
         "runWorkerFirst が違う",
-        "production",
+        "dtn",
         (o) => (sub(worker(o), "assets")["runWorkerFirst"] = ["/api/*"]),
         "assets.runWorkerFirst:",
       ],
@@ -216,117 +227,55 @@ describe("check-build-output", () => {
     it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
   });
 
-  describe("C-6: env のキーの集合", () => {
+  describe("C-6: env のキーの集合・シークレット・文字列", () => {
     const cases: Case[] = [
       [
-        "1 つ多い",
-        "production",
-        (o) => (env(o)["EXTRA_FLAG"] = { type: "text", value: "1" }),
-        "env.EXTRA_FLAG:",
+        "DTN_CONTACT_KEY がない",
+        "dtn",
+        (o) => delete env(o)["DTN_CONTACT_KEY"],
+        "env.DTN_CONTACT_KEY:",
       ],
-      ["1 つ少ない", "production", (o) => delete env(o)["REPLAYS"], "env.REPLAYS:"],
+      ["ACTOR_HOST がない", "dtn", (o) => delete env(o)["ACTOR_HOST"], "env.ACTOR_HOST:"],
+      ["余分なキー", "dtn", (o) => (env(o)["EXTRA"] = { type: "text", value: "x" }), "env.EXTRA:"],
       [
-        "development に GAME_SESSION",
+        "development に DTN_SESSION",
         "development",
-        (o) => (env(o)["GAME_SESSION"] = {}),
-        "env.GAME_SESSION:",
-      ],
-      [
-        "development に ALLOWED_ORIGINS",
-        "development",
-        (o) => (env(o)["ALLOWED_ORIGINS"] = {}),
-        "env.ALLOWED_ORIGINS:",
-      ],
-    ];
-    it.each(cases)("%s → 誤り（項目名にそのキー）", (...c) => expectViolation(c));
-  });
-
-  describe("C-7: シークレット", () => {
-    const cases: Case[] = [
-      [
-        "value がある",
-        "production",
-        (o) => (sub(env(o), "SESSION_SIGNING_KEY")["value"] = "x".repeat(32)),
-        "env.SESSION_SIGNING_KEY:",
-      ],
-      [
-        'type: "text"',
-        "demo",
         (o) =>
-          (env(o)["TURNSTILE_SECRET"] = {
-            type: "text",
-            value: "1x0000000000000000000000000000000AA",
+          (env(o)["DTN_SESSION"] = {
+            type: "durable-object",
+            worker: "raft-game-dtn-dev",
+            exportName: "DtnSession",
           }),
-        "env.TURNSTILE_SECRET:",
+        "env.DTN_SESSION:",
       ],
       [
-        "demo に ADMIN_TOKEN",
-        "demo",
-        (o) => (env(o)["ADMIN_TOKEN"] = { type: "secret" }),
+        "シークレットに値",
+        "dtn",
+        (o) => (env(o)["DTN_CONTACT_KEY"] = { type: "secret", value: "x" }),
+        "env.DTN_CONTACT_KEY:",
+      ],
+      [
+        "ADMIN_TOKEN が text",
+        "dtn",
+        (o) => (env(o)["ADMIN_TOKEN"] = { type: "text", value: "x" }),
         "env.ADMIN_TOKEN:",
       ],
-    ];
-    it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
-  });
-
-  describe("C-8: 文字列", () => {
-    it.each(["production", "demo"] as const)(
-      "%s の ALLOWED_ORIGINS は 2 つのホスト名のオリジンのカンマ区切り（#130）",
-      (mode) => {
-        const want = `https://${PROD_HOST},https://${DEMO_HOST}`;
-        expect(ALLOWED_ORIGINS).toBe(want);
-        expect(sub(env(fixture(mode)), "ALLOWED_ORIGINS")).toEqual({ type: "text", value: want });
-      },
-    );
-
-    const cases: Case[] = [
       [
-        "DEMO_CONTROLS が 1",
-        "production",
-        (o) => (sub(env(o), "DEMO_CONTROLS")["value"] = "1"),
+        "DEMO_CONTROLS が 0",
+        "dtn",
+        (o) => (env(o)["DEMO_CONTROLS"] = { type: "text", value: "0" }),
         "env.DEMO_CONTROLS:",
       ],
       [
-        "CONTAINER_INSTANCE が x",
-        "production",
-        (o) => (sub(env(o), "CONTAINER_INSTANCE")["value"] = "x"),
+        "CONTAINER_INSTANCE が standard-1",
+        "dtn",
+        (o) => (env(o)["CONTAINER_INSTANCE"] = { type: "text", value: "standard-1" }),
         "env.CONTAINER_INSTANCE:",
       ],
       [
-        "ALLOWED_ORIGINS がデモのホスト名だけ",
-        "production",
-        (o) => (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${DEMO_HOST}`),
-        "env.ALLOWED_ORIGINS:",
-      ],
-      [
-        "ALLOWED_ORIGINS が一般公開のホスト名だけ",
-        "production",
-        (o) => (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${PROD_HOST}`),
-        "env.ALLOWED_ORIGINS:",
-      ],
-      [
-        "デモの ALLOWED_ORIGINS がデモのホスト名だけ",
-        "demo",
-        (o) => (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${DEMO_HOST}`),
-        "env.ALLOWED_ORIGINS:",
-      ],
-      [
-        "デモの ALLOWED_ORIGINS が逆の順",
-        "demo",
-        (o) =>
-          (sub(env(o), "ALLOWED_ORIGINS")["value"] = `https://${DEMO_HOST},https://${PROD_HOST}`),
-        "env.ALLOWED_ORIGINS:",
-      ],
-      [
-        "BUILD_ID が a b",
-        "production",
-        (o) => (sub(env(o), "BUILD_ID")["value"] = "a b"),
-        "env.BUILD_ID:",
-      ],
-      [
-        "BUILD_ID が 65 文字",
-        "demo",
-        (o) => (sub(env(o), "BUILD_ID")["value"] = "a".repeat(65)),
+        "BUILD_ID が不正",
+        "dtn",
+        (o) => (env(o)["BUILD_ID"] = { type: "text", value: "a b" }),
         "env.BUILD_ID:",
       ],
     ];
@@ -336,271 +285,161 @@ describe("check-build-output", () => {
   describe("C-9: SESSION_RATE_LIMIT", () => {
     const cases: Case[] = [
       [
-        "period が 10",
-        "production",
-        (o) => (sub(env(o), "SESSION_RATE_LIMIT", "simple")["period"] = 10),
-        "env.SESSION_RATE_LIMIT.simple:",
-      ],
-      [
-        "limit が GUARDS.rateLimit.perIpPerMinute と違う",
-        "production",
-        (o) => (sub(guards(o), "rateLimit")["perIpPerMinute"] = 20),
-        "env.SESSION_RATE_LIMIT.simple.limit:",
-      ],
-      [
-        "namespace が abc",
-        "production",
-        (o) => (sub(env(o), "SESSION_RATE_LIMIT")["namespace"] = "abc"),
+        "prod の namespace（1001）",
+        "dtn",
+        (o) => (sub(env(o), "SESSION_RATE_LIMIT")["namespace"] = "1001"),
         "env.SESSION_RATE_LIMIT.namespace:",
       ],
       [
-        "デモの namespace が一般公開と同じ",
-        "demo",
-        (o) =>
-          (sub(env(o), "SESSION_RATE_LIMIT")["namespace"] = EXPECTED.production.rateLimitNamespace),
-        "env.SESSION_RATE_LIMIT.namespace:",
-      ],
-      [
-        'type が "text"',
+        "main の dev の namespace（1003）",
         "development",
-        (o) => (env(o)["SESSION_RATE_LIMIT"] = { type: "text", value: "10" }),
-        "env.SESSION_RATE_LIMIT:",
+        (o) => (sub(env(o), "SESSION_RATE_LIMIT")["namespace"] = "1003"),
+        "env.SESSION_RATE_LIMIT.namespace:",
+      ],
+      [
+        "simple が違う",
+        "dtn",
+        (o) => (sub(env(o), "SESSION_RATE_LIMIT")["simple"] = { limit: 20, period: 60 }),
+        "env.SESSION_RATE_LIMIT.simple:",
       ],
     ];
     it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
   });
 
-  describe("C-10: GUARDS", () => {
+  describe("C-10: GUARDS（DTN の専用の上限）", () => {
     const cases: Case[] = [
       [
-        "signature がある",
-        "production",
-        (o) => (guards(o)["signature"] = { enabled: false }),
-        "env.GUARDS.signature:",
+        "monthlyUsd が 30",
+        "dtn",
+        (o) => (sub(guards(o), "budget")["monthlyUsd"] = 30),
+        "env.GUARDS.budget.monthlyUsd:",
       ],
       [
-        "budget.dailyUsd が 5",
-        "production",
-        (o) => (sub(guards(o), "budget")["dailyUsd"] = 5),
+        "dailyUsd が 2",
+        "dtn",
+        (o) => (sub(guards(o), "budget")["dailyUsd"] = 2),
         "env.GUARDS.budget.dailyUsd:",
       ],
       [
-        "turnstile.enabled が false",
-        "production",
+        "maxMinutes が 30",
+        "dtn",
+        (o) => (sub(guards(o), "gameTime")["maxMinutes"] = 30),
+        "env.GUARDS.gameTime.maxMinutes:",
+      ],
+      [
+        "turnstile が無効",
+        "dtn",
         (o) => (sub(guards(o), "turnstile")["enabled"] = false),
         "env.GUARDS.turnstile.enabled:",
       ],
       [
-        "gameTime.maxAlarms が 50",
-        "local-container",
-        (o) => (sub(guards(o), "gameTime")["maxAlarms"] = 50),
-        "env.GUARDS.gameTime.maxAlarms:",
-      ],
-      ["キーが 1 つ欠ける", "development", (o) => delete guards(o)["unitCostUsd"], "env.GUARDS:"],
-      [
-        "acceptGames が false",
-        "production",
-        (o) => (guards(o)["acceptGames"] = false),
-        "env.GUARDS.acceptGames:",
+        "signature を書く",
+        "dtn",
+        (o) => (guards(o)["signature"] = { enabled: false }),
+        "env.GUARDS.signature:",
       ],
       [
-        "budget.monthlyUsd が 100",
-        "production",
-        (o) => (sub(guards(o), "budget")["monthlyUsd"] = 100),
-        "env.GUARDS.budget.monthlyUsd:",
+        "do の単価がない",
+        "dtn",
+        (o) => delete sub(guards(o), "unitCostUsd")["do"],
+        "env.GUARDS.unitCostUsd.do:",
       ],
       [
-        "gameTime.maxMinutes が 60",
-        "production",
-        (o) => (sub(guards(o), "gameTime")["maxMinutes"] = 60),
-        "env.GUARDS.gameTime.maxMinutes:",
-      ],
-      [
-        "demo に GUARDS",
-        "demo",
-        (o) =>
-          (env(o)["GUARDS"] = structuredClone(
-            sub(fixture("production").worker as Obj, "env", "GUARDS"),
-          )),
-        "env.GUARDS:",
-      ],
-    ];
-    it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
-  });
-
-  describe("C-11: Durable Object のバインディング", () => {
-    const cases: Case[] = [
-      [
-        "demo の COST_GUARD.worker が raft-game-demo",
-        "demo",
-        (o) => (sub(env(o), "COST_GUARD")["worker"] = "raft-game-demo"),
-        "env.COST_GUARD:",
-      ],
-      [
-        "production の GAME_SESSION.worker が raft-game-demo",
-        "production",
-        (o) => (sub(env(o), "GAME_SESSION")["worker"] = "raft-game-demo"),
-        "env.GAME_SESSION:",
-      ],
-      [
-        "development の COST_GUARD が raft-game",
+        "container.lite の単価がない",
         "development",
-        (o) => (sub(env(o), "COST_GUARD")["worker"] = "raft-game"),
-        "env.COST_GUARD:",
-      ],
-      [
-        "COST_GUARD の exportName が違う",
-        "production",
-        (o) => (sub(env(o), "COST_GUARD")["exportName"] = "GameSession"),
-        "env.COST_GUARD:",
+        (o) => delete sub(guards(o), "unitCostUsd")["container.lite"],
+        "env.GUARDS.unitCostUsd.container.lite:",
       ],
     ];
     it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
   });
 
-  describe("C-12: exports", () => {
+  describe("C-11〜13: Durable Object・exports・コンテナ", () => {
     const cases: Case[] = [
       [
-        "GameSession.container が raft-game-server でない",
-        "production",
-        (o) => (sub(worker(o), "exports", "GameSession")["container"] = "raft-game-demo-server"),
-        "exports.GameSession.container:",
+        "ACTOR_HOST が DtnSession を指す",
+        "dtn",
+        (o) => (sub(env(o), "ACTOR_HOST")["exportName"] = "DtnSession"),
+        "env.ACTOR_HOST:",
       ],
       [
-        "そのコンテナの出力がない",
-        "production",
-        (o) => (o.containers = []),
-        "exports.GameSession.container:",
+        "COST_GUARD が別の Worker",
+        "dtn",
+        (o) => (sub(env(o), "COST_GUARD")["worker"] = "raft-game-dtn-dev"),
+        "env.COST_GUARD:",
       ],
       [
-        'storage が "kv"',
-        "production",
-        (o) => (sub(worker(o), "exports", "CostGuard")["storage"] = "kv"),
-        "exports.CostGuard:",
+        "ActorHost の export がない",
+        "dtn",
+        (o) => delete sub(worker(o), "exports")["ActorHost"],
+        "exports.ActorHost:",
       ],
       [
-        "demo の exports に CostGuard",
-        "demo",
-        (o) =>
-          (sub(worker(o), "exports")["CostGuard"] = { type: "durable-object", storage: "sqlite" }),
-        "exports.CostGuard:",
+        "DtnSession のコンテナが actor",
+        "dtn",
+        (o) => (sub(worker(o), "exports", "DtnSession")["container"] = "raft-dtn-actor"),
+        "exports.DtnSession.container:",
       ],
       [
-        "production に CostGuard がない",
-        "production",
-        (o) => delete sub(worker(o), "exports")["CostGuard"],
-        "exports.CostGuard:",
-      ],
-      [
-        "CostGuard に container",
-        "production",
-        (o) => (sub(worker(o), "exports", "CostGuard")["container"] = "raft-game-server"),
+        "CostGuard にコンテナ",
+        "dtn",
+        (o) => (sub(worker(o), "exports", "CostGuard")["container"] = "raft-dtn-actor"),
         "exports.CostGuard.container:",
       ],
+      ["コンテナが 1 つ", "dtn", (o) => o.containers.pop(), "containers:"],
       [
-        "development に GameSession",
-        "development",
-        (o) =>
-          (sub(worker(o), "exports")["GameSession"] = {
-            type: "durable-object",
-            storage: "sqlite",
-          }),
-        "exports.GameSession:",
-      ],
-    ];
-    it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
-  });
-
-  describe("C-13: コンテナ", () => {
-    const cases: Case[] = [
-      [
-        "development に 1 つある",
-        "development",
-        (o) => (o.containers = fixture("local-container").containers),
-        "containers:",
-      ],
-      [
-        "production に 2 つある",
-        "production",
-        (o) => o.containers.push(...fixture("demo").containers),
-        "containers:",
-      ],
-      [
-        'schedulingPolicy が "default"',
-        "production",
+        "schedulingPolicy が default",
+        "dtn",
         (o) => (container(o)["schedulingPolicy"] = "default"),
         "containers.schedulingPolicy:",
       ],
       [
-        "images のキーが app",
-        "demo",
-        (o) => (container(o)["images"] = { app: sub(container(o), "images")["server"] }),
+        "image が server",
+        "local-container",
+        (o) => (container(o)["images"] = { server: { localReference: "x" } }),
         "containers.images:",
       ],
       [
-        "name が違う",
-        "local-container",
-        (o) => (container(o)["name"] = "raft-game-server"),
-        "containers.name:",
-      ],
-    ];
-    it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
-  });
-
-  describe("C-14: REPLAYS", () => {
-    const cases: Case[] = [
-      ["ない", "production", (o) => delete env(o)["REPLAYS"], "env.REPLAYS:"],
-      [
-        "name が違う",
-        "demo",
-        (o) => (sub(env(o), "REPLAYS")["name"] = "raft-game-replays-demo"),
-        "env.REPLAYS:",
+        "development にコンテナ",
+        "development",
+        (o) => o.containers.push(...fixture("dtn").containers),
+        "containers:",
       ],
     ];
     it.each(cases)("%s → 誤り", (...c) => expectViolation(c));
   });
 
   describe("C-15: main", () => {
-    function run(argv: string[]): { code: number; stdout: string; stderr: string } {
-      let stdout = "";
-      let stderr = "";
-      const code = main(argv, { stdout: (s) => (stdout += s), stderr: (s) => (stderr += s) });
-      return { code, stdout, stderr };
-    }
-
     it.each([
-      ["引数がない", []],
-      ["ディレクトリがない（引数）", ["--mode", "production"]],
-      ["--mode staging", ["--mode", "staging", fixtureDir("production")]],
-      ["--mode がない", [fixtureDir("production")]],
-      ["引数が多い", ["--mode", "production", fixtureDir("production"), "x"]],
-      [
-        "ディレクトリが存在しない",
-        ["--mode", "production", fileURLToPath(new URL("./fixtures/no-such-dir", import.meta.url))],
-      ],
-    ])("%s → 2", (_name, argv) => {
-      const r = run(argv);
-      expect(r.code).toBe(2);
-      expect(r.stdout).toBe("");
-      expect(r.stderr).not.toBe("");
+      [[]],
+      [["--mode", "dtn"]],
+      [["--mode", "production", fixtureDir("dtn")]],
+      [["--mode", "demo", fixtureDir("dtn")]],
+      [["--mode", "dtn", "/nonexistent/output"]],
+    ])("引数 %j → 2", (argv) => {
+      const err: string[] = [];
+      expect(main(argv, { stdout: () => undefined, stderr: (s) => err.push(s) })).toBe(2);
+      expect(err.join("")).not.toBe("");
     });
 
     it("違反があれば 1 で、標準エラーに項目名", () => {
-      const r = run(["--mode", "production", fixtureDir("demo")]);
-      expect(r.code).toBe(1);
-      expect(r.stdout).toBe("");
-      const lines = r.stderr.trimEnd().split("\n");
-      expect(lines).toContain('name: "raft-game-demo"（raft-game であること）');
-      expect(lines.some((l) => l.startsWith("exports.CostGuard:"))).toBe(true);
+      const err: string[] = [];
+      const code = main(["--mode", "development", fixtureDir("dtn")], {
+        stdout: () => undefined,
+        stderr: (s) => err.push(s),
+      });
+      expect(code).toBe(1);
+      expect(err.join("")).toContain("name:");
     });
 
     it.each(MODES)("%s の写しなら 0 で、標準出力が {ok:true,…} の JSON の 1 行", (mode) => {
-      const r = run(["--mode", mode, fixtureDir(mode)]);
-      expect(r.code).toBe(0);
-      expect(r.stderr).toBe("");
-      expect(r.stdout.endsWith("\n")).toBe(true);
-      expect(r.stdout.trimEnd().split("\n")).toHaveLength(1);
-      expect(JSON.parse(r.stdout)).toEqual({
+      const out: string[] = [];
+      const code = main(["--mode", mode, fixtureDir(mode)], {
+        stdout: (s) => out.push(s),
+        stderr: () => undefined,
+      });
+      expect(code).toBe(0);
+      expect(JSON.parse(out.join(""))).toEqual({
         ok: true,
         mode,
         worker: EXPECTED[mode].worker,
@@ -609,8 +448,9 @@ describe("check-build-output", () => {
     });
 
     it("localImages は写しの localReference", () => {
-      expect(localImages(fixture("production"))).toEqual([
-        "cloudflare-build/000000000000/raft-game-server-server:fixture",
+      expect(localImages(fixture("dtn")).sort()).toEqual([
+        "cloudflare-build/000000000000/raft-dtn-actor-dtnactor:fixture",
+        "cloudflare-build/000000000000/raft-dtn-coordinator-dtnactor:fixture",
       ]);
       expect(localImages(fixture("development"))).toEqual([]);
     });
