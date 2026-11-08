@@ -94,12 +94,11 @@ Coordinator は、今の `Transport` と同じ確認（停泊中か・Contact �
 | 操作 | 送り元 → 受け取り | 受け取り側の `then` | 送り元の `then` |
 |---|---|---|---|
 | 積む（`cmd.ferry.load`・`autoload`） | 島 X の港 → 船 F | `cargo.add` | `port.remove` |
-| 下ろす（自島の手紙） | 船 F → 島 X の港 | `port.return`（R1〜R6 をかけ直す） | `cargo.remove` |
-| 下ろす（他島の手紙） | 船 F → 島 X の倉庫 | `relay.store` | `cargo.remove` |
+| 下ろす | 船 F → 島 X（自島の手紙は港、他島の手紙は倉庫） | `unload`（手紙の ID の昇順。港に戻す手紙は R1〜R6 をかけ直す） | `cargo.remove` |
 | 倉庫から積む（`cmd.relay.load`） | 島 X の倉庫 → 船 F | `cargo.add` | `relay.remove` |
 | 到着の配達 | 船 F → 島 X（宛先が X の手紙。Cargo の順） | `deliver` | `cargo.remove` |
 
-1 つの下ろす操作に自島と他島の手紙が混ざるときは、2 つの transfer に分け、自島 → 他島の順に行う（今の `Unload` の処理の順）。
+1 つの下ろす操作は 1 つの transfer にする。`unload` は手紙の ID の昇順で処理する（今の `Unload` と同じ順）。倉庫の上限（`relayCap`）は、Coordinator が先に確かめる。
 
 ### 3.3 止まったときの回復
 

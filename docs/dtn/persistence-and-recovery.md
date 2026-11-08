@@ -56,7 +56,7 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
 - `advance` は、直前の journal の行も `advance` なら、2 つを 1 つの行にまとめる（島の進み方は上限の区切り方に依存しない。D-9）
   - まとめた行は、新しい `event_seq`・新しい上限・**2 つの応答の `outputs` をつなげたもの**を持ち、`resp_digest` はつなげた `outputs` で計算し直す。再生では、まとめた上限への 1 回の `advance` が、つなげた `outputs` と同じ出力を出す（D-9）ので、digest が一致する
   - まとめて消えた古い `eventSeq` が後から届いたら `stale_event`（上限は単調なので、古い上限は意味を持たない）
-- `inspect`・`transfer.status`・`host.status` は journal に入れない
+- `inspect`・`bundle.export`・`transfer.status`・`host.status` は journal に入れない（状態を変えない）。`bundle.export` の bytes は、送り元の Host が `transfers` と `bundles` に prepared の版として保存する
 
 ## 3. 確定の順序
 

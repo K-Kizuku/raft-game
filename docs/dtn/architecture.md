@@ -60,7 +60,7 @@
 | `server/internal/dtn/contact`・`server/internal/dtn/cla/rpc` | DTN-09 | Contact と RPC CLA |
 | `server/internal/dtn/recovery` | DTN-10 | 復元 |
 | `server/internal/dtn/fabric`・`server/cmd/dtnfabric` | DTN-11 | ローカルの Session Front と Actor Host |
-| `server/cmd/dtnactor` | DTN-02〜05 | Actor の Container のエントリ（`ROLE`） |
+| `server/cmd/dtnactor` | DTN-02〜05 | Actor の Container のエントリ（`ROLE`）。`island`・`ferry` は DTN-03・04、`coordinator` と Session Front との枠組み（[actor-protocol.md §1](./actor-protocol.md#1-経路と符号化)）は DTN-05 |
 | `web/worker/dtn/` | DTN-12・13 | `DtnSession`・`ActorHost`・DTN の入り口 |
 | `server/internal/dtn/cla/moq`・`spike/dtn-moq/` | DTN-14・15 | MoQ |
 
@@ -154,5 +154,5 @@ flowchart TD
 ```
 
 - DTN-01（この文書群のレビューと Accepted）は今すぐできる。DTN-00 は MVP の凍結（`main` のタグ）の後、`dtn/main` に `main` を取り込んでから始める
-- DTN-06 と DTN-14 は、DTN-01 の後なら他と並行できる
+- DTN-06 と DTN-14 は、DTN-01 の後なら他と並行できる。DTN-02 が手紙の符号化の interface（`LetterCodec`）と試験用の偽物を用意し、DTN-03・04 はそれを使う。DTN-06 が本物を実装したら差し替える
 - DTN-17（対象外のイベント）は、DTN-11 の後の後続

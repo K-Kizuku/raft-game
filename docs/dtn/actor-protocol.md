@@ -6,7 +6,7 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 
 | 区間 | Cloudflare | ローカル | 符号化 |
 |---|---|---|---|
-| Coordinator ⇔ Session Front | DtnSession DO → Coordinator Container の `/ws` | `dtnfabric` → `dtnactor` の `/ws` | JSON テキストフレーム |
+| Coordinator ⇔ Session Front | DtnSession DO → Coordinator Container の `/ws` | `dtnfabric` → `dtnactor` の `/ws` | JSON テキストフレーム。1 フレーム = 1 つの JSON。`{"ch": "ctl" \| "browser", "msg": …}` で制御（§3.3）とブラウザの電文を分ける |
 | Session Front ⇔ Actor Host | DO RPC（`ActorHost` のメソッド） | Go の関数呼び出し | 同じ JSON の構造 |
 | Actor Host ⇔ Actor | ActorHost DO → Actor Container の `/ws` | Go の Host → `dtnactor` の `/ws` | JSON テキストフレーム |
 | Actor Host ⇔ Actor Host（RPC CLA） | DO RPC | Go の関数呼び出し | JSON（Bundle は base64） |
@@ -14,6 +14,8 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 - Bundle の bytes は JSON の中で base64（RFC 4648 §4、パディングあり）
 - 1 つの電文の上限は 1 MiB（Workers の WebSocket の 1 メッセージの上限に合わせる）。超えたら `too_large`
 - digest と署名に使う「正準の JSON」は RFC 8785（JSON Canonicalization Scheme）。digest は `sha256:` ＋ 16 進の小文字
+
+- `dtnactor` は起動したら、開いたポートを標準出力の 1 行目に `{"listen":"127.0.0.1:NNNNN"}` の形で出す（ポートは `:0` で開く）
 
 ## 2. エンベロープ
 
@@ -73,20 +75,22 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 |---|---|---|---|
 | `init` | すべて | `{stage, stageHash, seed, actor, plan?}` | Actor を作る。島は開幕式を手元で再計算する。`plan` は、その島が発生元の依頼の計画（Coordinator が渡す） |
 | `advance` | 島 | `{horizon: [t, c]}` | [simulation-time.md §2.1](./simulation-time.md#21-上限horizon) |
-| `deliver` | 島 | `{t, letters: [{letterId, bundle}]}` | 到着した手紙を、この順に処理する（Raft の手紙は `Deliver` → `Process` → 返事を港へ、依頼の手紙は窓口へ）。最後に `Process` する |
+| `deliver` | 島 | `{t, letters: [手紙]}` | 到着した手紙を、この順に処理する（Raft の手紙は `Deliver` → `Process` → 返事を港へ、依頼の手紙は窓口へ）。最後に `Process` する |
 | `port.remove` | 島 | `{letterIds}` | 船に積まれた（所有権が移った）手紙を港から除く |
-| `port.return` | 島 | `{t, letters: [{letterId, bundle}]}` | 下ろされた自島の手紙を港に戻し、規則 R1〜R6 をかけ直す |
-| `relay.store` | 島 | `{letters: [{letterId, bundle}]}` | 下ろされた他島の手紙を倉庫に入れる |
+| `unload` | 島 | `{t, letters: [手紙 ＋ `place`]}` | 下ろされた手紙を、この順（手紙の ID の昇順。今の `Unload` と同じ）に処理する。`place: "port"`（自島の手紙）は港に戻して規則 R1〜R6 をかけ直し、`place: "relay"`（他島の手紙）は倉庫に入れる |
 | `relay.remove` | 島 | `{letterIds}` | 倉庫から船に積まれた手紙を除く |
 | `arrive` | 船 | `{t, island}` | `Docked` にし、`ReadyAt = t + dockMs` |
 | `depart` | 船 | `{t, to, arriveAt}` | `Sailing` にする |
-| `cargo.add` | 船 | `{letters: [{letterId, bundle}]}` | Cargo の末尾に、この順に加える |
+| `cargo.add` | 船 | `{t, letters: [手紙]}` | Cargo の末尾に、この順に加える |
 | `cargo.remove` | 船 | `{letterIds}` | Cargo から除く |
-| `bundle.export` | 島・船 | `{t, letterIds}` | 送り出す Bundle の Bundle Age と CRC を更新した bytes を返す（状態は変えない。[bpv7-profile.md §3](./bpv7-profile.md#3-時刻)） |
+| `bundle.export` | 島・船 | `{t, letterIds}` | 送り出す Bundle の Bundle Age と CRC を更新した bytes を、出力 `bundle.exported{letterId, digest, size}`（Host への応答には `bundle` も入る）で返す。状態は変えない・journal に入れない（[bpv7-profile.md §3](./bpv7-profile.md#3-時刻)） |
 | `inspect` | すべて | `{}` | 状態の要約を返す（状態は変えない。journal に入れない） |
 | `shutdown` | すべて | `{}` | 処理を止めて終わる |
 
-- `deliver`・`port.return`・`relay.store`・`cargo.add` の bundle は、Handoff で所有権が確定したものだけ（[handoff-and-contact.md](./handoff-and-contact.md)）。Actor は、受けた bundle の digest を確かめる
+- 「手紙」は `{letterId, createdAt, digest, bundle}`（`createdAt` は手紙を作った仮想時刻。Bundle Age の計算に使う）
+- `deliver`・`unload`・`cargo.add` の bundle は、Handoff で所有権が確定したものだけ（[handoff-and-contact.md](./handoff-and-contact.md)）。Actor は、受けた bundle の digest を確かめる
+- `init` の応答には、開幕式の後の最初の出力（`node.state` など、t = 0）を入れる。Coordinator はこれを `cmd.game.start` のときに適用する（今の開幕式の役割の変化の再生と同じ）
+- コマンドが起こした出力（`deliver`・`unload` など）の `class` は 8（[simulation-time.md §2.1](./simulation-time.md#21-上限horizon) のコマンドの位置）。コードの `ClassCommandApplied = 0` は使われていないので使わない
 - Actor の状態を変える要求は、Actor ごとに直列に処理する。並行した要求は届いた順に待たせる
 
 ### 3.2 Actor Host が受ける（Container には送らない）
@@ -115,11 +119,14 @@ Session Front → Coordinator の電文。Coordinator → Session Front は `dis
 
 ## 4. 出力（Actor → Coordinator）
 
-| type | 出す Actor | data |
+`data` は、**今のドメインイベントの中身（同じ型・同じフィールド）** に、下の表の追加のフィールドを足したもの。ブラウザ向けのイベントと正規化トレースを、Coordinator が島の出力から作れるようにするため（Raft のメッセージの中身の表示用のフィールド `logTerm`・`index`・`commit`・`entries`・`reject` なども、今の `letter.created` と同じく入る）。
+
+| type | 出す Actor | data（今のドメインイベントの中身に足すもの） |
 |---|---|---|
-| `letter.created` | 島 | `{letterId, kind, from, to, msgType, term, reqId?, digest, size}`（Host への応答には `bundle` も入る） |
-| `letter.dropped` | 島 | `{letterId, rule}`（`R1`〜`R6`） |
-| `letter.delivered` | 島 | `{letterId}` |
+| `letter.created` | 島 | `digest`・`size`（Host への応答には `bundle` も入る） |
+| `letter.dropped` | 島 | `rule`（`R1`〜`R6`） |
+| `letter.delivered` | 島 | なし |
+| `bundle.exported` | 島・船 | `{letterId, digest, size}`（Host への応答には `bundle` も入る） |
 | `node.state`・`node.leader_elected`・`node.stepped_down` | 島 | 今のドメインイベントと同じ中身 |
 | `term.changed` | 島 | `{term}`（古い手紙の検出に使う） |
 | `ledger.applied` | 島 | `{reqId, outcome, index}`（`outcome`: `ok`・`rejected`・`duplicate`） |
@@ -130,6 +137,7 @@ Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けの
 
 ## 5. 冪等と順序
 
+- 要求の digest は、エンベロープから `epoch`・`coordEpoch`・`replay` を除いたもの（`v`・`sessionId`・`actor`・`eventSeq`・`kind`・`payload`）の RFC 8785 の正準の JSON の SHA-256。世代が変わった後の送り直しを `conflict` にしないため
 - Host は、処理した `eventSeq` ごとに、要求の digest と応答を保存する（[persistence-and-recovery.md](./persistence-and-recovery.md)）
   - 同じ `eventSeq` で同じ digest → 保存した応答をそのまま返す（Container に送り直さない）
   - 同じ `eventSeq` で違う digest → `conflict`
