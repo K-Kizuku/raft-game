@@ -46,11 +46,17 @@ async function loadFixtures(): Promise<Fixture[]> {
   const spec: string = "node:fs";
   const fs = (await import(/* @vite-ignore */ spec)) as NodeFs;
   const dir = new URL("../../../../server/internal/dtn/host/testdata/contract/", import.meta.url);
-  return fs
-    .readdirSync(dir.pathname)
-    .filter((name) => name.endsWith(".json"))
-    .sort()
-    .map((name) => JSON.parse(fs.readFileSync(new URL(name, dir).pathname, "utf8")) as Fixture);
+  return (
+    fs
+      .readdirSync(dir.pathname)
+      .filter((name) => name.endsWith(".json"))
+      // TODO(DTN-12 の続き): DTN-08 の transfer.* の fixture（T01〜T05。`peerReply`・`expect.peerCalled`・
+      // `afterPrepare`・`afterPeerReply`）を TS の ActorHost でも通す。それまでは C* だけを回す
+      // （transfer.* の TS の試験は fixtures/transfer-scenarios.json）。
+      .filter((name) => !name.startsWith("T"))
+      .sort()
+      .map((name) => JSON.parse(fs.readFileSync(new URL(name, dir).pathname, "utf8")) as Fixture)
+  );
 }
 
 const FIXTURES = await loadFixtures();

@@ -1,0 +1,37 @@
+{
+  "description": "transfer.activate then unload on an island (letters without bytes)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.activate",
+    "payload": {
+      "transferId": "x1300",
+      "then": {
+        "kind": "unload",
+        "payload": {
+          "t": 12600,
+          "letters": [
+            {
+              "letterId": 1000000001,
+              "createdAt": 100,
+              "digest": "sha256:8ebde99462ec72b43a7e722b62361594fa41c6de9c3c91311663f42594b97f47",
+              "place": "relay"
+            },
+            {
+              "letterId": 2000000001,
+              "createdAt": 100,
+              "digest": "sha256:7b68a23fe05672689fd6253aea6662402347f342e63d8305cbdfad906e888e5e",
+              "place": "port"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:272a6cdfed98bae15c5b2a5a1dd8a741145dde4888dd47608a80fa28f0fafd81"
+}

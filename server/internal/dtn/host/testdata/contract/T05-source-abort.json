@@ -1,0 +1,592 @@
+{
+  "name": "T05-source-abort",
+  "description": "送り元の取り消し: ACK の後でも committed の前なら prepared → held に戻り、取り消した transfer の prepare の送り直しは断る（DTN-08）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "note": "letter.created で港に手紙ができる",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            400,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 3,
+            "seq": 1,
+            "type": "letter.created",
+            "data": {
+              "letterId": 1000000001,
+              "digest": "sha256:651e5deb2ab0cecb2746a612d1d6d4ebda3373eeaef41d93f1b981b797e4d2c6",
+              "size": 23
+            },
+            "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTA="
+          },
+          {
+            "t": 200,
+            "class": 3,
+            "seq": 2,
+            "type": "letter.created",
+            "data": {
+              "letterId": 1000000002,
+              "digest": "sha256:481aaabea0b2a4fc95bc69e8a014c7f2f8ea807c9d695a6d432eb32b128d90f4",
+              "size": 23
+            },
+            "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTA="
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            400,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 2
+        }
+      }
+    },
+    {
+      "note": "prepare",
+      "request": {
+        "eventSeq": 3,
+        "kind": "transfer.prepare",
+        "payload": {
+          "transferId": "x3",
+          "t": 500,
+          "to": "ferry:f1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "letterIds": [
+            1000000001,
+            1000000002
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 500,
+            "class": 8,
+            "seq": 0,
+            "type": "bundle.exported",
+            "data": {
+              "letterId": 1000000001,
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+              "size": 25
+            },
+            "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA=="
+          },
+          {
+            "t": 500,
+            "class": 8,
+            "seq": 0,
+            "type": "bundle.exported",
+            "data": {
+              "letterId": 1000000002,
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1",
+              "size": 25
+            },
+            "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA=="
+          }
+        ]
+      },
+      "peerReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 0,
+            "seq": 0,
+            "type": "transfer.ack",
+            "data": {
+              "transferId": "x3",
+              "digests": [
+                "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.ack",
+              "data": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "abort",
+      "request": {
+        "eventSeq": 4,
+        "kind": "transfer.abort",
+        "payload": {
+          "transferId": "x3"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 4,
+          "error": null
+        },
+        "rows": {
+          "bundles": [
+            {
+              "letter_id": 1000000001,
+              "state": "held",
+              "place": "port",
+              "transfer_id": null,
+              "updated_seq": 4,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA=="
+            },
+            {
+              "letter_id": 1000000002,
+              "state": "held",
+              "place": "port",
+              "transfer_id": null,
+              "updated_seq": 4,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA=="
+            }
+          ],
+          "transfers": [
+            {
+              "transfer_id": "x3",
+              "role": "source",
+              "peer": "ferry:f1",
+              "contact_id": "k2",
+              "letter_ids": [
+                1000000001,
+                1000000002
+              ],
+              "digests": [
+                "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              ],
+              "state": "aborted",
+              "ack": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "取り消した transfer の prepare は断る",
+      "request": {
+        "eventSeq": 3,
+        "kind": "transfer.prepare",
+        "payload": {
+          "transferId": "x3",
+          "t": 500,
+          "to": "ferry:f1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "letterIds": [
+            1000000001,
+            1000000002
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 3,
+          "error": {
+            "code": "invalid"
+          }
+        }
+      }
+    },
+    {
+      "note": "取り消した transfer の gc は断る",
+      "request": {
+        "eventSeq": 5,
+        "kind": "transfer.gc",
+        "payload": {
+          "transferId": "x3",
+          "then": {
+            "kind": "port.remove",
+            "payload": {
+              "letterIds": [
+                1000000001,
+                1000000002
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 5,
+          "error": {
+            "code": "invalid"
+          }
+        }
+      }
+    },
+    {
+      "note": "同じ手紙で別の transfer を始められる",
+      "request": {
+        "eventSeq": 6,
+        "kind": "transfer.prepare",
+        "payload": {
+          "transferId": "x6",
+          "t": 500,
+          "to": "ferry:f1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "letterIds": [
+            1000000001
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 500,
+            "class": 8,
+            "seq": 0,
+            "type": "bundle.exported",
+            "data": {
+              "letterId": 1000000001,
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+              "size": 25
+            },
+            "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA=="
+          }
+        ]
+      },
+      "peerReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 0,
+            "seq": 0,
+            "type": "transfer.ack",
+            "data": {
+              "transferId": "x6",
+              "digests": [
+                "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 6,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.ack",
+              "data": {
+                "transferId": "x6",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "CLA が届かなければ not_ready（prepared は保存したまま。ACK は無い）",
+      "request": {
+        "eventSeq": 7,
+        "kind": "transfer.prepare",
+        "payload": {
+          "transferId": "x7",
+          "t": 500,
+          "to": "ferry:f1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "letterIds": [
+            1000000002
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 500,
+            "class": 8,
+            "seq": 0,
+            "type": "bundle.exported",
+            "data": {
+              "letterId": 1000000002,
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1",
+              "size": 25
+            },
+            "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA=="
+          }
+        ]
+      },
+      "peerReply": "disconnect",
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 7,
+          "error": {
+            "code": "not_ready"
+          }
+        },
+        "rows": {
+          "transfers": [
+            {
+              "transfer_id": "x3"
+            },
+            {
+              "transfer_id": "x6"
+            },
+            {
+              "transfer_id": "x7",
+              "role": "source",
+              "peer": "ferry:f1",
+              "contact_id": "k2",
+              "letter_ids": [
+                1000000002
+              ],
+              "digests": [
+                "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              ],
+              "state": "prepared",
+              "ack": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "受け取る Host の誤り（contact_closed）はそのまま返す",
+      "request": {
+        "eventSeq": 7,
+        "kind": "transfer.prepare",
+        "payload": {
+          "transferId": "x7",
+          "t": 500,
+          "to": "ferry:f1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "letterIds": [
+            1000000002
+          ]
+        }
+      },
+      "peerReply": {
+        "status": "error",
+        "error": {
+          "code": "contact_closed",
+          "message": "contact k2 is closed"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 7,
+          "error": {
+            "code": "contact_closed"
+          }
+        }
+      }
+    },
+    {
+      "note": "同じ eventSeq の送り直しで ACK を受ける",
+      "request": {
+        "eventSeq": 7,
+        "kind": "transfer.prepare",
+        "payload": {
+          "transferId": "x7",
+          "t": 500,
+          "to": "ferry:f1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "letterIds": [
+            1000000002
+          ]
+        }
+      },
+      "peerReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 0,
+            "seq": 0,
+            "type": "transfer.ack",
+            "data": {
+              "transferId": "x7",
+              "digests": [
+                "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "peerRequest": {
+          "actor": "ferry:f1",
+          "epoch": 2,
+          "eventSeq": 7,
+          "kind": "transfer.accept",
+          "payload": {
+            "transferId": "x7",
+            "from": "island:1",
+            "contact": {
+              "contactId": "k2",
+              "sessionId": "s_contract",
+              "island": 1,
+              "ferry": "f1",
+              "islandEpoch": 1,
+              "ferryEpoch": 2,
+              "openedAt": 0,
+              "sig": "dGVzdA=="
+            },
+            "bundles": [
+              {
+                "letterId": 1000000002,
+                "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+                "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": "ok",
+          "eventSeq": 7,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.ack",
+              "data": {
+                "transferId": "x7",
+                "digests": [
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -54,6 +54,9 @@ type Step struct {
 	// オブジェクトは応答（足りないフィールドは Host が送った要求から補う）、"timeout" は応答しない、
 	// "disconnect" は接続が切れる。
 	ActorReply json.RawMessage `json:"actorReply,omitempty"`
+	// PeerReply は偽の受け取る Host（CLA）の応答（transfer.prepare の accept。DTN-08）。規則は ActorReply と同じ
+	// （null は「呼ばれない」・オブジェクトは応答で足りないフィールドを補う・"timeout"・"disconnect"）。
+	PeerReply json.RawMessage `json:"peerReply,omitempty"`
 	// CrashAt は止める位置（afterIntent・afterActorReply・afterCommit）。止めたら Store を開き直し、
 	// 新しい Host で次の step へ進む。
 	CrashAt *string `json:"crashAt,omitempty"`
@@ -70,6 +73,10 @@ type Expect struct {
 	ActorCalled *bool `json:"actorCalled,omitempty"`
 	// ActorRequest は Container に送った要求（部分一致）。
 	ActorRequest json.RawMessage `json:"actorRequest,omitempty"`
+	// PeerCalled は受け取る Host（CLA）が呼ばれたか（省略なら「peerReply が null でない」）。
+	PeerCalled *bool `json:"peerCalled,omitempty"`
+	// PeerRequest は受け取る Host に送った transfer.accept の電文（部分一致）。
+	PeerRequest json.RawMessage `json:"peerRequest,omitempty"`
 	// Rows は保存の行（meta・journal・bundles・transfers・contacts）。
 	Rows map[string]json.RawMessage `json:"rows,omitempty"`
 	// Destroyed は保存がすべて消えたこと（shutdown）。
@@ -132,6 +139,7 @@ func Run(t *testing.T, fx Fixture, b Backend) {
 		t.Fatal(err)
 	}
 	conn := &scriptConn{}
+	peer := &scriptConn{}
 	var crashAt string
 	cfg := host.Config{
 		SessionID:    fx.Meta.SessionID,
@@ -139,6 +147,8 @@ func Run(t *testing.T, fx Fixture, b Backend) {
 		Limits:       lim,
 		ActorTimeout: time.Duration(fx.ActorTimeoutMs) * time.Millisecond,
 		InitialEpoch: fx.Meta.Epoch,
+		Peer:         host.PeerFunc(peer.Call),
+		Contacts:     host.RecordOnlyContacts{},
 		Now:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Hooks: host.Hooks{At: func(p host.Point) error {
 			if string(p) == crashAt {
@@ -176,10 +186,11 @@ func Run(t *testing.T, fx Fixture, b Backend) {
 			t.Fatalf("%s: %v", where, err)
 		}
 		conn.reset(st.ActorReply)
+		peer.reset(st.PeerReply)
 		crashAt = ""
 		if st.CrashAt != nil {
 			crashAt = *st.CrashAt
-			if !slices.Contains(host.Points, host.Point(crashAt)) {
+			if !slices.Contains(host.Points, host.Point(crashAt)) && !slices.Contains(host.HandoffPoints, host.Point(crashAt)) {
 				t.Fatalf("%s: unknown crashAt %q", where, crashAt)
 			}
 		}
@@ -194,6 +205,23 @@ func Run(t *testing.T, fx Fixture, b Backend) {
 		}
 		if conn.calls > 1 {
 			t.Errorf("%s: actor called %d times", where, conn.calls)
+		}
+		wantPeer := len(st.PeerReply) > 0 && string(st.PeerReply) != "null"
+		if st.Expect.PeerCalled != nil {
+			wantPeer = *st.Expect.PeerCalled
+		}
+		if got := peer.calls > 0; got != wantPeer {
+			t.Errorf("%s: peer called = %v (%d calls), want %v", where, got, peer.calls, wantPeer)
+		}
+		if peer.calls > 1 {
+			t.Errorf("%s: peer called %d times", where, peer.calls)
+		}
+		if len(st.Expect.PeerRequest) > 0 {
+			if peer.calls == 0 {
+				t.Errorf("%s: peerRequest expected but the peer was not called", where)
+			} else if err := matchJSON(peer.lastReq, st.Expect.PeerRequest); err != nil {
+				t.Errorf("%s: peerRequest: %v\n got: %s", where, err, peer.lastReq)
+			}
 		}
 		if len(st.Expect.ActorRequest) > 0 {
 			if conn.calls == 0 {
@@ -351,7 +379,7 @@ func buildRequest(defaults map[string]json.RawMessage, st Step) ([]byte, error) 
 	return json.Marshal(m)
 }
 
-// scriptConn は台本どおりに答える偽の Container。
+// scriptConn は台本どおりに答える偽の Container（と、偽の受け取る Host）。
 type scriptConn struct {
 	reply   json.RawMessage
 	calls   int

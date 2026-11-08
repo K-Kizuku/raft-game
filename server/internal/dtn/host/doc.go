@@ -20,7 +20,8 @@
 // ではない。
 //
 // 後続の Issue の拡張点:
-//   - transfer.*・contact.*（DTN-08・09）: Host.handleHostOnly。今は internal（未実装）を返す
+//   - transfer.*（DTN-08）: transfer.go。contact.*（DTN-09）は Host.handleHostOnly で internal（未実装）を返す。
+//     Contact の確認（ContactVerifier）と CLA（Peer）は Config で差し替える
 //   - 復元（DTN-10）: Host.Restart（epoch を 1 増やして Container をつなぎ替える）・Store.View と Tx.Journals
 //     （journal を event_seq の順に読む）・Hooks.OnActorLost
 package host

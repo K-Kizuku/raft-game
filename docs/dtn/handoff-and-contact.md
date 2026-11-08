@@ -114,6 +114,23 @@ Coordinator は、今の `Transport` と同じ確認（停泊中か・Contact �
 - **配達の重複を防ぐ（D-4）**: 島は配達した `letterId` を覚え、同じ手紙の 2 回目の `deliver` を `invalid` で断る。Host の `eventSeq` の冪等（[actor-protocol.md §5](./actor-protocol.md#5-冪等と順序)）と二重に守る
 - **Raft の再送とは混同しない**: Raft が同じ内容を送り直したものは、別の `letterId` の別の手紙。宛先で捨てない
 
+### 3.4 実装の細部（DTN-08）
+
+実装は `server/internal/dtn/handoff`（台帳と §3.3 の表。決定的）と `server/internal/dtn/host`（`transfer.*`）。Host の保存の規則と fixture は [persistence-and-recovery.md §7.5](./persistence-and-recovery.md#74-handoffdtn-08)。
+
+- **台帳 `handoff.Ledger`**: `Propose → Persisted(ack) → Commit → Activated → Collected`、`Proposed`・`Persisted` からだけ `Abort`。それ以外の遷移は `ErrTransition`（バグ）、取り消した transfer への ACK は `ErrAborted`（捨てる）。誤りのときは何も変えない
+  - `Commit` の CAS: すべての手紙の持ち主が `From` で、別の transfer に握られていないときだけ持ち主を変える。手紙は `Commit` から `Collected` まで、その transfer に握られる（`Propose` は握らない。同じ手紙の 2 つの transfer は先に `Commit` した方だけが通る）
+  - `Transfer.To` は受け取る Actor の置き場所、`Transfer.Final` は手紙ごとの `Commit` の後の持ち主（省略なら全部 `To`）。下ろす操作は `To = island:X/port`・`Final` に港と倉庫が混ざる。到着の配達は `Final` がすべて `delivered`
+  - Handoff の外の持ち主の変化は `Create`（`letter.created`。島の港）と `Move`（港の規則での破棄など。CAS で、握られている手紙は `ErrHeld`）で記録する
+  - 島から島・船から船の transfer は `Propose` で断る（D-1）
+- **`handoff.Resume(stage, src, dst)`**: §3.3 の表を、台帳の段階と両方の Host の `transfer.status` の `state` で引く。台帳は Coordinator の journal から復元したもので Host より遅れることがあるので、`activate`・`gc` は「送り直す（eventSeq の冪等）」を返す。`proposed` で受け取り側が `pending` なら CAS（`ActionCommit`。受け取り側の `ack` を使う）。表に無い組み合わせ（committed なのに受け取り側に bytes が無い など）は `ActionFail`（`dtn_internal`）
+- **`then` の手紙は bytes を持たない**: `transfer.activate` の `then`（`cargo.add`・`deliver`・`unload`）の手紙は `{letterId, createdAt, digest}`（`unload` は ＋`place`）で、`bundle` を書くと `invalid`。`digest` は ACK の値（受け取る Host は pending の行の digest と照らす）。`createdAt` は Coordinator が `letter.created` の `t` から持つ（Bundle の作成時刻は 0 なので bytes からは分からない）。受け取る Host が pending の bytes を付けた要求を Container に送り、それを journal に入れる
+- `transfer.activate` の `then` にできるのは `cargo.add`・`deliver`・`unload`、`transfer.gc` の `then` は `port.remove`・`relay.remove`・`cargo.remove` だけ（違えば `invalid`）
+- **ACK と状態の形**: 応答の `outputs` に、`transfer.prepare`・`transfer.accept` は `{type: "transfer.ack", data: {transferId, digests}}`、`transfer.status`・`transfer.abort` は `{type: "transfer.status", data: {transferId, state, ack?}}` を 1 つ入れる。`digests` は `letterIds` の順。`state` は `transfers.state` か、行が無ければ `none`
+- **CLA と Contact の確認**: `host.Peer`（`Accept(ctx, 電文) → 応答の電文`。同じプロセスでは受け取る Host の `Handle`）と `host.ContactVerifier`。DTN-09 までの試験の実装 `RecordOnlyContacts` は、署名と epoch を見ず、`sessionId`・島と船の組・記録が閉じていないことだけを確かめる。どちらかが設定されていない Host は、`transfer.prepare`・`transfer.accept` を `internal` で断る。`contact.open`・`contact.close` は DTN-09（今は `internal`）
+- **送り元の誤りの返し方**: CLA が届かない（受け取る Host が止まった・応答が失われた）は `not_ready`（Session Front は同じ eventSeq で `prepare` を送り直す）。受け取る Host の誤りの応答は、その code をそのまま返す。受け取る Host が別の bytes を ACK したら `conflict`
+- **Coordinator の手順（DTN-05 が入れる）**: Coordinator は今の `Transport` と同じ確認の後、journal に intent を書いて `Ledger.Propose` → `transfer.prepare`（`eventSeq` は transferId の番号）→ ACK で `Persisted`・`Commit`・journal に committed → `transfer.activate` → `Activated` → `transfer.gc` → `Collected`。dispatch は送る前に journal に書く（復元で同じ eventSeq で送り直すため）。この手順の試験の役は、今は `server/internal/dtn/host/handoff_test.go` の `world` が持つ（DTN-05 の Coordinator に置き換える）
+
 ## 4. RPC CLA（初期）
 
 - `transfer.accept` を、送り元の Actor Host が受け取る Actor Host の Durable Object を `fetch` ハンドラ（ADR-0023）で呼ぶ（`ACTOR_HOST.get(idFromName("<sessionId>/<actor>"))`）。ローカルは `dtnfabric` の中の関数呼び出し

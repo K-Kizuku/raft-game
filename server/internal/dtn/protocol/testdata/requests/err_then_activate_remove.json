@@ -1,0 +1,24 @@
+{
+  "description": "transfer.activate then cargo.remove (gc kinds cannot follow activate)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.activate",
+    "payload": {
+      "transferId": "x1300",
+      "then": {
+        "kind": "cargo.remove",
+        "payload": {
+          "letterIds": [
+            2000000001
+          ]
+        }
+      }
+    }
+  },
+  "expect": "invalid"
+}

@@ -366,6 +366,10 @@ func (t *tx) PutBundle(r host.BundleRow) error {
 		int64(r.LetterID), b, r.Digest, r.Size, r.State, r.Place, nullString(r.TransferID), int64(r.UpdatedSeq))
 }
 
+func (t *tx) DeleteBundle(letterID uint64) error {
+	return t.exec("DELETE FROM bundles WHERE letter_id = ?", int64(letterID))
+}
+
 const transferCols = "transfer_id, role, peer, contact_id, letter_ids, digests, state, ack"
 
 func scanTransfer(sc interface{ Scan(...any) error }) (host.TransferRow, error) {

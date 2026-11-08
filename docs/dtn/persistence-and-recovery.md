@@ -164,7 +164,7 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
 - `coordEpoch` の更新は、journal に入れない種類（`inspect`・`bundle.export`・`host.status`）でも行う（小さいトランザクション）
 - `host.status` の応答は `outputs: [{type: "host.status", data: {epoch, lastEventSeq, container}}]`。`lastEventSeq` は applied の行の最大の `eventSeq`（intent の行は数えない）、`container` は `running`・`lost`・`stopped`
 - `shutdown` は journal に入れない。Container に `shutdown` を送り（応答が無くても続ける）、接続を閉じ、保存を消す。消した後は `shutdown` に成功を、それ以外に `not_ready` を返す
-- `transfer.*`・`contact.*` は受け口だけ（`internal`。処理は DTN-08・09）
+- `transfer.*` は §7.5（DTN-08）。`contact.*` は受け口だけ（`internal`。処理は DTN-09）
 
 ### 7.3 契約テストの fixture
 
@@ -190,7 +190,8 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
 - `meta`: Host の設定（新しい保存の `meta.sessionId`・`actor`・`epoch`）。`limits`（省略可）は actor-protocol.md §6 の上限を JSON の名前（`maxMessageBytes`・`maxBundleBytes`・`maxJournalRows`・`maxStoredBytes` など）で上書きする。`actorTimeoutMs`（省略可）は Container を待つ上限（既定 10 秒）
 - `request` は電文の JSON（`defaults` の足りないキーを浅く補い、空白なしで送る）。`requestText` は bytes をそのまま送る電文（補わない）
 - `actorReply` は偽の Container の応答: 省略か `null` は「呼ばれない」（呼ばれたら接続の誤り）、オブジェクトは応答（足りない `v`・`actor`・`epoch`・`eventSeq` は Host が送った要求の値、`status` は `"ok"`、`outputs` は `[]`、`cursor`・`error` は `null` で補う）、`"timeout"` は応答しない、`"disconnect"` は接続が切れる
-- `crashAt`（省略可）は止める位置 `afterIntent`・`afterActorReply`・`afterCommit`。止めたら応答を返さず（`expect.crashed: true`）、Store を開き直して新しい Host で次の step へ進む（Container の台本は step ごと）
+- `peerReply`（省略可。DTN-08）は偽の受け取る Host（CLA）の、`transfer.accept` への応答。規則は `actorReply` と同じ。`expect.peerCalled`（省略なら「`peerReply` が `null` でない」）・`expect.peerRequest`（送った `transfer.accept` の電文。部分一致）で確かめる。Contact の確認は §7.4 の `RecordOnlyContacts` と同じ規則
+- `crashAt`（省略可）は止める位置 `afterIntent`・`afterActorReply`・`afterCommit`・`afterPrepare`・`afterPeerReply`（後ろの 2 つと、Host だけで処理する要求での意味は §7.4）。止めたら応答を返さず（`expect.crashed: true`）、Store を開き直して新しい Host で次の step へ進む（Container の台本は step ごと）
 - `expect.actorCalled` を省略したら「`actorReply` が `null` でない」。Container は 1 つの step で 2 回以上呼ばれないこと
 - 照合は部分一致: オブジェクトは期待のキーだけを比べる（期待が `null` ならキーが無くてもよい。期待が `"$absent"` ならキーが無いこと）、配列は同じ長さで要素ごと、数・文字列・真偽・`null` は等しいこと
 - `rows` の形: 表ごとに主キーの順の行の配列（`meta` だけは `{k: v}` で v は TEXT）。列の名前は §2 の SQL のまま。`journal.payload`・`journal.response`・`transfers.letter_ids`・`digests`・`ack`・`contacts.body` は JSON の値として、`bundles.bundle` は base64（パディングあり）で、NULL は `null` で比べる
@@ -210,3 +211,25 @@ Go の `host.Host` と同じ契約で、§7.3 の fixture を `web/worker/dtn/ho
 - `transfer.activate` の journal の `payload` には、Container に送る bytes を埋めた `then` を入れる（再生はこれだけを使う）
 - `shutdown` は要求（`/host` の `kind: "shutdown"`）でも `POST /shutdown {sessionId}`（DtnSession の片付け）でも受ける。`destroy()` が失敗したら保存を残し、30 秒後のアラームで再試行する（`maxAlarms` の中）。自分の期限（`deadlineAt`）のアラームでも止めて消す
 - 要求の読み込みは Go と同じ厳密な JSON（重複したキー・小数・安全でない整数は `invalid`。`web/worker/dtn/codec.ts` の `parseStrictJson`。DTN-02 の canonical の fixture も `codec.test.ts` で通す）
+
+### 7.5 Handoff（DTN-08）
+
+実装は `server/internal/dtn/host/transfer.go`。手順と台帳は [handoff-and-contact.md §3.4](./handoff-and-contact.md#34-実装の細部dtn-08)。
+
+- `transfer.prepare`・`transfer.accept`・`transfer.abort` は journal に入れない（冪等は `transfers` の行。復元の再生にも出てこない）。`eventSeq` は形の確認だけ（`stale_event` にしない）。`transfer.accept` の電文は、送り元の Host が `transfer.prepare` の `eventSeq`・`coordEpoch` と、Contact の受け取り側の epoch で作る
+- `transfer.activate`・`transfer.gc` は journal に入れる種類として §3.1 の手順で処理する。journal の行の `kind`・`payload` は Container に送った `then`（activate は pending の bytes を付けたもの）、`req_digest` は `transfer.*` の要求の digest。だから同じ要求の送り直しは保存した応答を返し、復元（DTN-10）は `then` をそのまま再生する
+- 行の変化（すべて 1 つのトランザクション。`updated_seq` はその要求の `eventSeq`）:
+
+| 要求 | 受ける Host | `transfers` | `bundles` |
+|---|---|---|---|
+| `transfer.prepare` | 送り元 | `source`・`prepared`（`ack` は NULL）→ ACK を受けたら `ack` を書く | 手紙ごとに `bundle.export` の bytes で上書き。`prepared`・`place` はそのまま・`transfer_id` |
+| `transfer.accept` | 受け取り | `dest`・`pending`・`ack`（返す ACK） | 手紙ごとに `pending`・`transfer_id`。`place` は仮に、船なら `cargo`・島なら `port`（`activate` で `then` に合わせる） |
+| `transfer.activate` | 受け取り | `activated` | §7.2 の `then` の効果（`cargo.add`・`unload` は `held`、`deliver` は `gone`・`delivered`。`transfer_id` は NULL） |
+| `transfer.gc` | 送り元 | `collected` | §7.2 の `then` の効果（`gone`・`moved`・bytes を NULL。`transfer_id` は残す） |
+| `transfer.abort` | 両方 | `aborted`（行が無ければ `role`・`peer`・`contact_id` が空、`letter_ids`・`digests` が `[]` の墓石を作る） | 送り元は `prepared → held`（`transfer_id` を NULL）、受け取りは `pending` の行を消す |
+
+- 断るもの（`invalid`）: `prepare` の手紙が `held` でない（無い・別の transfer の途中）・取り消した transfer の `prepare`・`accept`（墓石を含む）・受け取り側に `gone` 以外の行がある手紙の `accept`・`pending` でない transfer の `activate`（別の `eventSeq` での 2 回目を含む）・ACK の無い・`prepared` でない transfer の `gc`・`then` の手紙が transfer の手紙と違う・`then` の digest が pending の行と違う・`gc` の `then` の種類が手紙の `place` と違う・`activated`・`collected` の `abort`
+- 同じ `transferId` の中身の違いは `conflict`（`prepare` は `to`・Contact の ID・`letterIds`、`accept` は `from`・Contact の ID・手紙の ID・digest を比べる）。同じ中身の送り直しは保存した ACK を返す（`prepare` は ACK が無ければ、保存した prepared の bytes で `accept` を送り直す。Container に `bundle.export` を送り直さない）
+- `activate` で pending の bytes が無い（メタデータだけ残った）は `internal`（Container に送らない・成功にしない）
+- 止める位置（`Hooks.At`）: `prepare` は `afterActorReply`（`bundle.export` の応答の後・保存の前）・`afterPrepare`（prepared の確定の後・`accept` の前）・`afterPeerReply`（ACK を受けた後・保存の前）・`afterCommit`（ACK の保存の後・応答の前）、`accept`・`abort` は `afterCommit`。`activate`・`gc` は §7.2 と同じ
+- fixture: `T01-prepare-gc`・`T02-prepare-crash`・`T03-accept-activate`・`T04-abort`・`T05-source-abort`（§7.3 の形）。2 つの Host を同じプロセスの CLA でつないだ試験（§3.3 の止める位置のすべて）は `server/internal/dtn/host/handoff_test.go`
