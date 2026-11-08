@@ -64,7 +64,7 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
           <section aria-label="状況" className="game-hud">
             <HudBar />
             {/* エンジニアモードの切り替えは HUD の並びの右に置き、マップの内容に重ねない（T-439）。
-                パネル自体はアンカー配置でマップの左半分に重ねる（EngineerPanel.css）。 */}
+                開いたパネルは、島の詳細の列に置く（T-438。GameScreen.css）。 */}
             <EngineerPanel />
           </section>
           <section aria-label="マップ" className="game-map">
