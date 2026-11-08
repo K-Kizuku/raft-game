@@ -9,7 +9,8 @@ import {
 import { MOCK_ENABLED } from "../dev/mockMode.ts";
 import type { SessionHandle } from "../types.ts";
 
-export type RoundSource = "server" | "mock";
+// replay はリプレイの画面（app/replay/replayConnector.ts。ADR-0028 R4）が使う。
+export type RoundSource = "server" | "mock" | "replay";
 export type RoundMode = "offline" | RoundSource;
 
 // 開いた接続 1 本。dispose は接続を閉じ、その接続のために作ったもの（モックのタイマー）を片付ける。何度呼んでもよい。

@@ -710,6 +710,8 @@ FR-LOG-04（入力ログを読み込むとリプレイできる）は、同じ G
 
 WASM は `server/cmd/replaywasm` を `scripts/build-replay-wasm.sh`（`make wasm`）でビルドし、`web/public/wasm/` に置く（コミットしない。JS との約束は `server/cmd/replaywasm/doc.go`）。
 
+画面は `/replay`（`web/src/app/replay/`）。誤りの文言は `web/src/replay/messages.ts`。
+
 ---
 
 ## 11. 不変条件の検査（`internal/sim/invariants`）
@@ -1331,6 +1333,7 @@ T-401 で決めた画面の骨組みです。画面の流れは [04-game-design.
 | `/stages/<stageId>` | ステージ紹介（`StageIntroScreen`） | 一覧の読み込み中・失敗はステージ選択と同じ表示。`stageId` が一覧に無ければ「ステージが見つかりません。」 |
 | `/play` | ゲーム（`GameScreen`） | ラウンドが無ければ `/stages`、終わっていれば `/result` へ `replace` |
 | `/result` | リザルト（`ResultScreen`。中身は T-408） | ラウンドが無ければ `/stages`、終わっていなければ `/play` へ `replace` |
+| `/replay` | リプレイ（`ReplayScreen`） | — |
 | それ以外 | — | `/` へ `replace` |
 
 - `<stageId>` は `^[a-z0-9][a-z0-9-]{0,31}$` に合うものだけ。末尾の `/` は 1 つだけ許し、大文字・小文字は区別し、パーセントエンコードは解かない。セグメントが余分なものは「それ以外」

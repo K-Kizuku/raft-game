@@ -18,7 +18,7 @@ import { GameShortcuts } from "../../ui/shortcuts/GameShortcuts.tsx";
 import { Link } from "../router/Link.tsx";
 import { TutorialOverlay } from "../tutorial/TutorialOverlay.tsx";
 import type { RoundContext } from "../types.ts";
-import { connectionNotice, mockNotice } from "./connectionText.ts";
+import { connectionNotice, mockNotice, replayNotice } from "./connectionText.ts";
 import type { RoundConnector } from "./connector.ts";
 import { useRoundConnection } from "./useRoundConnection.ts";
 import "./GameScreen.css";
@@ -37,6 +37,10 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
   });
   const notice = connectionNotice(view);
   const mock = mockNotice(view);
+  const replay = replayNotice(view);
+  // リプレイ（ADR-0028 R4）では、チュートリアル（自動の一時停止を送る）とデモの操作を出さない。
+  const replaying =
+    view.kind !== "offline" && view.kind !== "unavailable" && view.source === "replay";
 
   return (
     <GameCommandProvider send={send}>
@@ -53,7 +57,7 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
             <section aria-label="お知らせ" aria-live="polite" className="game-notifications">
               <Notifications />
             </section>
-            {(notice !== null || mock !== null) && (
+            {(notice !== null || mock !== null || replay !== null) && (
               <div className="game-connection">
                 {notice !== null && (
                   <div
@@ -67,6 +71,7 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
                   </div>
                 )}
                 {mock !== null && <p className="game-connection-mock">{mock}</p>}
+                {replay !== null && <p className="game-connection-mock">{replay}</p>}
               </div>
             )}
           </section>
@@ -85,10 +90,10 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
             </div>
           )}
           <EngineerPanel />
-          <DemoKeys />
+          {!replaying && <DemoKeys />}
           <GameShortcuts />
           <OpeningCeremony />
-          <TutorialOverlay stageId={round.stage.id} />
+          {!replaying && <TutorialOverlay stageId={round.stage.id} />}
         </div>
       </EngineerSubscriptionProvider>
     </GameCommandProvider>

@@ -10,6 +10,7 @@ export type Route =
   | { name: "stageIntro"; stageId: string } // /stages/<stageId>
   | { name: "game" } // /play
   | { name: "result" } // /result
+  | { name: "replay" } // /replay（ADR-0028 R4）
   | { name: "notFound" };
 
 export type KnownRoute = Exclude<Route, { name: "notFound" }>;
@@ -24,6 +25,7 @@ const STATIC_PATHS: Readonly<Record<string, KnownRoute>> = {
   "/stages": { name: "stageSelect" },
   "/play": { name: "game" },
   "/result": { name: "result" },
+  "/replay": { name: "replay" },
 };
 
 // `location.pathname` だけを受ける（クエリと `#` は呼ぶ側で落とす）。
@@ -74,5 +76,7 @@ export function formatRoute(route: KnownRoute): string {
       return "/play";
     case "result":
       return "/result";
+    case "replay":
+      return "/replay";
   }
 }

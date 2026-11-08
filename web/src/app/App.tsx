@@ -127,6 +127,11 @@ const ThemePreview = import.meta.env.DEV
   ? lazy(() => import("../ui/theme/ThemePreview.tsx").then((m) => ({ default: m.ThemePreview })))
   : null;
 
+// リプレイの画面（ADR-0028 R4）。ほかの画面の読み込みにリプレイのコードと WASM を入れないよう、遅延して読む。
+const ReplayScreen = lazy(() =>
+  import("./replay/ReplayScreen.tsx").then((m) => ({ default: m.ReplayScreen })),
+);
+
 function wantsThemePreview(): boolean {
   return import.meta.env.DEV && new URLSearchParams(window.location.search).has("theme-preview");
 }
@@ -478,6 +483,12 @@ function AppRoutes({ deps }: { deps?: Partial<AppDeps> }): ReactElement {
           </>
         );
       }
+      case "replay":
+        return (
+          <Suspense fallback={<p role="status">読み込んでいます…</p>}>
+            <ReplayScreen />
+          </Suspense>
+        );
       case "notFound":
         return null;
     }
