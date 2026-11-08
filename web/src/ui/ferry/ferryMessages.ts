@@ -13,11 +13,14 @@ export function viaLabel(viaName: string): string {
   return `${viaName}経由`;
 }
 
-export type FerryOp = "load" | "unload" | "autoload" | "depart";
+// deposit は積み荷を中継倉庫に預ける（送るのは cmd.ferry.unload）、relayLoad は倉庫から積む（cmd.relay.load）。FR-FERRY-06。
+export type FerryOp = "load" | "unload" | "deposit" | "relayLoad" | "autoload" | "depart";
 
 export const FERRY_OP_NAMES: Readonly<Record<FerryOp, string>> = Object.freeze({
   load: "積み込み",
   unload: "荷降ろし",
+  deposit: "預け入れ",
+  relayLoad: "倉庫からの積み込み",
   autoload: "おまかせ積み込み",
   depart: "出航",
 });
@@ -25,6 +28,8 @@ export const FERRY_OP_NAMES: Readonly<Record<FerryOp, string>> = Object.freeze({
 const OK_MESSAGES: Readonly<Record<Exclude<FerryOp, "depart">, string>> = {
   load: "手紙を積みました。",
   unload: "手紙を港に戻しました。",
+  deposit: "手紙を倉庫に預けました。",
+  relayLoad: "倉庫の手紙を積みました。",
   autoload: "おまかせで積みました。",
 };
 
@@ -53,9 +58,12 @@ export function ferryResultMessage(
       return "積み荷がいっぱいです。";
     case "letter_not_here":
       if (op === "load") return "その手紙はもう港にありません。";
-      if (op === "unload") return "その手紙はもう船にありません。";
+      if (op === "unload" || op === "deposit") return "その手紙はもう船にありません。";
+      if (op === "relayLoad") return "その手紙はもう倉庫にありません。";
       if (op === "autoload") return `港に${to}宛ての手紙がありません。`;
       break;
+    case "relay_full":
+      return "この島の倉庫はいっぱいです。";
     case "no_route":
       return `${to}へは直接の航路がありません。`;
     case "route_blocked":

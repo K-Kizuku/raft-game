@@ -13,7 +13,14 @@ import {
   viaIsland,
 } from "./ferryView.ts";
 import type { FerryBlocker, FerryDetail } from "./ferryView.ts";
-import { FERRY_ISLAND_COLORS, makeFerrySnapshot, portLetter, withFerry1 } from "./testing/world.ts";
+import {
+  FERRY_ISLAND_COLORS,
+  makeFerrySnapshot,
+  portLetter,
+  relayLetter,
+  withFerry1,
+  withRelayCap,
+} from "./testing/world.ts";
 
 const NO_SELECTION: UiSelection = { islandId: null, ferryId: null };
 
@@ -391,6 +398,119 @@ describe("経由の手紙（#318）", () => {
 
   it("FV-8 三角形の航路では案内を出さない", () => {
     expect(detailOf(worldOf(), "f1").viaHints).toEqual([]);
+  });
+});
+
+describe("中継倉庫（FR-FERRY-06）", () => {
+  // f1 は島 1 に停泊。島 1 の倉庫に 3 通（宛先 3・2・3）、島 2 の倉庫に 1 通、港・船にも手紙がある。
+  function relayWorld(relayCap: number, extra: Partial<Snapshot> = {}): World {
+    const base = makeFerrySnapshot();
+    return worldOf(
+      withRelayCap(
+        {
+          ...base,
+          letters: [
+            ...base.letters,
+            relayLetter(31, "append", 2, 3, 1),
+            relayLetter(23, "heartbeat", 3, 2, 1),
+            relayLetter(30, "vote", 2, 3, 1),
+            relayLetter(40, "append", 3, 1, 2),
+          ],
+          ...extra,
+        },
+        relayCap,
+      ),
+    );
+  }
+
+  function cargoWorld(relayCap: number, relayCount: number): World {
+    const relayLetters = Array.from({ length: relayCount }, (_, i) =>
+      relayLetter(60 + i, "append", 2, 3, 1),
+    );
+    const snapshot = withFerry1(
+      { cargo: [50, 51] },
+      {
+        letters: [
+          portLetter(50, "heartbeat", 1, 2, { loc: { type: "ferry", ferryId: "f1" } }),
+          portLetter(51, "append", 2, 3, { loc: { type: "ferry", ferryId: "f1" } }),
+          ...relayLetters,
+        ],
+      },
+    );
+    return worldOf(relayCap === 0 ? snapshot : withRelayCap(snapshot, relayCap));
+  }
+
+  function letterSlots(
+    detail: FerryDetail,
+  ): Extract<FerryDetail["cargo"][number], { kind: "letter" }>[] {
+    return detail.cargo.flatMap((s) => (s.kind === "letter" ? [s] : []));
+  }
+
+  it("FV-R1 停泊中の島の倉庫の手紙が宛先の昇順・ID の昇順の山で入り、数と上限が正しい", () => {
+    const detail = detailOf(relayWorld(12), "f1");
+    expect(detail.relayCap).toBe(12);
+    expect(detail.relayCount).toBe(3);
+    expect(detail.relay.map((g) => ({ ...g, letters: g.letters.map((l) => l.id) }))).toEqual([
+      { to: 2, toName: "二の島", toColor: FERRY_ISLAND_COLORS[2], letters: [23] },
+      { to: 3, toName: "三の島", toColor: FERRY_ISLAND_COLORS[3], letters: [30, 31] },
+    ]);
+    // 別の島の倉庫（40）・港（2・5・9）・船（7）の手紙は入らない。
+    const ids = detail.relay.flatMap((g) => g.letters.map((l) => l.id));
+    for (const id of [40, 2, 5, 9, 7]) expect(ids).not.toContain(id);
+    // 港には倉庫の手紙が入らない。
+    expect(detail.port.flatMap((g) => g.letters.map((l) => l.id))).toEqual([2, 5, 9]);
+  });
+
+  it.each<[string, number, number, boolean, string | null]>([
+    ["relayCap 0", 0, 0, false, "この島で生まれた手紙だけ降ろせます"],
+    ["倉庫がいっぱい", 2, 2, false, "倉庫がいっぱいです"],
+    ["空きあり", 2, 1, true, null],
+  ])("FV-R2 %s: 送信元は port で押せ、経由の手紙は relay", (_, cap, count, want, note) => {
+    const detail = detailOf(cargoWorld(cap, count), "f1");
+    expect(detail.relayCount).toBe(count);
+    const [origin, via] = letterSlots(detail);
+    expect(origin?.unloadTo).toBe("port");
+    expect(origin?.unloadable).toBe(true);
+    expect(origin?.unloadNote).toBeNull();
+    expect(via?.unloadTo).toBe("relay");
+    expect(via?.unloadable).toBe(want);
+    expect(via?.unloadNote).toBe(note);
+  });
+
+  it("FV-R3 航行中は relay が空で、積み荷はすべて降ろせない", () => {
+    const base = makeFerrySnapshot();
+    const snapshot = withRelayCap(
+      {
+        ...base,
+        ferries: base.ferries.map((f) => (f.id === "f2" ? { ...f, cargo: [7, 8] } : f)),
+        letters: [
+          ...base.letters,
+          portLetter(8, "heartbeat", 3, 1, { loc: { type: "ferry", ferryId: "f2" } }),
+          relayLetter(30, "append", 2, 3, 3),
+        ],
+      },
+      12,
+    );
+    const detail = detailOf(worldOf(snapshot), "f2");
+    expect(detail.relay).toEqual([]);
+    expect(detail.relayCount).toBe(0);
+    expect(detail.relayCap).toBe(12);
+    const slots = letterSlots(detail);
+    expect(slots.length).toBe(2);
+    expect(slots.every((s) => !s.unloadable)).toBe(true);
+  });
+
+  it("FV-R4 relayCap が無い世界では relayCap 0・倉庫は空で、既存の項目は変わらない", () => {
+    const world = worldOf();
+    expect("relayCap" in world.stage).toBe(false);
+    const detail = detailOf(world, "f1");
+    expect(detail.relayCap).toBe(0);
+    expect(detail.relayCount).toBe(0);
+    expect(detail.relay).toEqual([]);
+    expect(detail.port.flatMap((g) => g.letters.map((l) => l.id))).toEqual([2, 5, 9]);
+    const via = letterSlots(detailOf(cargoWorld(0, 0), "f1"))[1];
+    expect(via?.unloadable).toBe(false);
+    expect(via?.unloadNote).toBe("この島で生まれた手紙だけ降ろせます");
   });
 });
 

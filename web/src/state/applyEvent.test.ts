@@ -180,6 +180,13 @@ describe("worldFromSnapshot", () => {
     expect(world.ferries.f2?.brokenUntil).toBeNull();
   });
 
+  it("AE-R1 snapshot.stage.relayCap を写し、無ければ項目を作らない", () => {
+    const snapshot = smallSnapshot();
+    expect("relayCap" in worldFromSnapshot(snapshot, 0).stage).toBe(false);
+    snapshot.stage.relayCap = 12;
+    expect(worldFromSnapshot(snapshot, 0).stage.relayCap).toBe(12);
+  });
+
   it("WF-2 配達済み・破棄の手紙は入れず、同じ ID は後のものを使う", () => {
     const snapshot = smallSnapshot();
     const second = { ...island(1), name: "後の島" };

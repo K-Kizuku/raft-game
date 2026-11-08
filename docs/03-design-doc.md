@@ -1515,23 +1515,32 @@ T-412 で決めた、設定「Raft の用語を併記する」（[FR-UI-10](./01
 
 ### 13.8 フェリー操作パネル
 
-T-405 で決めた、ゲーム画面の下のスロット「フェリー操作」（`FerryPanel`、[04-game-design.md §3.2](./04-game-design.md)・§7.2）です。ファイルは `web/src/ui/ferry/`（`FerryPanel.tsx`・`FerryPanel.css`・`ferryView.ts`・`ferryMessages.ts`・`dnd.ts`）にあります。送るコマンドは `cmd.ferry.load`・`cmd.ferry.unload`・`cmd.ferry.autoload`・`cmd.ferry.depart`（[06-protocol.md §4](./06-protocol.md)）で、送る関数は `useGameCommand()`（T-406。`GameCommandProvider` に `sendCommand` を渡すのは T-402b）から得ます。
+T-405 で決めた、ゲーム画面の下のスロット「フェリー操作」（`FerryPanel`、[04-game-design.md §3.2](./04-game-design.md)・§7.2）です。ファイルは `web/src/ui/ferry/`（`FerryPanel.tsx`・`FerryPanel.css`・`ferryView.ts`・`ferryMessages.ts`・`dnd.ts`）にあります。送るコマンドは `cmd.ferry.load`・`cmd.ferry.unload`・`cmd.ferry.autoload`・`cmd.ferry.depart`・`cmd.relay.load`（[06-protocol.md §4](./06-protocol.md)）で、送る関数は `useGameCommand()`（T-406。`GameCommandProvider` に `sendCommand` を渡すのは T-402b）から得ます。
 
 **表示を作る純粋な関数**（`ferryView.ts`。引数を書き換えず、呼ぶたびに新しい配列を返すので `useMemo` の中で呼ぶ。時刻は引数の `simNow`）
 
 | 関数 | 返すもの |
 |---|---|
 | `ferryTabs(world, selection, simNow)` | 船の一覧（`ferryIds` の順。状態・いる島か行き先の島・到着までの残り・積み荷の数・故障） |
-| `ferryDetail(world, ferryId, simNow)` | 選んだ船の詳細。停泊中ならいる島の港の手紙（`portPiles` の山）・積み荷のスロット（手紙・不明な手紙・空き）・航路でつながる行き先（嵐・予報の印）・停泊の残り時間。船が無ければ `null` |
+| `ferryDetail(world, ferryId, simNow)` | 選んだ船の詳細。停泊中ならいる島の港の手紙（`portPiles` の山）・いる島の中継倉庫の手紙（`relay`。宛先の昇順の山・山の中は ID の昇順）と倉庫の数・上限（`relayCount`・`relayCap`）・積み荷のスロット（手紙・不明な手紙・空き。手紙には降ろし先 `unloadTo` と押せない理由 `unloadNote`）・航路でつながる行き先（嵐・予報の印）・停泊の残り時間。船が無ければ `null` |
 | `autoloadBlocker(detail, to)` | おまかせを押せない理由（航行中・行き先が無い）。嵐の航路でも積める（§3.4） |
 | `departBlocker(detail, to)` | 出航を押せない理由（おまかせの理由に加え、停泊の時間中・嵐の航路。FR-FERRY-07） |
 
 **ADR-0009 との関係**
 
 - 表示（手紙の場所・船の状態）はストア（§13.2）の値だけで変え、コマンドを送っただけでは変えない（楽観的に動かさない）。成否はサーバーの `ack` で知り、`ferryResultMessage` の文を `role="status"` に出す
-- 押せなくするのは「送っても明らかに失敗する」ものだけ（Provider の外・`phase` が `sailing` でない・航行中・行き先が無い・停泊の時間中・嵐の航路・違う島で生まれた手紙を降ろす）。満載・行き先宛ての手紙が無い・故障はボタンを止めず、サーバーの `capacity_exceeded`・`letter_not_here`・`ferry_broken` を文で知らせる（§3.4「積めない理由を返す」）
-- 1 度に送るのは 1 つだけで、`ack` が返るまでパネルのすべての操作を押せなくする。`load`・`unload` が `ok` で返っても、`letter.moved` が届くまでは、その手紙を「反映待ち」にして押せなくする（同じ手紙を押して `letter_not_here` になるのを防ぐ）。送っている間にアンマウントされたら結果を捨てる
+- 押せなくするのは「送っても明らかに失敗する」ものだけ（Provider の外・`phase` が `sailing` でない・航行中・行き先が無い・停泊の時間中・嵐の航路・倉庫の無いステージで違う島で生まれた手紙を降ろす・倉庫がいっぱいのときに経由の手紙を預ける）。満載・行き先宛ての手紙が無い・故障はボタンを止めず、サーバーの `capacity_exceeded`・`letter_not_here`・`ferry_broken` を文で知らせる（§3.4「積めない理由を返す」）
+- 1 度に送るのは 1 つだけで、`ack` が返るまでパネルのすべての操作を押せなくする。`load`・`unload`・`relay.load` が `ok` で返っても、`letter.moved` が届くまでは、その手紙を「反映待ち」にして押せなくする（同じ手紙を押して `letter_not_here` になるのを防ぐ）。送っている間にアンマウントされたら結果を捨てる
 - おまかせの積む順（§3.4）はサーバーの `autoload` が決める。クライアントで並べ替えて `load` にしない
+
+**中継倉庫（積み替え、FR-FERRY-06・T-722）**
+
+- 停泊中で `relayCap`（`snapshot.stage.relayCap` を写した `world.stage.relayCap`）が 1 以上なら、港の区画の後ろ・積み荷の区画の前に倉庫の区画（`ferry-panel__relay-section`）を出す。見出しは「{島}の倉庫 n/上限」（`<h3 tabIndex={-1}>`）、その下に「預けた手紙は、宛先に着くまで島では読まれません」。中身は落とせる場所 `ferry-panel__relay`（ドロップの ID `ferry-relay`）で、港と同じ山の形（`→ {宛先}`・「行き先宛て」の印）で倉庫の手紙のボタンを並べる。空なら「倉庫に手紙はありません。」。`relayCap` が無い・0 のステージと航行中は出さない
+- 倉庫の手紙のボタンを押す・積み荷へドラッグすると `cmd.relay.load`（`{ ferryId, letterIds: [id] }`）を送る
+- 積み荷の手紙の降ろし先（`unloadTo`）は、その島で生まれた手紙なら港（`port`）、それ以外（経由の手紙）なら倉庫（`relay`）。どちらも送るのは `cmd.ferry.unload`（降ろし先はサーバーが送信元で決める）で、積み荷を港・倉庫のどちらへドラッグしても同じ。パネルの中では、港へ戻す（`unload`）と倉庫に預ける（`deposit`）を分け、結果の文を変える（「手紙を港に戻しました。」・「手紙を倉庫に預けました。」）
+- 経由の手紙を押せない理由（`unloadNote`）: `relayCap` が 0 なら「この島で生まれた手紙だけ降ろせます」、倉庫がいっぱい（`relayCount >= relayCap`）なら「倉庫がいっぱいです」。送信元の手紙は倉庫がいっぱいでも港へ戻せる。倉庫から積んで満載になるときはボタンを止めず、サーバーの `capacity_exceeded` で知らせる
+- 失敗の文: `relay_full` →「この島の倉庫はいっぱいです。」、倉庫から積むときの `letter_not_here` →「その手紙はもう倉庫にありません。」（別の船・別の人が先に積んだ）、預けるときの `letter_not_here` →「その手紙はもう船にありません。」
+- 倉庫の区画は港と同じ紙の地で、枠を破線にして一時的に預かる場所と分かるようにする（色・余白・角丸は `tokens.css` のトークンだけ）
 
 **行き先の持ち方**
 
@@ -1539,7 +1548,7 @@ T-405 で決めた、ゲーム画面の下のスロット「フェリー操作�
 
 **ドラッグ＆ドロップとキーボード**
 
-- ドラッグ＆ドロップはパネルの中（港の手紙 → 積み荷・積み荷 → 港）で完結する（[ADR-0010](./adr/0010-frontend-react-pixijs.md)）。落とした先からコマンドを決めるのは純粋な関数 `dropCommand`（`dnd.ts`）で、同じ場所・パネルの外に落としたら何もしない
+- ドラッグ＆ドロップはパネルの中（港・倉庫の手紙 → 積み荷・積み荷 → 港・倉庫）で完結する（[ADR-0010](./adr/0010-frontend-react-pixijs.md)）。落とした先からコマンドを決めるのは純粋な関数 `dropCommand`（`dnd.ts`）で、同じ場所・パネルの外・港と倉庫の間に落としたら何もしない
 - センサーは `PointerSensor`（`activationConstraint: { distance: 6 }`）だけ。6 px 動かすまではドラッグを始めないので、クリックはクリックのまま
 - `KeyboardSensor` は使わない。Enter・Space でドラッグを始めるので、ボタンの押下とぶつかるため。キーボードでは、手紙のボタンを Enter・Space で押すとクリックと同じに積む・降ろす。`useDraggable` の `attributes`（`aria-roledescription="draggable"` と英語の説明）は渡さず、ボタンのままの意味にする。`DndContext` の `accessibility` には日本語の `announcements` と `screenReaderInstructions` を渡す
 - `@dnd-kit/core` を import するのは `web/src/ui/ferry/` だけ。`@dnd-kit/utilities`・`@dnd-kit/sortable`・`@dnd-kit/modifiers` は足さない
@@ -1547,7 +1556,7 @@ T-405 で決めた、ゲーム画面の下のスロット「フェリー操作�
 **押せないボタンとフォーカス**
 
 - 押せないボタンは `disabled` にせず `aria-disabled="true"` にし、押されても送らない。`disabled` にすると、押した直後にフォーカスが外れ、キーボードで続けて操作できないため。押せない理由は文字でボタンの近くに出し、`aria-describedby` でつなぐ
-- 手紙のボタンで積む・降ろした手紙が、イベントで一覧から消えたら、同じ一覧（港・積み荷）の同じ位置のボタン、無ければ 1 つ前、それも無ければその一覧の見出し（`<h3 tabIndex={-1}>`）にフォーカスを移す（`body` に落とさない）。フォーカスがパネルの外にあるときは動かさない
+- 手紙のボタンで積む・降ろした手紙が、イベントで一覧から消えたら、同じ一覧（港・倉庫・積み荷）の同じ位置のボタン、無ければ 1 つ前、それも無ければその一覧の見出し（`<h3 tabIndex={-1}>`）にフォーカスを移す（`body` に落とさない）。フォーカスがパネルの外にあるときは動かさない
 
 **`@dnd-kit/react` を使わない理由**
 
@@ -1556,7 +1565,7 @@ T-405 で決めた、ゲーム画面の下のスロット「フェリー操作�
 **後続のタスクとの境界**
 
 - チュートリアル（T-409）は、`className` の `ferry-panel`・`ferry-panel__tabs`・`ferry-panel__port`・`ferry-panel__cargo`・`ferry-panel__destinations`・`ferry-panel__autoload`・`ferry-panel__depart`・`ferry-panel__status` を指す。これらを変えない
-- 積み替え（`cmd.relay.load`、FR-FERRY-06）・寄港地の予約・キーボードショートカット（FR-UI-09）・故障の操作の制限（P1）は対象外
+- 寄港地の予約・キーボードショートカット（FR-UI-09）・故障の操作の制限（P1）は対象外
 
 ### 13.9 ステージのクリアの記録
 
