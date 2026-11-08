@@ -1,0 +1,118 @@
+{
+  "name": "C14-regenerated-resend",
+  "description": "epoch・coordEpoch が変わった後の同じ要求の送り直しは conflict にならない（digest に含めない）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "note": "a new coordinator",
+      "request": {
+        "eventSeq": 0,
+        "kind": "host.status",
+        "payload": {},
+        "coordEpoch": 2
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        }
+      }
+    },
+    {
+      "note": "resend with other epoch and coordEpoch",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        },
+        "epoch": 5,
+        "coordEpoch": 2
+      },
+      "expect": {
+        "actorCalled": false,
+        "response": {
+          "status": "ok",
+          "eventSeq": 1,
+          "epoch": 1,
+          "outputs": [
+            {
+              "t": 0,
+              "class": 3,
+              "seq": 1,
+              "type": "node.state",
+              "data": {
+                "id": 1,
+                "role": "follower"
+              }
+            }
+          ]
+        },
+        "rows": {
+          "meta": {
+            "maxCoordEpoch": "2"
+          },
+          "journal": [
+            {
+              "event_seq": 1,
+              "status": "applied"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

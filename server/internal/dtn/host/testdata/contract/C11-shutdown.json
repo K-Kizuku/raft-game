@@ -1,0 +1,115 @@
+{
+  "name": "C11-shutdown",
+  "description": "shutdown は Container を止めてから保存をすべて消す。2 回目も成功する（D-8）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "shutdown",
+        "payload": {}
+      },
+      "actorReply": {
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "actorRequest": {
+          "kind": "shutdown"
+        },
+        "response": {
+          "status": "ok",
+          "eventSeq": 2
+        },
+        "destroyed": true
+      }
+    },
+    {
+      "note": "second shutdown",
+      "request": {
+        "eventSeq": 3,
+        "kind": "shutdown",
+        "payload": {}
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3
+        },
+        "destroyed": true
+      }
+    },
+    {
+      "note": "nothing else after shutdown",
+      "request": {
+        "eventSeq": 0,
+        "kind": "inspect",
+        "payload": {}
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "not_ready"
+          }
+        }
+      }
+    }
+  ]
+}

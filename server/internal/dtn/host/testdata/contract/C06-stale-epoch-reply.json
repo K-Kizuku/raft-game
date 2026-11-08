@@ -1,0 +1,155 @@
+{
+  "name": "C06-stale-epoch-reply",
+  "description": "epoch は meta.epoch で上書きして送る。応答の epoch が違えば捨てる（stale_epoch。確定しない）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 2
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "request epoch 1 is overwritten with 2",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        },
+        "epoch": 1
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "epoch": 1
+      },
+      "expect": {
+        "actorRequest": {
+          "epoch": 2,
+          "kind": "init"
+        },
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "stale_epoch"
+          },
+          "epoch": 2
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1,
+              "status": "intent",
+              "response": null,
+              "resp_digest": null,
+              "epoch": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "a new eventSeq waits for the pending one",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "not_ready"
+          }
+        }
+      }
+    },
+    {
+      "note": "resend",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        },
+        "epoch": 1
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "actorRequest": {
+          "epoch": 2
+        },
+        "response": {
+          "status": "ok",
+          "epoch": 2
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1,
+              "status": "applied",
+              "epoch": 2
+            }
+          ],
+          "meta": {
+            "epoch": "2"
+          }
+        }
+      }
+    }
+  ]
+}

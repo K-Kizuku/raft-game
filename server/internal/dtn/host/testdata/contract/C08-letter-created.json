@@ -1,0 +1,342 @@
+{
+  "name": "C08-letter-created",
+  "description": "letter.created の bytes を bundles に保存し、応答と保存した応答からは除く。digest が違えば invalid（確定しない）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "deliver",
+        "payload": {
+          "t": 50,
+          "letters": [
+            {
+              "letterId": 11,
+              "createdAt": 10,
+              "digest": "sha256:5931baeeb45678c67d03cbb59ccae331729cc63d86f18086a5c02540e372e01b",
+              "bundle": "YnVuZGxlLTExLWRlbGl2ZXJlZC10by1pc2xhbmQtMQ=="
+            }
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 50,
+            "class": 1,
+            "seq": 2,
+            "type": "letter.delivered",
+            "data": {
+              "letterId": 11
+            }
+          },
+          {
+            "t": 50,
+            "class": 1,
+            "seq": 3,
+            "type": "letter.created",
+            "data": {
+              "letterId": 12,
+              "digest": "sha256:ae971fb4d4feebc052d2ceafd540800ec7cb54674bf663019f5aece9e0e26f04",
+              "size": 29,
+              "msgTerm": 1
+            },
+            "bundle": "YnVuZGxlLTEyLWNyZWF0ZWQtYnktaXNsYW5kLTE="
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            50,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "actorRequest": {
+          "payload": {
+            "t": 50,
+            "letters": [
+              {
+                "letterId": 11,
+                "createdAt": 10,
+                "digest": "sha256:5931baeeb45678c67d03cbb59ccae331729cc63d86f18086a5c02540e372e01b",
+                "bundle": "YnVuZGxlLTExLWRlbGl2ZXJlZC10by1pc2xhbmQtMQ=="
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": "ok",
+          "outputs": [
+            {
+              "t": 50,
+              "class": 1,
+              "seq": 2,
+              "type": "letter.delivered",
+              "data": {
+                "letterId": 11
+              }
+            },
+            {
+              "t": 50,
+              "class": 1,
+              "seq": 3,
+              "type": "letter.created",
+              "data": {
+                "letterId": 12,
+                "digest": "sha256:ae971fb4d4feebc052d2ceafd540800ec7cb54674bf663019f5aece9e0e26f04",
+                "size": 29,
+                "msgTerm": 1
+              },
+              "bundle": "$absent"
+            }
+          ]
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "applied",
+              "payload": {
+                "t": 50,
+                "letters": [
+                  {
+                    "letterId": 11,
+                    "createdAt": 10,
+                    "digest": "sha256:5931baeeb45678c67d03cbb59ccae331729cc63d86f18086a5c02540e372e01b",
+                    "bundle": "YnVuZGxlLTExLWRlbGl2ZXJlZC10by1pc2xhbmQtMQ=="
+                  }
+                ]
+              },
+              "response": {
+                "outputs": [
+                  {
+                    "t": 50,
+                    "class": 1,
+                    "seq": 2,
+                    "type": "letter.delivered",
+                    "data": {
+                      "letterId": 11
+                    }
+                  },
+                  {
+                    "t": 50,
+                    "class": 1,
+                    "seq": 3,
+                    "type": "letter.created",
+                    "data": {
+                      "letterId": 12,
+                      "digest": "sha256:ae971fb4d4feebc052d2ceafd540800ec7cb54674bf663019f5aece9e0e26f04",
+                      "size": 29,
+                      "msgTerm": 1
+                    },
+                    "bundle": "$absent"
+                  }
+                ]
+              },
+              "resp_digest": "sha256:a5e48d732d20cbcf67baf60ee7aa073f9957fed25af1c51110f89c6ad64ccda4"
+            }
+          ],
+          "bundles": [
+            {
+              "letter_id": 11,
+              "bundle": "YnVuZGxlLTExLWRlbGl2ZXJlZC10by1pc2xhbmQtMQ==",
+              "digest": "sha256:5931baeeb45678c67d03cbb59ccae331729cc63d86f18086a5c02540e372e01b",
+              "size": 31,
+              "state": "gone",
+              "place": "delivered",
+              "transfer_id": null,
+              "updated_seq": 2
+            },
+            {
+              "letter_id": 12,
+              "bundle": "YnVuZGxlLTEyLWNyZWF0ZWQtYnktaXNsYW5kLTE=",
+              "digest": "sha256:ae971fb4d4feebc052d2ceafd540800ec7cb54674bf663019f5aece9e0e26f04",
+              "size": 29,
+              "state": "held",
+              "place": "port",
+              "transfer_id": null,
+              "updated_seq": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "letter.dropped",
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 4,
+            "type": "letter.dropped",
+            "data": {
+              "letterId": 12,
+              "rule": "R1"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "bundles": [
+            {
+              "letter_id": 11
+            },
+            {
+              "letter_id": 12,
+              "state": "gone",
+              "place": "dropped",
+              "updated_seq": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "digest mismatch",
+      "request": {
+        "eventSeq": 4,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 200,
+            "class": 4,
+            "seq": 5,
+            "type": "letter.created",
+            "data": {
+              "letterId": 13,
+              "digest": "sha256:ae971fb4d4feebc052d2ceafd540800ec7cb54674bf663019f5aece9e0e26f04",
+              "size": 29
+            },
+            "bundle": "YnVuZGxlLTEzLWNyZWF0ZWQtYnktaXNsYW5kLTE="
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            200,
+            0
+          ],
+          "stateDigest": "sha256:0303030303030303030303030303030303030303030303030303030303030303"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "invalid"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2
+            },
+            {
+              "event_seq": 3
+            },
+            {
+              "event_seq": 4,
+              "status": "intent"
+            }
+          ],
+          "bundles": [
+            {
+              "letter_id": 11
+            },
+            {
+              "letter_id": 12
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

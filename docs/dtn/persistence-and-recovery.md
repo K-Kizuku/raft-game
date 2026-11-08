@@ -131,3 +131,68 @@ CREATE TABLE contacts (contact_id TEXT PRIMARY KEY, body TEXT NOT NULL, state TE
 
 - ゲームが終わったら（ラウンドの終了・時間の上限・切断・中断）、Session Front がすべての Host に `shutdown` を送り、Host は Container を止めてから保存をすべて消す（`deleteAll`）。止められなかったら、アラームで再試行する（[environment.md](./environment.md)）。片付けそのものも再実行できるようにする（D-8）
 - 送り元の写しは、`collected` になったら bytes を消してよい（tombstone の行は残す）。`pending`・`prepared`・`activated` の bytes は、ゲームの途中では消さない
+
+## 7. 実装の細部（DTN-07）
+
+実装は `server/internal/dtn/host`（`Host`・`Store`・`Tx`・行の型・`ActorConn`・`Hooks`）・`server/internal/dtn/host/sqlitestore`（Go の SQLite adapter）・`server/internal/dtn/host/contracttest`（fixture の runner）。
+
+### 7.1 保存
+
+- `meta` の k は §2 のものに `journalRows`・`storedBytes`（§6 の上限を数える値。トランザクションごとに差分で更新する）を足す。値はすべて TEXT（数は 10 進）。`createdAt` は RFC 3339（UTC）
+- `journal.payload` は要求の `payload` の JSON を受けたとおりの bytes で持つ（エンベロープの残りは列と `meta` から作れる）。`meta.initPayload` は `init` の intent を書くトランザクションで書く（intent のまま止まっても、復元が `init` を送れるように）
+- SQLite は `PRAGMA journal_mode=WAL`・`synchronous=FULL`・`BEGIN IMMEDIATE`、接続は 1 つ。`schemaVersion` が 1 でないファイルは開かない（`unsupported_version`）
+- 保存の合計（`storedBytes`）は、`bundles.bundle` の長さ＋`journal.payload` の長さ＋`journal.response` の長さの和。intent を書く前に「行の数＋1」と「合計＋payload」を、確定の前に確定後の合計を確かめ、超えたら `too_large`（何も書かない。確定の前なら行は intent のまま）
+
+### 7.2 確定の規則
+
+- Container の応答のうち、確定する（applied にする）のは `ok` と、Actor が決定的に出した誤り（`invalid`・`too_large`。再生でも同じ誤りになる）だけ。それ以外の誤り（`not_ready`・`stale_*`・`internal` など。Container が要求を適用していない）は確定せず、行は intent のまま応答を返す。`internal` のときは Container を失ったとみなす
+- Container が上限の時間までに応答しない・接続が切れた・壊れた応答（版・`actor`・`eventSeq` が要求と合わない）・`internal` → `Hooks.OnActorLost` を 1 回呼び、`Host.Restart`（DTN-10 が使う。古い接続を閉じて `meta.epoch` を 1 増やす）までの新しい要求に `not_ready` を返す。applied の行の送り直しには、保存した応答を返し続ける
+- 行が intent のまま残っているとき、それより大きい `eventSeq` の要求は `not_ready`（先に同じ `eventSeq` で送り直す）
+- 確定の効果（`bundles`。`ok` の応答だけ。要求の効果を先に、出力の効果を出力の順に）:
+
+| きっかけ | `bundles` の行 |
+|---|---|
+| 要求 `cargo.add` | 手紙ごとに要求の bytes で上書き。`held`・`cargo` |
+| 要求 `unload` | 手紙ごとに要求の bytes で上書き。`held`・手紙の `place`（`port`・`relay`） |
+| 要求 `deliver` | 手紙ごとに要求の bytes で上書き。`gone`・`delivered` |
+| 要求 `port.remove`・`relay.remove`・`cargo.remove` | 行があれば `gone`・`moved`、`bundle` を NULL（所有権が移った後。tombstone） |
+| 出力 `letter.created` | `data.letterId` の行を出力の bytes で上書き。`held`・`port`。bytes が無い・16 KiB を超える・`sha256(bundle) ≠ data.digest`・`data.size` が長さと違う → `invalid`（確定しない） |
+| 出力 `letter.dropped`・`letter.delivered` | `data.letterId` の行があれば `gone`・`dropped`／`delivered` |
+
+- `advance` のまとめ（§2）: 直前の行が applied で `ok` の `advance` なら、まとめる。ただし、まとめた上限への 1 回の再生の応答が上限（`outputs` の 4,096・電文の 1 MiB。bytes は `data.size` を base64 にした長さで見積もる）を超えるときは、まとめない
+- まとめた行の `eventSeq` の送り直しには、保存した応答（2 つの `outputs` をつなげたもの）を返す。最初の応答（この要求の `outputs` だけ）とは違うので、Coordinator（DTN-05）は、適用済みの上限以下の `(t, class, seq)` の出力を捨てる
+- `coordEpoch` の更新は、journal に入れない種類（`inspect`・`bundle.export`・`host.status`）でも行う（小さいトランザクション）
+- `host.status` の応答は `outputs: [{type: "host.status", data: {epoch, lastEventSeq, container}}]`。`lastEventSeq` は applied の行の最大の `eventSeq`（intent の行は数えない）、`container` は `running`・`lost`・`stopped`
+- `shutdown` は journal に入れない。Container に `shutdown` を送り（応答が無くても続ける）、接続を閉じ、保存を消す。消した後は `shutdown` に成功を、それ以外に `not_ready` を返す
+- `transfer.*`・`contact.*` は受け口だけ（`internal`。処理は DTN-08・09）
+
+### 7.3 契約テストの fixture
+
+`server/internal/dtn/host/testdata/contract/*.json`。1 つのファイルが 1 つの場面で、ファイル名（拡張子を除く）が `name`。Go は `contracttest.RunDir`、TS（DTN-12）は同じ規則の runner で読む。
+
+```json
+{
+  "name": "C01-idempotent",
+  "description": "…",
+  "meta": { "sessionId": "s_contract", "actor": "island:1", "epoch": 1 },
+  "limits": { "maxJournalRows": 3 },
+  "actorTimeoutMs": 50,
+  "defaults": { "v": 1, "sessionId": "s_contract", "actor": "island:1", "epoch": 1, "coordEpoch": 1 },
+  "steps": [
+    { "note": "…", "request": { "eventSeq": 1, "kind": "init", "payload": { … } },
+      "actorReply": { "outputs": [ … ], "cursor": { … } }, "crashAt": null,
+      "expect": { "response": { … }, "actorCalled": true, "actorRequest": { … },
+                  "rows": { "meta": { … }, "journal": [ … ], "bundles": [ … ] }, "crashed": false, "destroyed": false } }
+  ]
+}
+```
+
+- `meta`: Host の設定（新しい保存の `meta.sessionId`・`actor`・`epoch`）。`limits`（省略可）は actor-protocol.md §6 の上限を JSON の名前（`maxMessageBytes`・`maxBundleBytes`・`maxJournalRows`・`maxStoredBytes` など）で上書きする。`actorTimeoutMs`（省略可）は Container を待つ上限（既定 10 秒）
+- `request` は電文の JSON（`defaults` の足りないキーを浅く補い、空白なしで送る）。`requestText` は bytes をそのまま送る電文（補わない）
+- `actorReply` は偽の Container の応答: 省略か `null` は「呼ばれない」（呼ばれたら接続の誤り）、オブジェクトは応答（足りない `v`・`actor`・`epoch`・`eventSeq` は Host が送った要求の値、`status` は `"ok"`、`outputs` は `[]`、`cursor`・`error` は `null` で補う）、`"timeout"` は応答しない、`"disconnect"` は接続が切れる
+- `crashAt`（省略可）は止める位置 `afterIntent`・`afterActorReply`・`afterCommit`。止めたら応答を返さず（`expect.crashed: true`）、Store を開き直して新しい Host で次の step へ進む（Container の台本は step ごと）
+- `expect.actorCalled` を省略したら「`actorReply` が `null` でない」。Container は 1 つの step で 2 回以上呼ばれないこと
+- 照合は部分一致: オブジェクトは期待のキーだけを比べる（期待が `null` ならキーが無くてもよい。期待が `"$absent"` ならキーが無いこと）、配列は同じ長さで要素ごと、数・文字列・真偽・`null` は等しいこと
+- `rows` の形: 表ごとに主キーの順の行の配列（`meta` だけは `{k: v}` で v は TEXT）。列の名前は §2 の SQL のまま。`journal.payload`・`journal.response`・`transfers.letter_ids`・`digests`・`ack`・`contacts.body` は JSON の値として、`bundles.bundle` は base64（パディングあり）で、NULL は `null` で比べる
+- `destroyed: true` は保存がすべて消えたこと（Go はファイルが無い、DO は `deleteAll` の後）
+- 実装ごとに長さの違う値（`storedBytes`・応答の JSON の bytes）は fixture で比べない

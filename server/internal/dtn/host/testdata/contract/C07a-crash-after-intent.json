@@ -1,0 +1,172 @@
+{
+  "name": "C07a-crash-after-intent",
+  "description": "intent を確定した後に止まり、開き直して同じ eventSeq で送り直すと 1 回だけ適用される",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "crashAt": "afterIntent",
+      "expect": {
+        "crashed": true,
+        "actorCalled": false,
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1,
+              "status": "applied"
+            },
+            {
+              "event_seq": 2,
+              "status": "intent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "a new eventSeq waits for the pending one",
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "not_ready"
+          }
+        }
+      }
+    },
+    {
+      "note": "resend",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 2,
+            "type": "term.changed",
+            "data": {
+              "term": 1
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "outputs": [
+            {
+              "t": 100,
+              "class": 4,
+              "seq": 2,
+              "type": "term.changed",
+              "data": {
+                "term": 1
+              }
+            }
+          ]
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "applied",
+              "resp_digest": "sha256:00ae96db858c153b2aaedb85d25350befd6fce79ea97052dc95063b70d56a8f5"
+            }
+          ],
+          "meta": {
+            "journalRows": "2"
+          }
+        }
+      }
+    }
+  ]
+}
