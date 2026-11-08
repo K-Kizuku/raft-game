@@ -55,3 +55,45 @@
 .app-credits .credits-section .credits-section-title + .provenance-label {
   margin-top: var(--space-1);
 }
+
+/* 広い画面（1024px 以上）では、2 列の段組みにして 1 画面に収める（T-429。基準は 1470×860・docs/11 §15）。
+   左の列にオープンデータ、右の列にソフトウェアと素材を置く。見出しと「タイトルへ」は 2 列にまたがる。 */
+@media (min-width: 64rem) {
+  .app-credits.app-card.app-screen {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto auto 1fr auto;
+    column-gap: var(--space-5);
+    align-items: start;
+    max-width: min(80rem, calc(100% - 2 * var(--space-5)));
+    margin-block: var(--space-4);
+  }
+
+  .app-credits > * {
+    grid-column: 1 / -1;
+  }
+
+  .app-credits > .credits-section:nth-of-type(1) {
+    grid-column: 1;
+    grid-row: 2 / span 2;
+  }
+
+  .app-credits > .credits-section:nth-of-type(2) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .app-credits > .credits-section:nth-of-type(3) {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .app-credits > h1 {
+    margin-bottom: 0;
+  }
+
+  .app-credits > .app-back {
+    justify-self: start;
+    margin-top: var(--space-5);
+  }
+}

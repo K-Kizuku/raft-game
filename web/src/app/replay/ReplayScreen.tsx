@@ -23,6 +23,7 @@ import { ResultScreen } from "../result/ResultScreen.tsx";
 import { navigate } from "../router/history.ts";
 import type { RoundContext, StageSummary } from "../types.ts";
 import { createReplayConnector } from "./replayConnector.ts";
+import "./ReplayScreen.css";
 
 export type ReplayScreenProps = {
   loadEngine?: () => Promise<ReplayEngine>; // 既定 loadReplayEngine
@@ -208,8 +209,9 @@ export function ReplayScreen({
     }
     case "result": {
       const { outcome } = phase;
+      // リザルトと「別の入力ログを選ぶ」を、画面の高さに一緒に収める（T-429・ReplayScreen.css）。
       return (
-        <>
+        <div className="replay-result">
           <ResultScreen
             stage={phase.round.stage}
             nextStage={null}
@@ -228,7 +230,7 @@ export function ReplayScreen({
               別の入力ログを選ぶ
             </button>
           </div>
-        </>
+        </div>
       );
     }
     case "error": {
