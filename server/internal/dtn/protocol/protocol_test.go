@@ -256,8 +256,8 @@ func TestResponseDigestIgnoresEpochAndBundle(t *testing.T) {
 
 func TestKindTable(t *testing.T) {
 	kinds := Kinds()
-	if len(kinds) != 13+9 {
-		t.Fatalf("got %d kinds, want 22", len(kinds))
+	if len(kinds) != 14+9 {
+		t.Fatalf("got %d kinds, want 23", len(kinds))
 	}
 	var notJournaled []Kind
 	for _, k := range kinds {

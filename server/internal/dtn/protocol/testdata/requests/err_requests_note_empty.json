@@ -1,0 +1,18 @@
+{
+  "description": "requests.note with no request ids",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 42,
+    "kind": "requests.note",
+    "payload": {
+      "t": 12500,
+      "created": [],
+      "resolved": []
+    }
+  },
+  "expect": "invalid"
+}

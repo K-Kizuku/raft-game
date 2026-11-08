@@ -255,6 +255,46 @@ func (p *LetterIDsPayload) validate(c *vctx) *Error {
 	return checkIDs(c, "payload.letterIds", p.LetterIDs)
 }
 
+// MaxNoteRequests は requests.note の created・resolved のそれぞれの reqId の数の上限。
+const MaxNoteRequests = 64
+
+// RequestsNotePayload は requests.note の payload（DTN-03 #160）。T は知らせる原因のイベント（依頼の発生・
+// 依頼元の台帳の結果）の時刻。Created は発生した依頼、Resolved は依頼元の台帳で結果が出た依頼の reqId。
+// どちらも必須（空の配列はよい）で、合わせて 1 件以上。
+type RequestsNotePayload struct {
+	T        int64    `json:"t"`
+	Created  []string `json:"created"`
+	Resolved []string `json:"resolved"`
+}
+
+func (p *RequestsNotePayload) validate(*vctx) *Error {
+	if err := checkT(p.T); err != nil {
+		return err
+	}
+	if len(p.Created)+len(p.Resolved) == 0 {
+		return Errorf(CodeInvalid, "payload: created and resolved are both empty")
+	}
+	for _, f := range []struct {
+		path string
+		ids  []string
+	}{{"payload.created", p.Created}, {"payload.resolved", p.Resolved}} {
+		if len(f.ids) > MaxNoteRequests {
+			return Errorf(CodeTooLarge, "%s: %d request ids exceeds %d", f.path, len(f.ids), MaxNoteRequests)
+		}
+		for i, id := range f.ids {
+			if !validID(id) {
+				return Errorf(CodeInvalid, "%s[%d]: invalid request id", f.path, i)
+			}
+			for _, prev := range f.ids[:i] {
+				if prev == id {
+					return Errorf(CodeInvalid, "%s: duplicate request id %q", f.path, id)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // ArrivePayload は arrive の payload。
 type ArrivePayload struct {
 	T      int64  `json:"t"`

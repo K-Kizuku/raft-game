@@ -106,7 +106,11 @@ func Serve(ctx context.Context, ln net.Listener, rt *Runtime) error {
 	closed = true
 	mu.Unlock()
 	_ = srv.Close()
-	<-errc
+	// srv.Close の後の Serve は http.ErrServerClosed を返す（止めた理由は ctx か shutdown なので、それ以外だけを返す）
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		handlers.Wait()
+		return err
+	}
 	handlers.Wait()
 	return nil
 }
