@@ -114,11 +114,24 @@ type Engine struct {
 	pending []DomainEvent // まだ取り出していないイベント
 	trace   traceHash
 	input   []InputEntry
+
+	// remote は分散版の Coordinator（DTN-05）が使うときの、島と船への作用の受け口（remote.go）。
+	// nil なら参照モデル（島の核を手元に持つ）。nil でなければ islands・nodes・ledgers は空で、島の出力は
+	// RemoteOutputs で受け取る。
+	remote        Remote
+	remoteOpening [][]islandcore.Output // cmd.game.start で適用する、各島の init の出力（添字 = ID - 1）
+	plan          []game.Request        // 依頼の計画（RemotePlan）
+	remoteApply   func(Command) Ack     // SetRemoteApply
 }
 
 // New は cfg と seed から Engine を作り、開会式（§5.3）まで計算する。
 // 開会式のイベントは cmd.game.start を適用したときに出す。Phase() は PhaseIntro、Now() は 0。
 func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
+	return buildEngine(cfg, seed, opt, nil)
+}
+
+// buildEngine は New と NewRemote の本体。r が nil でなければ、島の核と開会式のノードを作らない。
+func buildEngine(cfg Config, seed uint64, opt Options, r Remote) (*Engine, error) {
 	switch {
 	case cfg.Islands < 1:
 		return nil, fmt.Errorf("sim: islands %d < 1", cfg.Islands)
@@ -135,26 +148,16 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 
 	n := cfg.Islands
 	e := &Engine{
-		cfg:   cfg,
-		opt:   opt,
-		phase: PhaseIntro,
-		last:  make([]nodeView, n),
-		trace: newTraceHash(),
+		cfg:    cfg,
+		opt:    opt,
+		phase:  PhaseIntro,
+		last:   make([]nodeView, n),
+		trace:  newTraceHash(),
+		remote: r,
 	}
-	nodes, ledgers, opening, err := islandcore.OpeningAll(islandcore.NodeParams{
-		Islands:         n,
-		InitialLeader:   cfg.InitialLeader,
-		ElectionTick:    cfg.Raft.ElectionTick,
-		HeartbeatTick:   cfg.Raft.HeartbeatTick,
-		MaxSizePerMsg:   cfg.Raft.MaxSizePerMsg,
-		MaxInflightMsgs: cfg.Raft.MaxInflightMsgs,
-		Resources:       cfg.Resources,
-		RandIntn:        func(id uint64) func(int) int { return RaftRandIntn(seed, id) },
-	})
-	if err != nil {
-		return nil, fmt.Errorf("sim: %w", err)
+	if err := e.initOpening(seed); err != nil {
+		return nil, err
 	}
-	e.nodes, e.ledgers, e.opening = nodes, ledgers, opening
 	coord, err := coordcore.New(coordcore.Config{
 		Islands:  n,
 		Routes:   cfg.Routes,
@@ -165,6 +168,36 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sim: %w", err)
 	}
+	return e.initRest(coord, seed)
+}
+
+// initOpening は開会式（§5.3）を計算する（参照モデルだけ。分散版の島は init で自分で計算する）。
+func (e *Engine) initOpening(seed uint64) error {
+	if e.remote != nil {
+		return nil
+	}
+	cfg := e.cfg
+	nodes, ledgers, opening, err := islandcore.OpeningAll(islandcore.NodeParams{
+		Islands:         cfg.Islands,
+		InitialLeader:   cfg.InitialLeader,
+		ElectionTick:    cfg.Raft.ElectionTick,
+		HeartbeatTick:   cfg.Raft.HeartbeatTick,
+		MaxSizePerMsg:   cfg.Raft.MaxSizePerMsg,
+		MaxInflightMsgs: cfg.Raft.MaxInflightMsgs,
+		Resources:       cfg.Resources,
+		RandIntn:        func(id uint64) func(int) int { return RaftRandIntn(seed, id) },
+	})
+	if err != nil {
+		return fmt.Errorf("sim: %w", err)
+	}
+	e.nodes, e.ledgers, e.opening = nodes, ledgers, opening
+	return nil
+}
+
+// initRest は New の残り（Coordinator の部分の帳簿と島の核）。
+func (e *Engine) initRest(coord *coordcore.Core, seed uint64) (*Engine, error) {
+	cfg := e.cfg
+	n := cfg.Islands
 	switch {
 	case cfg.PortCap < 1:
 		return nil, fmt.Errorf("sim: ferry: portCap %d < 1", cfg.PortCap)
@@ -199,11 +232,15 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sim: requests: %w", err)
 	}
+	e.plan = plan
 	e.reqs = newRequestBook(plan, e.cfg.Requests.RetryMs)
 	if err := e.initScore(); err != nil {
 		return nil, err
 	}
 	e.initStats()
+	if e.remote != nil {
+		return e, nil
+	}
 	e.islands = make([]*islandcore.Core, n)
 	for i := range e.islands {
 		isl, err := islandcore.New(islandcore.Config{
@@ -216,7 +253,7 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 			RelayCap:      cfg.RelayCap,
 			Requests:      plan,
 			NextSeq:       e.nextIslandSeq,
-		}, nodes[i], ledgers[i])
+		}, e.nodes[i], e.ledgers[i])
 		if err != nil {
 			return nil, fmt.Errorf("sim: %w", err)
 		}
@@ -239,7 +276,16 @@ func (e *Engine) Phase() Phase { return e.phase }
 
 // Apply はコマンドを Now() の時刻で適用する。成功したコマンドだけを入力ログに記録する。
 // 失敗したときは、状態・イベント・入力ログ・時刻のどれも変えない。
+//
+// 分散版（NewRemote）で SetRemoteApply を渡したときは、それを呼ぶ（ボットが Coordinator を通して適用するため）。
 func (e *Engine) Apply(cmd Command) Ack {
+	if e.remoteApply != nil {
+		return e.remoteApply(cmd)
+	}
+	return e.apply(cmd)
+}
+
+func (e *Engine) apply(cmd Command) Ack {
 	switch cmd.Type {
 	case CmdGameStart:
 		if e.phase != PhaseIntro {
@@ -253,12 +299,12 @@ func (e *Engine) Apply(cmd Command) Ack {
 		if err := e.applyFerry(cmd); err != nil {
 			return e.fail(ferryErrCode(err), err.Error())
 		}
-		e.afterStep()
+		e.afterStepLocal()
 	case CmdDemoTrigger:
 		if code, msg := e.applyDemo(cmd); code != "" {
 			return e.fail(code, msg)
 		}
-		e.afterStep()
+		e.afterStepLocal()
 	default:
 		return e.fail(CodeBadRequest, fmt.Sprintf("sim: unknown command type %q", cmd.Type))
 	}
@@ -279,6 +325,11 @@ func (e *Engine) start() {
 		isl.ApplyRoleChange(int64(e.Now()), rc)
 		e.drain(isl)
 	}
+	// 分散版: 各島が init で開会式を再計算した出力（t = 0）を、島の ID の順に適用する（simulation-time.md §4）。
+	for i, outs := range e.remoteOpening {
+		e.drainOutputs(uint64(i+1), outs)
+	}
+	e.remoteOpening = nil
 	// 即時配達した手紙（e.opening.Delivered）は港を通らず ID もないので、手紙のイベントにしない。
 	e.afterStepAt(islandcore.ClassStart)
 	e.phase = PhaseSailing
@@ -321,6 +372,10 @@ func (e *Engine) applyFerry(cmd Command) error {
 			}
 			e.emit(LetterMoved{LetterID: uint64(l.ID), Loc: loc})
 		}
+		if e.remote != nil {
+			e.remote.Unload(e.Now(), id, f.At, cloneLetters(unloaded))
+			break
+		}
 		isl := e.islands[f.At-1]
 		isl.Unload(int64(e.Now()), unloaded)
 		e.drain(isl)
@@ -337,6 +392,9 @@ func (e *Engine) applyFerry(cmd Command) error {
 			DepartAt: e.Now(),
 			ArriveAt: SimTime(arriveAt),
 		})
+		if e.remote != nil {
+			e.remote.Depart(e.Now(), id, cmd.To, SimTime(arriveAt))
+		}
 		// DurationMs より後でも積む（ラウンドが先に終わるので処理されない）。
 		e.push(SimTime(arriveAt), ClassFerryArrive, kindFerryArrive, id)
 		e.chargeVoyage(SimTime(arriveAt) - e.Now())
@@ -355,6 +413,9 @@ func (e *Engine) applyFerry(cmd Command) error {
 // イベントは Coordinator のスケジューラと各島の待ち行列から (At, Class, Seq) の順に取り出す（島の Seq は全島で
 // 1 本なので、今の Engine の 1 本のスケジューラと同じ順になる）。
 func (e *Engine) RunUntil(t SimTime) {
+	if e.remote != nil {
+		panic("sim: RunUntil on a remote engine (the DTN Coordinator drives it with the Remote* methods)")
+	}
 	if e.phase != PhaseSailing {
 		return
 	}
@@ -561,6 +622,10 @@ func (e *Engine) arrive(id ferry.FerryID) {
 		e.noteDriftCandidate(l)
 		letters = append(letters, l)
 	}
+	if e.remote != nil {
+		e.remote.Arrive(e.Now(), id, f.At, slices.Clone(delivered))
+		return
+	}
 	isl := e.islands[f.At-1]
 	isl.Deliver(int64(e.Now()), letters)
 	e.drain(isl)
@@ -572,13 +637,25 @@ func (e *Engine) load(id ferry.FerryID, letters []ferry.LetterID) error {
 		return err
 	}
 	f, _ := e.tr.Ferry(id)
+	if e.remote != nil {
+		e.remote.Load(e.Now(), id, f.At, slices.Clone(letters))
+		return nil
+	}
 	if _, err := e.islands[f.At-1].Take(letters); err != nil {
 		panic(fmt.Sprintf("sim: load %q: island %d: %v", id, f.At, err))
 	}
 	return nil
 }
 
-// afterStep はコマンド（成功した Apply）の後処理（afterStepAt の ClassCommand）。
+// afterStepLocal はコマンド（成功した Apply）の後処理（afterStepAt の ClassCommand）。
+// 分散版では、島と船への作用の応答を受け取ってから呼び出し側が RemoteAfterStep で行う。
+func (e *Engine) afterStepLocal() {
+	if e.remote == nil {
+		e.afterStep()
+	}
+}
+
+// afterStep はコマンドの後処理（afterStepAt の ClassCommand）。
 func (e *Engine) afterStep() { e.afterStepAt(islandcore.ClassCommand) }
 
 // afterStepAt は 1 ステップ（成功した Apply・スケジューラのイベント 1 つ）の後処理。class は島の出力に付ける印。
@@ -596,15 +673,17 @@ func (e *Engine) afterStepAt(class islandcore.Class) {
 	e.refreshScore()
 	// 配達・破棄した手紙のイベントを作り終えたので、ここで手放す（#103）。
 	e.tr.Reclaim()
-	if e.opt.CheckInvariants {
+	if e.opt.CheckInvariants && e.remote == nil {
 		e.checkInvariants()
 	}
 }
 
 // drain は島 isl の出力を、出した順にドメインイベントと Coordinator の写しに反映する。
-func (e *Engine) drain(isl *islandcore.Core) {
-	id := isl.ID()
-	for _, o := range isl.Drain() {
+func (e *Engine) drain(isl *islandcore.Core) { e.drainOutputs(isl.ID(), isl.Drain()) }
+
+// drainOutputs は島 id の出力 outs を、並びの順にドメインイベントと Coordinator の写しに反映する。
+func (e *Engine) drainOutputs(id uint64, outs []islandcore.Output) {
+	for _, o := range outs {
 		switch d := o.Data.(type) {
 		case islandcore.LetterCreatedOut:
 			if err := e.tr.Track(d.Letter); err != nil {

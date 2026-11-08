@@ -27,7 +27,9 @@ func (e *Engine) applyRelayLoad(id ferry.FerryID, letters []uint64) error {
 		return err
 	}
 	f, _ := e.tr.Ferry(id)
-	if _, err := e.islands[f.At-1].TakeRelay(ids); err != nil {
+	if e.remote != nil {
+		e.remote.RelayLoad(e.Now(), id, f.At, ids)
+	} else if _, err := e.islands[f.At-1].TakeRelay(ids); err != nil {
 		panic(fmt.Sprintf("sim: relay load %q: island %d: %v", id, f.At, err))
 	}
 	for _, lid := range letters {
