@@ -1,0 +1,232 @@
+{
+  "name": "C07d-crash-before-merge",
+  "description": "まとめる advance の確定の前に止まると、古い行は残り新しい行は intent。送り直しで同じまとめになる",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 100,
+            "class": 4,
+            "seq": 2,
+            "type": "term.changed",
+            "data": {
+              "term": 1
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 200,
+            "class": 4,
+            "seq": 3,
+            "type": "term.changed",
+            "data": {
+              "term": 2
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            200,
+            0
+          ],
+          "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "crashAt": "afterActorReply",
+      "expect": {
+        "crashed": true,
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "applied"
+            },
+            {
+              "event_seq": 3,
+              "status": "intent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "resend",
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 200,
+            "class": 4,
+            "seq": 3,
+            "type": "term.changed",
+            "data": {
+              "term": 2
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            200,
+            0
+          ],
+          "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "outputs": [
+            {
+              "t": 200,
+              "class": 4,
+              "seq": 3,
+              "type": "term.changed",
+              "data": {
+                "term": 2
+              }
+            }
+          ]
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 3,
+              "status": "applied",
+              "response": {
+                "outputs": [
+                  {
+                    "t": 100,
+                    "class": 4,
+                    "seq": 2,
+                    "type": "term.changed",
+                    "data": {
+                      "term": 1
+                    }
+                  },
+                  {
+                    "t": 200,
+                    "class": 4,
+                    "seq": 3,
+                    "type": "term.changed",
+                    "data": {
+                      "term": 2
+                    }
+                  }
+                ]
+              },
+              "resp_digest": "sha256:d14390776be5680dc8160f5b23b194d6e081669a195c590bef7e9c212fa16d02"
+            }
+          ],
+          "meta": {
+            "journalRows": "2"
+          }
+        }
+      }
+    }
+  ]
+}

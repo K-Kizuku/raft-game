@@ -1,0 +1,207 @@
+{
+  "name": "C13-bytes-in-journal",
+  "description": "cargo.add の bytes は journal.payload に送ったとおりに残る。bundles を上書き・NULL にしても再生に使える",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "ferry:f1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "ferry:f1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "ferry:f1"
+        }
+      },
+      "actorReply": {
+        "outputs": [],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "cargo.add",
+        "payload": {
+          "t": 100,
+          "letters": [
+            {
+              "letterId": 7,
+              "createdAt": 10,
+              "digest": "sha256:a66fecbfdbb6c4789331a7568a3eb1cd15c3f303ad0cebeeaa32b0878392b3fc",
+              "bundle": "YnVuZGxlLTctYWdlLTkw"
+            }
+          ]
+        }
+      },
+      "actorReply": {
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "bundles": [
+            {
+              "letter_id": 7,
+              "bundle": "YnVuZGxlLTctYWdlLTkw",
+              "digest": "sha256:a66fecbfdbb6c4789331a7568a3eb1cd15c3f303ad0cebeeaa32b0878392b3fc",
+              "size": 15,
+              "state": "held",
+              "place": "cargo",
+              "updated_seq": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 3,
+        "kind": "cargo.remove",
+        "payload": {
+          "letterIds": [
+            7
+          ]
+        }
+      },
+      "actorReply": {
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "bundles": [
+            {
+              "letter_id": 7,
+              "bundle": null,
+              "digest": "sha256:a66fecbfdbb6c4789331a7568a3eb1cd15c3f303ad0cebeeaa32b0878392b3fc",
+              "state": "gone",
+              "place": "moved",
+              "updated_seq": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 4,
+        "kind": "cargo.add",
+        "payload": {
+          "t": 150,
+          "letters": [
+            {
+              "letterId": 7,
+              "createdAt": 10,
+              "digest": "sha256:4c2d36afa97308c2c1cfa91cc0abc0f602af8542740f75b1e5c5899a569f8572",
+              "bundle": "YnVuZGxlLTctYWdlLTE0MA=="
+            }
+          ]
+        }
+      },
+      "actorReply": {
+        "cursor": {
+          "horizon": [
+            150,
+            0
+          ],
+          "stateDigest": "sha256:0303030303030303030303030303030303030303030303030303030303030303"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "bundles": [
+            {
+              "letter_id": 7,
+              "bundle": "YnVuZGxlLTctYWdlLTE0MA==",
+              "digest": "sha256:4c2d36afa97308c2c1cfa91cc0abc0f602af8542740f75b1e5c5899a569f8572",
+              "state": "held",
+              "place": "cargo",
+              "updated_seq": 4
+            }
+          ],
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "payload": {
+                "t": 100,
+                "letters": [
+                  {
+                    "letterId": 7,
+                    "createdAt": 10,
+                    "digest": "sha256:a66fecbfdbb6c4789331a7568a3eb1cd15c3f303ad0cebeeaa32b0878392b3fc",
+                    "bundle": "YnVuZGxlLTctYWdlLTkw"
+                  }
+                ]
+              }
+            },
+            {
+              "event_seq": 3
+            },
+            {
+              "event_seq": 4,
+              "payload": {
+                "t": 150,
+                "letters": [
+                  {
+                    "letterId": 7,
+                    "createdAt": 10,
+                    "digest": "sha256:4c2d36afa97308c2c1cfa91cc0abc0f602af8542740f75b1e5c5899a569f8572",
+                    "bundle": "YnVuZGxlLTctYWdlLTE0MA=="
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

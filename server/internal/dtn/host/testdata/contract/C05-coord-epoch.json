@@ -1,0 +1,191 @@
+{
+  "name": "C05-coord-epoch",
+  "description": "coordEpoch が meta.maxCoordEpoch より古ければ stale_coord_epoch。新しければ同じトランザクションで更新する",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        },
+        "rows": {
+          "meta": {
+            "maxCoordEpoch": "1"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        },
+        "coordEpoch": 3
+      },
+      "actorReply": {
+        "cursor": {
+          "horizon": [
+            100,
+            0
+          ],
+          "stateDigest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "meta": {
+            "maxCoordEpoch": "3"
+          }
+        }
+      }
+    },
+    {
+      "note": "old coordinator",
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        },
+        "coordEpoch": 2
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "stale_coord_epoch"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "old coordinator asks host.status",
+      "request": {
+        "eventSeq": 0,
+        "kind": "host.status",
+        "payload": {},
+        "coordEpoch": 1
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "stale_coord_epoch"
+          }
+        }
+      }
+    },
+    {
+      "note": "new coordinator asks host.status",
+      "request": {
+        "eventSeq": 0,
+        "kind": "host.status",
+        "payload": {},
+        "coordEpoch": 4
+      },
+      "expect": {
+        "response": {
+          "status": "ok"
+        },
+        "rows": {
+          "meta": {
+            "maxCoordEpoch": "4"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 3,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            200,
+            0
+          ]
+        },
+        "coordEpoch": 4
+      },
+      "actorReply": {
+        "cursor": {
+          "horizon": [
+            200,
+            0
+          ],
+          "stateDigest": "sha256:0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3
+        }
+      }
+    }
+  ]
+}

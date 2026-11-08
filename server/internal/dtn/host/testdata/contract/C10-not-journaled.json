@@ -1,0 +1,187 @@
+{
+  "name": "C10-not-journaled",
+  "description": "inspect・bundle.export・host.status は journal に入れない（状態を変えない）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 0,
+        "kind": "inspect",
+        "payload": {}
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 0,
+            "seq": 0,
+            "type": "inspect",
+            "data": {
+              "ready": true
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "actorRequest": {
+          "kind": "inspect",
+          "epoch": 1
+        },
+        "response": {
+          "status": "ok",
+          "outputs": [
+            {
+              "type": "inspect",
+              "data": {
+                "ready": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 0,
+        "kind": "bundle.export",
+        "payload": {
+          "t": 60,
+          "letterIds": [
+            12
+          ]
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 60,
+            "class": 8,
+            "seq": 0,
+            "type": "bundle.exported",
+            "data": {
+              "letterId": 12,
+              "digest": "sha256:d32d85f06ac5343dad4eeb30799745067e7a59be613f1e9963d79e810456c116",
+              "size": 25
+            },
+            "bundle": "YnVuZGxlLTEyLWV4cG9ydGVkLWFnZS01MA=="
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "outputs": [
+            {
+              "type": "bundle.exported",
+              "data": {
+                "letterId": 12,
+                "digest": "sha256:d32d85f06ac5343dad4eeb30799745067e7a59be613f1e9963d79e810456c116",
+                "size": 25
+              },
+              "bundle": "$absent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "eventSeq": 0,
+        "kind": "host.status",
+        "payload": {}
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 0,
+          "outputs": [
+            {
+              "type": "host.status",
+              "data": {
+                "epoch": 1,
+                "lastEventSeq": 1,
+                "container": "running"
+              }
+            }
+          ]
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            }
+          ],
+          "bundles": [],
+          "meta": {
+            "journalRows": "1"
+          }
+        }
+      }
+    }
+  ]
+}

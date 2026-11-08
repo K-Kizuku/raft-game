@@ -1,0 +1,167 @@
+{
+  "name": "C01-idempotent",
+  "description": "同じ eventSeq・同じ digest の送り直しは、保存した応答を返し、Container を呼ばない（actor-protocol.md §5）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        },
+        "actorRequest": {
+          "kind": "init",
+          "epoch": 1,
+          "eventSeq": 1
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1,
+              "kind": "init",
+              "status": "applied",
+              "epoch": 1,
+              "payload": {
+                "stage": "stage1",
+                "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "seed": 7,
+                "actor": "island:1"
+              },
+              "req_digest": "sha256:383ee4c6d53bb71d9e4e7a4e0726a4fc16a4869ab3a1ffe0411f80692ec5876c",
+              "resp_digest": "sha256:e09d01f1fdd8a04d85188b8c23f89b30159f42379ce8f6848d8724c9697fe56c",
+              "response": {
+                "v": 1,
+                "actor": "island:1",
+                "epoch": 1,
+                "eventSeq": 1,
+                "status": "ok",
+                "outputs": [
+                  {
+                    "t": 0,
+                    "class": 3,
+                    "seq": 1,
+                    "type": "node.state",
+                    "data": {
+                      "id": 1,
+                      "role": "follower"
+                    }
+                  }
+                ],
+                "cursor": {
+                  "horizon": [
+                    0,
+                    0
+                  ],
+                  "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                },
+                "error": null
+              }
+            }
+          ],
+          "meta": {
+            "schemaVersion": "1",
+            "sessionId": "s_contract",
+            "actor": "island:1",
+            "epoch": "1",
+            "maxCoordEpoch": "1",
+            "journalRows": "1"
+          }
+        }
+      }
+    },
+    {
+      "note": "same request again",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "expect": {
+        "actorCalled": false,
+        "response": {
+          "v": 1,
+          "actor": "island:1",
+          "epoch": 1,
+          "eventSeq": 1,
+          "status": "ok",
+          "outputs": [
+            {
+              "t": 0,
+              "class": 3,
+              "seq": 1,
+              "type": "node.state",
+              "data": {
+                "id": 1,
+                "role": "follower"
+              }
+            }
+          ],
+          "cursor": {
+            "horizon": [
+              0,
+              0
+            ],
+            "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "error": null
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1,
+              "status": "applied"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

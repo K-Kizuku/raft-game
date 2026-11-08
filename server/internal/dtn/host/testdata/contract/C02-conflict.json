@@ -1,0 +1,148 @@
+{
+  "name": "C02-conflict",
+  "description": "同じ eventSeq で中身が違えば conflict（applied の行・intent の行の両方）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "island:1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "island:1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "island:1"
+        }
+      },
+      "actorReply": {
+        "outputs": [
+          {
+            "t": 0,
+            "class": 3,
+            "seq": 1,
+            "type": "node.state",
+            "data": {
+              "id": 1,
+              "role": "follower"
+            }
+          }
+        ],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "note": "same eventSeq, other seed",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 8,
+          "actor": "island:1"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "conflict"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1,
+              "status": "applied",
+              "payload": {
+                "stage": "stage1",
+                "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "seed": 7,
+                "actor": "island:1"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "advance 2 stops after intent",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            100,
+            0
+          ]
+        }
+      },
+      "crashAt": "afterIntent",
+      "expect": {
+        "crashed": true
+      }
+    },
+    {
+      "note": "eventSeq 2 with another horizon",
+      "request": {
+        "eventSeq": 2,
+        "kind": "advance",
+        "payload": {
+          "horizon": [
+            150,
+            0
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "error": {
+            "code": "conflict"
+          }
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 2,
+              "status": "intent",
+              "payload": {
+                "horizon": [
+                  100,
+                  0
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
