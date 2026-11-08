@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setShowRaftTerms, termsPreference } from "../../ui/terms/preference.ts";
 import type { StageCatalogEntry } from "../types.ts";
 import { StageIntroScreen } from "./StageIntroScreen.tsx";
 
@@ -96,7 +97,7 @@ describe("StageIntroScreen の紹介文と学べること（T-416）", () => {
     ).toBeDefined();
     const items = within(learning)
       .getAllByRole("listitem")
-      .map((li) => li.textContent);
+      .map((li) => li.querySelector(".stage-intro-learning-name")?.textContent);
     expect(items).toEqual([
       "定期便（Heartbeat）",
       "定期便が途切れる（Election Timeout）",
@@ -112,6 +113,9 @@ describe("StageIntroScreen の紹介文と学べること（T-416）", () => {
     expect(within(learning).getByText("遊び終わったあとで種明かしします。")).toBeDefined();
     expect(within(learning).queryByRole("list")).toBeNull();
     expect(screen.queryByText(/記録の複製/)).toBeNull();
+    // 図も伏せる（T-433）
+    expect(learning.querySelector("[data-learning-art]")).toBeNull();
+    expect(learning.querySelector("[data-learning-caption]")).toBeNull();
   });
 
   it.each<[string, string[]]>([
@@ -135,6 +139,67 @@ describe("StageIntroScreen の紹介文と学べること（T-416）", () => {
     expect(departButton().disabled).toBe(busy);
     fireEvent.click(departButton());
     expect(onDepart).toHaveBeenCalledTimes(busy ? 0 : 1);
+  });
+});
+
+describe("StageIntroScreen の学べることの図（T-433）", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    act(() => {
+      termsPreference.reload();
+    });
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    act(() => {
+      termsPreference.reload();
+    });
+  });
+
+  it("SI-5 学べることの 1 つずつに、そのキーの図と説明が付く", () => {
+    render(<StageIntroScreen stage={STAGE2} onDepart={() => {}} busy={false} />);
+
+    const learning = screen.getByRole("region", { name: "学べること" });
+    const items = within(learning).getAllByRole("listitem");
+    expect(
+      items.map((li) =>
+        li.querySelector("svg[data-learning-art]")?.getAttribute("data-learning-art"),
+      ),
+    ).toEqual(["heartbeat", "election_timeout", "check_quorum"]);
+    for (const li of items) {
+      const art = li.querySelector("svg[data-learning-art]");
+      expect(art?.getAttribute("aria-hidden")).toBe("true");
+      expect(art?.classList.contains("stage-intro-learning-art")).toBe(true);
+      const caption = li.querySelector(".stage-intro-learning-caption");
+      expect(caption?.getAttribute("data-learning-caption")).toBe(
+        art?.getAttribute("data-learning-art"),
+      );
+      expect(caption?.textContent).not.toBe("");
+    }
+    expect(items[0]?.querySelector(".stage-intro-learning-caption")?.textContent).toBe(
+      "代表は定期便を出し続け、元気だと知らせる",
+    );
+    // 知らないキー（unknown_key）は名前も図も出さない
+    expect(learning.querySelectorAll("[data-learning-art]").length).toBe(3);
+  });
+
+  it("SI-6 説明の用語は「Raft の用語を併記する」に従う（名前は設定に関係なく両方）", () => {
+    render(<StageIntroScreen stage={STAGE2} onDepart={() => {}} busy={false} />);
+    const learning = screen.getByRole("region", { name: "学べること" });
+    const caption = (): string | null | undefined =>
+      learning.querySelector('[data-learning-caption="heartbeat"]')?.textContent;
+    const name = (): string | null | undefined =>
+      learning.querySelector(".stage-intro-learning-name")?.textContent;
+
+    expect(caption()).toBe("代表は定期便を出し続け、元気だと知らせる");
+    expect(name()).toBe("定期便（Heartbeat）");
+
+    act(() => {
+      setShowRaftTerms(true);
+    });
+    expect(caption()).toBe("代表（Leader）は定期便（Heartbeat）を出し続け、元気だと知らせる");
+    expect(name()).toBe("定期便（Heartbeat）");
   });
 });
 
