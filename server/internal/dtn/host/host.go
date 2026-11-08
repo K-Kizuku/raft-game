@@ -27,10 +27,19 @@ const (
 	PointAfterCommit Point = "afterCommit"
 	// PointAfterActorStop は shutdown で Container を止めた後・保存を消す前（Go の試験だけが使う）。
 	PointAfterActorStop Point = "afterActorStop"
+	// PointAfterPrepare は transfer.prepare で prepared を確定した後・受け取る Host に accept を送る前（DTN-08）。
+	PointAfterPrepare Point = "afterPrepare"
+	// PointAfterPeerReply は transfer.prepare で受け取る Host の ACK を受けた後・ACK を保存する前（DTN-08）。
+	PointAfterPeerReply Point = "afterPeerReply"
 )
 
-// Points は契約テストの crashAt に書ける位置。
+// Points は journal に入れる要求の止める位置（契約テストの crashAt に書ける）。
 var Points = []Point{PointAfterIntent, PointAfterActorReply, PointAfterCommit}
+
+// HandoffPoints は transfer.prepare だけの止める位置（契約テストの crashAt にも書ける）。Host だけで処理する要求
+// （transfer.prepare・accept・abort）では、Points のうち afterActorReply は bundle.export の応答の後、afterCommit は
+// その要求の最後のトランザクションの後（応答を返す前）。
+var HandoffPoints = []Point{PointAfterPrepare, PointAfterPeerReply}
 
 // Hooks は試験用の止める位置と、Actor が止まったときの通知。
 type Hooks struct {
@@ -59,6 +68,11 @@ type Config struct {
 	// Now は meta.createdAt の時刻（nil なら time.Now）。
 	Now   func() time.Time
 	Hooks Hooks
+	// Peer は CLA（transfer.accept を受け取る Host に届ける。DTN-08）。nil なら transfer.prepare は internal。
+	Peer Peer
+	// Contacts は transfer.prepare・transfer.accept の Contact の確認（DTN-09 が署名などを足す）。nil なら
+	// transfer.prepare・transfer.accept は internal（確認なしでは転送しない）。
+	Contacts ContactVerifier
 }
 
 // Container の状態（host.status の container）。
@@ -81,12 +95,14 @@ type HostStatus struct {
 
 // Host は 1 Actor の Actor Host。New で作る。Handle は並行に呼んでよい（Actor ごとに直列にする）。
 type Host struct {
-	mu      sync.Mutex
-	store   Store
-	conn    ActorConn
-	lim     dtnproto.Limits
-	timeout time.Duration
-	hooks   Hooks
+	mu       sync.Mutex
+	store    Store
+	conn     ActorConn
+	lim      dtnproto.Limits
+	timeout  time.Duration
+	hooks    Hooks
+	peer     Peer
+	contacts ContactVerifier
 
 	meta      Meta // 確定した meta の写し
 	lost      bool // Container を失った（Restart まで not_ready）
@@ -104,7 +120,8 @@ func New(store Store, conn ActorConn, cfg Config) (*Host, error) {
 	if !cfg.Actor.Valid() {
 		return nil, fmt.Errorf("host: invalid actor %q", cfg.Actor)
 	}
-	h := &Host{store: store, conn: conn, lim: cfg.Limits, timeout: cfg.ActorTimeout, hooks: cfg.Hooks}
+	h := &Host{store: store, conn: conn, lim: cfg.Limits, timeout: cfg.ActorTimeout, hooks: cfg.Hooks,
+		peer: cfg.Peer, contacts: cfg.Contacts}
 	if h.lim == (dtnproto.Limits{}) {
 		h.lim = dtnproto.DefaultLimits
 	}
@@ -232,16 +249,31 @@ func (h *Host) Handle(ctx context.Context, raw []byte) ([]byte, error) {
 		return h.shutdown(ctx, req)
 	case req.Kind == dtnproto.KindHostStatus:
 		return h.hostStatus(req), nil
+	case req.Kind == dtnproto.KindTransferActivate:
+		return h.journaled(ctx, req, h.activatePlan(req))
+	case req.Kind == dtnproto.KindTransferGC:
+		return h.journaled(ctx, req, h.gcPlan(req))
 	case ki.HostOnly:
-		return h.handleHostOnly(req), nil
+		return h.handleHostOnly(ctx, req)
 	case !ki.Journaled:
 		return h.forward(ctx, req), nil
 	}
-	return h.journaled(ctx, req)
+	return h.journaled(ctx, req, nil)
 }
 
-// journaled は journal に入れる種類（Container に送る）を処理する（§3.1 の手順 2〜6）。
-func (h *Host) journaled(ctx context.Context, req dtnproto.Request) ([]byte, error) {
+// thenPlan は、transfer.activate・transfer.gc を journal に入れる種類として処理するときの差分（DTN-08）。
+// journal の行の kind・payload は Container に送る then（activate なら bytes を付けたもの）、req_digest は
+// transfer.* の要求の digest（同じ要求の送り直しを見分ける）。
+type thenPlan struct {
+	// build は新しい intent の行の kind と payload を作る（transfers・bundles の行を確かめる）。
+	build func(tx Tx) (dtnproto.Kind, json.RawMessage, *dtnproto.Error)
+	// effects は ok の応答を確定するトランザクションで、bundles の効果の後に行う（transfers の状態）。
+	effects func(tx Tx, m *Meta) error
+}
+
+// journaled は journal に入れる種類（Container に送る）を処理する（§3.1 の手順 2〜6）。plan が nil でなければ
+// transfer.activate・transfer.gc（Container には then を送る）。
+func (h *Host) journaled(ctx context.Context, req dtnproto.Request, plan *thenPlan) ([]byte, error) {
 	digest, derr := dtnproto.RequestDigest(req)
 	if derr != nil {
 		return h.fail(req, asProtoError(derr, dtnproto.CodeInvalid)), nil
@@ -260,6 +292,8 @@ func (h *Host) journaled(ctx context.Context, req dtnproto.Request) ([]byte, err
 		return h.fail(req, dtnproto.Errorf(dtnproto.CodeInternal, "read journal: %v", err)), nil
 	}
 
+	// send は Container に送る要求（plan があれば then。kind と payload は journal の行と同じ）
+	send := req
 	// 手順 2: 冪等の確認（actor-protocol.md §5）
 	switch {
 	case have && row.ReqDigest != digest:
@@ -273,6 +307,7 @@ func (h *Host) journaled(ctx context.Context, req dtnproto.Request) ([]byte, err
 		if err := h.bumpCoordEpoch(req); err != nil {
 			return h.fail(req, err), nil
 		}
+		send.Kind, send.Payload = row.Kind, row.Payload
 	case haveLast && req.EventSeq < last.EventSeq:
 		return h.fail(req, dtnproto.Errorf(dtnproto.CodeStaleEvent, "eventSeq %d < %d", req.EventSeq, last.EventSeq)), nil
 	case haveLast && last.Status == StatusIntent:
@@ -280,15 +315,30 @@ func (h *Host) journaled(ctx context.Context, req dtnproto.Request) ([]byte, err
 	case h.lost:
 		return h.fail(req, dtnproto.Errorf(dtnproto.CodeNotReady, "actor lost")), nil
 	default:
+		if plan != nil {
+			if err := h.bumpCoordEpoch(req); err != nil {
+				return h.fail(req, err), nil
+			}
+			var berr *dtnproto.Error
+			if err := h.store.View(func(tx Tx) error {
+				send.Kind, send.Payload, berr = plan.build(tx)
+				return nil
+			}); err != nil {
+				return h.fail(req, dtnproto.Errorf(dtnproto.CodeInternal, "read transfer: %v", err)), nil
+			}
+			if berr != nil {
+				return h.fail(req, berr), nil
+			}
+		}
 		// 手順 3: journal に intent で書く
 		if h.meta.JournalRows+1 > int64(h.lim.MaxJournalRows) {
 			return h.fail(req, dtnproto.Errorf(dtnproto.CodeTooLarge, "journal: %d rows reaches the limit %d", h.meta.JournalRows, h.lim.MaxJournalRows)), nil
 		}
-		if h.meta.StoredBytes+int64(len(req.Payload)) > int64(h.lim.MaxStoredBytes) {
-			return h.fail(req, dtnproto.Errorf(dtnproto.CodeTooLarge, "store: %d+%d bytes exceeds %d", h.meta.StoredBytes, len(req.Payload), h.lim.MaxStoredBytes)), nil
+		if h.meta.StoredBytes+int64(len(send.Payload)) > int64(h.lim.MaxStoredBytes) {
+			return h.fail(req, dtnproto.Errorf(dtnproto.CodeTooLarge, "store: %d+%d bytes exceeds %d", h.meta.StoredBytes, len(send.Payload), h.lim.MaxStoredBytes)), nil
 		}
-		row = JournalRow{EventSeq: req.EventSeq, Kind: req.Kind, ReqDigest: digest,
-			Payload: append(json.RawMessage(nil), req.Payload...), Status: StatusIntent, Epoch: h.meta.Epoch}
+		row = JournalRow{EventSeq: req.EventSeq, Kind: send.Kind, ReqDigest: digest,
+			Payload: append(json.RawMessage(nil), send.Payload...), Status: StatusIntent, Epoch: h.meta.Epoch}
 		if err := h.update(func(tx Tx, m *Meta) error {
 			m.MaxCoordEpoch = max(m.MaxCoordEpoch, req.CoordEpoch)
 			m.JournalRows++
@@ -309,7 +359,7 @@ func (h *Host) journaled(ctx context.Context, req dtnproto.Request) ([]byte, err
 	}
 
 	// 手順 4: Container に送る
-	resp, cerr := h.call(ctx, req)
+	resp, cerr := h.call(ctx, send)
 	if cerr != nil {
 		return h.fail(req, cerr), nil
 	}
@@ -327,8 +377,12 @@ func (h *Host) journaled(ctx context.Context, req dtnproto.Request) ([]byte, err
 
 	// 手順 5: 1 つのトランザクションで applied にする
 	storedRaw := encode(stored)
+	var extra func(Tx, *Meta) error
+	if plan != nil {
+		extra = plan.effects
+	}
 	if err := h.update(func(tx Tx, m *Meta) error {
-		return h.commit(tx, m, req, resp, stored, storedRaw)
+		return h.commit(tx, m, send, resp, stored, storedRaw, extra)
 	}); err != nil {
 		return h.fail(req, asProtoError(err, dtnproto.CodeInternal)), nil
 	}
@@ -339,8 +393,8 @@ func (h *Host) journaled(ctx context.Context, req dtnproto.Request) ([]byte, err
 	return storedRaw, nil
 }
 
-// commit は §3.1 の手順 5 をトランザクション tx の中で行う。
-func (h *Host) commit(tx Tx, m *Meta, req dtnproto.Request, resp, stored dtnproto.Response, storedRaw []byte) error {
+// commit は §3.1 の手順 5 をトランザクション tx の中で行う。extra は ok の応答のときに bundles の効果の後に行う。
+func (h *Host) commit(tx Tx, m *Meta, req dtnproto.Request, resp, stored dtnproto.Response, storedRaw []byte, extra func(Tx, *Meta) error) error {
 	intent, ok, err := tx.Journal(req.EventSeq)
 	if err != nil {
 		return err
@@ -358,6 +412,11 @@ func (h *Host) commit(tx Tx, m *Meta, req dtnproto.Request, resp, stored dtnprot
 	if resp.Status == dtnproto.StatusOK {
 		if err := h.applyEffects(tx, m, req, resp); err != nil {
 			return err
+		}
+		if extra != nil {
+			if err := extra(tx, m); err != nil {
+				return err
+			}
 		}
 		if req.Kind == dtnproto.KindAdvance {
 			if err := h.mergeAdvance(tx, m, &final, stored); err != nil {
@@ -463,13 +522,23 @@ func (h *Host) hostStatus(req dtnproto.Request) []byte {
 	return encode(okResponse(req, h.meta.Epoch, []dtnproto.Output{{Type: HostStatusOutputType, Data: data}}))
 }
 
-// handleHostOnly は Host だけで処理する種類（transfer.*・contact.*）の受け口。処理は DTN-08・09 が
-// ここに足す（persistence-and-recovery.md §3.2）。
-func (h *Host) handleHostOnly(req dtnproto.Request) []byte {
+// handleHostOnly は Host だけで処理する種類（transfer.*・contact.*）を処理する（persistence-and-recovery.md §3.2）。
+// transfer.activate・transfer.gc は Handle が journaled に回す。contact.* は DTN-09。
+func (h *Host) handleHostOnly(ctx context.Context, req dtnproto.Request) ([]byte, error) {
 	if err := h.bumpCoordEpoch(req); err != nil {
-		return h.fail(req, err)
+		return h.fail(req, err), nil
 	}
-	return h.fail(req, dtnproto.Errorf(dtnproto.CodeInternal, "%q is not implemented yet (DTN-08・09)", req.Kind))
+	switch req.Kind {
+	case dtnproto.KindTransferPrepare:
+		return h.transferPrepare(ctx, req)
+	case dtnproto.KindTransferAccept:
+		return h.transferAccept(req)
+	case dtnproto.KindTransferAbort:
+		return h.transferAbort(req)
+	case dtnproto.KindTransferStatus:
+		return h.transferStatus(req), nil
+	}
+	return h.fail(req, dtnproto.Errorf(dtnproto.CodeInternal, "%q is not implemented yet (DTN-09)", req.Kind)), nil
 }
 
 // shutdown は Container を止めてから保存をすべて消す（persistence-and-recovery.md §6）。2 回目は Handle が

@@ -45,8 +45,11 @@ type Tx interface {
 	Bundle(letterID uint64) (BundleRow, bool, error)
 	// PutBundle は行を書く（同じ letter_id の行は置き換える）。
 	PutBundle(r BundleRow) error
+	// DeleteBundle は letter_id の行を消す（transfer.abort で受け取り側の pending の行を消す。DTN-08）。
+	// 行が無ければ何もしない。
+	DeleteBundle(letterID uint64) error
 
-	// Transfer・PutTransfer・Contact・PutContact は DTN-08・09 が使う。
+	// Transfer・PutTransfer は DTN-08、Contact・PutContact は DTN-09 が使う。
 	Transfer(id string) (TransferRow, bool, error)
 	PutTransfer(r TransferRow) error
 	Contact(id string) (ContactRow, bool, error)

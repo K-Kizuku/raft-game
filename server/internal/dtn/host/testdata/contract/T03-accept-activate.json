@@ -1,0 +1,616 @@
+{
+  "name": "T03-accept-activate",
+  "description": "受け取り: transfer.accept は pending で保存して ACK を返す（同じ中身の送り直しは同じ ACK、digest が違えば conflict）。transfer.activate は then の手紙に pending の bytes を付けて Container に送り、付けた後の要求を journal に入れ、held にして activated にする（DTN-08）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "ferry:f1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "ferry:f1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "ferry:f1"
+        }
+      },
+      "actorReply": {
+        "outputs": [],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "note": "activate の前に accept が無ければ invalid",
+      "request": {
+        "eventSeq": 2,
+        "kind": "transfer.activate",
+        "payload": {
+          "transferId": "x3",
+          "then": {
+            "kind": "cargo.add",
+            "payload": {
+              "t": 500,
+              "letters": [
+                {
+                  "letterId": 1000000001,
+                  "createdAt": 100,
+                  "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+                },
+                {
+                  "letterId": 1000000002,
+                  "createdAt": 200,
+                  "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 2,
+          "error": {
+            "code": "invalid"
+          }
+        }
+      }
+    },
+    {
+      "note": "accept",
+      "request": {
+        "eventSeq": 3,
+        "kind": "transfer.accept",
+        "payload": {
+          "transferId": "x3",
+          "from": "island:1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "bundles": [
+            {
+              "letterId": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+            },
+            {
+              "letterId": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.ack",
+              "data": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1,
+              "kind": "init"
+            }
+          ],
+          "bundles": [
+            {
+              "letter_id": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+              "size": 25,
+              "state": "pending",
+              "place": "cargo",
+              "transfer_id": "x3",
+              "updated_seq": 3
+            },
+            {
+              "letter_id": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1",
+              "size": 25,
+              "state": "pending",
+              "place": "cargo",
+              "transfer_id": "x3",
+              "updated_seq": 3
+            }
+          ],
+          "transfers": [
+            {
+              "transfer_id": "x3",
+              "role": "dest",
+              "peer": "island:1",
+              "contact_id": "k2",
+              "letter_ids": [
+                1000000001,
+                1000000002
+              ],
+              "digests": [
+                "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              ],
+              "state": "pending",
+              "ack": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "accept の送り直しは同じ ACK",
+      "request": {
+        "eventSeq": 3,
+        "kind": "transfer.accept",
+        "payload": {
+          "transferId": "x3",
+          "from": "island:1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "bundles": [
+            {
+              "letterId": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+            },
+            {
+              "letterId": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.ack",
+              "data": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "同じ transferId で bytes が違えば conflict",
+      "request": {
+        "eventSeq": 3,
+        "kind": "transfer.accept",
+        "payload": {
+          "transferId": "x3",
+          "from": "island:1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "bundles": [
+            {
+              "letterId": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+            },
+            {
+              "letterId": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTA=",
+              "digest": "sha256:481aaabea0b2a4fc95bc69e8a014c7f2f8ea807c9d695a6d432eb32b128d90f4"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 3,
+          "error": {
+            "code": "conflict"
+          }
+        }
+      }
+    },
+    {
+      "note": "Contact の島が違う accept は contact_mismatch",
+      "request": {
+        "eventSeq": 4,
+        "kind": "transfer.accept",
+        "payload": {
+          "transferId": "x4",
+          "from": "island:1",
+          "contact": {
+            "contactId": "k9",
+            "sessionId": "s_contract",
+            "island": 2,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "bundles": [
+            {
+              "letterId": 9000000001,
+              "bundle": "eA==",
+              "digest": "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 4,
+          "error": {
+            "code": "contact_mismatch"
+          }
+        }
+      }
+    },
+    {
+      "note": "then の digest が ACK と違えば invalid",
+      "request": {
+        "eventSeq": 5,
+        "kind": "transfer.activate",
+        "payload": {
+          "transferId": "x3",
+          "then": {
+            "kind": "cargo.add",
+            "payload": {
+              "t": 500,
+              "letters": [
+                {
+                  "letterId": 1000000001,
+                  "createdAt": 100,
+                  "digest": "sha256:651e5deb2ab0cecb2746a612d1d6d4ebda3373eeaef41d93f1b981b797e4d2c6"
+                },
+                {
+                  "letterId": 1000000002,
+                  "createdAt": 200,
+                  "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 5,
+          "error": {
+            "code": "invalid"
+          }
+        }
+      }
+    },
+    {
+      "note": "activate",
+      "request": {
+        "eventSeq": 6,
+        "kind": "transfer.activate",
+        "payload": {
+          "transferId": "x3",
+          "then": {
+            "kind": "cargo.add",
+            "payload": {
+              "t": 500,
+              "letters": [
+                {
+                  "letterId": 1000000001,
+                  "createdAt": 100,
+                  "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+                },
+                {
+                  "letterId": 1000000002,
+                  "createdAt": 200,
+                  "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "actorReply": {
+        "outputs": []
+      },
+      "expect": {
+        "actorRequest": {
+          "eventSeq": 6,
+          "kind": "cargo.add",
+          "payload": {
+            "t": 500,
+            "letters": [
+              {
+                "letterId": 1000000001,
+                "createdAt": 100,
+                "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA=="
+              },
+              {
+                "letterId": 1000000002,
+                "createdAt": 200,
+                "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1",
+                "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA=="
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": "ok",
+          "eventSeq": 6,
+          "error": null
+        },
+        "rows": {
+          "journal": [
+            {
+              "event_seq": 1
+            },
+            {
+              "event_seq": 6,
+              "kind": "cargo.add",
+              "status": "applied",
+              "payload": {
+                "t": 500,
+                "letters": [
+                  {
+                    "letterId": 1000000001,
+                    "createdAt": 100,
+                    "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                    "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA=="
+                  },
+                  {
+                    "letterId": 1000000002,
+                    "createdAt": 200,
+                    "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1",
+                    "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA=="
+                  }
+                ]
+              }
+            }
+          ],
+          "bundles": [
+            {
+              "letter_id": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+              "size": 25,
+              "state": "held",
+              "place": "cargo",
+              "transfer_id": null,
+              "updated_seq": 6
+            },
+            {
+              "letter_id": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1",
+              "size": 25,
+              "state": "held",
+              "place": "cargo",
+              "transfer_id": null,
+              "updated_seq": 6
+            }
+          ],
+          "transfers": [
+            {
+              "transfer_id": "x3",
+              "role": "dest",
+              "peer": "island:1",
+              "contact_id": "k2",
+              "letter_ids": [
+                1000000001,
+                1000000002
+              ],
+              "digests": [
+                "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              ],
+              "state": "activated",
+              "ack": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "activate の送り直しは保存した応答（Container に送らない）",
+      "request": {
+        "eventSeq": 6,
+        "kind": "transfer.activate",
+        "payload": {
+          "transferId": "x3",
+          "then": {
+            "kind": "cargo.add",
+            "payload": {
+              "t": 500,
+              "letters": [
+                {
+                  "letterId": 1000000001,
+                  "createdAt": 100,
+                  "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+                },
+                {
+                  "letterId": 1000000002,
+                  "createdAt": 200,
+                  "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 6,
+          "error": null
+        }
+      }
+    },
+    {
+      "note": "同じ transfer の別の eventSeq の activate は invalid（2 回適用しない）",
+      "request": {
+        "eventSeq": 7,
+        "kind": "transfer.activate",
+        "payload": {
+          "transferId": "x3",
+          "then": {
+            "kind": "cargo.add",
+            "payload": {
+              "t": 500,
+              "letters": [
+                {
+                  "letterId": 1000000001,
+                  "createdAt": 100,
+                  "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+                },
+                {
+                  "letterId": 1000000002,
+                  "createdAt": 200,
+                  "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 7,
+          "error": {
+            "code": "invalid"
+          }
+        }
+      }
+    },
+    {
+      "note": "activated の後の取り消しは断る",
+      "request": {
+        "eventSeq": 8,
+        "kind": "transfer.abort",
+        "payload": {
+          "transferId": "x3"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 8,
+          "error": {
+            "code": "invalid"
+          }
+        }
+      }
+    },
+    {
+      "note": "status",
+      "request": {
+        "eventSeq": 0,
+        "kind": "transfer.status",
+        "payload": {
+          "transferId": "x3"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 0,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.status",
+              "data": {
+                "transferId": "x3",
+                "state": "activated",
+                "ack": {
+                  "transferId": "x3",
+                  "digests": [
+                    "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                    "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

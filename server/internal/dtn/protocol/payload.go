@@ -415,10 +415,21 @@ type Then struct {
 }
 
 // TransferThenPayload は transfer.activate・transfer.gc の payload。
+//
+// transfer.activate の then（deliver・cargo.add・unload）の手紙は bytes を持たない（ThenLetter・
+// ThenUnloadLetter）。受け取る Host が pending の行の bytes を付けて Container に送る（handoff-and-contact.md
+// §3.4）。だから Session Front と Coordinator は bytes を持たない。transfer.gc の then（port.remove・
+// relay.remove・cargo.remove）は letterIds だけなので、Container に送る形のまま。
 type TransferThenPayload struct {
 	TransferID string `json:"transferId"`
 	Then       Then   `json:"then"`
 }
+
+// activateThen は transfer.activate の then にできる種類、gcThen は transfer.gc の then にできる種類。
+var (
+	activateThen = []Kind{KindCargoAdd, KindUnload, KindDeliver}
+	gcThen       = []Kind{KindPortRemove, KindRelayRemove, KindCargoRemove}
+)
 
 func (p *TransferThenPayload) validate(c *vctx) *Error {
 	if !validID(p.TransferID) {
@@ -432,13 +443,132 @@ func (p *TransferThenPayload) validate(c *vctx) *Error {
 		return Errorf(CodeInvalid, "payload.then.kind: %q cannot follow a transfer", p.Then.Kind)
 	case !ki.Accepts(c.actor.Role()):
 		return Errorf(CodeInvalid, "payload.then.kind: %q is not for %q", p.Then.Kind, c.actor)
+	case c.kind == KindTransferActivate && !containsKind(activateThen, ki.Kind),
+		c.kind == KindTransferGC && !containsKind(gcThen, ki.Kind):
+		return Errorf(CodeInvalid, "payload.then.kind: %q cannot follow %q", p.Then.Kind, c.kind)
 	}
 	jv, err := parseJSON(p.Then.Payload)
 	if err != nil {
 		return err
 	}
+	if c.kind == KindTransferActivate {
+		_, err = DecodeThenPayload(ki.Kind, p.Then.Payload, c.actor, c.lim)
+		return err
+	}
 	_, err = decodePayload(ki, jv, p.Then.Payload, c.actor, c.lim)
 	return err
+}
+
+func containsKind(ks []Kind, k Kind) bool {
+	for _, x := range ks {
+		if x == k {
+			return true
+		}
+	}
+	return false
+}
+
+// ThenLetter は transfer.activate の then の手紙 1 通（bytes を除いた Letter）。Digest は送り元の Host が
+// prepare で保存した bytes の digest（ACK の digests の値）。
+type ThenLetter struct {
+	LetterID  ferry.LetterID `json:"letterId"`
+	CreatedAt int64          `json:"createdAt"`
+	Digest    string         `json:"digest"`
+}
+
+func (l *ThenLetter) validate(path string, t int64) *Error {
+	switch {
+	case l.LetterID == 0:
+		return Errorf(CodeInvalid, "%s.letterId: must be >= 1", path)
+	case l.CreatedAt < 0 || l.CreatedAt > t:
+		return Errorf(CodeInvalid, "%s.createdAt: must be in [0, t]", path)
+	case !digestRe.MatchString(l.Digest):
+		return Errorf(CodeInvalid, "%s.digest: must be sha256:<64 lowercase hex>", path)
+	}
+	return nil
+}
+
+// ThenUnloadLetter は transfer.activate の then（unload）の手紙 1 通。
+type ThenUnloadLetter struct {
+	ThenLetter
+	Place string `json:"place"`
+}
+
+// ThenLettersPayload は transfer.activate の then（deliver・cargo.add）の payload。
+type ThenLettersPayload struct {
+	T       int64        `json:"t"`
+	Letters []ThenLetter `json:"letters"`
+}
+
+func (p *ThenLettersPayload) validate(c *vctx) *Error {
+	if err := checkT(p.T); err != nil {
+		return err
+	}
+	if err := checkCount(c, "payload.then.payload.letters", len(p.Letters)); err != nil {
+		return err
+	}
+	ids := make([]ferry.LetterID, len(p.Letters))
+	for i := range p.Letters {
+		ids[i] = p.Letters[i].LetterID
+		if err := p.Letters[i].validate("payload.then.payload.letters["+strconv.Itoa(i)+"]", p.T); err != nil {
+			return err
+		}
+	}
+	return checkIDs(c, "payload.then.payload.letters", ids)
+}
+
+// ThenUnloadPayload は transfer.activate の then（unload）の payload。手紙は ID の昇順。
+type ThenUnloadPayload struct {
+	T       int64              `json:"t"`
+	Letters []ThenUnloadLetter `json:"letters"`
+}
+
+func (p *ThenUnloadPayload) validate(c *vctx) *Error {
+	if err := checkT(p.T); err != nil {
+		return err
+	}
+	if err := checkCount(c, "payload.then.payload.letters", len(p.Letters)); err != nil {
+		return err
+	}
+	for i := range p.Letters {
+		l := &p.Letters[i]
+		path := "payload.then.payload.letters[" + strconv.Itoa(i) + "]"
+		if l.Place != PlacePort && l.Place != PlaceRelay {
+			return Errorf(CodeInvalid, "%s.place: must be %q or %q", path, PlacePort, PlaceRelay)
+		}
+		if err := l.ThenLetter.validate(path, p.T); err != nil {
+			return err
+		}
+		if i > 0 && l.LetterID <= p.Letters[i-1].LetterID {
+			return Errorf(CodeInvalid, "payload.then.payload.letters: letter ids must be strictly ascending")
+		}
+	}
+	return nil
+}
+
+// DecodeThenPayload は transfer.activate の then の payload raw（kind は deliver・cargo.add・unload）を厳密に
+// 読んで確かめ、*ThenLettersPayload か *ThenUnloadPayload を返す。
+func DecodeThenPayload(kind Kind, raw json.RawMessage, actor ActorRef, lim Limits) (any, *Error) {
+	var p payload
+	switch kind {
+	case KindDeliver, KindCargoAdd:
+		p = new(ThenLettersPayload)
+	case KindUnload:
+		p = new(ThenUnloadPayload)
+	default:
+		return nil, Errorf(CodeInvalid, "payload.then.kind: %q cannot follow %q", kind, KindTransferActivate)
+	}
+	jv, err := parseJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeStrict(jv, raw, p, "payload.then.payload"); err != nil {
+		return nil, err
+	}
+	if err := p.validate(&vctx{lim: lim, actor: actor, kind: kind}); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // TransferIDPayload は transfer.abort・transfer.status の payload。

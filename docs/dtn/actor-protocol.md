@@ -104,7 +104,7 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 | `contact.open`・`contact.close` | Session Front → 島と船の Host | `{contact}` | Contact を記録する・閉じた ID を保存する（[handoff-and-contact.md §2](./handoff-and-contact.md#2-contact寄港)） |
 | `transfer.prepare` | Session Front → 送り元の Host | `{transferId, t, to, contact, letterIds}`（`t` は送り出す仮想時刻。Bundle Age の計算に使う） | [handoff-and-contact.md §3](./handoff-and-contact.md#3-handoff所有権の引き渡し) |
 | `transfer.accept` | 送り元の Host → 受け取る Host（CLA） | `{transferId, from, contact, bundles: [{letterId, bundle, digest}]}` | 同上 |
-| `transfer.activate` | Session Front → 受け取る Host | `{transferId, then: {kind, payload}}` | 同上。`then` は Container に送る要求（`deliver`・`cargo.add` など） |
+| `transfer.activate` | Session Front → 受け取る Host | `{transferId, then: {kind, payload}}` | 同上。`then` は Container に送る要求（`deliver`・`cargo.add` など）。手紙は bytes を持たず、受け取る Host が pending の bytes を付ける（§7.1） |
 | `transfer.gc` | Session Front → 送り元の Host | `{transferId, then: {kind, payload}}` | 同上。`then` は `port.remove`・`cargo.remove` など |
 | `transfer.abort` | Session Front → 両方の Host | `{transferId}` | 同上 |
 | `transfer.status` | Session Front → どちらかの Host | `{transferId}` | 状態を返す（状態は変えない） |
@@ -187,6 +187,7 @@ Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けの
 - `init` の `payload.actor` はエンベロープの `actor` と同じ。`plan` は島だけで、`origin` はその島
 - §3.1・§3.2 の「すべて」は島と船。Coordinator が受ける種類（§3.3。Coordinator への `init`・`inspect`・`shutdown` を含む）は DTN-05 が種類の表（`kinds.go`）に足す。それまで `coordinator` 宛ての要求は `invalid`
 - §3.2 の種類（Host だけが受ける）が Container に届いたら `invalid`。`transfer.activate`・`transfer.gc` の `then` は、宛先の役割に合う journal に入れる種類（`init`・`shutdown` を除く）で、その payload も同じ規則で確かめる
+- （DTN-08）`transfer.activate` の `then` は `cargo.add`・`deliver`・`unload` だけで、手紙は bytes を持たない `{letterId, createdAt, digest}`（`unload` は ＋`place`。`bundle` を書くと `invalid`。受け取る Host が pending の bytes を付ける）。`transfer.gc` の `then` は `port.remove`・`relay.remove`・`cargo.remove` だけ（[handoff-and-contact.md §3.4](./handoff-and-contact.md#34-実装の細部dtn-08)）
 
 ### 7.2 Runtime（Container の中）
 

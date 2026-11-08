@@ -16,4 +16,4 @@ DTN-01（#158）で、この一覧の「DTN-01 で決める」ものに結論を
 | Q-MOQ-3 | Relay のトークンの権限の細かさ・期限・漏れる経路 | Namespace ごとの厳密な認可があるとは仮定しない。受け取り側で必ず Contact を確かめる | DTN-14 |
 | Q-TRACE | 正規化トレースの `global` の比べ方（時刻ごとの集合）で、見逃すずれがないか | [simulation-time.md §5](./simulation-time.md#5-正規化トレース同等性の基準) のとおり | DTN-00 で参照モデルどうしを壊して確かめた（`server/internal/simtrace` の試験）。検出する: 1 つの島の列の中の順の入れ替え・手紙の時刻のずれ・`global` のイベントの時刻のずれ・欠け・重複・中身の違い・スコアの違い。見逃す（設計どおり）: 同じ時刻の中の `global` の順、同じ時刻の途中の `score.updated`、列をまたぐ同じ時刻の前後。同じ時刻の中の順の違いが最後の状態に効く依頼と島は、§5.3 の 4. の最終の状態で検出する（島の最後の `island.updated` を DTN-00 で足した） |
 | Q-SCORE | 同じ時刻に複数の島で依頼の結果が出たときのスコアの途中経過が、参照モデルと一致するか | [simulation-time.md §3](./simulation-time.md#3-島の出力をまとめる順序) の順で一致する見込み | DTN-05 の試験 |
-| Q-AGE | Bundle Age の更新のために `bundle.export` を挟むことで、積む操作の往復が 1 つ増える。許容できるか | 許容する（積む操作は人の操作の速さ） | DTN-08 |
+| Q-AGE | Bundle Age の更新のために `bundle.export` を挟むことで、積む操作の往復が 1 つ増える。許容できるか | 許容する（積む操作は人の操作の速さ） | DTN-08 で Host の部分を測った（`TestHandoffRoundTrips`。Coordinator の役は試験が持つ）: 1 回の積む操作（3 通）は Coordinator の dispatch 3（prepare・activate・gc）・Container への要求 3（`bundle.export` 1 を含む）・CLA 1。ローカル（SQLite のファイル・同じプロセス）の実時間は約 10 ms。Coordinator（DTN-05）を入れた往復の実測は DTN-11・12 |

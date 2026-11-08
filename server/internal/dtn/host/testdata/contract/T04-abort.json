@@ -1,0 +1,347 @@
+{
+  "name": "T04-abort",
+  "description": "取り消し（committed の前だけ）: 送り元は prepared → held、受け取りは pending の行を消す。2 回目は成功。行の無い transfer の取り消しは墓石を残し、遅れて届いた accept を断る（DTN-08）",
+  "meta": {
+    "sessionId": "s_contract",
+    "actor": "ferry:f1",
+    "epoch": 1
+  },
+  "defaults": {
+    "v": 1,
+    "sessionId": "s_contract",
+    "epoch": 1,
+    "coordEpoch": 1,
+    "actor": "ferry:f1"
+  },
+  "steps": [
+    {
+      "note": "init",
+      "request": {
+        "eventSeq": 1,
+        "kind": "init",
+        "payload": {
+          "stage": "stage1",
+          "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+          "seed": 7,
+          "actor": "ferry:f1"
+        }
+      },
+      "actorReply": {
+        "outputs": [],
+        "cursor": {
+          "horizon": [
+            0,
+            0
+          ],
+          "stateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 1
+        }
+      }
+    },
+    {
+      "note": "accept",
+      "request": {
+        "eventSeq": 3,
+        "kind": "transfer.accept",
+        "payload": {
+          "transferId": "x3",
+          "from": "island:1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "bundles": [
+            {
+              "letterId": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+            },
+            {
+              "letterId": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 3,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.ack",
+              "data": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "abort",
+      "request": {
+        "eventSeq": 4,
+        "kind": "transfer.abort",
+        "payload": {
+          "transferId": "x3"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 4,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.status",
+              "data": {
+                "transferId": "x3",
+                "state": "aborted"
+              }
+            }
+          ]
+        },
+        "rows": {
+          "bundles": [],
+          "transfers": [
+            {
+              "transfer_id": "x3",
+              "role": "dest",
+              "peer": "island:1",
+              "contact_id": "k2",
+              "letter_ids": [
+                1000000001,
+                1000000002
+              ],
+              "digests": [
+                "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+              ],
+              "state": "aborted",
+              "ack": {
+                "transferId": "x3",
+                "digests": [
+                  "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39",
+                  "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "2 回目の abort は成功",
+      "request": {
+        "eventSeq": 4,
+        "kind": "transfer.abort",
+        "payload": {
+          "transferId": "x3"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 4,
+          "error": null
+        }
+      }
+    },
+    {
+      "note": "取り消した transfer の accept は断る",
+      "request": {
+        "eventSeq": 3,
+        "kind": "transfer.accept",
+        "payload": {
+          "transferId": "x3",
+          "from": "island:1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "bundles": [
+            {
+              "letterId": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+            },
+            {
+              "letterId": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 3,
+          "error": {
+            "code": "invalid"
+          }
+        },
+        "rows": {
+          "bundles": []
+        }
+      }
+    },
+    {
+      "note": "行の無い transfer の取り消しは墓石を残す",
+      "request": {
+        "eventSeq": 5,
+        "kind": "transfer.abort",
+        "payload": {
+          "transferId": "x5"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 5,
+          "error": null
+        },
+        "rows": {
+          "transfers": [
+            {
+              "transfer_id": "x3"
+            },
+            {
+              "transfer_id": "x5",
+              "role": "",
+              "peer": "",
+              "contact_id": "",
+              "letter_ids": [],
+              "digests": [],
+              "state": "aborted",
+              "ack": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "墓石の transfer の遅れて届いた accept は断る",
+      "request": {
+        "eventSeq": 5,
+        "kind": "transfer.accept",
+        "payload": {
+          "transferId": "x5",
+          "from": "island:1",
+          "contact": {
+            "contactId": "k2",
+            "sessionId": "s_contract",
+            "island": 1,
+            "ferry": "f1",
+            "islandEpoch": 1,
+            "ferryEpoch": 2,
+            "openedAt": 0,
+            "sig": "dGVzdA=="
+          },
+          "bundles": [
+            {
+              "letterId": 1000000001,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDEtYWdlLTQwMA==",
+              "digest": "sha256:f5f849144d3b19b1ac1508179a8d1281f731c970da4ac49ad21a3adae1709c39"
+            },
+            {
+              "letterId": 1000000002,
+              "bundle": "YnVuZGxlLTEwMDAwMDAwMDItYWdlLTMwMA==",
+              "digest": "sha256:86935153081b6f57f0674318dfb30e710c43b911a29ea34780953e38531745b1"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "error",
+          "eventSeq": 5,
+          "error": {
+            "code": "invalid"
+          }
+        },
+        "rows": {
+          "bundles": []
+        }
+      }
+    },
+    {
+      "note": "status",
+      "request": {
+        "eventSeq": 0,
+        "kind": "transfer.status",
+        "payload": {
+          "transferId": "x5"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 0,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.status",
+              "data": {
+                "transferId": "x5",
+                "state": "aborted",
+                "ack": "$absent"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "status（行が無い）",
+      "request": {
+        "eventSeq": 0,
+        "kind": "transfer.status",
+        "payload": {
+          "transferId": "x6"
+        }
+      },
+      "expect": {
+        "response": {
+          "status": "ok",
+          "eventSeq": 0,
+          "error": null,
+          "outputs": [
+            {
+              "type": "transfer.status",
+              "data": {
+                "transferId": "x6",
+                "state": "none",
+                "ack": "$absent"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
