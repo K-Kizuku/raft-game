@@ -12,6 +12,9 @@ describe("parsePath", () => {
     ["/stages", { name: "stageSelect" }],
     ["/play", { name: "game" }],
     ["/result", { name: "result" }],
+    ["/replay", { name: "replay" }], // RS-1
+    ["/replay/", { name: "replay" }],
+    ["/replay/x", { name: "notFound" }],
     ["/stages/", { name: "stageSelect" }],
     ["/howto/", { name: "howto" }],
     ["/stages/stage1", { name: "stageIntro", stageId: "stage1" }],
@@ -49,6 +52,7 @@ describe("formatRoute", () => {
     [{ name: "stageIntro", stageId: "demo-izu" }, "/stages/demo-izu"],
     [{ name: "game" }, "/play"],
     [{ name: "result" }, "/result"],
+    [{ name: "replay" }, "/replay"], // RS-1
   ];
   it.each(cases)("%j → %s", (route, want) => {
     expect(formatRoute(route)).toBe(want);

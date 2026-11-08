@@ -13,11 +13,17 @@ import {
   type GameConnection,
 } from "../../net/index.ts";
 import { parseRecord, snapshotFromRecord } from "../../net/mock/record.ts";
-import type { Ack, Phase, StageView } from "../../protocol/index.ts";
+import type { Ack, Phase, Snapshot, StageView } from "../../protocol/index.ts";
 import { gameStore } from "../../state/index.ts";
 import { createMockRound } from "../dev/mockRound.ts";
+import { stage1Snapshot } from "../tutorial/testing/stage1World.ts";
 import type { RoundContext } from "../types.ts";
-import { createRoundConnector, type RoundConnector, type RoundLink } from "./connector.ts";
+import {
+  createRoundConnector,
+  type RoundConnector,
+  type RoundLink,
+  type RoundSource,
+} from "./connector.ts";
 import { GameScreen } from "./GameScreen.tsx";
 
 const round: RoundContext = {
@@ -43,7 +49,8 @@ const record = parseRecord(miniRecord);
 type SentCommand = { type: string; payload: unknown; resolve(ack: Ack): void };
 
 // 手で動かす接続と、それを返す RoundConnector（session があれば server、無ければ offline）。
-function manualConnector() {
+// source が replay なら、session によらず replay。
+function manualConnector(source: Exclude<RoundSource, "mock"> = "server") {
   const sent: SentCommand[] = [];
   let handlers: ConnectionHandlers | null = null;
   let status: ConnectionStatus = { state: "idle", attempt: 0, reason: null };
@@ -58,13 +65,13 @@ function manualConnector() {
     setEngineerSubscription() {},
     getStatus: () => status,
   };
-  const link: RoundLink = { source: "server", connection, dispose() {} };
+  const link: RoundLink = { source, connection, dispose() {} };
   const open = vi.fn((_session: unknown, h: ConnectionHandlers) => {
     handlers = h;
     return link;
   });
   const connector: RoundConnector = {
-    modeOf: (session) => (session === null ? "offline" : "server"),
+    modeOf: (session) => (source === "replay" ? "replay" : session === null ? "offline" : "server"),
     open,
   };
   function current(): ConnectionHandlers {
@@ -89,6 +96,11 @@ function manualConnector() {
           { ...snapshotFromRecord(record, { stage: miniStage as StageView }), phase },
           0,
         );
+      });
+    },
+    load(snapshot: Snapshot) {
+      act(() => {
+        current().onSnapshot(snapshot, 0);
       });
     },
   };
@@ -202,5 +214,44 @@ describe("GameScreen", () => {
     });
     expect(onRoundEnd).toHaveBeenCalledTimes(1);
     expect(gameStore.getState().roundResult).not.toBeNull();
+  });
+
+  describe("RS-11 リプレイの接続", () => {
+    const stage1Round: RoundContext = { ...round, session: null };
+    const tutorial = () => screen.queryByRole("complementary", { name: "チュートリアル" });
+    const demoSnapshot = () =>
+      stage1Snapshot({ session: { ...stage1Snapshot().session, demo: true } });
+
+    it("server ではチュートリアルが出て、デモのキーを受け付ける（比べるため）", () => {
+      const m = manualConnector("server");
+      render(<GameScreen round={withSession} onRoundEnd={() => {}} connector={m.connector} />);
+      m.setStatus("ready");
+      m.load(demoSnapshot());
+      expect(tutorial()).not.toBeNull();
+      expect(screen.queryByText("リプレイを再生しています（船の操作はできません）。")).toBeNull();
+      act(() => {
+        fireEvent.keyDown(window, { code: "KeyD", key: "d" });
+      });
+      expect(m.sent.map((x) => x.type)).toContain("demo.trigger");
+    });
+
+    it("リプレイの表示が出て、チュートリアルとデモのキーを出さない", () => {
+      const m = manualConnector("replay");
+      render(<GameScreen round={stage1Round} onRoundEnd={() => {}} connector={m.connector} />);
+      expect(screen.getByText("リプレイを再生しています（船の操作はできません）。")).toBeDefined();
+      m.setStatus("ready");
+      m.load(demoSnapshot());
+      expect(screen.getByText("リプレイを再生しています（船の操作はできません）。")).toBeDefined();
+      expect(tutorial()).toBeNull();
+      expect(screen.queryByText(/サーバーに接続していません/)).toBeNull();
+      expect(screen.queryByText(/開発用の記録を再生しています/)).toBeNull();
+      act(() => {
+        fireEvent.keyDown(window, { code: "KeyD", key: "d" });
+      });
+      expect(m.sent.map((x) => x.type)).not.toContain("demo.trigger");
+      expect(m.sent.map((x) => x.type)).not.toContain("cmd.game.pause");
+      // 船の操作のパネルは出す（操作は記録の再生が ack の失敗にする）。
+      expect(screen.getByRole("region", { name: "フェリー操作" })).toBeDefined();
+    });
   });
 });

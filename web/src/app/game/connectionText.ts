@@ -53,3 +53,11 @@ export function mockNotice(view: RoundConnectionView): string | null {
   }
   return null;
 }
+
+// replayNotice はリプレイ（ADR-0028 R4）の接続のときだけ文言を返す。
+export function replayNotice(view: RoundConnectionView): string | null {
+  if ((view.kind === "preparing" || view.kind === "connected") && view.source === "replay") {
+    return "リプレイを再生しています（船の操作はできません）。";
+  }
+  return null;
+}
