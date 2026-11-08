@@ -44,6 +44,13 @@ export interface FerryToPayload {
   to: number /* uint64 */;
 }
 /**
+ * FerryAutoPayload は cmd.ferry.auto の payload（T-724）。enabled が true なら船 ferryId を novice のボットに任せる。
+ */
+export interface FerryAutoPayload {
+  ferryId: string;
+  enabled: boolean;
+}
+/**
  * SubEngineerPayload は sub.engineer の payload。
  */
 export interface SubEngineerPayload {
@@ -80,7 +87,8 @@ export const AckCodeRelayFull = "relay_full";
 export const AckCodePhaseInvalid = "phase_invalid";
 export const AckCodeRateLimited = "rate_limited";
 export const AckCodeBadRequest = "bad_request";
-export type AckCode = typeof AckCodeFerryNotDocked | typeof AckCodeFerryNotReady | typeof AckCodeFerryBroken | typeof AckCodeCapacityExceeded | typeof AckCodeLetterNotHere | typeof AckCodeNoRoute | typeof AckCodeRouteBlocked | typeof AckCodeRelayFull | typeof AckCodePhaseInvalid | typeof AckCodeRateLimited | typeof AckCodeBadRequest;
+export const AckCodeFeatureDisabled = "feature_disabled";
+export type AckCode = typeof AckCodeFerryNotDocked | typeof AckCodeFerryNotReady | typeof AckCodeFerryBroken | typeof AckCodeCapacityExceeded | typeof AckCodeLetterNotHere | typeof AckCodeNoRoute | typeof AckCodeRouteBlocked | typeof AckCodeRelayFull | typeof AckCodePhaseInvalid | typeof AckCodeRateLimited | typeof AckCodeBadRequest | typeof AckCodeFeatureDisabled;
 /**
  * HTTPErrorCode は公開 API のエラーの本文の code（§2）。
  */
@@ -120,6 +128,7 @@ export const MessageTypeCmdFerryUnload = "cmd.ferry.unload";
 export const MessageTypeCmdFerryAutoload = "cmd.ferry.autoload";
 export const MessageTypeCmdFerryDepart = "cmd.ferry.depart";
 export const MessageTypeCmdRelayLoad = "cmd.relay.load";
+export const MessageTypeCmdFerryAuto = "cmd.ferry.auto";
 export const MessageTypeCmdSync = "cmd.sync";
 export const MessageTypeSubEngineer = "sub.engineer";
 export const MessageTypeDemoTrigger = "demo.trigger";
@@ -142,7 +151,8 @@ export const MessageTypeInternalRestore = "internal.restore";
 export const MessageTypeInternalResult = "internal.result";
 export const MessageTypeInternalPing = "internal.ping";
 export const MessageTypeInternalPong = "internal.pong";
-export type MessageType = typeof MessageTypeHello | typeof MessageTypeCmdGameStart | typeof MessageTypeCmdGamePause | typeof MessageTypeCmdGameSpeed | typeof MessageTypeCmdGameSkip | typeof MessageTypeCmdFerryLoad | typeof MessageTypeCmdFerryUnload | typeof MessageTypeCmdFerryAutoload | typeof MessageTypeCmdFerryDepart | typeof MessageTypeCmdRelayLoad | typeof MessageTypeCmdSync | typeof MessageTypeSubEngineer | typeof MessageTypeDemoTrigger | typeof MessageTypePing | typeof MessageTypeSnapshot | typeof MessageTypeEvents | typeof MessageTypeAck | typeof MessageTypeNodeDetail | typeof MessageTypeRoundResult | typeof MessageTypeError | typeof MessageTypePong | typeof MessageTypeInternalInit | typeof MessageTypeInternalRestore | typeof MessageTypeInternalResult | typeof MessageTypeInternalPing | typeof MessageTypeInternalPong;
+export const MessageTypeInternalInput = "internal.input";
+export type MessageType = typeof MessageTypeHello | typeof MessageTypeCmdGameStart | typeof MessageTypeCmdGamePause | typeof MessageTypeCmdGameSpeed | typeof MessageTypeCmdGameSkip | typeof MessageTypeCmdFerryLoad | typeof MessageTypeCmdFerryUnload | typeof MessageTypeCmdFerryAutoload | typeof MessageTypeCmdFerryDepart | typeof MessageTypeCmdRelayLoad | typeof MessageTypeCmdFerryAuto | typeof MessageTypeCmdSync | typeof MessageTypeSubEngineer | typeof MessageTypeDemoTrigger | typeof MessageTypePing | typeof MessageTypeSnapshot | typeof MessageTypeEvents | typeof MessageTypeAck | typeof MessageTypeNodeDetail | typeof MessageTypeRoundResult | typeof MessageTypeError | typeof MessageTypePong | typeof MessageTypeInternalInit | typeof MessageTypeInternalRestore | typeof MessageTypeInternalResult | typeof MessageTypeInternalPing | typeof MessageTypeInternalPong | typeof MessageTypeInternalInput;
 /**
  * Envelope は WebSocket の電文 1 つ（§3）。
  */
@@ -400,6 +410,13 @@ export interface HealthzResponse {
  */
 export interface StagesResponse {
   stages: StageSummary[];
+  features: Features;
+}
+/**
+ * Features は、その Worker（standalone ではプロセス）で有効な任意の機能（T-724）。画面が切り替えを出すかを決める。
+ */
+export interface Features {
+  autoFerry: boolean; // 自動航行（cmd.ferry.auto）。Worker の変数 AUTO_FERRY が "1"、standalone は --auto-ferry
 }
 /**
  * StageSummary はステージ選択の 1 行。
@@ -469,6 +486,11 @@ export interface InternalInitPayload {
   stageId: string;
   seed: number /* uint64 */;
   demo: boolean;
+  /**
+   * AutoFerry は自動航行（cmd.ferry.auto）を受け付けるか（Worker の変数 AUTO_FERRY が "1"。T-724）。
+   * 省略・false なら、コンテナは cmd.ferry.auto を feature_disabled で断る。
+   */
+  autoFerry?: boolean;
 }
 /**
  * InternalRestorePayload は internal.restore の payload。
@@ -648,6 +670,10 @@ export interface Session {
    * Build はコンテナのビルドの識別子（/healthz の build と同じ）。DO が保存して入力ログの build に入れる。
    */
   build?: string;
+  /**
+   * AutoFerries は自動航行（cmd.ferry.auto）にしている船の ID（昇順。T-724）。ひとつもなければキーを出さない。
+   */
+  autoFerries?: string[];
 }
 /**
  * StageView は Snapshot の stage（§5.1）。

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestSingleInitSnapshot(t *testing.T) {
 	st, _ := ts.srv.cat.Lookup("alpha")
 	wantSession := protocol.Session{ID: "s_test.1", StageID: "alpha", Seed: 7, Demo: false, Restored: false,
 		StageHash: st.Hash, Build: testBuild}
-	if snap.Protocol != 1 || snap.Session != wantSession {
+	if snap.Protocol != 1 || !reflect.DeepEqual(snap.Session, wantSession) {
 		t.Errorf("protocol %d session %+v, want %+v", snap.Protocol, snap.Session, wantSession)
 	}
 	if !strings.HasPrefix(snap.Session.StageHash, "sha256:") {

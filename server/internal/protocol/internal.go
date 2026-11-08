@@ -4,6 +4,7 @@ import "encoding/json"
 
 // 内部の電文（§9。Durable Object ⇔ コンテナ）の payload。
 // internal.result の payload は RoundResult、internal.ping・internal.pong は {}。
+// internal.input（コンテナ → DO）の payload は InputCommand（ボットが適用したコマンド 1 件。T-724）。
 
 // InternalInitPayload は internal.init の payload。
 type InternalInitPayload struct {
@@ -11,6 +12,9 @@ type InternalInitPayload struct {
 	StageID   string `json:"stageId"`
 	Seed      uint64 `json:"seed"`
 	Demo      bool   `json:"demo"`
+	// AutoFerry は自動航行（cmd.ferry.auto）を受け付けるか（Worker の変数 AUTO_FERRY が "1"。T-724）。
+	// 省略・false なら、コンテナは cmd.ferry.auto を feature_disabled で断る。
+	AutoFerry bool `json:"autoFerry,omitempty"`
 }
 
 // InternalRestorePayload は internal.restore の payload。

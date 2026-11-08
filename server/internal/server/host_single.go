@@ -221,6 +221,7 @@ func (h *singleHost) open(p protocol.InternalInitPayload, restore *protocol.Inte
 	params.demo = p.Demo
 	params.restored = restore != nil
 	params.paused = restore != nil
+	params.autoFerry = p.AutoFerry // Durable Object が Worker の変数 AUTO_FERRY で決める（T-724）
 	params.engine = engine
 	sess := newSession(srv.baseCtx, params)
 	sess.start()

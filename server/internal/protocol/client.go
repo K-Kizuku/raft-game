@@ -36,6 +36,12 @@ type FerryToPayload struct {
 	To      uint64 `json:"to"`
 }
 
+// FerryAutoPayload は cmd.ferry.auto の payload（T-724）。enabled が true なら船 ferryId を novice のボットに任せる。
+type FerryAutoPayload struct {
+	FerryID string `json:"ferryId"`
+	Enabled bool   `json:"enabled"`
+}
+
 // SubEngineerPayload は sub.engineer の payload。
 type SubEngineerPayload struct {
 	Enabled bool   `json:"enabled"`

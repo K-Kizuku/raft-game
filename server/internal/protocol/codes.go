@@ -15,6 +15,7 @@ const (
 	AckCodePhaseInvalid     AckCode = "phase_invalid"
 	AckCodeRateLimited      AckCode = "rate_limited"
 	AckCodeBadRequest       AckCode = "bad_request"
+	AckCodeFeatureDisabled  AckCode = "feature_disabled"
 )
 
 // AckCodes は AckCode をすべて、定義の順に返す。呼ぶたびに新しいスライスを返す。
@@ -31,6 +32,7 @@ func AckCodes() []AckCode {
 		AckCodePhaseInvalid,
 		AckCodeRateLimited,
 		AckCodeBadRequest,
+		AckCodeFeatureDisabled,
 	}
 }
 

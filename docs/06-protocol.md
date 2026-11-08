@@ -108,7 +108,8 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
       "learning": ["log_replication", "commit", "quorum", "prevote"],
       "demo": false
     }
-  ]
+  ],
+  "features": { "autoFerry": true }
 }
 ```
 
@@ -116,6 +117,7 @@ Worker（`web/worker/routes/`）が返す本文はすべて JSON で、ヘッダ
 - `intro` はステージ定義の `intro`（[データ仕様 §5.2](./07-data-spec.md)）。`text` は加工しない文章、`provenance` は[データ仕様 §1](./07-data-spec.md) の出典区分（`fact`・`derived`・`creative`）。`source` は出典（`dataset`・`region`・`field`・`quote`）で、書いていなければ `null`。`quote` は引用がなければ `null`（どちらもキーを省かない）
 - `learning` は学べることのキー（[データ仕様 §5.4](./07-data-spec.md)）。書いていなければ `[]`（`null` にしない）
 - `demo` はデモ用のステージ（ステージ定義に `demo` がある）。`true` のステージだけ、`POST /api/sessions` で `demo: true` を送ってよい
+- `features` は、その Worker で有効な任意の機能（Go の `protocol.Features`。T-724）。`autoFerry` は自動航行（`cmd.ferry.auto`、§4）を受け付けるか（Worker の変数 `AUTO_FERRY` が `"1"` なら `true`、それ以外・未設定は `false`。`standalone` は `--auto-ferry`）。画面は `false` なら自動航行の切り替えを出さない。後方互換なフィールドの追加です（§8）
 - 一覧は、ビルドのときに `server/cmd/stagecatalog` が `data/`（`data/stages/*.yaml` と `data/islands.json`）から作り、Worker に同梱した `web/worker/routes/stage-catalog.gen.json`（生成物。コミットする）。Worker は一覧のためにコンテナも Durable Object も起こさない（[ADR-0018](./adr/0018-cost-guard.md)）。Worker は読み込みのときに生成物の形を厳密に確かめ、壊れていれば起動に失敗する
   - `data/stages/`・`data/islands.json`・`protocol.StageSummary` を変えたら、リポジトリのルートで作り直す。古ければ `go -C server test ./...` が失敗する
 
@@ -376,6 +378,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `cmd.ferry.autoload` | `{ "ferryId": "f1", "to": 2 }` | おまかせ積み込み。港の手紙のうち `to` 宛てのものを、ゲームデザイン §3.4 の順に空きの数だけ積む。`to` への直接の航路がなければ `no_route`、積む手紙がなければ `letter_not_here`、満載なら `capacity_exceeded` | P0 |
 | `cmd.ferry.depart` | `{ "ferryId": "f1", "to": 2 }` | 出航 | P0 |
 | `cmd.relay.load` | `{ "ferryId": "f1", "letterIds": [20] }` | いまいる島の中継倉庫の手紙を、渡した順に積む（どの船でもよい。検査は `cmd.ferry.load` と同じ。倉庫にない手紙は `letter_not_here`） | P1 |
+| `cmd.ferry.auto` | `{ "ferryId": "f2", "enabled": true }` | 自動航行。`enabled: true` で船 `ferryId` を初心者のボット `novice` に任せ、`false` で手動に戻す（T-724）。注記は表の下 | P1 |
 | `cmd.sync` | `{}` | スナップショットを要求する | P0 |
 | `sub.engineer` | `{ "enabled": true, "nodeId": 2 }` | エンジニアモードの購読（`nodeId` の詳細 `node.detail` を、すぐに 1 つと、以後 2Hz で送る）。`{ "enabled": false }` でやめる（`nodeId` は見ない）。注記は表の下 | P0 |
 | `demo.trigger` | `{ "event": "storm" }` | デモ用。ステージ定義の `demo.storm`（対象の航路・時間）で嵐を起こす。デモ操作が有効なセッションだけ。嵐は送った時刻に始まり、`demo.storm.durationMs` だけ続く（予報なし。嵐の途中でもう一度送ると遮断が延びる）。成功すると `ok: true` の `ack`（`t` は起こした時刻）を返し、入力ログに記録してリプレイで再現する | P0 |
@@ -388,6 +391,13 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 - `enabled: true` は購読するノードを置き換え、すぐにそのノードの `node.detail` を 1 つ送る（保留のイベントがあれば先に送る）。`enabled: false` は購読していなくても成功する
 - 購読をやめる時機: `enabled: false`・同じセッションへの新しい接続（古い接続の購読を引き継がない）・切断。クライアントは再接続して `snapshot` を受けた後に送り直す（§10.5）
 - Intro（`cmd.game.start` の前）は、購読は受け付けるが `node.detail` を送らない（`snapshot` の `nodes` は開会式の前の値なので）。開始後の最初のまとめ送りから送る。`snapshot` を送る前（standalone の `hello` の前）と、送信キューが詰まっているとき（`events` と同じ基準）も送らない。一時停止中・ラウンドの終了後は、購読中なら 2Hz で送り続ける
+
+`cmd.ferry.auto` の注記（T-724。[DesignDoc §12.4「自動航行」](./03-design-doc.md#自動航行t-724)）:
+
+- 返事: `cmdId` は必須（ない電文は `error`（`bad_request`、偽））。成功は `ok: true` の `ack`（`t` はいまのゲーム内時刻）。すでにその状態でも成功する。Intro（`cmd.game.start` の前）でも受け付ける
+- 誤り: 自動航行が無効（Worker の変数 `AUTO_FERRY` が `"1"` でない。`standalone` は `--auto-ferry=false`）→ `feature_disabled`。payload の誤り（`ferryId` が空・ない・文字列でない、`enabled` がない・真偽値でない）・ステージにない船 → `bad_request`。ラウンドの終了後 → `phase_invalid`。誤りのときは状態を変えない
+- 自動の船は、航行中のステップごとにボットが操作する（一時停止中・ラウンドの終わりは動かさない）。ボットの操作は、プレイヤーの操作と同じく入力ログに入る（コンテナが `internal.input` で Durable Object に知らせる。§9）。プレイヤーが自動の船にコマンドを送ってもサーバーは断らない（画面が受け付けない）
+- `cmd.ferry.auto` 自体は Engine に触れないので、入力ログに記録しない。自動の船の一覧は `snapshot` の `session.autoFerries`（§5.1）。`internal.restore` で作り直したセッションでは、すべての船が手動に戻る
 
 ### 4.1 コマンドの検証とエラーコード
 
@@ -406,6 +416,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 | `phase_invalid` | いまのフェーズでは使えないコマンド |
 | `rate_limited` | コマンドが多すぎる |
 | `bad_request` | 形式が不正 |
+| `feature_disabled` | その機能が無効（`cmd.ferry.auto` で、Worker の変数 `AUTO_FERRY` が `"1"` でない。T-724） |
 
 - `cmd.game.pause`・`cmd.game.speed`・`cmd.game.skip` の失敗の `code`: payload の誤り（必須のキーがない・型が違う・`until` が `next_notable` でない）・使えない速度・デモ操作が有効でないセッションの `skip` は `bad_request`。ラウンドの終了後の 3 種類と、Intro（`cmd.game.start` の前）の `skip` は `phase_invalid`（Intro の `pause`・`speed` は受け付ける）
 - `demo.trigger` の失敗の `code`: payload の誤り（`event` が `storm` でない）・デモ操作が有効でないセッション・ステージに `demo.storm` がない → `bad_request`。航行中でない（Intro・終了後）→ `phase_invalid`
@@ -510,6 +521,7 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 - `stageHash` はステージ定義のハッシュ（`"sha256:"` ＋ 64 桁の 16 進）、`build` はコンテナのビルドの識別子（`/healthz` の `build` と同じ）。DO はこの 2 つを保存して、入力ログの `stageHash`・`build` に入れる（§9）。Go は常に送る（TS の生成した型では、既存の例との互換のため省略可能にしている）
 - `restored` は `internal.restore` で作り直したセッションなら `true`
+- `autoFerries` は自動航行（`cmd.ferry.auto`、§4）にしている船の ID の昇順（例: `["f2"]`）。ひとつもなければキーを出さない（T-724）
 
 ### 5.2 Letter
 
@@ -668,14 +680,15 @@ DO が自分で送る `error`（§5 の `error` と同じ形。`fatal: true`。�
 
 ## 9. 内部の電文（Durable Object ⇔ コンテナ）
 
-Durable Object だけが送る電文です。ブラウザから届いた `internal.*` は、Durable Object が破棄します。エンベロープは §3 と同じです。
+Durable Object とコンテナの間だけの電文です。ブラウザから届いた `internal.*` は、Durable Object が破棄します。エンベロープは §3 と同じです。
 
 | type | 方向 | payload | 説明 |
 |---|---|---|---|
-| `internal.init` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false }` | 新しいゲームを始める。コンテナは `snapshot` を返す |
-| `internal.restore` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "inputLog": InputLog, "until": 61200 }` | コンテナが止まった後の復元。コンテナは `sim.Replay` で入力ログの最後の時刻（`until` があればその時刻）まで進め、一時停止の状態で `snapshot`（`session.restored: true`）を返す |
+| `internal.init` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "autoFerry": true }` | 新しいゲームを始める。コンテナは `snapshot` を返す。`autoFerry` は Worker の変数 `AUTO_FERRY` が `"1"` のときだけ `true` を入れる（それ以外はキーを省く。省くとコンテナは `cmd.ferry.auto` を `feature_disabled` で断る。T-724） |
+| `internal.restore` | DO → コンテナ | `{ "sessionId": "s_…", "stageId": "stage2", "seed": 20261101, "demo": false, "autoFerry": true, "inputLog": InputLog, "until": 61200 }`（`autoFerry` は `internal.init` と同じ） | コンテナが止まった後の復元。コンテナは `sim.Replay` で入力ログの最後の時刻（`until` があればその時刻）まで進め、一時停止の状態で `snapshot`（`session.restored: true`）を返す |
 | `internal.result` | コンテナ → DO | `RoundResult`（§5.5） | ラウンドの終了時。DO が SQLite に保存する（ブラウザには別に `round.result` が届く） |
 | `internal.ping` / `internal.pong` | 双方向 | `{}` | 死活監視（5 秒ごと）。3 回続けて応答がなければ、DO はコンテナが止まったとみなして復元する |
+| `internal.input` | コンテナ → DO | `{ "t": 3000, "cmd": { "type": "cmd.ferry.depart", "payload": { "ferryId": "f2", "to": 3 } } }`（入力ログの 1 件） | 自動航行の船のボットが適用したコマンド 1 件（T-724）。DO が入力ログに追記する（ブラウザには送らない）。適用した順に送るので、`ack` と合わせた記録の順は Engine の入力ログと同じ。`standalone` は送らない |
 
 `InputLog` の形式は [DesignDoc §10.1](./03-design-doc.md) のとおりです。`until` は省略できます（ゲーム内のミリ秒。0 か省略なら入力ログの最後のコマンドの `t`）。DO は最後に中継した `clock.t` を入れます。入力ログの `stageHash`・`build` は、コンテナが `snapshot` の `session.stageHash`・`session.build`（§5.1）で知らせた値を DO が保存して入れます。
 

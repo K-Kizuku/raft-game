@@ -97,7 +97,7 @@ func TestHTTPStandalone(t *testing.T) {
 		`"learning":[],"demo":false},` +
 		`{"id":"omega","title":"テストの外海","region":"波間県（架空）","islands":3,"ferries":1,"durationMs":180000,"unlock":"alpha",` +
 		`"intro":{"text":"架空の穏やかな海です。","provenance":"derived","source":{"dataset":"fixture-2026","region":"星砂地域","field":"NATURAL_CLIMATE_FEATURES","quote":null}},` +
-		`"learning":[],"demo":false}]}`
+		`"learning":[],"demo":false}],"features":{"autoFerry":false}}`
 	if string(body) != want {
 		t.Errorf("GET /api/stages =\n%s\nwant\n%s", body, want)
 	}

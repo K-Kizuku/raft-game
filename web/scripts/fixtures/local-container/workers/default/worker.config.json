@@ -23,6 +23,10 @@
       "type": "text",
       "value": "1"
     },
+    "AUTO_FERRY": {
+      "type": "text",
+      "value": "1"
+    },
     "BUILD_ID": {
       "type": "text",
       "value": "git:fixture"

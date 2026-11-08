@@ -103,6 +103,7 @@ func (s *session) step(now time.Time) {
 		adv, s.rem = advance(elapsed, s.speedPermille, s.rem)
 		if adv > 0 {
 			s.runTo(s.engine.Now() + adv)
+			s.driveAutos()
 		}
 	})
 }

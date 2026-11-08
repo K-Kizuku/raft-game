@@ -73,6 +73,8 @@ const SECRETS = ["SESSION_SIGNING_KEY", "TURNSTILE_SECRET", "ADMIN_TOKEN"] as co
 const RUN_WORKER_FIRST = ["/api/*", "/ws/*"];
 const RATE_LIMIT = { limit: 10, period: 60 };
 const BUILD_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
+// 自動航行のスイッチ（T-724）。cloudflare.config.ts の AUTO_FERRY と同じ値（切り戻すときは両方を "0" にする）
+const AUTO_FERRY = "1";
 const GUARDS_KEYS = [
   "acceptGames",
   "budget",
@@ -89,6 +91,7 @@ export function expectedEnvKeys(mode: Mode): string[] {
   const e = EXPECTED[mode];
   const keys = [
     "DEMO_CONTROLS",
+    "AUTO_FERRY",
     "BUILD_ID",
     "CONTAINER_INSTANCE",
     "COST_GUARD",
@@ -314,6 +317,7 @@ export function checkOutput(out: BuildOutput, mode: Mode): string[] {
 
   // 9. 文字列
   checkText(env, "DEMO_CONTROLS", e.demoControls, errors);
+  checkText(env, "AUTO_FERRY", AUTO_FERRY, errors);
   checkText(env, "CONTAINER_INSTANCE", e.instance, errors);
   if (e.host !== undefined) checkText(env, "ALLOWED_ORIGINS", ALLOWED_ORIGINS, errors);
   const buildId = env["BUILD_ID"];

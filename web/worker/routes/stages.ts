@@ -3,7 +3,7 @@
 // 一覧は、ビルドのときに server/cmd/stagecatalog が data/ から作った stage-catalog.gen.json（T-311）。
 // コンテナ・Durable Object・CostGuard に触れない（ADR-0018）。
 
-import type { Env } from "./env.ts";
+import { autoFerryEnabled, type Env } from "./env.ts";
 import { json } from "./http.ts";
 import type { RequestContext, WorkerDeps } from "./ports.ts";
 
@@ -41,6 +41,15 @@ export function visibleStages(stages: readonly StageSummary[], env: Env): readon
   return stages.filter((stage) => !stage.demo);
 }
 
+// features は、その Worker で有効な任意の機能（Go の protocol.Features。T-724）。画面が切り替えを出すかを決める。
+export interface Features {
+  readonly autoFerry: boolean;
+}
+
+export function featuresOf(env: Env): Features {
+  return { autoFerry: autoFerryEnabled(env) };
+}
+
 export function handleStages(ctx: RequestContext, deps: WorkerDeps): Response {
-  return json({ stages: visibleStages(deps.stages, ctx.env) }, 200);
+  return json({ stages: visibleStages(deps.stages, ctx.env), features: featuresOf(ctx.env) }, 200);
 }

@@ -207,7 +207,7 @@ func TestStandaloneStagesOnlyDemo(t *testing.T) {
 	t.Parallel()
 	ts := newDemoCatalogServer(t, demoStageCatalog(t, false), false)
 	body, _ := getStages(t, ts)
-	if want := `{"stages":[]}`; string(body) != want {
+	if want := `{"stages":[],"features":{"autoFerry":false}}`; string(body) != want {
 		t.Errorf("GET /api/stages = %s, want %s", body, want)
 	}
 }

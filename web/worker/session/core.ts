@@ -8,12 +8,12 @@
 // 送ったら running → 「終わり」で ended（戻らない）。ブラウザの接続 1 本に、コンテナへの WebSocket を 1 本張る。
 //
 // 入力ログと復元（T-308b）: ブラウザのコマンドを cmdId ごとに覚え、コンテナの ack が ok: true なら
-// input_log に記録する。コンテナが止まったと判断したら（monitor の終わり・ソケットの close・死活監視など）
+// input_log に記録する。自動航行の船のボットの操作（T-724）は、コンテナの internal.input をそのまま記録する。コンテナが止まったと判断したら（monitor の終わり・ソケットの close・死活監視など）
 // ブラウザを 1011 で閉じ、次の /connect（トークンの確認の後）で起動し直して internal.restore を送る。
 
 import type { CostGuardClient } from "../admin/client.ts";
 import { containerInstanceOf } from "../admin/ports.ts";
-import type { Env } from "../routes/env.ts";
+import { autoFerryEnabled, type Env } from "../routes/env.ts";
 import { errorResponse, json, readJsonBody } from "../routes/http.ts";
 import { SESSION_TOKEN_PATTERN, hashSessionToken } from "../security/token.ts";
 import { desiredAlarmAt } from "./alarm.ts";
@@ -30,6 +30,7 @@ import {
   exceedsBytes,
   utf8Bytes,
   type AckInfo,
+  type BotInput,
   type ContainerMessage,
 } from "./envelope.ts";
 import {
@@ -56,6 +57,8 @@ import {
   buildInputLogJson,
   buildRestoreMessage,
   commandJson,
+  initPayload,
+  isBotCommandType,
   recordDecision,
   restoreUntil,
 } from "./restore.ts";
@@ -797,22 +800,16 @@ export class GameSessionCore {
     for (const item of conn.buffer.splice(0)) this.#sendToContainer(conn, socket, item);
   }
 
+  // AUTO_FERRY（T-724）は autoFerry で渡す（"1" のときだけキーを入れる）。cmd.ferry.auto を断る ack
+  // （feature_disabled）はコンテナが返す（DO は seq を持つ ack を作れないため）。
   #firstMessage(row: SessionRow): string {
+    const autoFerry = autoFerryEnabled(this.#env);
     if (row.stageHash === null) {
-      return JSON.stringify({
-        v: 1,
-        type: "internal.init",
-        payload: {
-          sessionId: row.sessionId,
-          stageId: row.stageId,
-          seed: row.seed,
-          demo: row.demo,
-        },
-      });
+      return JSON.stringify({ v: 1, type: "internal.init", payload: initPayload(row, autoFerry) });
     }
     const commands = readInputLog(this.#ctx.storage.sql);
     const until = restoreUntil(this.#clock(), commands.at(-1)?.t ?? null);
-    const message = buildRestoreMessage(row, commands, until);
+    const message = buildRestoreMessage(row, commands, until, autoFerry);
     this.#log("info", "session.restore", {
       commands: commands.length,
       until,
@@ -994,16 +991,43 @@ export class GameSessionCore {
   #onAck(ack: AckInfo): void {
     const entry = this.#awaitingAck.take(ack.cmdId);
     if (entry === undefined || !ack.ok) return;
+    this.#append(ack.t, entry.cmd, entry.bytes);
+  }
+
+  // internal.input（自動航行の船のボットが適用したコマンド。T-724）を記録する。ボットの操作はコンテナで適用済みなので、
+  // ブラウザのコマンドと違って送る前に止められない。形が違う・ボットが出さない種類・上限を超えるものは記録せず warn。
+  #onBotInput(input: BotInput | null): void {
+    if (input === null || !isBotCommandType(input.type)) {
+      this.#log("warn", "session.error", { op: "input_log_bot", error: "malformed" });
+      return;
+    }
+    const cmd = commandJson(input.type, input.payload);
+    const bytes = utf8Bytes(cmd);
     const stats = this.#stats();
-    if (stats.lastT !== null && ack.t < stats.lastT) {
+    if (
+      stats.rows + this.#awaitingAck.size >= MAX_INPUT_LOG_ROWS ||
+      stats.bytes + this.#awaitingAck.bytes + bytes > MAX_INPUT_LOG_BYTES
+    ) {
+      if (!this.#logFullWarned) {
+        this.#logFullWarned = true;
+        this.#log("warn", "input_log.full", { rows: stats.rows, bytes: stats.bytes });
+      }
+      return;
+    }
+    this.#append(input.t, cmd, bytes);
+  }
+
+  #append(t: number, cmd: string, bytes: number): void {
+    const stats = this.#stats();
+    if (stats.lastT !== null && t < stats.lastT) {
       // Go は Now() を返すので起きない。sim.Replay は時刻の逆転を誤りにするので記録しない。
       this.#log("warn", "session.error", { op: "input_log_order" });
       return;
     }
-    appendInputLog(this.#ctx.storage.sql, ack.t, entry.cmd);
+    appendInputLog(this.#ctx.storage.sql, t, cmd);
     stats.rows += 1;
-    stats.bytes += entry.bytes;
-    stats.lastT = ack.t;
+    stats.bytes += bytes;
+    stats.lastT = t;
   }
 
   // ---- 最後の clock.t ----
@@ -1049,10 +1073,14 @@ export class GameSessionCore {
       this.#track(this.#endSession("round_ended"));
       return;
     }
-    // ack は、置き換えた・ブラウザが閉じた接続のソケットから届いても、いまのコンテナのものなら記録に使う
-    // （Go は ack を「いまの接続」に送るので、どちらのソケットにも届きうる）。
+    // ack・internal.input は、置き換えた・ブラウザが閉じた接続のソケットから届いても、いまのコンテナのものなら
+    // 記録に使う（Go は「いまの接続」に送るので、どちらのソケットにも届きうる）。
     if (message.kind === "forward" && message.ack !== null && watchGen === this.#watchGen) {
       this.#onAck(message.ack);
+    }
+    if (message.kind === "input") {
+      if (watchGen === this.#watchGen) this.#onBotInput(message.input);
+      return; // ブラウザに送らない（internal.*）
     }
     // ほかの電文は、置き換えた・ブラウザが閉じた接続のソケットから届いたら、すべて捨てる。
     if (!this.#isCurrent(conn)) return;
@@ -1063,6 +1091,7 @@ export class GameSessionCore {
   #handleContainerMessage(conn: Connection, data: string, message: ContainerMessage): void {
     switch (message.kind) {
       case "result":
+      case "input":
         return; // #onContainerMessage で扱う
       case "ping":
         if (conn.container !== null) safeSend(conn.container, PONG);
