@@ -267,3 +267,83 @@
     stroke-dashoffset: -16.1;
   }
 }
+
+/* ===== 出港の絵（DepartureArt・T-436） ===== */
+
+.departure-art-sea {
+  fill: var(--color-sea-light);
+  stroke: var(--art-line);
+  stroke-width: 2.5;
+}
+
+.departure-art-grid {
+  fill: none;
+  stroke: var(--color-sea-deep);
+  stroke-width: 1;
+  opacity: 0.18;
+}
+
+.departure-art-wave {
+  fill: none;
+  stroke: var(--color-sea-deep);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.4;
+}
+
+.departure-art-route {
+  fill: none;
+  stroke: var(--color-postal);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 10;
+  opacity: 0.75;
+}
+
+/* 動き（動きを減らす設定のときは動かさず、船を港の少し沖に止めて描く。docs/11-visual-design.md §10） */
+@media (prefers-reduced-motion: no-preference) {
+  .departure-art-sail {
+    animation: departure-art-sail 4.5s ease-in-out infinite;
+  }
+
+  .departure-art-ship {
+    transform-box: fill-box;
+    transform-origin: 50% 80%;
+    animation: title-art-bob 2.2s ease-in-out infinite;
+  }
+
+  .departure-art-waves {
+    animation: title-art-drift 5s ease-in-out infinite alternate;
+  }
+
+  .departure-art-route {
+    animation: departure-art-route 1.5s linear infinite;
+  }
+}
+
+/* 船が港を出て沖へ進み、見えなくなったら港からもう一度出る */
+@keyframes departure-art-sail {
+  0% {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  15% {
+    opacity: 1;
+  }
+
+  80% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(140px);
+  }
+}
+
+@keyframes departure-art-route {
+  to {
+    stroke-dashoffset: -10.1;
+  }
+}

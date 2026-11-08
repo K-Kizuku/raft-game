@@ -5,6 +5,7 @@
 import type { ReactElement } from "react";
 
 import { MapView } from "../../game/MapView.tsx";
+import { DepartureArt } from "../../ui/art/DepartureArt.tsx";
 import { GameCommandProvider } from "../../ui/commands/GameCommands.tsx";
 import { DemoKeys } from "../../ui/demo/DemoKeys.tsx";
 import { EngineerPanel } from "../../ui/engineer/EngineerPanel.tsx";
@@ -40,6 +41,9 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
   // 出航・到着・配達・確定・嵐の予報で効果音を鳴らす（T-434）。リプレイでも同じストアなので鳴る。
   useGameSounds();
   const notice = connectionNotice(view);
+  // 待ち時間（接続の準備中・接続中）はマップの中央に出港の絵と出し、それ以外（再接続中・失敗）は隅の札に出す。
+  const departing = notice?.departing === true ? notice : null;
+  const corner = notice !== null && notice.departing !== true ? notice : null;
   const mock = mockNotice(view);
   const replay = replayNotice(view);
   // リプレイ（ADR-0028 R4）では、チュートリアル（自動の一時停止を送る）とデモの操作を出さず、
@@ -62,15 +66,22 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
             <section aria-label="お知らせ" aria-live="polite" className="game-notifications">
               <Notifications />
             </section>
-            {(notice !== null || mock !== null || replay !== null || replaying) && (
+            {departing !== null && (
+              // 出航を押してからゲームが始まるまで（T-436）。マップの中央に出港の絵と文言を出す。
+              <div role="status" className="game-departure">
+                <DepartureArt className="game-departure-art" />
+                <p>{departing.text}</p>
+              </div>
+            )}
+            {(corner !== null || mock !== null || replay !== null || replaying) && (
               <div className="game-connection">
-                {notice !== null && (
+                {corner !== null && (
                   <div
-                    role={notice.tone === "error" ? "alert" : "status"}
-                    className={`game-connection-notice game-connection-${notice.tone}`}
+                    role={corner.tone === "error" ? "alert" : "status"}
+                    className={`game-connection-notice game-connection-${corner.tone}`}
                   >
-                    <p>{notice.text}</p>
-                    {notice.tone === "error" && (
+                    <p>{corner.text}</p>
+                    {corner.tone === "error" && (
                       <Link to={{ name: "stageSelect" }}>ステージ選択へ</Link>
                     )}
                   </div>

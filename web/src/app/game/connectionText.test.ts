@@ -12,7 +12,7 @@ function connected(
   return { kind: "connected", source, status: { state, attempt: 1, reason } };
 }
 
-const CONNECTING = { text: "サーバーに接続しています…", tone: "info" };
+const CONNECTING = { text: "出航の準備をしています…", tone: "info", departing: true };
 
 describe("connectionNotice", () => {
   it.each<{ name: string; view: RoundConnectionView; want: unknown }>([
