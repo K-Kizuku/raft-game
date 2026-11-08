@@ -92,7 +92,12 @@ describe("HudBar", () => {
     expect(text(container, ".hud-fest")).toContain("62%");
     const list = screen.getByRole("list", { name: "重要な資源" });
     const items = [...list.querySelectorAll("li")];
-    expect(items.map((li) => li.textContent)).toEqual(["🎆大花火 A（確定）", "🎆大花火 B（まだ）"]);
+    expect(items.map((li) => li.textContent)).toEqual(["大花火 A（確定）", "大花火 B（まだ）"]);
+    for (const li of items) {
+      expect(li.querySelector('svg[data-icon="firework"]')?.getAttribute("aria-hidden")).toBe(
+        "true",
+      );
+    }
     expect(items[0]?.className).toContain("is-secured");
     expect(items[1]?.className).not.toContain("is-secured");
     cleanup();

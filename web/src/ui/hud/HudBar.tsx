@@ -7,6 +7,7 @@ import type { ReactElement } from "react";
 import type { Ack } from "../../protocol/index.ts";
 import { useGameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
+import { FireworkIcon } from "../art/icons/Firework.tsx";
 import { useGameCommand } from "../commands/GameCommands.tsx";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
 import {
@@ -61,7 +62,7 @@ function HudContent({ world }: { world: World }): ReactElement {
                   className={secured ? "hud-critical is-secured" : "hud-critical"}
                   title={r.label}
                 >
-                  <span aria-hidden="true">🎆</span>
+                  <FireworkIcon />
                   <span className="visually-hidden">
                     {r.label}（{secured ? "確定" : "まだ"}）
                   </span>
