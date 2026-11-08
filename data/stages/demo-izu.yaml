@@ -1,4 +1,4 @@
-# デモ（伊豆版・サブ）。値は進行表 §8・データ仕様 §4.5・§5.3・§5.5 のとおり（調整は T-501。T-501b・T-501c で台本どおりに進む値が見つからず、2026-11-08 にメインを五島版に入れ替えた。T-501e で航路をフルメッシュに作り直した）。
+# デモ（伊豆版・サブ）。値は進行表 §8・データ仕様 §4.5・§5.3・§5.5 のとおり（調整は T-501。T-501b・T-501c で台本どおりに進む値が見つからず、2026-11-08 にメインを五島版に入れ替えた。T-501e で航路をフルメッシュに作り直した。T-501h で初心者のボット novice が★2 に届くよう、選挙タイムアウトと嵐の長さを延ばした）。
 format: 1
 id: demo-izu
 title: 嵐の離島共和国（デモ・伊豆版）
@@ -70,7 +70,7 @@ raft:
   initialLeader: tokyo-oshima
   tickMs: 500
   heartbeatTick: 2
-  electionTick: 28              # 14〜28 秒（進行表 §8。T-501e）
+  electionTick: 39              # 19.5〜39 秒（進行表 §8。T-501e。初心者のボット novice で決めた。T-501h #333）
   checkQuorum: true
   preVote: true
   maxInflightMsgs: 4
@@ -103,7 +103,7 @@ demo:
   endOnAllCriticalSecured: true
   storm:
     routes: [[tokyo-oshima, tokyo-toshima], [tokyo-oshima, tokyo-miyakejima], [tokyo-oshima, tokyo-mikurajima], [tokyo-oshima, tokyo-hachijojima], [tokyo-oshima, tokyo-aogashima]]   # 代表の大島を孤立させる（大島と残りの 5 島）
-    durationMs: 40000
+    durationMs: 50000           # 0:30 に起こすと 1:20 まで（T-501h #333。選挙タイムアウトを延ばしたので、嵐の間に新しい代表が決まるように）
     flavor:
       text: 台風が近づき、大島のまわりの海が荒れています
       provenance: derived
