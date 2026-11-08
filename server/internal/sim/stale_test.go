@@ -49,31 +49,31 @@ func TestLetterStalePortAndFerry(t *testing.T) { // ST-1
 	t.Parallel()
 	e := startedEngine(t)
 	e.RunUntil(1000)
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{2}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 2)})
 	e.DrainEvents()
 
 	deliverRaw(t, e, heartbeat(2, 1, 3))
 	evs := e.DrainEvents()
 	for _, ev := range evs {
 		if ev.T != 1000 {
-			t.Errorf("event %d at %d, want 1000", ev.Seq, ev.T)
+			t.Errorf("event %d at %d, want 1e9+1000", ev.Seq, ev.T)
 		}
 	}
 	if len(evs) != 5 {
-		t.Fatalf("events = %+v, want 5", datas(evs))
+		t.Fatalf("events = %+v, want 1e9+5", datas(evs))
 	}
 	created, ok := evs[3].Data.(LetterCreated)
 	if !ok {
 		t.Fatalf("event 4 = %+v, want letter.created", evs[3].Data)
 	}
 	l := created.Letter
-	if l.ID != 3 || l.From != 1 || l.To != 2 || l.Label != "heartbeat_resp" || l.Raft == nil || l.Raft.Term != 3 || l.Raft.Stale {
+	if l.ID != lid(1, 3) || l.From != 1 || l.To != 2 || l.Label != "heartbeat_resp" || l.Raft == nil || l.Raft.Term != 3 || l.Raft.Stale {
 		t.Errorf("letter.created = %+v (raft %+v)", l, l.Raft)
 	}
 	checkEvents(t, []DomainEvent{evs[0], evs[1], evs[2], evs[4]}, []EventData{
 		SteppedDown{ID: 1, Term: 3, Reason: "higher_term"},
-		LetterStale{LetterID: 1},
-		LetterStale{LetterID: 2},
+		LetterStale{LetterID: lid(1, 1)},
+		LetterStale{LetterID: lid(1, 2)},
 		NodeState{ID: 1, Role: "follower", Term: 3, Vote: 0, Lead: 2, Commit: 4, Applied: 4, LastIndex: 4},
 	})
 
@@ -81,7 +81,7 @@ func TestLetterStalePortAndFerry(t *testing.T) { // ST-1
 	for _, c := range []struct {
 		id    uint64
 		stale bool
-	}{{1, true}, {2, true}, {3, false}} {
+	}{{lid(1, 1), true}, {lid(1, 2), true}, {lid(1, 3), false}} {
 		if got := snapLetter(t, s, c.id).Raft.Stale; got != c.stale {
 			t.Errorf("letter %d stale = %v, want %v", c.id, got, c.stale)
 		}
@@ -93,7 +93,7 @@ func staleEngine(t *testing.T) *Engine {
 	t.Helper()
 	e := startedEngine(t)
 	e.RunUntil(1000)
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{2}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 2)})
 	deliverRaw(t, e, heartbeat(2, 1, 3))
 	e.DrainEvents()
 	return e
@@ -104,18 +104,18 @@ func TestLetterStaleOnce(t *testing.T) { // ST-2
 	e := staleEngine(t)
 	deliverRaw(t, e, heartbeat(3, 1, 4))
 	evs := e.DrainEvents()
-	if got, want := staleIDs(evs), []uint64{3}; !reflect.DeepEqual(got, want) {
+	if got, want := staleIDs(evs), lids(1, 3); !reflect.DeepEqual(got, want) {
 		t.Errorf("letter.stale = %v, want %v", got, want)
 	}
 	created := ofType[LetterCreated](evs)
 	if len(created) != 1 {
-		t.Fatalf("letter.created = %+v, want 1", created)
+		t.Fatalf("letter.created = %+v, want 1e9+1", created)
 	}
-	if l := created[0].Letter; l.ID != 4 || l.To != 3 || l.Raft.Term != 4 || l.Raft.Stale {
+	if l := created[0].Letter; l.ID != lid(1, 4) || l.To != 3 || l.Raft.Term != 4 || l.Raft.Stale {
 		t.Errorf("letter.created = %+v (raft %+v), want id 4 to 3 term 4 not stale", l, l.Raft)
 	}
 	if e.staleTerms()[0] != 4 {
-		t.Errorf("staleTerm[0] = %d, want 4", e.staleTerms()[0])
+		t.Errorf("staleTerm[0] = %d, want 1e9+4", e.staleTerms()[0])
 	}
 }
 
@@ -125,11 +125,11 @@ func TestLetterStaleTermJump(t *testing.T) {
 	e.RunUntil(1000)
 	e.DrainEvents()
 	deliverRaw(t, e, heartbeat(2, 1, 7)) // Term 2 → 7
-	if got, want := staleIDs(e.DrainEvents()), []uint64{1, 2}; !reflect.DeepEqual(got, want) {
+	if got, want := staleIDs(e.DrainEvents()), lids(1, 1, 2); !reflect.DeepEqual(got, want) {
 		t.Errorf("letter.stale = %v, want %v", got, want)
 	}
 	deliverRaw(t, e, heartbeat(3, 1, 9))
-	if got, want := staleIDs(e.DrainEvents()), []uint64{3}; !reflect.DeepEqual(got, want) {
+	if got, want := staleIDs(e.DrainEvents()), lids(1, 3); !reflect.DeepEqual(got, want) {
 		t.Errorf("letter.stale after 9 = %v, want %v (only the term 7 reply)", got, want)
 	}
 }
@@ -138,7 +138,7 @@ func TestLetterStaleSenderOnly(t *testing.T) { // ST-3
 	t.Parallel()
 	e := startedEngine(t)
 	e.RunUntil(1000)
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	e.RunUntil(4750)
 	port2 := e.tr.Port(2)
@@ -172,13 +172,13 @@ func TestLetterStaleRequest(t *testing.T) { // ST-4
 	t.Parallel()
 	e := startedEngine(t)
 	id, _, err := e.postRequestForTest(0, 1, 2, ferry.RequestNote{ReqID: "r-0001"})
-	if err != nil || id != 1 {
-		t.Fatalf("PostRequest = %d, %v; want 1", id, err)
+	if err != nil || id != flid(1, 1) {
+		t.Fatalf("PostRequest = %d, %v; want 1e9+1", id, err)
 	}
 	e.RunUntil(1000)
 	e.DrainEvents()
 	deliverRaw(t, e, heartbeat(2, 1, 3))
-	if got, want := staleIDs(e.DrainEvents()), []uint64{2, 3}; !reflect.DeepEqual(got, want) {
+	if got, want := staleIDs(e.DrainEvents()), lids(1, 2, 3); !reflect.DeepEqual(got, want) {
 		t.Errorf("letter.stale = %v, want %v", got, want)
 	}
 }

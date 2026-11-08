@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Island, Letter, Loc, Request, ServerEvent, Snapshot } from "../protocol/index.ts";
 import { applyEvent, applyEvents, withClock, worldFromSnapshot } from "./applyEvent.ts";
+import { lettersAtPort, lettersOnFerry } from "./selectors.ts";
 import { loadMiniRound } from "./fixtures/loadRecord.ts";
 import { WORLD_LIMITS } from "./world.ts";
 import type { World } from "./world.ts";
@@ -185,6 +186,44 @@ describe("worldFromSnapshot", () => {
     expect("relayCap" in worldFromSnapshot(snapshot, 0).stage).toBe(false);
     snapshot.stage.relayCap = 12;
     expect(worldFromSnapshot(snapshot, 0).stage.relayCap).toBe(12);
+  });
+
+  it("WF-3 島ごとの手紙の ID（islandId × 10^9 + n、最大 6,000,000,000 台）でも、引く・並べる・動かすが壊れない", () => {
+    // DTN-00（#363）: 4,294,967,295 以上の ID は配列の添字にならず、Object のキーの順が ID の順にならない。
+    const big = (island: number, n: number) => island * 1_000_000_000 + n;
+    expect(Number.isSafeInteger(big(6, 999_999_999))).toBe(true);
+    const snapshot = smallSnapshot();
+    snapshot.ferries[0] = { ...snapshot.ferries[0]!, cargo: [big(6, 1)] };
+    snapshot.letters = [
+      raftLetter(big(6, 2), { type: "port", islandId: 1 }),
+      raftLetter(big(1, 7), { type: "port", islandId: 1 }),
+      raftLetter(big(5, 3), { type: "port", islandId: 1 }),
+      raftLetter(big(6, 1), { type: "ferry", ferryId: "f1" }),
+      raftLetter(big(4, 9), { type: "relay", islandId: 2 }, 3),
+    ];
+    let world = worldFromSnapshot(snapshot, 0);
+    expect(lettersAtPort(world, 1).map((l) => l.id)).toEqual([big(1, 7), big(5, 3), big(6, 2)]);
+    expect(lettersOnFerry(world, "f1").map((l) => l.id)).toEqual([big(6, 1)]);
+    expect(world.letters[big(4, 9)]?.loc).toEqual({ type: "relay", islandId: 2 });
+    world = applyEvents(world, [
+      {
+        seq: 101,
+        t: 1000,
+        type: "letter.created",
+        letter: raftLetter(big(6, 3), { type: "port", islandId: 1 }),
+      },
+      {
+        seq: 102,
+        t: 1000,
+        type: "letter.moved",
+        letterId: big(6, 2),
+        loc: { type: "ferry", ferryId: "f1" },
+      },
+      { seq: 103, t: 1000, type: "letter.dropped", letterId: big(5, 3), reason: "superseded" },
+    ]);
+    expect(lettersAtPort(world, 1).map((l) => l.id)).toEqual([big(1, 7), big(6, 3)]);
+    expect(world.ferries.f1?.cargo).toEqual([big(6, 1), big(6, 2)]);
+    expect(world.letters[big(5, 3)]).toBeUndefined();
   });
 
   it("WF-2 配達済み・破棄の手紙は入れず、同じ ID は後のものを使う", () => {

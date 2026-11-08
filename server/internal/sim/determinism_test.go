@@ -313,7 +313,7 @@ func (d *detRecorder) failRandom() {
 	case 0: // 航行中の船への load
 		for _, f := range fs {
 			if f.State == ferry.Sailing {
-				d.mustFail(Command{Type: CmdFerryLoad, FerryID: string(f.ID), LetterIDs: []uint64{1}})
+				d.mustFail(Command{Type: CmdFerryLoad, FerryID: string(f.ID), LetterIDs: lids(1, 1)})
 				return
 			}
 		}

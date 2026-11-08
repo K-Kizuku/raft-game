@@ -183,7 +183,7 @@ func TestIntroPhase(t *testing.T) { // N-3
 		t.Errorf("events in intro: %v", evs)
 	}
 	for _, cmd := range []Command{
-		{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}},
+		{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)},
 		{Type: CmdFerryDepart, FerryID: "f1", To: 2},
 	} {
 		ack := e.Apply(cmd)
@@ -282,21 +282,21 @@ func TestHeartbeat(t *testing.T) { // T-1
 	evs := e.DrainEvents()
 	for _, ev := range evs {
 		if ev.T != 1000 {
-			t.Errorf("event %d at %d, want 1000", ev.Seq, ev.T)
+			t.Errorf("event %d at %d, want 1e9+1000", ev.Seq, ev.T)
 		}
 	}
 	if got, want := summarizeLetters(evs), []EventData{
-		LetterCreated{Letter: createdLetter(1, 1, 2, "heartbeat", 1000)},
-		LetterCreated{Letter: createdLetter(2, 1, 3, "heartbeat", 1000)},
+		LetterCreated{Letter: createdLetter(lid(1, 1), 1, 2, "heartbeat", 1000)},
+		LetterCreated{Letter: createdLetter(lid(1, 2), 1, 3, "heartbeat", 1000)},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("letters at 1000:\n got  %+v\n want %+v", got, want)
 	}
 	e.RunUntil(2000)
 	if got, want := summarizeLetters(e.DrainEvents()), []EventData{
-		LetterCreated{Letter: createdLetter(3, 1, 2, "heartbeat", 2000)},
-		LetterDropped{LetterID: 1, Reason: "superseded"},
-		LetterCreated{Letter: createdLetter(4, 1, 3, "heartbeat", 2000)},
-		LetterDropped{LetterID: 2, Reason: "superseded"},
+		LetterCreated{Letter: createdLetter(lid(1, 3), 1, 2, "heartbeat", 2000)},
+		LetterDropped{LetterID: lid(1, 1), Reason: "superseded"},
+		LetterCreated{Letter: createdLetter(lid(1, 4), 1, 3, "heartbeat", 2000)},
+		LetterDropped{LetterID: lid(1, 2), Reason: "superseded"},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("letters at 2000:\n got  %+v\n want %+v", got, want)
 	}
@@ -389,8 +389,8 @@ func TestRoundEnd(t *testing.T) { // T-4
 		}
 		for _, cmd := range []Command{
 			{Type: CmdGameStart},
-			{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}},
-			{Type: CmdFerryUnload, FerryID: "f1", LetterIDs: []uint64{1}},
+			{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)},
+			{Type: CmdFerryUnload, FerryID: "f1", LetterIDs: lids(1, 1)},
 			{Type: CmdFerryDepart, FerryID: "f1", To: 1},
 		} {
 			if ack := e.Apply(cmd); ack.OK || ack.Code != CodePhaseInvalid || ack.T != 3750 {

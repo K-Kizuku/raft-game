@@ -53,7 +53,7 @@ func runE1(t *testing.T, e *Engine, hook func(name string)) {
 	t.Helper()
 	e.RunUntil(0)
 	hook("0")
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
 	hook("load")
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	hook("depart 2")

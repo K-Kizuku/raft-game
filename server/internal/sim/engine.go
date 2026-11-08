@@ -96,15 +96,14 @@ type Engine struct {
 	nodes   []*cluster.Node    // 観察だけに使う（= islands[i].Node()）。添字 = ID - 1
 	ledgers []*ledger.Ledger   // 観察だけに使う（= islands[i].Ledger()）。添字 = ID - 1
 
-	islandSeq    uint64         // 島のイベントと待ちに振る、全島で 1 本の Seq（今の Engine の Seq の相対的な順を保つ）
-	lastLetterID ferry.LetterID // 最後に振った手紙の ID（全体で 1 本の連番）
-	storms       stormBook      // 嵐の帳簿（storm.go）
-	breakdowns   breakdownBook  // 船の故障の帳簿（breakdown.go）
-	rushes       rushBook       // 注文ラッシュの帳簿（rush.go）
-	drifts       driftBook      // 漂流瓶の帳簿（drift.go）
-	reqs         requestBook    // 依頼の帳簿（request.go）
-	score        scoreBook      // 採点の帳簿（score.go）
-	stats        statsBook      // 統計と「今日の出来事」の帳簿（stats.go）
+	islandSeq  uint64        // 島のイベントと待ちに振る、全島で 1 本の Seq（組み替えの前の Engine の Seq の相対的な順を保つ）
+	storms     stormBook     // 嵐の帳簿（storm.go）
+	breakdowns breakdownBook // 船の故障の帳簿（breakdown.go）
+	rushes     rushBook      // 注文ラッシュの帳簿（rush.go）
+	drifts     driftBook     // 漂流瓶の帳簿（drift.go）
+	reqs       requestBook   // 依頼の帳簿（request.go）
+	score      scoreBook     // 採点の帳簿（score.go）
+	stats      statsBook     // 統計と「今日の出来事」の帳簿（stats.go）
 
 	phase   Phase
 	opening cluster.OpeningResult
@@ -216,7 +215,6 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 			PerLinkAppCap: cfg.PerLinkAppCap,
 			RelayCap:      cfg.RelayCap,
 			Requests:      plan,
-			NewLetterID:   e.nextLetterID,
 			NextSeq:       e.nextIslandSeq,
 		}, nodes[i], ledgers[i])
 		if err != nil {
@@ -225,12 +223,6 @@ func New(cfg Config, seed uint64, opt Options) (*Engine, error) {
 		e.islands[i] = isl
 	}
 	return e, nil
-}
-
-// nextLetterID は手紙の ID を全体で 1 本の連番で振る（島の港が使う）。
-func (e *Engine) nextLetterID() ferry.LetterID {
-	e.lastLetterID++
-	return e.lastLetterID
 }
 
 // nextIslandSeq は島のイベントと待ちの Seq を全島で 1 本の連番で振る。

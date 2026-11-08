@@ -45,10 +45,10 @@ func TestRoundTripCommit(t *testing.T) { // D-1
 
 	// 1. MsgApp の letter.created が 2 件
 	if len(created) != 2 {
-		t.Fatalf("letter.created = %+v, want 2", created)
+		t.Fatalf("letter.created = %+v, want 1e9+2", created)
 	}
 	l1, l2 := created[0].Letter, created[1].Letter
-	if l1.ID != 1 || l1.To != 2 || l1.Label != "append" || l2.ID != 2 || l2.To != 3 {
+	if l1.ID != lid(1, 1) || l1.To != 2 || l1.Label != "append" || l2.ID != lid(1, 2) || l2.To != 3 {
 		t.Errorf("letters = %+v, %+v", l1, l2)
 	}
 	wantEntries := []EntryView{{Index: 5, Term: 2, Type: "normal", Summary: "stall.reserve s-0001"}}
@@ -57,12 +57,12 @@ func TestRoundTripCommit(t *testing.T) { // D-1
 	}
 
 	// 2. 島 2 へ運ぶ
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	e.RunUntil(3750)
 	evs := at(e.DrainEvents(), 3750)
 	iArr := indexOf(evs, func(d EventData) bool { return d == FerryArrived{FerryID: "f1", IslandID: 2, ReadyAt: 5250} })
-	iDel := indexOf(evs, func(d EventData) bool { return d == LetterDelivered{LetterID: 1, IslandID: 2, Accepted: true} })
+	iDel := indexOf(evs, func(d EventData) bool { return d == LetterDelivered{LetterID: lid(1, 1), IslandID: 2, Accepted: true} })
 	var resp LetterView
 	iResp := indexOf(evs, func(d EventData) bool {
 		c, ok := d.(LetterCreated)
@@ -115,19 +115,19 @@ func TestRoundTripCommit(t *testing.T) { // D-1
 func TestRelayOnFerry(t *testing.T) { // D-2
 	t.Parallel()
 	e, _ := committedEngine(t)
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{2}}) // 1→3
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 2)}) // 1→3
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	e.RunUntil(5250)
 	if got := ofType[LetterDelivered](e.DrainEvents()); len(got) != 0 {
 		t.Errorf("delivered at 2: %+v", got)
 	}
-	if f, _ := e.tr.Ferry("f1"); !reflect.DeepEqual(f.Cargo, []ferry.LetterID{2}) {
+	if f, _ := e.tr.Ferry("f1"); !reflect.DeepEqual(f.Cargo, flids(1, 2)) {
 		t.Errorf("cargo = %v, want [2]", f.Cargo)
 	}
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 3})
 	e.RunUntil(10500)
 	got := ofType[LetterDelivered](e.DrainEvents())
-	if want := []LetterDelivered{{LetterID: 2, IslandID: 3, Accepted: true}}; !reflect.DeepEqual(got, want) {
+	if want := []LetterDelivered{{LetterID: lid(1, 2), IslandID: 3, Accepted: true}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("delivered = %+v, want %+v", got, want)
 	}
 }
@@ -150,7 +150,7 @@ func snapTransport(e *Engine) transportState {
 func TestReclaim(t *testing.T) { // D-3
 	t.Parallel()
 	e, _ := committedEngine(t)
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	e.RunUntil(3750)
 
@@ -159,7 +159,7 @@ func TestReclaim(t *testing.T) { // D-3
 	if after := snapTransport(e); !reflect.DeepEqual(before, after) {
 		t.Errorf("DrainEvents changed the transport: %+v → %+v", before, after)
 	}
-	if _, ok := e.tr.Letter(1); ok {
+	if _, ok := e.tr.Letter(flid(1, 1)); ok {
 		t.Error("delivered letter 1 is still held")
 	}
 	drops := ofType[LetterDropped](evs)
@@ -190,7 +190,7 @@ func TestReclaim(t *testing.T) { // D-3
 func TestDeliveryDoesNotModifyMessages(t *testing.T) { // D-4
 	t.Parallel()
 	e, created := committedEngine(t)
-	l, ok := e.tr.Letter(1)
+	l, ok := e.tr.Letter(flid(1, 1))
 	if !ok {
 		t.Fatal("letter 1 not found")
 	}
@@ -201,7 +201,7 @@ func TestDeliveryDoesNotModifyMessages(t *testing.T) { // D-4
 		t.Errorf("RaftView = %+v, want %+v", created[0].Letter.Raft, want)
 	}
 
-	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: []uint64{1}})
+	mustApply(t, e, Command{Type: CmdFerryLoad, FerryID: "f1", LetterIDs: lids(1, 1)})
 	mustApply(t, e, Command{Type: CmdFerryDepart, FerryID: "f1", To: 2})
 	e.RunUntil(3750)
 	if got := ofType[LetterDelivered](e.DrainEvents()); len(got) != 1 {

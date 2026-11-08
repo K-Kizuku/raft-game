@@ -55,3 +55,27 @@ func (e *Engine) staleTerms() []uint64 {
 	}
 	return out
 }
+
+// lid は、島 island で n 番目に作った手紙の ID（islandId × 10^9 + n、DTN-00 段階 B）。
+func lid(island, n uint64) uint64 { return island*islandcore.LetterIDBase + n }
+
+// lids は lid(island, n) を並べたもの。
+func lids(island uint64, ns ...uint64) []uint64 {
+	out := make([]uint64, len(ns))
+	for i, n := range ns {
+		out[i] = lid(island, n)
+	}
+	return out
+}
+
+// flids は lid(island, n) を ferry.LetterID で並べたもの。
+func flids(island uint64, ns ...uint64) []ferry.LetterID {
+	out := make([]ferry.LetterID, len(ns))
+	for i, n := range ns {
+		out[i] = ferry.LetterID(lid(island, n))
+	}
+	return out
+}
+
+// flid は lid(island, n) の ferry.LetterID。
+func flid(island, n uint64) ferry.LetterID { return ferry.LetterID(lid(island, n)) }
