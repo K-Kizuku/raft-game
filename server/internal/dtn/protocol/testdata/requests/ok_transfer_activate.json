@@ -1,0 +1,31 @@
+{
+  "description": "transfer.activate with then cargo.add",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.activate",
+    "payload": {
+      "transferId": "x1300",
+      "then": {
+        "kind": "cargo.add",
+        "payload": {
+          "t": 12600,
+          "letters": [
+            {
+              "letterId": 2000000001,
+              "createdAt": 100,
+              "digest": "sha256:8ebde99462ec72b43a7e722b62361594fa41c6de9c3c91311663f42594b97f47",
+              "bundle": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fj/Bg0UGyIpMA=="
+            }
+          ]
+        }
+      }
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:d7c6185c99be46f8af5dc031a8c552c4e47d172dc71ebaf56806cf3052cf14a4"
+}

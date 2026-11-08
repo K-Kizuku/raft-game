@@ -1,0 +1,15 @@
+{
+  "description": "host.status (not journaled)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 0,
+    "kind": "host.status",
+    "payload": {}
+  },
+  "expect": "ok",
+  "digest": "sha256:819ae81b568720dec62a03e43dacb0f472e815f32ea5a52bd726c3b1543d81fc"
+}

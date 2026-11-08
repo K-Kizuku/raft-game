@@ -1,0 +1,19 @@
+{
+  "description": "depart",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "depart",
+    "payload": {
+      "t": 13000,
+      "to": 3,
+      "arriveAt": 19000
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:45c048acf6d4ad8032f6eee4a0a474fdf153c69e8739fde7117f2879754de865"
+}

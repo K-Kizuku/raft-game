@@ -1,0 +1,19 @@
+{
+  "description": "init payload actor differs from envelope",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1,
+    "kind": "init",
+    "payload": {
+      "stage": "stage2",
+      "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+      "seed": 1,
+      "actor": "island:3"
+    }
+  },
+  "expect": "invalid"
+}

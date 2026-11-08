@@ -1,0 +1,17 @@
+{
+  "description": "transfer.status (not journaled)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 0,
+    "kind": "transfer.status",
+    "payload": {
+      "transferId": "x1300"
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:855326f013529e9c26e685ed6f6f0c212c2857c87a77264bf78c09c51072a805"
+}

@@ -1,0 +1,5 @@
+{
+  "description": "leading plus",
+  "input": "+1",
+  "error": "invalid"
+}

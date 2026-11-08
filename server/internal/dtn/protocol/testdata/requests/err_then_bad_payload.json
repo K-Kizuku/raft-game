@@ -1,0 +1,25 @@
+{
+  "description": "transfer.activate then payload with an unknown field",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.activate",
+    "payload": {
+      "transferId": "x1",
+      "then": {
+        "kind": "cargo.remove",
+        "payload": {
+          "letterIds": [
+            1
+          ],
+          "x": 1
+        }
+      }
+    }
+  },
+  "expect": "invalid"
+}

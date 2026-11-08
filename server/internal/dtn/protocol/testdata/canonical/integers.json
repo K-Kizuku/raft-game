@@ -1,0 +1,6 @@
+{
+  "description": "integers including -0 and the safe range bounds",
+  "input": "[0, -0, 1, -1, 9007199254740991, -9007199254740991, 1207]",
+  "canonical": "[0,0,1,-1,9007199254740991,-9007199254740991,1207]",
+  "digest": "sha256:c84e5919e274d8639dbfd986eb91ea617b4f8841c6125a0406efaa0c864cada3"
+}

@@ -1,0 +1,126 @@
+{
+  "description": "transfer.activate then cargo.add with 17 letters",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.activate",
+    "payload": {
+      "transferId": "x1",
+      "then": {
+        "kind": "cargo.add",
+        "payload": {
+          "t": 9000,
+          "letters": [
+            {
+              "letterId": 1000000001,
+              "createdAt": 100,
+              "digest": "sha256:8ebde99462ec72b43a7e722b62361594fa41c6de9c3c91311663f42594b97f47",
+              "bundle": "HyYtNDtCSVBXXmVsc3qBiI+WnaSrsrnAx87V3OPq8fj/Bg0UGyIpMA=="
+            },
+            {
+              "letterId": 1000000002,
+              "createdAt": 100,
+              "digest": "sha256:7b68a23fe05672689fd6253aea6662402347f342e63d8305cbdfad906e888e5e",
+              "bundle": "PkVMU1phaG92fYSLkpmgp661vMPK0djf5u30+wIJEBceJSwzOkFITw=="
+            },
+            {
+              "letterId": 1000000003,
+              "createdAt": 100,
+              "digest": "sha256:60b0478af54623d9d7fc6ad60994e469d2428e97400fdc122bb7748135d71537",
+              "bundle": "XWRrcnmAh46VnKOqsbi/xs3U2+Lp8Pf+BQwTGiEoLzY9REtSWWBnbg=="
+            },
+            {
+              "letterId": 1000000004,
+              "createdAt": 100,
+              "digest": "sha256:69a080c813ab62bf2fd1b7cd1e6be287a0bc6be372f2ea025c58c68ca1c4d52d",
+              "bundle": "fIOKkZifpq20u8LJ0Nfe5ezz+gEIDxYdJCsyOUBHTlVcY2pxeH+GjQ=="
+            },
+            {
+              "letterId": 1000000005,
+              "createdAt": 100,
+              "digest": "sha256:9796ec37589942359620e67abc552f62f2a2eda1e9c63eade123e3d85479716c",
+              "bundle": "m6KpsLe+xczT2uHo7/b9BAsSGSAnLjU8Q0pRWF9mbXR7gomQl56lrA=="
+            },
+            {
+              "letterId": 1000000006,
+              "createdAt": 100,
+              "digest": "sha256:a8f4ae35666cd9d829be95c811d6db17e48cd2322092a35378dd593f99ad4366",
+              "bundle": "usHIz9bd5Ovy+QAHDhUcIyoxOD9GTVRbYmlwd36FjJOaoaivtr3Eyw=="
+            },
+            {
+              "letterId": 1000000007,
+              "createdAt": 100,
+              "digest": "sha256:488831275158b9792a88e6fd76f2a735943531142979fa971d74b2bf36fd8965",
+              "bundle": "2eDn7vX8AwoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dzj6g=="
+            },
+            {
+              "letterId": 1000000008,
+              "createdAt": 100,
+              "digest": "sha256:080a9cffa3d41c3b0ed272c4ebd74a53a68539600be7b4eae516ca6edf29e4d7",
+              "bundle": "+P8GDRQbIikwNz5FTFNaYWhvdn2Ei5KZoKeutbzDytHY3+bt9PsCCQ=="
+            },
+            {
+              "letterId": 1000000009,
+              "createdAt": 100,
+              "digest": "sha256:1853abdce9b4994af222b136abe0e1af274a2ca4274060c3da86fe5c28b09987",
+              "bundle": "Fx4lLDM6QUhPVl1ka3J5gIeOlZyjqrG4v8bN1Nvi6fD3/gUMExohKA=="
+            },
+            {
+              "letterId": 1000000010,
+              "createdAt": 100,
+              "digest": "sha256:de56e62ffbd6089d89da0266c20cbabde009f01894cd1a48df4f30ba4c7b4909",
+              "bundle": "Nj1ES1JZYGdudXyDipGYn6attLvCydDX3uXs8/oBCA8WHSQrMjlARw=="
+            },
+            {
+              "letterId": 1000000011,
+              "createdAt": 100,
+              "digest": "sha256:970c86cbc04390ba2e74ec56958383711a041163f8f5abcb7ede302773ca1239",
+              "bundle": "VVxjanF4f4aNlJuiqbC3vsXM09rh6O/2/QQLEhkgJy41PENKUVhfZg=="
+            },
+            {
+              "letterId": 1000000012,
+              "createdAt": 100,
+              "digest": "sha256:3bb3a06bebee660eff6cdfa4661831e186570845c2618e85497425e2594bcc5e",
+              "bundle": "dHuCiZCXnqWss7rByM/W3eTr8vkABw4VHCMqMTg/Rk1UW2JpcHd+hQ=="
+            },
+            {
+              "letterId": 1000000013,
+              "createdAt": 100,
+              "digest": "sha256:9974fa1f82c9b99bc455747cafa34c47b9e6e60de31a4a3ab08e2a98bbd2c958",
+              "bundle": "k5qhqK+2vcTL0tng5+71/AMKERgfJi00O0JJUFdeZWxzeoGIj5adpA=="
+            },
+            {
+              "letterId": 1000000014,
+              "createdAt": 100,
+              "digest": "sha256:0ace787a3177a0ed55b7f27ae1d282dbc5939b44f185bc81bccc0d9fe3da27ec",
+              "bundle": "srnAx87V3OPq8fj/Bg0UGyIpMDc+RUxTWmFob3Z9hIuSmaCnrrW8ww=="
+            },
+            {
+              "letterId": 1000000015,
+              "createdAt": 100,
+              "digest": "sha256:a27277891248a088de1ac9a65bee7d8ec832d284060ef7553c574267d8a0436a",
+              "bundle": "0djf5u30+wIJEBceJSwzOkFIT1ZdZGtyeYCHjpWco6qxuL/GzdTb4g=="
+            },
+            {
+              "letterId": 1000000016,
+              "createdAt": 100,
+              "digest": "sha256:a71544d1bf07d5adbd065443efc047e1342a04ca68333aa876daa443ac212449",
+              "bundle": "8Pf+BQwTGiEoLzY9REtSWWBnbnV8g4qRmJ+mrbS7wsnQ197l7PP6AQ=="
+            },
+            {
+              "letterId": 1000000017,
+              "createdAt": 100,
+              "digest": "sha256:780f92d20edecefd06369cd6bba4490bbfccbe9f30b5c034525727d347e7b145",
+              "bundle": "DxYdJCsyOUBHTlVcY2pxeH+GjZSboqmwt77FzNPa4ejv9v0ECxIZIA=="
+            }
+          ]
+        }
+      }
+    }
+  },
+  "expect": "too_large"
+}

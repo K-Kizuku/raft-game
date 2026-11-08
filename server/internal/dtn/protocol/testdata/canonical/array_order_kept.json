@@ -1,0 +1,6 @@
+{
+  "description": "array order is kept",
+  "input": "[3, 1, 2, \"b\", \"a\"]",
+  "canonical": "[3,1,2,\"b\",\"a\"]",
+  "digest": "sha256:50300122e6fdfef79ecb31e0447247453c80bc9fd0c146af68c052638f73572c"
+}

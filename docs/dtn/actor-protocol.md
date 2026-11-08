@@ -17,6 +17,7 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 - Bundle の bytes は JSON の中で base64（RFC 4648 §4、パディングあり）
 - 1 つの電文の上限は 1 MiB（Workers の WebSocket の 1 メッセージの上限に合わせる）。超えたら `too_large`
 - digest と署名に使う「正準の JSON」は RFC 8785（JSON Canonicalization Scheme）。digest は `sha256:` ＋ 16 進の小文字
+  - この電文の数は整数だけ。小数点・指数を含む数（`1.0`・`1e3` も）と、絶対値が 2^53 − 1 を超える整数は `invalid`（`-0` は `0`）。重複したキー・不正な UTF-8・対にならないサロゲートも `invalid`（[§7](#7-実装の細部dtn-02)）
 
 - `dtnactor` は起動したら、開いたポートを標準出力の 1 行目に `{"listen":"127.0.0.1:NNNNN"}` の形で出す（ポートは `:0` で開く）
 
@@ -172,3 +173,36 @@ Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けの
 | 1 回の応答の `outputs` | 4,096 |
 | 1 Actor の journal の行 | 20,000（上限の更新は上書きするので、ふつうは数千） |
 | 1 Actor の保存の合計 | 8 MiB |
+
+## 7. 実装の細部（DTN-02）
+
+実装は `server/internal/dtn/protocol`（import の別名は `dtnproto`）・`server/internal/dtn/runtime`・`server/cmd/dtnactor`。
+
+### 7.1 検証（`dtnproto.Validate`）
+
+- 確かめる順: 長さ（`too_large`）→ JSON の読み込み（`invalid`）→ `v`（整数でなければ `invalid`、1 でなければ `unsupported_version`）→ エンベロープの形・`actor`・`kind`・宛先の役割 → payload
+- フィールドの名前は大文字と小文字を区別する。未知のフィールド・足りないフィールド・`null`（省略可のフィールドを除く）は `invalid`。Bundle の base64 は RFC 4648 §4 のパディングありの形だけ（改行などを含む別の書き方は `invalid`）
+- journal に入れる種類は `eventSeq` が 1 以上。入れない種類（`inspect` など）は 0 でもよい
+- 手紙の列（`letters`・`letterIds`・`bundles`）は 1 通以上 16 通以下（空は `invalid`、17 通以上は `too_large`）で、ID の重複は `invalid`。`unload` の手紙は ID の狭義の昇順。手紙の `createdAt` は `t` 以下
+- `init` の `payload.actor` はエンベロープの `actor` と同じ。`plan` は島だけで、`origin` はその島
+- §3.1・§3.2 の「すべて」は島と船。Coordinator が受ける種類（§3.3。Coordinator への `init`・`inspect`・`shutdown` を含む）は DTN-05 が種類の表（`kinds.go`）に足す。それまで `coordinator` 宛ての要求は `invalid`
+- §3.2 の種類（Host だけが受ける）が Container に届いたら `invalid`。`transfer.activate`・`transfer.gc` の `then` は、宛先の役割に合う journal に入れる種類（`init`・`shutdown` を除く）で、その payload も同じ規則で確かめる
+
+### 7.2 Runtime（Container の中）
+
+- 応答の `epoch` は、`init` の後は Runtime の epoch（要求の epoch が違っても）。`init` の前は要求の epoch
+- Actor を呼んだ後の誤りの応答（Actor の誤り・`internal`・outputs が 4,096 を超えた・応答が 1 MiB を超えた `too_large`）も、成功と同じく最後の 1 件として持ち、同じ `eventSeq` の送り直しには同じ bytes を返す。Actor を呼ぶ前に断ったもの（`stale_*`・`conflict` など）は持たない
+- `init` が失敗したら、Runtime は状態を決めない（Host は Container を作り直す）
+- `inspect` の応答は、`outputs` に `{"type": "inspect", "data": <Actor の要約>}` を 1 つ入れる（`init` の前は `data` が `{"ready":false}` で `cursor` は `null`）。`inspect`・`bundle.export` は `eventSeq` を確かめず、進めない
+- `shutdown` の後は、同じ `shutdown` の送り直し（保存した応答）を除いて `not_ready`。`/ws` は `shutdown` の応答を書いてから閉じ、`dtnactor` は終了コード 0 で終わる
+- 応答の digest（`dtnproto.ResponseDigest`。復元の照合に使う）は、`{v, actor, eventSeq, status, outputs, cursor, error}` の正準の JSON の SHA-256。`epoch`（世代が変わった後の再生でも同じにするため）と `outputs[].bundle`（Host が保存する応答には bytes を入れない。bundle の digest は `data` に残る）を含めない
+
+### 7.3 `dtnactor`
+
+- `PORT` があれば全てのアドレスのそのポートで待ち受け、1 行目にはその実際のアドレス（例 `{"listen":"[::]:8080"}`）を出す
+- 終了コード: 0 = シグナルか `shutdown` で止めた、1 = 起動の失敗、2 = 未知の `ROLE`・まだ実装のない `ROLE`・`PORT` の誤り
+
+### 7.4 fixture（TS 側の契約テストも読む）
+
+- `server/internal/dtn/protocol/testdata/requests/*.json`: `{description, request | requestText, limits?, expect, digest?}`。`request` は電文（JSON の値。空白を除いて送る）、`requestText` は bytes をそのまま書いた電文（重複したキー・小数など）。`limits` は §6 の上限を部分的に上書きする（`maxMessageBytes` など）。`expect` は `"ok"` かエラーコード、`digest` は `ok` のときの要求の digest（§5）
+- `server/internal/dtn/protocol/testdata/canonical/*.json`: `{description, input, canonical, digest}` か `{description, input, error}`。`input` は JSON の文書の文字列

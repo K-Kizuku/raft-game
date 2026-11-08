@@ -1,0 +1,5 @@
+{
+  "description": "exponent",
+  "input": "1e3",
+  "error": "invalid"
+}

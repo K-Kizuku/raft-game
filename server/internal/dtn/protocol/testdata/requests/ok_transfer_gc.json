@@ -1,0 +1,25 @@
+{
+  "description": "transfer.gc with then port.remove",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.gc",
+    "payload": {
+      "transferId": "x1300",
+      "then": {
+        "kind": "port.remove",
+        "payload": {
+          "letterIds": [
+            2000000001
+          ]
+        }
+      }
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:aea711506f0759c5b2ab1f6acb4e97685241dfeffe9194fea5f0f657fc530a9a"
+}

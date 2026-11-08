@@ -1,0 +1,20 @@
+{
+  "description": "init: ferry without plan",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1,
+    "kind": "init",
+    "payload": {
+      "stage": "stage2",
+      "stageHash": "sha256:abababababababababababababababababababababababababababababababab",
+      "seed": 9007199254740991,
+      "actor": "ferry:f1"
+    }
+  },
+  "expect": "ok",
+  "digest": "sha256:3254000aff67fb6e8c9200c39756b87cebf4ffade5916bff978cccd3bdf3ad76"
+}

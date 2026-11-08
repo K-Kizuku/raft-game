@@ -1,0 +1,5 @@
+{
+  "description": "an array instead of an object",
+  "requestText": "[1]",
+  "expect": "invalid"
+}

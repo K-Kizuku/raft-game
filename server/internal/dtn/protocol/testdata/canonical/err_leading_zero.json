@@ -1,0 +1,5 @@
+{
+  "description": "leading zero",
+  "input": "[01]",
+  "error": "invalid"
+}

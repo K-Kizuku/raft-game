@@ -1,0 +1,19 @@
+{
+  "description": "init stageHash without the sha256: prefix",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1,
+    "kind": "init",
+    "payload": {
+      "stage": "stage2",
+      "stageHash": "abababababababababababababababababababababababababababababababab",
+      "seed": 1,
+      "actor": "island:2"
+    }
+  },
+  "expect": "invalid"
+}

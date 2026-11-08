@@ -1,0 +1,21 @@
+{
+  "description": "advance with replay: true (digest ignores replay)",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "island:2",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 1208,
+    "kind": "advance",
+    "payload": {
+      "horizon": [
+        12500,
+        8
+      ]
+    },
+    "replay": true
+  },
+  "expect": "ok",
+  "digest": "sha256:ab49661f6c3358d94921c4bea16be69602d43dc42ac1501d09b7b8808109981c"
+}

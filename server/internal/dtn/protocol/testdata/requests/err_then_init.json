@@ -1,0 +1,20 @@
+{
+  "description": "transfer.activate then init",
+  "request": {
+    "v": 1,
+    "sessionId": "s_0123456789abcdef",
+    "actor": "ferry:f1",
+    "epoch": 3,
+    "coordEpoch": 1,
+    "eventSeq": 10,
+    "kind": "transfer.activate",
+    "payload": {
+      "transferId": "x1",
+      "then": {
+        "kind": "init",
+        "payload": {}
+      }
+    }
+  },
+  "expect": "invalid"
+}

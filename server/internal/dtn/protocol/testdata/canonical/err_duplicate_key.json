@@ -1,0 +1,5 @@
+{
+  "description": "duplicate key",
+  "input": "{\"a\": 1, \"a\": 1}",
+  "error": "invalid"
+}

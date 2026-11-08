@@ -1,0 +1,9 @@
+{
+  "description": "message exactly at maxMessageBytes",
+  "requestText": "{\"v\":1,\"sessionId\":\"s_0123456789abcdef\",\"actor\":\"island:2\",\"epoch\":3,\"coordEpoch\":1,\"eventSeq\":1207,\"kind\":\"advance\",\"payload\":{\"horizon\":[12500,1]}}",
+  "limits": {
+    "maxMessageBytes": 149
+  },
+  "expect": "ok",
+  "digest": "sha256:e906bf2428b48fa527ba3656219aa04c87ebd483cd2b2f9a589aa05e6e667849"
+}
