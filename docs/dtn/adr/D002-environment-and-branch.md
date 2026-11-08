@@ -32,7 +32,9 @@ DTN は `sim`・`ferry`・Worker・Durable Object を大きく組み替える。
   - 作業のブランチ・PR・Codex のレビュー・Merge Gate・Worktree と Worker の仕組み（[docs/agents/](../../agents/README.md)）は使わない
   - `dtn/main` に Ruleset は設けない
   - 品質は、push の前にローカルで回す検査（`go -C server test -race -count=1 ./...`・`pnpm -C web test`・`python3 scripts/check-docs.py` のうち変更に関係するもの）と、DTN-11 の同等性・障害の試験で担保する
-- MVP を凍結するとき、`main` にタグ（例: `mvp-final`）を付ける。そのあと `main` を `dtn/main` に 1 回取り込んでから、DTN-00 を始める
+- 2026-11-08 に、最新の `main`（`924d55d`）を `dtn/main` に取り込み済み（オーナーの指示。すぐに実装を始めるため）。DTN-00 から着手してよい
+- MVP がこのあとも変わったら、必要なときに `main` を `dtn/main` にマージして取り込む。DTN-00 で `sim`・`ferry` を組み替えた後は衝突しやすいので、取り込むなら早めに・小さく行う
+- MVP を凍結するとき、`main` にタグ（例: `mvp-final`）を付ける
 - `dtn/main` から `main` へはマージしない
 
 ### デプロイの環境

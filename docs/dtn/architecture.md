@@ -153,6 +153,6 @@ flowchart TD
   D13 --> D15
 ```
 
-- DTN-01（この文書群のレビューと Accepted）は今すぐできる。DTN-00 は MVP の凍結（`main` のタグ）の後、`dtn/main` に `main` を取り込んでから始める
+- `main` は 2026-11-08 に `dtn/main` へ取り込み済み。DTN-01（この文書群の確認と Accepted）と DTN-00 は今すぐ始められる。MVP の変更は必要なときに `main` をマージして取り込む（[D002](./adr/D002-environment-and-branch.md)）
 - DTN-06 と DTN-14 は、DTN-01 の後なら他と並行できる。DTN-02 が手紙の符号化の interface（`LetterCodec`）と試験用の偽物を用意し、DTN-03・04 はそれを使う。DTN-06 が本物を実装したら差し替える
 - DTN-17（対象外のイベント）は、DTN-11 の後の後続

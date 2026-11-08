@@ -95,7 +95,7 @@
   - ゲームのロジックは 1 つの実装のまま。参照モデルとの同等性の試験が意味を持つ
   - 開幕式に D-1 の例外がない
 - 悪いこと・受け入れるリスク:
-  - DTN-00 で `sim`・`ferry` を大きく組み替える。MVP の凍結の後に `dtn/main` でだけ行う（[D002](./D002-environment-and-branch.md)）
+  - DTN-00 で `sim`・`ferry` を大きく組み替える。`dtn/main` でだけ行う（`main` には入れない）（[D002](./D002-environment-and-branch.md)）
   - 手紙の ID の規則が変わるので、`dtn/main` の `traceHash` は MVP と一致しなくなる。組み替え（ID は今のまま）と ID の変更を別の PR に分け、前者は `traceHash` の一致で確かめる
   - Coordinator の Container が 1 つ増える（費用の予約に含める）
 
