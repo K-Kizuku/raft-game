@@ -11,6 +11,7 @@ import type { SessionHandle, StageSummary } from "../types.ts";
 import { tokens } from "../../ui/theme/tokens.ts";
 import { Fireworks } from "./Fireworks.tsx";
 import { InputLogDownload } from "./InputLogDownload.tsx";
+import { ReflectionSection } from "./ReflectionSection.tsx";
 import { ReplayButton } from "./ReplayButton.tsx";
 import { ResultEngineer } from "./ResultEngineer.tsx";
 import { ResultSeed } from "./ResultSeed.tsx";
@@ -321,6 +322,7 @@ export function ResultScreen({
           {hasFireworks(view.stars) && <Fireworks />}
           <ScoreSection view={view} />
           <RequestsSection view={view} />
+          <ReflectionSection />
           <TechnicalSection technical={view.technical} world={world} />
           <StorySection view={view} />
           <ResultEngineer />
