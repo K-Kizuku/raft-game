@@ -130,6 +130,42 @@
   filter: none;
 }
 
+/* 重要な依頼の進み具合（T-431）。花火の名前と小さなステッパー、その下に止まっている理由の一言。 */
+.hud-critical-requests {
+  gap: var(--space-3);
+  margin: 0;
+  list-style: none;
+}
+
+/* 1 行目に花火の名前と丸、2 行目に理由（札の幅を理由の長さまでに抑える）。 */
+.hud-critical-request {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-content: start;
+  gap: 2px var(--space-2);
+}
+
+.hud-critical-request .request-progress {
+  display: contents;
+}
+
+.hud-critical-request .request-progress-reason {
+  grid-column: 1 / -1;
+}
+
+.hud-critical-request + .hud-critical-request {
+  padding-left: var(--space-3);
+  border-left: 1px dotted var(--color-ink-muted);
+}
+
+.hud-critical-request-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: bold;
+}
+
 /* 速度のボタン（紙の札のボタン。base.css の .btn に合わせる）。 */
 .hud-speed button {
   min-width: 2.75rem;
