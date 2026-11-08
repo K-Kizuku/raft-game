@@ -42,7 +42,7 @@ routes:
     source: { dataset: mlit-ritou-2026, region: 小豆島地域, field: MARITIME_TRANSPORT, quote: "高松~直島~豊島(22.6km・35分" }
 
 ferries:
-  - { id: f1, name: せとうち丸, home: kagawa-shodoshima, capacity: 4, speed: 1.0 }
+  - { id: f1, name: せとうち丸, home: kagawa-shodoshima, capacity: 6, speed: 1.0 }
 
 raft:
   initialLeader: kagawa-shodoshima
@@ -61,7 +61,7 @@ resources:
   - { id: "stall:main", kind: stall, label: 屋台の出店枠, capacity: 5 }
 
 requests:
-  deadlineMs: { normal: 60000, critical: 90000 }
+  deadlineMs: { normal: 90000, critical: 120000 }
   retryMs: 25000
   script:                       # 進行表 §3 の「依頼の台本」
     - { at: 5000,   island: kagawa-shodoshima, kind: stall.reserve,    resource: "stall:main" }
@@ -79,7 +79,7 @@ requests:
 events: []
 
 scoring:
-  target: { successes: 3, score3: 900 }   # ★1 の目標は初心者のボット novice で決める（T-501f #311・ゲームデザイン §5.5）
+  target: { successes: 3, score3: 1150 }  # ★1 の目標は初心者のボット novice で決める（T-501f #311・ゲームデザイン §5.5）。★3 は greedy の★3 が 9 割以下になるよう上げた（T-501i #350）
   points: { normal: 100, critical: 300, late: 30, rejected: 0, expiredPenalty: 50 }
   ferryCostMsPerPoint: 2000
   fairnessPerSatisfaction: 5

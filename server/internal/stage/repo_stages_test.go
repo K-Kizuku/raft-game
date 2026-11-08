@@ -80,6 +80,9 @@ type wantStage struct {
 	rateMilliPerMin int64
 	targetSuccesses int64
 	targetScore3    int64
+	// 依頼の期限（通常・重要）。0 なら共通の値（60000・90000。データ仕様 §5.2）。
+	deadlineNormalMs   int64
+	deadlineCriticalMs int64
 }
 
 func sr(at int64, island uint64, kind, resource string) stage.ScriptRequest {
@@ -146,7 +149,7 @@ var wantStages = []wantStage{
 			{1, 2, 3750, stage.Derived},
 			{2, 3, 5250, stage.Derived},
 		},
-		ferries:       []wantFerry{{"f1", "せとうち丸", 1, 4, 1000, stage.Creative}},
+		ferries:       []wantFerry{{"f1", "せとうち丸", 1, 6, 1000, stage.Creative}}, // 積載は 4 → 6（T-501i #350）
 		critical:      []string{fwA},
 		stallCapacity: 5,
 		script: []stage.ScriptRequest{
@@ -157,7 +160,8 @@ var wantStages = []wantStage{
 			sr(105000, 3, stall, stMn),
 			sr(130000, 2, stall, stMn),
 		},
-		rateMilliPerMin: 0, targetSuccesses: 3, targetScore3: 900, // 目標は novice で決める（T-501f #311）
+		rateMilliPerMin: 0, targetSuccesses: 3, targetScore3: 1150, // 目標は novice で決める（T-501f #311）。★3 は T-501i #350
+		deadlineNormalMs: 90000, deadlineCriticalMs: 120000, // 期限を延ばした（T-501i #350）
 	},
 	{
 		id: "stage2", title: "島から返事が来ない！", durationMs: 210000, unlock: "stage1", tutorial: "",
@@ -360,9 +364,18 @@ func TestRepoStagesValues(t *testing.T) {
 			}
 
 			// すべてのステージに共通する値（データ仕様 §5.2、ゲームデザイン §4.2・§4.3・§5.1・§5.2）。
+			// 依頼の期限だけは、Stage 1 で延ばしている（T-501i #350）。
 			rq := st.Requests
-			if rq.DeadlineNormalMs != 60000 || rq.DeadlineCriticalMs != 90000 || rq.RetryMs != 25000 {
-				t.Errorf("Requests = (%d, %d, %d), want (60000, 90000, 25000)", rq.DeadlineNormalMs, rq.DeadlineCriticalMs, rq.RetryMs)
+			wantNormal, wantCritical := w.deadlineNormalMs, w.deadlineCriticalMs
+			if wantNormal == 0 {
+				wantNormal = 60000
+			}
+			if wantCritical == 0 {
+				wantCritical = 90000
+			}
+			if rq.DeadlineNormalMs != wantNormal || rq.DeadlineCriticalMs != wantCritical || rq.RetryMs != 25000 {
+				t.Errorf("Requests = (%d, %d, %d), want (%d, %d, 25000)",
+					rq.DeadlineNormalMs, rq.DeadlineCriticalMs, rq.RetryMs, wantNormal, wantCritical)
 			}
 			if want := (stage.Transport{DockMs: 1500, PerLinkAppCap: 4, PortCap: 24, RelayCap: 12}); st.Transport != want {
 				t.Errorf("Transport = %+v, want %+v", st.Transport, want)

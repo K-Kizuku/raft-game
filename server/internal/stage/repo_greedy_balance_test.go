@@ -65,13 +65,14 @@ func stageStars(t *testing.T, id, name string, minStars int) int {
 	return n
 }
 
-// Stage 1 は、初めての人がクリアできる難しさにする（T-501f #311）。初心者の代わりのボット novice の★1 の割合が 70% 以上。
+// Stage 1 は、初めての人がクリアできる難しさにする（T-501f #311）。初心者の代わりのボット novice の★1 の割合が 80% 以上
+// （T-501i #350 で 70% から上げた）。
 //
 //	go -C server test -tags balance -count=1 -run Novice -v ./internal/stage/...
 func TestRepoNoviceStage1Balance(t *testing.T) {
 	t.Parallel()
-	if n := stage1Stars(t, "novice", 1); n*10 < stage1NoviceSeeds*7 {
-		t.Fatalf("novice: ★1 以上のシード = %d / %d（70%% 未満）", n, stage1NoviceSeeds)
+	if n := stage1Stars(t, "novice", 1); n*10 < stage1NoviceSeeds*8 {
+		t.Fatalf("novice: ★1 以上のシード = %d / %d（80%% 未満）", n, stage1NoviceSeeds)
 	}
 }
 
