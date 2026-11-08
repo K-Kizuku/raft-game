@@ -9,10 +9,10 @@ import (
 	"github.com/K-Kizuku/raft-game/server/internal/sim"
 )
 
-const recordSynopsis = "simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR]"
+const recordSynopsis = "simcli record --data DIR --stage ID [--bot NAME] --seed N [--invariants=BOOL] [--inputs-dir DIR] [--normalized-trace FILE]"
 
 // runRecord は record サブコマンド。ボットに 1 ラウンド遊ばせ、記録を stdout に書く。
-// 失敗したら stdout に何も書かない（--inputs-dir の入力ログは書く）。
+// 失敗したら stdout に何も書かない（--inputs-dir の入力ログは書く）。--normalized-trace は成功したときだけ書く。
 func runRecord(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("record")
 	data := fs.String("data", "", "データのディレクトリ（DIR/islands.json と DIR/stages/*.yaml）（必須）")
@@ -21,6 +21,7 @@ func runRecord(args []string, stdout, stderr io.Writer) int {
 	seedArg := fs.String("seed", "", "シード（10 進の uint64）（必須）")
 	invariants := fs.Bool("invariants", true, "不変条件の検査（テストモード）。結果は変わらない")
 	inputsDir := fs.String("inputs-dir", "", "入力ログを DIR/<stageId>-<bot>-<seed>.json に書く")
+	normalized := fs.String("normalized-trace", "", normalizedTraceUsage)
 	if code, done := parseFlags(fs, args, stderr, recordSynopsis, "data", "stage", "seed"); done {
 		return code
 	}
@@ -32,14 +33,22 @@ func runRecord(args []string, stdout, stderr io.Writer) int {
 	if !checkBot(*botName, stderr) {
 		return exitUsage
 	}
+	if *normalized == "-" {
+		_, _ = fmt.Fprintln(stderr, "simcli: --normalized-trace に - は使えない（標準出力は記録に使う）")
+		return exitUsage
+	}
 	st := loadStageReport(*data, *stageID, stderr)
 	if st == nil {
 		return exitFail
 	}
 
-	var snap sim.Snapshot
+	var (
+		snap sim.Snapshot
+		eng  *sim.Engine
+	)
 	res, events, inputs, err := playSeedWith(st, seed, *botName, *invariants, func(e *sim.Engine) {
 		snap = e.Snapshot() // ボットを動かす前（phase は intro、lastSeq は 0）
+		eng = e             // --normalized-trace の round.result を、遊び終えたあとに読む
 	})
 	build := buildID()
 	if *inputsDir != "" {
@@ -72,5 +81,8 @@ func runRecord(args []string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stderr, "simcli record: %s bot=%s seed=%d events=%d traceHash=%s\n",
 		st.ID, *botName, seed, len(events), res.TraceHash)
+	if *normalized != "" {
+		return writeNormalizedTrace("record", *normalized, events, engineResult(eng), stderr)
+	}
 	return exitOK
 }

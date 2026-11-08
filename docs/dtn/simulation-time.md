@@ -101,14 +101,24 @@
 | `score.updated` | `global`（累積する） |
 | `round.result` | `final` |
 
+実装（`simtrace.Normalize`）で決めた細部:
+
+- 手紙の ID の採番の規則には依らない。`letter.dropped`（中身に島がない）は、`letter.created` と `letter.moved` から追った手紙の今の位置（港・倉庫）の島、分からなければ送信元の島の列にする。`letter.moved` で下ろす（`loc` が `port`・`relay`）ものは、下ろす前にいた船の列にする
+- 持ち主を決められないイベント（`letter.created` のない手紙の `letter.dropped`・`letter.moved` など）は `unknown` の列に入れる（参照モデルの完全な列では空になることを試験で確かめる）。表にない `type` は `global`（累積しない）に入れる
+- `round.result` はドメインイベントではない（`sim.Engine.Result()`）。`Trace.WithResult` で別に渡す
+- 列の名前は `island:<id>`（ID の昇順）・`ferry:<id>`（ID の昇順）・`unknown` の順に並べる。中身は正準の JSON（キーを辞書順・数は元の表記）で持つ
+- `simcli record`・`simcli replay` の `--normalized-trace FILE` で、正規化トレースを JSON（2 字下げ）で書ける（成功したときだけ。`-` は使い方の誤り）
+
 ### 5.3 比べ方
 
 1. **島・船の列**: 列ごとに、`(t, type, 中身)` の並びが一致する（`seq` は除く）
 2. **`global` の累積しない列**: 同じ `t` ごとに、イベントの集合（中身の正準の JSON で並べたもの）が一致する
 3. **`global` の累積する値**: 同じ `t` ごとに、その時刻の最後の `score.updated` が一致する
-4. **最後の結果**: `round.result`、各島の台帳の内容、各依頼の最終の状態が一致する
+4. **最後の結果**: `round.result`、各島の台帳の内容、各依頼の最終の状態、各島の最後の `island.updated` が一致する
+   - 台帳の内容は、島ごとの `ledger.applied` の中身を適用した順に並べたもの。依頼の最終の状態は、`request.created` の `request` に `request.updated` を順に重ねたもの
+   - 各島の最後の `island.updated` は DTN-00 で足した（2. の集合は同じ時刻の中の順を比べないので、同じ時刻に同じ島の `island.updated` が 2 つあると、どちらが最後かを見逃すため。Q-TRACE）
 
-`simtrace.Compare(ref, got)` は、最初に食い違った列・`t`・イベントを返す。DTN-11 の試験は、失敗したときに seed・入力・食い違いを `server/.dtn-failures/`（`.gitignore` に入れる）に保存する。
+`simtrace.Compare(ref, got)` は、最初に食い違った列・`t`・イベントを返す。1.〜3. の食い違いのうち `t` の最も早いもの（同じ `t` なら列 → `global` → `score`）を返し、1.〜3. が一致したときだけ 4. を比べる。DTN-11 の試験は、失敗したときに seed・入力・食い違いを `server/.dtn-failures/`（`.gitignore` に入れる）に保存する。
 
 ### 5.4 比べる組み合わせ
 
