@@ -13,11 +13,12 @@
 //
 // 大きな画面（T-425）: 島の名前と船の文字は、画面の幅から決める倍率（labelScale）でさらに大きくする。
 // 倍率は画面の大きさが変わったときだけ計算し、変わった表示物の scale と名札・積み荷の並びだけを直す。
-import { Application, Container, Graphics, Text } from "pixi.js";
+import { Container, Graphics, Text } from "pixi.js";
+import type { Application } from "pixi.js";
 
 import { formatDuration } from "../../app/format.ts";
 import { estimateSimTime } from "../../state/index.ts";
-import type { GameStore } from "../../state/index.ts";
+import type { GameStore, World } from "../../state/index.ts";
 import { dashSegments } from "../model/dash.ts";
 import { hitTest } from "../model/hitTest.ts";
 import { buildRaftTags } from "../model/raftLabels.ts";
@@ -37,6 +38,8 @@ import { bobOffset, rainOffset, seedOf, waveOffset } from "../model/art/motion.t
 import { seaBlobs, waveMarks } from "../model/art/sea.ts";
 import type { SeaTone } from "../model/art/sea.ts";
 import { MAP_ART_STYLE } from "../model/art/style.ts";
+import { clampResolution, createApplication, errorMessage, readGlLimits } from "./appInit.ts";
+import type { GlLimits, InitAttempt } from "./appInit.ts";
 import { createCommitEffectsLayer } from "./commitEffects.ts";
 import { drawEnvelope } from "./envelope.ts";
 import { createLetterEffectsLayer } from "./letterEffects.ts";
@@ -407,15 +410,22 @@ function drawIsland(g: Graphics, island: IslandNode): void {
 }
 
 // 紙の色の角丸の名札。名前が変わったときだけ大きさを測って描き直す。
+// 文字の大きさを測る（measureText）・角丸を描くところで例外が出たら、名札の地だけ描かない（#386。名前の文字は残す）。
 function drawNameTag(view: IslandView): void {
-  const w = view.name.width + 2 * A.nameTagPadX;
-  const h = view.name.height + 2 * A.nameTagPadY;
   view.tag.clear();
-  view.tag.visible = view.name.text !== "";
-  view.tag
-    .roundRect(-w / 2, 0, w, h, A.nameTagRadius)
-    .fill({ color: S.colors.nameTag })
-    .stroke({ width: A.nameTagStrokeWidth, color: S.colors.nameTagStroke });
+  try {
+    const w = view.name.width + 2 * A.nameTagPadX;
+    const h = view.name.height + 2 * A.nameTagPadY;
+    view.tag.visible = view.name.text !== "";
+    view.tag
+      .roundRect(-w / 2, 0, w, h, A.nameTagRadius)
+      .fill({ color: S.colors.nameTag })
+      .stroke({ width: A.nameTagStrokeWidth, color: S.colors.nameTagStroke });
+  } catch (error) {
+    view.tag.clear();
+    view.tag.visible = false;
+    console.error("[map] 島の名札を描けないので隠します", error);
+  }
 }
 
 function updateIsland(view: IslandView, island: IslandNode, k: number, ls: number): void {
@@ -721,69 +731,139 @@ function hitScene(scene: MapScene): MapScene {
   };
 }
 
-export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHandle> {
-  const app = new Application();
+// 部品（分断の縁取り・札・確定の演出・手紙の演出）を描く処理を守る（#386）。例外が出たら、その部品の層を隠して
+// 以後は描かない（ほかの部品は描き続ける）。理由は 1 回だけ console に出す。
+function guardedPart<A extends unknown[]>(
+  name: string,
+  layer: Container,
+  run: (...args: A) => void,
+): (...args: A) => void {
+  let broken = false;
+  return (...args) => {
+    if (broken) return;
+    try {
+      run(...args);
+    } catch (error) {
+      broken = true;
+      layer.visible = false;
+      console.error(`[map] ${name} を描けないので隠します`, error);
+    }
+  };
+}
+
+// 段階に名前を付けて実行し、失敗したら「どこで失敗したか」を付けて投げ直す（#386）。
+function step<T>(name: string, run: () => T): T {
   try {
-    await app.init({
-      resizeTo: host,
-      antialias: true,
-      autoDensity: true,
-      resolution: window.devicePixelRatio,
-      background: S.colors.sea,
-    });
+    return run();
+  } catch (error) {
+    throw new Error(`${name}で失敗: ${errorMessage(error)}`, { cause: error });
+  }
+}
+
+export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHandle> {
+  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio;
+  const limits = readGlLimits();
+  const { app, attempt } = await createApplication(host, {
+    dpr,
+    limits,
+    base: { background: S.colors.sea },
+  });
+  try {
+    return assemble(app, host, deps, attempt, limits);
   } catch (error) {
     try {
       app.destroy({ removeView: true }, { children: true });
     } catch {
-      // 作りかけの Application は壊せないことがある（renderer が無い）。元の失敗を返す。
+      // 壊せなくても、元の失敗を返す。
     }
     throw error;
   }
-  host.appendChild(app.canvas);
+}
 
-  // 下から sea・routes・storms・partition・islands・piles・ferries・overlay・celebrations・effects。overlay はエンジニアモードの札。海は地の色（background）の上に、
-  // にじみと波の記号を描く。celebrations は依頼の確定の光る線と紙吹雪（T-435、./commitEffects.ts）、
-  // effects は手紙の処分・差し替えのアニメーション（T-410、./letterEffects.ts）を描く。
-  const layers: Layers = {
-    sea: new Container(),
-    routes: new Container(),
-    storms: new Container(),
-    partition: new Container(),
-    islands: new Container(),
-    piles: new Container(),
-    ferries: new Container(),
-    overlay: new Container(),
-    celebrations: new Container(),
-    effects: new Container(),
-  };
-  app.stage.addChild(
-    layers.sea,
-    layers.routes,
-    layers.storms,
-    layers.partition,
-    layers.islands,
-    layers.piles,
-    layers.ferries,
-    layers.overlay,
-    layers.celebrations,
-    layers.effects,
-  );
-  // 動きを減らす設定。マップの動き（波・雨・船の揺れ）は設定の変化に追従する。
+function assemble(
+  app: Application,
+  host: HTMLElement,
+  deps: MapDeps,
+  attempt: InitAttempt,
+  limits: GlLimits | null,
+): MapHandle {
+  step("キャンバスの追加", () => host.appendChild(app.canvas));
+
+  // 動きを減らす設定。マップの動き（波・雨・船の揺れ）は設定の変化に追従する（変化の受け取りは最後に登録する）。
   const motionQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? null;
   let reducedMotion = motionQuery?.matches ?? false;
   const onMotionChange = (event: MediaQueryListEvent): void => {
     reducedMotion = event.matches;
   };
-  motionQuery?.addEventListener?.("change", onMotionChange);
-  const effects = createLetterEffectsLayer(layers.effects, { reducedMotion });
-  // 確定の演出は、動きを減らす設定の変化にも追従する（毎フレーム読む）。
-  const celebrations = createCommitEffectsLayer(layers.celebrations, {
-    reducedMotion: () => reducedMotion,
-  });
-  const partition = createPartitionLayer(layers.partition);
-  const overlay = createRaftOverlay(layers.overlay);
 
-  const sea = createSea(layers);
+  const parts = step("レイヤーの作成", () => {
+    // 下から sea・routes・storms・partition・islands・piles・ferries・overlay・celebrations・effects。overlay はエンジニアモードの札。海は地の色（background）の上に、
+    // にじみと波の記号を描く。celebrations は依頼の確定の光る線と紙吹雪（T-435、./commitEffects.ts）、
+    // effects は手紙の処分・差し替えのアニメーション（T-410、./letterEffects.ts）を描く。
+    const layers: Layers = {
+      sea: new Container(),
+      routes: new Container(),
+      storms: new Container(),
+      partition: new Container(),
+      islands: new Container(),
+      piles: new Container(),
+      ferries: new Container(),
+      overlay: new Container(),
+      celebrations: new Container(),
+      effects: new Container(),
+    };
+    app.stage.addChild(
+      layers.sea,
+      layers.routes,
+      layers.storms,
+      layers.partition,
+      layers.islands,
+      layers.piles,
+      layers.ferries,
+      layers.overlay,
+      layers.celebrations,
+      layers.effects,
+    );
+    const effects = createLetterEffectsLayer(layers.effects, { reducedMotion });
+    // 確定の演出は、動きを減らす設定の変化にも追従する（毎フレーム読む）。
+    const celebrations = createCommitEffectsLayer(layers.celebrations, {
+      reducedMotion: () => reducedMotion,
+    });
+    const partition = createPartitionLayer(layers.partition);
+    const overlay = createRaftOverlay(layers.overlay);
+    return { layers, effects, celebrations, partition, overlay, sea: createSea(layers) };
+  });
+  const { layers, effects, celebrations, partition, overlay, sea } = parts;
+  // 部品は守って描く（例外が出たら、その部品だけ描かない）。
+  const updatePartition = guardedPart(
+    "分断の縁取り",
+    layers.partition,
+    (p: MapScene["partition"]) => {
+      partition.update(p);
+    },
+  );
+  const updateOverlay = guardedPart(
+    "メッセージの札",
+    layers.overlay,
+    (tags: Parameters<typeof overlay.update>[0]) => {
+      overlay.update(tags);
+    },
+  );
+  const updateCelebrations = guardedPart(
+    "確定の演出",
+    layers.celebrations,
+    (world: World, scene: MapScene, now: number) => {
+      celebrations.update(world, scene, now);
+    },
+  );
+  const updateEffects = guardedPart(
+    "手紙の演出",
+    layers.effects,
+    (world: World, scene: MapScene, now: number, simNow: number) => {
+      effects.update(world, scene, now, simNow);
+    },
+  );
+
   const routeViews = new Map<string, RouteView>();
   const islandViews = new Map<number, IslandView>();
   const pileViews = new Map<string, PileView>();
@@ -792,11 +872,18 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
   let lastScene: MapScene | null = null;
   let textScale = currentLabelScale();
 
+  // 画面の大きさが変わったら、キャンバスの大きさ × resolution が WebGL の上限を超えないように resolution を直す。
+  const fitResolution = (size: Size): void => {
+    const target = clampResolution(size, attempt.resolution, limits);
+    if (app.renderer.resolution !== target) app.renderer.resize(size.width, size.height, target);
+  };
+
   const tick = (): void => {
     const now = deps.now();
     const motion: Motion = { now, reduced: reducedMotion };
     const size = { width: app.screen.width, height: app.screen.height };
     if (size.width !== sea.size.width || size.height !== sea.size.height) {
+      fitResolution(size);
       drawSea(sea, size);
       textScale = currentLabelScale();
     }
@@ -819,7 +906,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       },
       destroyRoute,
     );
-    partition.update(scene.partition);
+    updatePartition(scene.partition);
     syncViews(
       islandViews,
       scene.islands,
@@ -850,9 +937,26 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       },
       (v) => v.root.destroy({ children: true }),
     );
-    overlay.update(deps.engineer?.() === true ? buildRaftTags(world, scene) : null);
-    celebrations.update(world, scene, now);
-    effects.update(world, scene, now, shown);
+    updateOverlay(deps.engineer?.() === true ? buildRaftTags(world, scene) : null);
+    updateCelebrations(world, scene, now);
+    updateEffects(world, scene, now, shown);
+  };
+
+  // 最初の描画は、ここで 1 回だけ行う（失敗したら理由を付けて reject し、文の表示に切り替える）。
+  step("最初の描画", () => {
+    tick();
+    app.render();
+  });
+
+  // 毎フレームの描画の例外で ticker が止まらないようにする（理由は 1 回だけ console に出す）。
+  let tickFailed = false;
+  const onTick = (): void => {
+    try {
+      tick();
+    } catch (error) {
+      if (!tickFailed) console.error("[map] 描画で失敗", error);
+      tickFailed = true;
+    }
   };
 
   const onPointerDown = (event: PointerEvent): void => {
@@ -870,18 +974,22 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
     else state.selectIsland(hit.id);
   };
 
-  app.ticker.add(tick);
-  app.canvas.addEventListener("pointerdown", onPointerDown);
-  // resizeTo は window の resize しか見ないので、マップの領域だけが変わったとき（パネルの中身が増えて
-  // マップの行が縮んだときなど）も、次のフレームで canvas の大きさを合わせる（T-426）。
-  // 大きさが変わると、次の tick で構図（buildMapScene の layoutMap）と海が作り直される。
-  const resizeObserver =
-    typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(() => {
-          app.queueResize();
-        });
-  resizeObserver?.observe(host);
+  const resizeObserver = step("イベントの登録", () => {
+    motionQuery?.addEventListener?.("change", onMotionChange);
+    app.ticker.add(onTick);
+    app.canvas.addEventListener("pointerdown", onPointerDown);
+    // resizeTo は window の resize しか見ないので、マップの領域だけが変わったとき（パネルの中身が増えて
+    // マップの行が縮んだときなど）も、次のフレームで canvas の大きさを合わせる（T-426）。
+    // 大きさが変わると、次の tick で構図（buildMapScene の layoutMap）と海が作り直される。
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            app.queueResize();
+          });
+    observer?.observe(host);
+    return observer;
+  });
 
   let destroyed = false;
   return {
@@ -890,7 +998,7 @@ export async function mountMap(host: HTMLElement, deps: MapDeps): Promise<MapHan
       destroyed = true;
       app.canvas.removeEventListener("pointerdown", onPointerDown);
       resizeObserver?.disconnect();
-      app.ticker.remove(tick);
+      app.ticker.remove(onTick);
       motionQuery?.removeEventListener?.("change", onMotionChange);
       routeViews.clear();
       islandViews.clear();
