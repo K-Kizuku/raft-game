@@ -132,6 +132,58 @@ describe("GameScreen", () => {
     expect(notifications.getAttribute("aria-live")).toBe("polite");
   });
 
+  it("GM-6 エンジニアモードを開いている間は、島の詳細の代わりにエンジニアパネルを出す（T-438）", () => {
+    const m = manualConnector();
+    render(<GameScreen round={withSession} onRoundEnd={() => {}} connector={m.connector} />);
+    m.setStatus("ready");
+    m.snapshot("sailing");
+    const island = () => screen.queryByRole("complementary", { name: "島の詳細" });
+    const engineer = () => screen.queryByRole("complementary", { name: "エンジニアパネル" });
+    expect(island()).not.toBeNull();
+    expect(engineer()).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "E エンジニアモード" }));
+    expect(island()).toBeNull();
+    const panel = engineer();
+    expect(panel).not.toBeNull();
+    // パネルはゲーム画面の直下（GameScreen.css が島の詳細の列に置く）で、マップの中には無い。
+    expect(panel?.parentElement?.className).toBe("game-screen");
+    expect(
+      within(screen.getByRole("region", { name: "マップ" })).queryByRole("tablist"),
+    ).toBeNull();
+
+    // マップで島を選ぶ（ストアの選択）と、開いたままのパネルのノード一覧でその島を選ぶ。
+    act(() => {
+      gameStore.getState().selectIsland(2);
+    });
+    expect(
+      within(screen.getByRole("table", { name: "ノード一覧" }))
+        .getByRole("button", { name: /^2 / })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    fireEvent.keyDown(window, { key: "e" });
+    expect(engineer()).toBeNull();
+    expect(island()).not.toBeNull();
+  });
+
+  it("GM-6 リプレイでもエンジニアモードを開ける", () => {
+    const m = manualConnector("replay");
+    render(
+      <GameScreen
+        round={{ ...round, session: null }}
+        onRoundEnd={() => {}}
+        connector={m.connector}
+      />,
+    );
+    m.setStatus("ready");
+    m.snapshot("sailing");
+    fireEvent.click(screen.getByRole("button", { name: "E エンジニアモード" }));
+    expect(screen.queryByRole("complementary", { name: "島の詳細" })).toBeNull();
+    const panel = screen.getByRole("complementary", { name: "エンジニアパネル" });
+    expect(within(panel).getAllByRole("tab")).toHaveLength(4);
+  });
+
   it("GM-2 offline なら「リザルトへ（仮）」で onRoundEnd を呼ぶ", () => {
     const { connector, open } = manualConnector();
     const onRoundEnd = vi.fn();

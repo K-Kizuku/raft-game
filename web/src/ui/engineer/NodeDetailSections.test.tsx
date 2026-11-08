@@ -6,7 +6,8 @@ import type { LogEntry, NodeDetail } from "../../protocol/index.ts";
 import { gameStore } from "../../state/index.ts";
 import type { World } from "../../state/index.ts";
 import { loadMiniRound } from "../../state/fixtures/loadRecord.ts";
-import { NodeDetailSections } from "./NodeDetailSections.tsx";
+import { ENGINEER_LOG_LIMIT } from "./nodeDetailView.ts";
+import { ProgressDetailSection, RaftLogSection } from "./NodeDetailSections.tsx";
 
 beforeEach(() => {
   gameStore.getState().reset();
@@ -67,10 +68,17 @@ function cells(row: HTMLTableRowElement): string[] {
 
 const NOT_YET = "ノードの詳細はまだ届いていません（サーバーにつながっているときだけ表示します）。";
 
-describe("NodeDetailSections", () => {
+describe("RaftLogSection・ProgressDetailSection", () => {
   it("ND-1 詳細が無ければ、その旨の文だけ", () => {
     const world = loadWorld();
-    render(<NodeDetailSections world={world} targetId={2} />);
+    const view = render(<RaftLogSection world={world} targetId={2} />);
+    expect(screen.getByRole("heading", { name: "Raft ログ" })).not.toBeNull();
+    expect(screen.getByText(NOT_YET)).not.toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    view.unmount();
+
+    render(<ProgressDetailSection world={world} targetId={2} />);
+    expect(screen.getByRole("heading", { name: "Progress" })).not.toBeNull();
     expect(screen.getByText(NOT_YET)).not.toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
   });
@@ -78,7 +86,7 @@ describe("NodeDetailSections", () => {
   it("ND-2 Raft ログは新しい順で、Commit 済みに印と区切りの行", () => {
     const world = loadWorld();
     setDetail(detail());
-    render(<NodeDetailSections world={world} targetId={2} />);
+    render(<RaftLogSection world={world} targetId={2} />);
     expect(screen.getByRole("heading", { name: "Raft ログ: 2 二の島" })).not.toBeNull();
     const table = screen.getByRole("table", { name: "Raft ログ" });
     expect([...table.querySelectorAll("th")].map((th) => th.textContent)).toEqual([
@@ -106,7 +114,7 @@ describe("NodeDetailSections", () => {
     const world = loadWorld();
     // すべて Commit 済み → 区切りは一番上。最初の index が 1 より大きい → 省いた旨。
     setDetail(detail({ commit: 13, log: [entry(12, true), entry(13, true, "")] }));
-    const view = render(<NodeDetailSections world={world} targetId={2} />);
+    const view = render(<RaftLogSection world={world} targetId={2} />);
     let rows = bodyRows(screen.getByRole("table", { name: "Raft ログ" }));
     expect(rows.map(cells)).toEqual([
       ["Commit Index 13"],
@@ -139,7 +147,7 @@ describe("NodeDetailSections", () => {
   it("ND-3 detail.id が targetId と違えば届いていない扱い", () => {
     const world = loadWorld();
     setDetail(detail({ id: 3 }));
-    render(<NodeDetailSections world={world} targetId={2} />);
+    render(<RaftLogSection world={world} targetId={2} />);
     expect(screen.getByText(NOT_YET)).not.toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByText(/Raft ログ:/)).toBeNull();
@@ -159,7 +167,7 @@ describe("NodeDetailSections", () => {
         ],
       }),
     );
-    render(<NodeDetailSections world={world} targetId={1} />);
+    render(<ProgressDetailSection world={world} targetId={1} />);
     expect(
       screen.getByRole("heading", { name: "Progress（Leader から見た複製の進み具合）" }),
     ).not.toBeNull();
@@ -187,7 +195,7 @@ describe("NodeDetailSections", () => {
   it("ND-4 Follower のいない Leader は「Follower はいません。」", () => {
     const world = loadWorld();
     setDetail(detail({ id: 1, role: "leader", lead: 1, progress: [] }));
-    render(<NodeDetailSections world={world} targetId={1} />);
+    render(<ProgressDetailSection world={world} targetId={1} />);
     expect(screen.getByText("Follower はいません。")).not.toBeNull();
     expect(screen.queryByRole("table", { name: "Progress" })).toBeNull();
   });
@@ -195,7 +203,7 @@ describe("NodeDetailSections", () => {
   it("ND-5 Follower なら Leader でない旨と、Leader を選ぶボタン", () => {
     const world = loadWorld();
     setDetail(detail({ lead: 1 }));
-    const view = render(<NodeDetailSections world={world} targetId={2} />);
+    const view = render(<ProgressDetailSection world={world} targetId={2} />);
     expect(
       screen.getByText("このノードは Leader ではないので、Progress はありません。"),
     ).not.toBeNull();
@@ -207,5 +215,27 @@ describe("NodeDetailSections", () => {
     setDetail(detail({ lead: 0 }));
     expect(screen.queryByRole("button", { name: /Leader（/ })).toBeNull();
     view.unmount();
+  });
+  it("ND-6 Raft ログは新しい順に ENGINEER_LOG_LIMIT 件まで。古いものは出さず、その旨を 1 行", () => {
+    const world = loadWorld();
+    const total = ENGINEER_LOG_LIMIT + 4;
+    const log: LogEntry[] = [];
+    for (let i = 1; i <= total; i++) log.push(entry(i, i <= total - 2));
+    setDetail(detail({ commit: total - 2, lastIndex: total, log }));
+    render(<RaftLogSection world={world} targetId={2} />);
+    const rows = bodyRows(screen.getByRole("table", { name: "Raft ログ" })).filter(
+      (r) => r.dataset.index !== undefined,
+    );
+    expect(rows.map((r) => Number(r.dataset.index))).toEqual(
+      Array.from({ length: ENGINEER_LOG_LIMIT }, (_, i) => total - i),
+    );
+    // Commit 済みの最大の index（total − 2）の上に区切り。
+    expect(screen.getByText(`Commit Index ${String(total - 2)}`)).not.toBeNull();
+    expect(
+      screen.getByText(
+        `新しい ${String(ENGINEER_LOG_LIMIT)} 件だけ出しています（古いエントリは省いています）。`,
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText(/末尾の/)).toBeNull();
   });
 });

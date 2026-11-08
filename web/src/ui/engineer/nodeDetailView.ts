@@ -3,7 +3,7 @@
 //
 // 表示の決まり:
 // - ログ（log）は index の昇順に並べる（届いた順が昇順でなければ昇順に並べ直す）。表は新しいエントリを上にする
-//   （描画だけ降順。LogRow の列は昇順のまま）。
+//   （描画だけ降順。LogRow の列は昇順のまま）。表に出すのは新しい ENGINEER_LOG_LIMIT 件まで（T-438）。
 // - committed・commit はサーバーの値のまま。index <= commit を画面で計算し直さない。
 // - 表では Commit 済みの最大の index の行の上に「Commit Index <commit>」の区切りの行を入れる
 //   （commit が 0 か、行の中に Commit 済みが無いときは入れない）。
@@ -46,6 +46,15 @@ export type NodeDetailView = Readonly<{
 }>;
 
 const NONE = "—";
+
+// エンジニアパネルの「Raft ログ」のタブに出す行の上限（T-438）。1470×860 で、Stage 3（6 島）でも
+// パネルの中を巻き取らずに収まる件数。これより古いエントリは出さない。
+export const ENGINEER_LOG_LIMIT = 8;
+
+// 表に出す行（新しい順に limit 件まで）。log は index の昇順（nodeDetailView の log）。
+export function newestLogRows(log: readonly LogRow[], limit: number): LogRow[] {
+  return log.slice(Math.max(0, log.length - limit)).reverse();
+}
 
 export const PROGRESS_STATE_LABELS: Readonly<Record<string, string>> = Object.freeze({
   probe: "Probe",

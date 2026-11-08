@@ -3,8 +3,10 @@
 // データは props で受けず、ストア（T-403）から読む（ADR-0010・DesignDoc §13.3）。
 // 値は届いたものをそのまま出し、Leader や Commit をここで決めない（ADR-0009）。
 // 開いている間だけ、選んでいるノードの詳細（node.detail）を sub.engineer で購読する（DesignDoc §13.4）。
+// 中身はタブ（ノード一覧・Raft ログ・Progress・手紙）に分け、パネルの中を巻き取らずに収める（T-438）。
+// 置き場所はゲーム画面が決める（開いている間は右の島の詳細の列。GameScreen.css）。
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactElement } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactElement } from "react";
 
 import type { Letter, LetterEntry } from "../../protocol/index.ts";
 import { gameStore, lettersAtPort, lettersOnFerry, useGameStore } from "../../state/index.ts";
@@ -24,16 +26,25 @@ import {
   targetNodeId,
 } from "./engineerView.ts";
 import type { FieldRow, LetterLookup } from "./engineerView.ts";
-import { NodeDetailSections } from "./NodeDetailSections.tsx";
+import { ENGINEER_TABS, tabAfterKey } from "./engineerTabs.ts";
+import type { EngineerTabId } from "./engineerTabs.ts";
+import { ProgressDetailSection, RaftLogSection } from "./NodeDetailSections.tsx";
 import { useEngineerSubscriber } from "./EngineerSubscription.tsx";
 import type { EngineerSubscriber } from "./EngineerSubscription.tsx";
 import "./EngineerPanel.css";
 
 const PANEL_ID = "engineer-panel";
+const TABPANEL_ID = "engineer-tabpanel";
 const NONE = "—";
+
+function tabId(id: EngineerTabId): string {
+  return `engineer-tab-${id}`;
+}
 
 export function EngineerPanel(): ReactElement {
   const [open, setOpen] = useState(false);
+  // 選んでいるタブ（閉じて開き直しても同じタブ）。
+  const [tab, setTab] = useState<EngineerTabId>("nodes");
   const toggleRef = useRef<HTMLButtonElement>(null);
   const world = useGameStore((s) => s.world);
   const selectedIslandId = useGameStore((s) => s.selection.islandId);
@@ -91,7 +102,7 @@ export function EngineerPanel(): ReactElement {
           {world === null ? (
             <p>まだ島の状態が届いていません。</p>
           ) : (
-            <EngineerBody world={world} targetId={targetId} />
+            <EngineerBody world={world} targetId={targetId} tab={tab} onTab={setTab} />
           )}
         </aside>
       )}
@@ -147,76 +158,170 @@ function idText(id: number | null): string {
 function EngineerBody({
   world,
   targetId,
+  tab,
+  onTab,
+}: {
+  world: World;
+  targetId: number | null;
+  tab: EngineerTabId;
+  onTab: (tab: EngineerTabId) => void;
+}): ReactElement {
+  const [letterId, setLetterId] = useState<number | null>(null);
+
+  return (
+    <div className="engineer-body">
+      <EngineerTabList tab={tab} onTab={onTab} />
+      <div
+        id={TABPANEL_ID}
+        role="tabpanel"
+        aria-labelledby={tabId(tab)}
+        className="engineer-tabpanel"
+        data-tab={tab}
+      >
+        {tab === "nodes" && <NodeListSection world={world} targetId={targetId} />}
+        {tab === "log" && <RaftLogSection world={world} targetId={targetId} />}
+        {tab === "progress" && <ProgressDetailSection world={world} targetId={targetId} />}
+        {tab === "letters" && (
+          <LettersSection world={world} letterId={letterId} onSelect={setLetterId} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// タブの列（WAI-ARIA の tablist）。選んでいるタブだけを Tab の順に入れ、← → でタブを移る。
+function EngineerTabList({
+  tab,
+  onTab,
+}: {
+  tab: EngineerTabId;
+  onTab: (tab: EngineerTabId) => void;
+}): ReactElement {
+  const refs = useRef(new Map<EngineerTabId, HTMLButtonElement>());
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const next = tabAfterKey(tab, event.key);
+    if (next === null) return;
+    event.preventDefault();
+    onTab(next);
+    refs.current.get(next)?.focus();
+  }
+
+  return (
+    <div
+      role="tablist"
+      aria-label="エンジニアパネルの表示"
+      className="engineer-tabs"
+      onKeyDown={onKeyDown}
+    >
+      {ENGINEER_TABS.map((t) => (
+        <button
+          key={t.id}
+          ref={(el) => {
+            if (el === null) refs.current.delete(t.id);
+            else refs.current.set(t.id, el);
+          }}
+          id={tabId(t.id)}
+          type="button"
+          role="tab"
+          className="engineer-tab"
+          aria-selected={t.id === tab}
+          aria-controls={TABPANEL_ID}
+          tabIndex={t.id === tab ? 0 : -1}
+          onClick={() => {
+            onTab(t.id);
+          }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function NodeListSection({
+  world,
+  targetId,
 }: {
   world: World;
   targetId: number | null;
 }): ReactElement {
-  const selection = useGameStore((s) => s.selection);
-  const [letterId, setLetterId] = useState<number | null>(null);
   const rows = useMemo(() => nodeRows(world, targetId), [world, targetId]);
+  return (
+    <section className="engineer-section">
+      <h3>ノード一覧</h3>
+      {rows.length === 0 ? (
+        <p>ノードの状態が届いていません。</p>
+      ) : (
+        <table aria-label="ノード一覧" className="engineer-table">
+          <thead>
+            <tr>
+              {["Node", "Role", "Term", "Vote", "Lead", "Commit", "Applied", "Last Index"].map(
+                (name) => (
+                  <th key={name} scope="col">
+                    {name}
+                  </th>
+                ),
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                key={row.id}
+                data-node={row.id}
+                data-role={row.role === "leader" ? "leader" : undefined}
+              >
+                <td>
+                  <button
+                    type="button"
+                    className="engineer-node"
+                    aria-pressed={row.target}
+                    onClick={() => {
+                      gameStore.getState().selectIsland(row.id);
+                    }}
+                  >
+                    <span
+                      className="engineer-node-dot"
+                      aria-hidden="true"
+                      style={islandDotStyle(world, row.id)}
+                    />
+                    {row.id} {row.name}
+                  </button>
+                </td>
+                <td className={`engineer-role engineer-role--${row.role}`}>{row.roleLabel}</td>
+                <td>{row.term}</td>
+                <td>{idText(row.vote)}</td>
+                <td>{idText(row.lead)}</td>
+                <td>{row.commit}</td>
+                <td>{row.applied}</td>
+                <td>{row.lastIndex}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function LettersSection({
+  world,
+  letterId,
+  onSelect,
+}: {
+  world: World;
+  letterId: number | null;
+  onSelect: (id: number) => void;
+}): ReactElement {
+  const selection = useGameStore((s) => s.selection);
   const lists = useMemo(() => letterLists(world, selection), [world, selection]);
   const lookup = useMemo(
     () => (letterId === null ? null : findLetter(world, letterId)),
     [world, letterId],
   );
-
   return (
-    <div className="engineer-body">
-      <section className="engineer-section">
-        <h3>ノード一覧</h3>
-        {rows.length === 0 ? (
-          <p>ノードの状態が届いていません。</p>
-        ) : (
-          <table aria-label="ノード一覧" className="engineer-table">
-            <thead>
-              <tr>
-                {["Node", "Role", "Term", "Vote", "Lead", "Commit", "Applied", "Last Index"].map(
-                  (name) => (
-                    <th key={name} scope="col">
-                      {name}
-                    </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={row.id}
-                  data-node={row.id}
-                  data-role={row.role === "leader" ? "leader" : undefined}
-                >
-                  <td>
-                    <button
-                      type="button"
-                      className="engineer-node"
-                      aria-pressed={row.target}
-                      onClick={() => {
-                        gameStore.getState().selectIsland(row.id);
-                      }}
-                    >
-                      <span
-                        className="engineer-node-dot"
-                        aria-hidden="true"
-                        style={islandDotStyle(world, row.id)}
-                      />
-                      {row.id} {row.name}
-                    </button>
-                  </td>
-                  <td className={`engineer-role engineer-role--${row.role}`}>{row.roleLabel}</td>
-                  <td>{row.term}</td>
-                  <td>{idText(row.vote)}</td>
-                  <td>{idText(row.lead)}</td>
-                  <td>{row.commit}</td>
-                  <td>{row.applied}</td>
-                  <td>{row.lastIndex}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-      <NodeDetailSections world={world} targetId={targetId} />
+    <>
       <section className="engineer-section">
         <h3>手紙</h3>
         {lists.length === 0 ? (
@@ -229,7 +334,7 @@ function EngineerBody({
               title={list.title}
               letters={list.letters}
               selectedId={letterId}
-              onSelect={setLetterId}
+              onSelect={onSelect}
             />
           ))
         )}
@@ -237,7 +342,7 @@ function EngineerBody({
       {letterId !== null && lookup !== null && (
         <LetterDetail world={world} letterId={letterId} lookup={lookup} />
       )}
-    </div>
+    </>
   );
 }
 
