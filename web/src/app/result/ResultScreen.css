@@ -428,6 +428,133 @@
   border-top: 2px dashed var(--result-rule);
 }
 
+/* 広い画面（1024px 以上・高さ 600px 以上）では、画面の高さちょうどの紙に、列を横に並べる
+   （T-429。基準は 1470×860・docs/11 §15）。画面全体は巻き取らず、列の中だけを巻き取る。
+   左から「★・スコア・依頼」「技術的な結果・エンジニアモード」「今日の出来事」「次の行動（シード・入力ログ・
+   リプレイ・ボタン）」。狭い・低い画面では、これまでどおり縦に 1 列に並べる。 */
+@media (min-width: 64rem) and (min-height: 37.5rem) {
+  .result.app-screen {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(14rem, 16rem);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    column-gap: var(--space-5);
+    box-sizing: border-box;
+    max-width: min(100rem, calc(100% - 2 * var(--space-4)));
+    height: calc(100vh - 2 * var(--space-4));
+    height: calc(100dvh - 2 * var(--space-4));
+    margin-block: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+  }
+
+  .result > h1,
+  .result > h1 + p {
+    grid-column: 1 / -1;
+  }
+
+  /* 盤（3 列）と、結果が無いときの文は左、次の行動の列は右。 */
+  .result > .result-board,
+  .result > h1 + p + p {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .result > .result-next {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .result .result-board {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr);
+    gap: var(--space-5);
+    min-height: 0;
+  }
+
+  /* 一覧を持つ行（配った手紙・各島の最終ログ）は、見出しの下に列の幅いっぱいで出す（列が狭いため）。 */
+  .result .result-board .result-list > dt:has(+ dd > :is(ul, ol)) {
+    grid-column: 1 / -1;
+    border-bottom: none;
+  }
+
+  .result .result-board .result-list > dd:has(> :is(ul, ol)) {
+    grid-column: 1 / -1;
+    padding-top: 0;
+  }
+
+  /* 列。中身が入りきらないときは、列の中だけを巻き取る。 */
+  .result .result-column {
+    min-height: 0;
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-top: 2px dashed var(--result-rule);
+  }
+
+  .result .result-column > .result-section,
+  .result .result-figures > .result-section,
+  .result .result-column > .result-engineer-area {
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+  }
+
+  .result .result-column > :first-child,
+  .result .result-figures > .result-section {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .result .result-column > .fireworks {
+    margin-top: var(--space-3);
+  }
+
+  .result .fireworks-banner {
+    margin-top: 0;
+  }
+
+  /* スコアと依頼は横に並べる（どちらも短い帳簿）。 */
+  .result .result-figures {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 2px dashed var(--result-rule);
+  }
+
+  .result .result-stars {
+    font-size: calc(var(--font-size-h1) * 1.5);
+  }
+
+  .result .result-total {
+    font-size: var(--font-size-h1);
+  }
+
+  .result .result-breakdown th,
+  .result .result-breakdown td,
+  .result .result-list > dt,
+  .result .result-list > dd {
+    padding-block: var(--space-1);
+  }
+
+  /* 次の行動の列。ボタンは列の下の端にそろえ、縦に並べる。 */
+  .result .result-next {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .result .result-next > .result-actions {
+    flex-direction: column;
+    margin-top: auto;
+    padding-top: var(--space-4);
+  }
+
+  .result .result-next > .result-actions .btn {
+    width: 100%;
+  }
+}
+
 /* 動きを減らす設定では、★は最初から全部見える。 */
 @media (prefers-reduced-motion: reduce) {
   .result .result-star-filled {

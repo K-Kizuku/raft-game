@@ -141,15 +141,50 @@
   text-align: center;
 }
 
-/* 広い画面（1280px 以上）では、節を 2 列に並べて、スクロールを減らす */
+/* 広い画面（1280px 以上）では、節を 3 列 × 2 行に並べて 1 画面に収める（T-429。基準は 1470×860・docs/11 §15）。
+   番号と絵は節の見出しの左に小さく置き、文は節の幅いっぱいに流す。カードの上下の余白も詰める。 */
 @media (min-width: 80rem) {
   .app-howto.app-card.app-screen {
-    max-width: 84rem;
+    max-width: min(96rem, calc(100% - 2 * var(--space-5)));
+    margin-block: var(--space-4);
+  }
+
+  .app-howto > h1 {
+    margin-bottom: var(--space-4);
   }
 
   .app-howto .howto-steps {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .app-howto .howto-step {
+    min-height: 0;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--font-size-body);
+    line-height: 1.6;
+  }
+
+  .app-howto .howto-step::before {
+    top: var(--space-3);
+  }
+
+  .app-howto .howto-step-icon {
+    top: var(--space-2);
+    left: 3em;
+    width: 2.8em;
+    height: 2.2em;
+  }
+
+  .app-howto .howto-step-title {
+    display: flex;
+    align-items: center;
+    min-height: 1.8em;
+    padding-left: 5.4em;
+  }
+
+  .app-howto .app-back.btn {
+    margin-top: var(--space-4);
   }
 }

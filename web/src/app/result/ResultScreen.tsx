@@ -316,42 +316,72 @@ export function ResultScreen({
       {view === null ? (
         <p>結果を受け取っていません。</p>
       ) : (
-        <>
-          <StarsSection view={view} world={world} />
-          {hasFireworks(view.stars) && <Fireworks />}
-          <ScoreSection view={view} />
-          <RequestsSection view={view} />
-          <TechnicalSection technical={view.technical} world={world} />
-          <StorySection view={view} />
-          <ResultEngineer />
-        </>
+        // 広い画面では、列ごとに並べ、列の中だけを巻き取る（T-429・docs/11 §15）。
+        <div className="result-board">
+          <div className="result-column result-column-summary">
+            <StarsSection view={view} world={world} />
+            {hasFireworks(view.stars) && <Fireworks />}
+            <div className="result-figures">
+              <ScoreSection view={view} />
+              <RequestsSection view={view} />
+            </div>
+          </div>
+          <div className="result-column result-column-technical">
+            <TechnicalSection technical={view.technical} world={world} />
+          </div>
+          <div className="result-column result-column-story">
+            <StorySection view={view} />
+            <ResultEngineer />
+          </div>
+        </div>
       )}
-      {view !== null && <ResultSeed stageId={stage.id} />}
-      {view !== null && (
-        <InputLogDownload
-          session={session ?? null}
-          available={roundResult?.inputLogAvailable === true}
-        />
-      )}
-      {view !== null && (
-        <ReplayButton
-          session={session ?? null}
-          available={roundResult?.inputLogAvailable === true}
-        />
-      )}
-      <div className="result-actions">
-        <button type="button" className="btn btn-primary" onClick={onRetry}>
-          同じ条件でもう一度
-        </button>
-        {nextStage !== null && (
-          <button type="button" className="btn" onClick={onNextStage}>
-            次のステージ
-          </button>
+      <div className="result-column result-next">
+        {view !== null && <ResultSeed stageId={stage.id} />}
+        {view !== null && (
+          <InputLogDownload
+            session={session ?? null}
+            available={roundResult?.inputLogAvailable === true}
+          />
         )}
-        <button type="button" className="btn" onClick={onStageSelect}>
-          ステージ選択
-        </button>
+        {view !== null && (
+          <ReplayButton
+            session={session ?? null}
+            available={roundResult?.inputLogAvailable === true}
+          />
+        )}
+        <ResultActions
+          nextStage={nextStage}
+          onRetry={onRetry}
+          onNextStage={onNextStage}
+          onStageSelect={onStageSelect}
+        />
       </div>
+    </div>
+  );
+}
+
+function ResultActions({
+  nextStage,
+  onRetry,
+  onNextStage,
+  onStageSelect,
+}: Pick<
+  ResultScreenProps,
+  "nextStage" | "onRetry" | "onNextStage" | "onStageSelect"
+>): ReactElement {
+  return (
+    <div className="result-actions">
+      <button type="button" className="btn btn-primary" onClick={onRetry}>
+        同じ条件でもう一度
+      </button>
+      {nextStage !== null && (
+        <button type="button" className="btn" onClick={onNextStage}>
+          次のステージ
+        </button>
+      )}
+      <button type="button" className="btn" onClick={onStageSelect}>
+        ステージ選択
+      </button>
     </div>
   );
 }

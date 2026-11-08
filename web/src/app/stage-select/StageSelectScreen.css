@@ -7,6 +7,23 @@
   --stage-select-perforation: 8px;
 }
 
+/* 広い画面（1024px 以上）では、カードを横に並べて 1 画面に収める（T-429。基準は 1470×860・docs/11 §15）。
+   画面の枠を広げ、カードが 3・4 枚なら 1 行に並ぶようにする。上下の余白も詰める。 */
+@media (min-width: 64rem) {
+  .app-screen.stage-select {
+    max-width: min(96rem, 100%);
+    padding-block: var(--space-4);
+  }
+
+  .stage-select > h1 {
+    margin-block: var(--space-2) 0;
+  }
+
+  .stage-select .stage-select-list {
+    margin-block: var(--space-4);
+  }
+}
+
 /* 見出しと「タイトルへ」は、カードの列と同じく画面の中央にそろえる（T-427。カードが 1・2 枚でも中央に来る）。 */
 .stage-select > h1 {
   text-align: center;
