@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { Ack, AckCode } from "../../protocol/index.ts";
 import {
+  AUTO_FERRY_BUSY,
   FERRY_OP_NAMES,
+  autoFerryResultMessage,
   blockerText,
   ferryResultMessage,
   viaHintText,
@@ -118,5 +120,25 @@ describe("blockerText", () => {
     ["route_blocked", 0, "嵐で航路が通れません。"],
   ])("FM-2 %s・%i →「%s」", (blocker, readyInMs, want) => {
     expect(blockerText(blocker, readyInMs)).toBe(want);
+  });
+});
+
+describe("autoFerryResultMessage（T-725）", () => {
+  it.each<[boolean, Ack | "rejected", string]>([
+    [true, OK, "自動航行にしました。ボットが積み込みと出航をします。"],
+    [false, OK, "手で操作する船に戻しました。"],
+    [true, "rejected", "サーバーにつながっていないため、切り替えできませんでした。"],
+    [true, fail("feature_disabled"), "いまは自動航行を使えません。"],
+    [true, fail("phase_invalid"), "ラウンドが終わったため、切り替えできません。"],
+    [true, fail("rate_limited"), "操作が多すぎます。少し待ってください。"],
+    [true, fail("bad_request"), "切り替えできませんでした。"],
+    [false, fail("unknown_code"), "切り替えできませんでした。"],
+    [false, fail(), "切り替えできませんでした。"],
+  ])("FM-AUTO enabled=%s →「%s」", (enabled, result, want) => {
+    expect(autoFerryResultMessage(enabled, result)).toBe(want);
+  });
+
+  it("FM-AUTO 自動の船を手で操作したときの文", () => {
+    expect(AUTO_FERRY_BUSY).toBe("自動航行中です。");
   });
 });

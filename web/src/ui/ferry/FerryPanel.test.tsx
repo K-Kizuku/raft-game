@@ -12,6 +12,7 @@ import { gameStore } from "../../state/index.ts";
 import { GameCommandProvider } from "../commands/GameCommands.tsx";
 import type { GameCommandSender } from "../commands/GameCommands.tsx";
 import { setShowRaftTerms } from "../terms/preference.ts";
+import { resetAutoFerryFeature, setAutoFerryFeature } from "./autoFerryFeature.ts";
 import { CARGO_DROP_ID, PORT_DROP_ID, RELAY_DROP_ID } from "./dnd.ts";
 import { FerryPanel } from "./FerryPanel.tsx";
 import { pressIsland } from "./islandPress.ts";
@@ -1132,5 +1133,192 @@ describe("記録を入れたときの封筒のスロット（T-422）", () => {
       3,
     );
     expect(document.querySelector(".ferry-panel__cargo button")).toBeNull();
+  });
+});
+
+describe("FerryPanel の自動航行（T-725）", () => {
+  beforeEach(() => {
+    setAutoFerryFeature(true);
+  });
+
+  afterEach(() => {
+    resetAutoFerryFeature();
+  });
+
+  function toggle(): HTMLElement | null {
+    return screen.queryByRole("switch", { name: /自動航行（ボット）/ });
+  }
+
+  function autoSnapshot(ids: string[], overrides: Partial<Snapshot> = {}): Snapshot {
+    const base = makeFerrySnapshot(overrides);
+    return { ...base, session: { ...base.session, autoFerries: ids } };
+  }
+
+  function oneFerrySnapshot(): Snapshot {
+    const base = makeFerrySnapshot();
+    return {
+      ...base,
+      ferries: base.ferries.filter((f) => f.id === "f1"),
+      letters: base.letters.filter((l) => l.loc.type !== "ferry"),
+    };
+  }
+
+  it("FP-AUTO-1 船が 2 隻以上なら切り替えを出し、押すと cmd.ferry.auto を送る。ok の ack で印が出る", async () => {
+    load();
+    const send = okSender();
+    renderPanel(send);
+    const sw = toggle();
+    expect(sw).not.toBeNull();
+    expect(sw?.getAttribute("aria-checked")).toBe("false");
+    expect(document.querySelector(".ferry-panel__auto-mark")).toBeNull();
+
+    fireEvent.click(sw as HTMLElement);
+    expect(send).toHaveBeenCalledWith("cmd.ferry.auto", { ferryId: "f1", enabled: true });
+    // 送っただけでは変えない（ADR-0009）。
+    expect(toggle()?.getAttribute("aria-checked")).toBe("false");
+    await flush();
+    expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+    expect(gameStore.getState().world?.session.autoFerries).toEqual(["f1"]);
+    expect(statusText()).toBe("自動航行にしました。ボットが積み込みと出航をします。");
+    // 選んだ船の名前の行と、船のタブに「自動」の印。
+    expect(document.querySelector(".ferry-panel__title .ferry-panel__auto-mark")?.textContent).toBe(
+      "🧭 自動",
+    );
+    const tabs = document.querySelectorAll<HTMLElement>(".ferry-panel__tab");
+    expect(tabs[0]?.querySelector(".ferry-panel__auto-mark")).not.toBeNull();
+    expect(tabs[1]?.querySelector(".ferry-panel__auto-mark")).toBeNull();
+
+    fireEvent.click(toggle() as HTMLElement);
+    expect(send).toHaveBeenLastCalledWith("cmd.ferry.auto", { ferryId: "f1", enabled: false });
+    await flush();
+    expect(toggle()?.getAttribute("aria-checked")).toBe("false");
+    expect(gameStore.getState().world?.session).not.toHaveProperty("autoFerries");
+    expect(statusText()).toBe("手で操作する船に戻しました。");
+  });
+
+  it("FP-AUTO-1 何も選んでいないときの船の一覧のカードにも「自動」の印", () => {
+    load(autoSnapshot(["f2"]), null);
+    renderPanel(okSender());
+    const cards = document.querySelectorAll<HTMLElement>(".ferry-list__card");
+    expect(cards[0]?.querySelector(".ferry-list__auto")).toBeNull();
+    expect(cards[1]?.querySelector(".ferry-list__auto")?.textContent).toBe("🧭 自動");
+  });
+
+  it("FP-AUTO-2 features.autoFerry が false なら切り替えを出さない", () => {
+    setAutoFerryFeature(false);
+    load();
+    renderPanel(okSender());
+    expect(toggle()).toBeNull();
+  });
+
+  it("FP-AUTO-2 スイッチが後から有効になったら出す（/api/stages の読み込みを待つ）", () => {
+    resetAutoFerryFeature();
+    setAutoFerryFeature(false);
+    load();
+    renderPanel(okSender());
+    expect(toggle()).toBeNull();
+    act(() => {
+      setAutoFerryFeature(true);
+    });
+    expect(toggle()).not.toBeNull();
+  });
+
+  it("FP-AUTO-3 船が 1 隻のステージ（Stage 1）では出さない", () => {
+    load(oneFerrySnapshot());
+    renderPanel(okSender());
+    expect(toggle()).toBeNull();
+  });
+
+  it("FP-AUTO-4 自動の船は手で積めない・出航できない。押すと「自動航行中です」で、何も送らない", () => {
+    load(autoSnapshot(["f1"]));
+    const send = okSender();
+    renderPanel(send);
+    expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+    expect(
+      screen.getByText("ボットが積み込みと出航をします。手では操作できません。"),
+    ).toBeDefined();
+
+    const letter = button(HEARTBEAT_LOAD);
+    expect(letter.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(letter);
+    expect(statusText()).toBe("自動航行中です。");
+
+    for (const el of [autoloadButton(), departButton()]) {
+      expect(el.getAttribute("aria-disabled")).toBe("true");
+      expect(describedText(el)).toContain("手では操作できません");
+      fireEvent.click(el);
+      expect(statusText()).toBe("自動航行中です。");
+    }
+    // 行き先も選べない。
+    expect((screen.getByRole("radio", { name: "二の島" }) as HTMLInputElement).disabled).toBe(true);
+    // ドロップで積もうとしても送らない。
+    act(() => {
+      dnd.onDragEnd?.({
+        active: { id: "port:2", data: { current: { letterId: 2, source: "port" } } },
+        over: { id: CARGO_DROP_ID },
+      } as unknown as DragEndEvent);
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("FP-AUTO-5 ほかの船（手動）は今までどおり操作できる", () => {
+    load(autoSnapshot(["f2"]));
+    const send = okSender();
+    renderPanel(send);
+    expect(toggle()?.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(button(HEARTBEAT_LOAD));
+    expect(send).toHaveBeenCalledWith("cmd.ferry.load", { ferryId: "f1", letterIds: [2] });
+  });
+
+  it("FP-AUTO-6 断られたら印を変えず、理由を出す", async () => {
+    load();
+    const send = vi.fn<GameCommandSender>(() =>
+      Promise.resolve({ cmdId: "c-1", ok: false, t: 29000, code: "feature_disabled" }),
+    );
+    renderPanel(send);
+    fireEvent.click(toggle() as HTMLElement);
+    await flush();
+    expect(toggle()?.getAttribute("aria-checked")).toBe("false");
+    expect(gameStore.getState().world?.session).not.toHaveProperty("autoFerries");
+    expect(statusText()).toBe("いまは自動航行を使えません。");
+  });
+
+  it("FP-AUTO-7 Intro・一時停止中は切り替えられ、ラウンドの終わり・接続が無いときは押せない", () => {
+    load(makeFerrySnapshot({ phase: "intro" }));
+    const send = okSender();
+    renderPanel(send);
+    expect(toggle()?.getAttribute("aria-disabled")).toBeNull();
+    cleanup();
+
+    load(makeFerrySnapshot({ phase: "ended" }));
+    renderPanel(send);
+    expect(toggle()?.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(toggle() as HTMLElement);
+    expect(send).not.toHaveBeenCalled();
+    cleanup();
+
+    load();
+    renderPanel(null);
+    expect(toggle()?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("FP-AUTO-8 ack の前に船の選択を外しても、ok なら自動の印をストアに残す", async () => {
+    load();
+    let resolve: (ack: Ack) => void = () => undefined;
+    const send = vi.fn<GameCommandSender>(
+      () =>
+        new Promise<Ack>((r) => {
+          resolve = r;
+        }),
+    );
+    renderPanel(send);
+    fireEvent.click(toggle() as HTMLElement);
+    act(() => {
+      gameStore.getState().selectFerry(null);
+    });
+    resolve(OK);
+    await flush();
+    expect(gameStore.getState().world?.session.autoFerries).toEqual(["f1"]);
+    expect(document.querySelectorAll(".ferry-list__auto")).toHaveLength(1);
   });
 });

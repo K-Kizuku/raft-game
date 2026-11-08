@@ -1,5 +1,6 @@
 // ゲーム画面のスロット「フェリー操作」（T-405・ゲームデザイン §3.2・§7.2 の下・DesignDoc §13.8）。
 // 船を選ぶ・港の手紙を積む／降ろす・中継倉庫に預ける／倉庫から積む（クリック・キーボード・ドラッグ＆ドロップ。T-722）・行き先・おまかせ・出航。
+// 船が 2 隻以上なら、選んだ船を自動航行（ボット）に切り替えられる（T-725。features.autoFerry が false なら出さない）。
 // 表示はストア（T-403）に届いた値だけで変え、コマンドを送っただけでは変えない（ADR-0009）。
 // 成否はサーバーの ack で知る。押せなくするのは「送っても明らかに失敗する」ときだけ。
 import {
@@ -26,10 +27,18 @@ import { letterKind } from "../letters/letterKinds.ts";
 import { letterRaftTerm, withRaftTerm } from "../terms/glossary.ts";
 import { useShowRaftTerms } from "../terms/preference.ts";
 import { RaftTerm } from "../terms/RaftTerm.tsx";
+import { sendFerryAuto, useAutoFerryFeature } from "./autoFerryFeature.ts";
 import { CARGO_DROP_ID, PORT_DROP_ID, RELAY_DROP_ID, dragId, dropCommand } from "./dnd.ts";
 import type { LetterDragData } from "./dnd.ts";
 import { FerryList } from "./FerryList.tsx";
-import { blockerText, ferryResultMessage, viaHintText, viaLabel } from "./ferryMessages.ts";
+import {
+  AUTO_FERRY_BUSY,
+  autoFerryResultMessage,
+  blockerText,
+  ferryResultMessage,
+  viaHintText,
+  viaLabel,
+} from "./ferryMessages.ts";
 import type { FerryOp } from "./ferryMessages.ts";
 import { autoloadBlocker, departBlocker, ferryDetail, ferryTabs } from "./ferryView.ts";
 import type { FerryDetail, FerryTab, RelayGroup } from "./ferryView.ts";
@@ -38,6 +47,7 @@ import "./FerryPanel.css";
 
 const RELAY_NOTE = "預けた手紙は、宛先に着くまで島では読まれません";
 const DESTINATION_HOW_TO = "下のボタンか、マップで隣の島を押して選びます";
+const AUTO_NOTE = "ボットが積み込みと出航をします。手では操作できません。";
 const SCREEN_READER_INSTRUCTIONS =
   "Enter か Space で積み込み・荷降ろしをします。マウスではドラッグでもできます。";
 
@@ -94,6 +104,15 @@ function BrokenMark(): ReactElement {
   );
 }
 
+// 自動航行の船の印（T-725）。色だけでなく文字でも示す。
+function AutoMark(): ReactElement {
+  return (
+    <span className="ferry-panel__auto-mark">
+      <span aria-hidden="true">🧭</span> 自動
+    </span>
+  );
+}
+
 function FerryTabs({ tabs }: { tabs: readonly FerryTab[] }): ReactElement {
   if (tabs.length === 0) {
     return <p className="ferry-panel__note">船がありません。</p>;
@@ -119,6 +138,12 @@ function FerryTabs({ tabs }: { tabs: readonly FerryTab[] }): ReactElement {
             <FerryStateText state={tab.state} placeName={tab.placeName} etaMs={tab.etaMs} />
           </span>{" "}
           <span className="ferry-panel__tab-cargo">{`積み荷 ${String(tab.cargoCount)}/${String(tab.capacity)}`}</span>
+          {tab.auto && (
+            <>
+              {" "}
+              <AutoMark />
+            </>
+          )}
           {tab.broken && (
             <>
               {" "}
@@ -214,6 +239,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     [],
   );
 
+  const autoFeature = useAutoFerryFeature();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   // 選んだ船が変わったら、結果の文・反映待ち・行き先を捨てる（描画の中で前の値と比べて直す）。
@@ -293,15 +319,24 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     detail.destinations.find((d) => d.islandId === destinationTo)?.name ?? null;
   const phaseOk = world.phase === "sailing";
   const canOperate = send !== null && phaseOk && !sending;
+  // 自動航行（T-725）。自動の船は手での積み込み・出航を受け付けない（押すと「自動航行中です」）。
+  // 切り替えは船が 2 隻以上で、スイッチ（features.autoFerry）が有効なときだけ出す。Intro・一時停止中も切り替えられる。
+  const auto = detail.auto;
+  const showAutoToggle = autoFeature && world.ferryIds.length >= 2;
+  const canToggleAuto = send !== null && world.phase !== "ended" && !sending;
+  const showAutoBusy = (): void => {
+    setStatus({ ferryId, text: AUTO_FERRY_BUSY });
+  };
   const shownPending = shownFerry === ferryId ? pending : [];
   const isPending = (letter: Letter): boolean =>
     shownPending.some((p) => p.letterId === letter.id && p.locType === letter.loc.type);
 
+  // message は結果の文。onOk は ok の ack が返ったときに呼ぶ（パネルが消えていても呼ぶ）。
   function dispatch(
-    op: FerryOp,
-    toName: string | null,
+    message: (result: Ack | "rejected") => string,
     request: (sender: GameCommandSender) => Promise<Ack>,
     moved: PendingLetter | null,
+    onOk?: () => void,
   ): void {
     if (send === null || sendingRef.current) return;
     sendingRef.current = true;
@@ -319,10 +354,11 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
       )
       .then((result) => {
         sendingRef.current = false;
+        const ok = result !== "rejected" && result.ok;
+        if (ok) onOk?.();
         if (!mountedRef.current) return;
         setSending(false);
-        setStatus({ ferryId, text: ferryResultMessage(op, result, toName) });
-        const ok = result !== "rejected" && result.ok;
+        setStatus({ ferryId, text: message(result) });
         if (!ok) {
           if (focusIntentRef.current?.letterId === moved?.letterId) focusIntentRef.current = null;
           return;
@@ -344,7 +380,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     letterId: number,
     fromButton: boolean,
   ): void {
-    if (!canOperate || !docked) return;
+    if (!canOperate || !docked || auto) return;
     const letter = Object.hasOwn(world.letters, letterId) ? world.letters[letterId] : undefined;
     if (letter === undefined || isPending(letter)) return;
     let list: LetterList;
@@ -371,8 +407,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
     }
     const moved: PendingLetter = { letterId, locType: letter.loc.type };
     dispatch(
-      resultOp,
-      destinationName,
+      (result) => ferryResultMessage(resultOp, result, destinationName),
       (sender) => {
         const payload = { ferryId, letterIds: [letterId] };
         if (op === "load") return sender("cmd.ferry.load", payload);
@@ -386,14 +421,27 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
   const autoload = autoloadBlocker(detail, destinationTo);
   const depart = departBlocker(detail, destinationTo);
 
+  function toggleAuto(): void {
+    if (!canToggleAuto) return;
+    const enabled = !auto;
+    focusIntentRef.current = null;
+    dispatch(
+      (result) => autoFerryResultMessage(enabled, result),
+      (sender) => sendFerryAuto(sender, { ferryId, enabled }),
+      null,
+      () => {
+        gameStore.getState().setAutoFerry(ferryId, enabled);
+      },
+    );
+  }
+
   function sendTo(op: "autoload" | "depart"): void {
     const blocker = op === "autoload" ? autoload : depart;
-    if (!canOperate || blocker !== null || destinationTo === null) return;
+    if (!canOperate || auto || blocker !== null || destinationTo === null) return;
     const to = destinationTo;
     focusIntentRef.current = null;
     dispatch(
-      op,
-      destinationName,
+      (result) => ferryResultMessage(op, result, destinationName),
       (sender) =>
         op === "autoload"
           ? sender("cmd.ferry.autoload", { ferryId, to })
@@ -430,6 +478,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
   }
 
   const phaseNoteId = `${ids}-phase`;
+  const autoNoteId = `${ids}-auto`;
   const statusText = status !== null && status.ferryId === ferryId ? status.text : "";
   const cargoLetters = detail.ferry.cargo.length;
 
@@ -443,7 +492,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
   ): LetterButtonProps => {
     const waiting = isPending(letter);
     const blocked = source === "cargo" && !unloadable;
-    const disabled = !canOperate || waiting || blocked;
+    const disabled = !canOperate || auto || waiting || blocked;
     const blockedNote = blocked ? unloadNote : null;
     return {
       letter,
@@ -454,7 +503,8 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
       note: blockedNote ?? (waiting ? "反映待ち" : null),
       noteVisible: blockedNote === null && waiting,
       title: blockedNote ?? undefined,
-      describedBy: phaseOk ? undefined : phaseNoteId,
+      describedBy: auto ? autoNoteId : phaseOk ? undefined : phaseNoteId,
+      onBlocked: auto ? showAutoBusy : undefined,
       onActivate: () => {
         sendLetter(
           source === "port" ? "load" : source === "relay" ? "relayLoad" : "unload",
@@ -467,22 +517,46 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
 
   return (
     <div className="ferry-panel__detail" ref={rootRef} data-ferry={ferryId}>
-      <h2 className="ferry-panel__title">
-        {`${detail.name} `}
-        <span className="ferry-panel__title-state">
-          <FerryStateText
-            state={detail.state}
-            placeName={docked ? detail.islandName : detail.toName}
-            etaMs={detail.etaMs}
+      <div className="ferry-panel__head">
+        <h2 className="ferry-panel__title">
+          {`${detail.name} `}
+          <span className="ferry-panel__title-state">
+            <FerryStateText
+              state={detail.state}
+              placeName={docked ? detail.islandName : detail.toName}
+              etaMs={detail.etaMs}
+            />
+          </span>
+          {auto && (
+            <>
+              {" "}
+              <AutoMark />
+            </>
+          )}
+          {detail.broken && (
+            <>
+              {" "}
+              <BrokenMark />
+            </>
+          )}
+        </h2>
+        {showAutoToggle && (
+          <AutoToggle
+            on={auto}
+            disabled={!canToggleAuto}
+            onToggle={() => {
+              toggleAuto();
+            }}
           />
-        </span>
-        {detail.broken && (
-          <>
-            {" "}
-            <BrokenMark />
-          </>
         )}
-      </h2>
+      </div>
+      {auto && (
+        // 行を増やさない（1470×860 でスクロールしない）よう、見た目は名前の行の印とボタンの横の理由で示し、
+        // 説明は読み上げにだけ出す（ボタンの aria-describedby）。
+        <span className="visually-hidden" id={autoNoteId}>
+          {AUTO_NOTE}
+        </span>
+      )}
       {docked && detail.readyInMs > 0 && (
         <p className="ferry-panel__ready">{`出航まで あと ${formatRemaining(detail.readyInMs)}`}</p>
       )}
@@ -666,6 +740,7 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
                     name={`ferry-destination-${ferryId}`}
                     value={d.islandId}
                     checked={destinationTo === d.islandId}
+                    disabled={auto}
                     onChange={() => {
                       if (detail.islandId === null) return;
                       setDestination({ ferryId, islandId: detail.islandId, to: d.islandId });
@@ -698,10 +773,17 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
             <ActionButton
               className="ferry-panel__autoload"
               label="おまかせ"
-              disabled={!canOperate || autoload !== null}
-              reason={autoload === null ? null : blockerText(autoload, detail.readyInMs)}
+              disabled={!canOperate || auto || autoload !== null}
+              reason={
+                auto
+                  ? AUTO_FERRY_BUSY
+                  : autoload === null
+                    ? null
+                    : blockerText(autoload, detail.readyInMs)
+              }
               reasonId={`${ids}-autoload`}
-              extraDescribedBy={phaseOk ? undefined : phaseNoteId}
+              extraDescribedBy={auto ? autoNoteId : phaseOk ? undefined : phaseNoteId}
+              onBlocked={auto ? showAutoBusy : undefined}
               onActivate={() => {
                 sendTo("autoload");
               }}
@@ -709,10 +791,17 @@ function FerryOperations({ world, detail }: { world: World; detail: FerryDetail 
             <ActionButton
               className="ferry-panel__depart"
               label="出航"
-              disabled={!canOperate || depart !== null}
-              reason={depart === null ? null : blockerText(depart, detail.readyInMs)}
+              disabled={!canOperate || auto || depart !== null}
+              reason={
+                auto
+                  ? AUTO_FERRY_BUSY
+                  : depart === null
+                    ? null
+                    : blockerText(depart, detail.readyInMs)
+              }
               reasonId={`${ids}-depart`}
-              extraDescribedBy={phaseOk ? undefined : phaseNoteId}
+              extraDescribedBy={auto ? autoNoteId : phaseOk ? undefined : phaseNoteId}
+              onBlocked={auto ? showAutoBusy : undefined}
               onActivate={() => {
                 sendTo("depart");
               }}
@@ -796,6 +885,7 @@ type LetterButtonProps = Readonly<{
   noteVisible: boolean;
   title: string | undefined;
   describedBy: string | undefined;
+  onBlocked?: (() => void) | undefined; // 押せないときに押したら呼ぶ（自動航行の船。T-725）
   onActivate: () => void;
 }>;
 
@@ -810,6 +900,7 @@ function LetterButton({
   noteVisible,
   title,
   describedBy,
+  onBlocked,
   onActivate,
 }: LetterButtonProps): ReactElement {
   const show = useShowRaftTerms();
@@ -845,6 +936,7 @@ function LetterButton({
         }
         onClick={() => {
           if (!disabled) onActivate();
+          else onBlocked?.();
         }}
       >
         <LetterIcon letter={letter} borderColor={toColor} />
@@ -866,6 +958,7 @@ function ActionButton({
   reason,
   reasonId,
   extraDescribedBy,
+  onBlocked,
   onActivate,
 }: {
   className: string;
@@ -874,6 +967,7 @@ function ActionButton({
   reason: string | null;
   reasonId: string;
   extraDescribedBy: string | undefined;
+  onBlocked?: (() => void) | undefined; // 押せないときに押したら呼ぶ（自動航行の船。T-725）
   onActivate: () => void;
 }): ReactElement {
   const described = [reason === null ? undefined : reasonId, extraDescribedBy]
@@ -888,6 +982,7 @@ function ActionButton({
         aria-describedby={described === "" ? undefined : described}
         onClick={() => {
           if (!disabled) onActivate();
+          else onBlocked?.();
         }}
       >
         {label}
@@ -898,5 +993,36 @@ function ActionButton({
         </p>
       )}
     </div>
+  );
+}
+
+// 自動航行（ボット）の切り替え（T-725）。押すたびに cmd.ferry.auto を送る。表示はストアの値（ok の ack の後）で変わる。
+function AutoToggle({
+  on,
+  disabled,
+  onToggle,
+}: {
+  on: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      role="switch"
+      className="ferry-panel__auto-toggle"
+      aria-checked={on}
+      aria-disabled={disabled ? "true" : undefined}
+      onClick={() => {
+        if (!disabled) onToggle();
+      }}
+    >
+      <span className="ferry-panel__auto-toggle-label">
+        <span aria-hidden="true">🧭</span> 自動航行（ボット）
+      </span>
+      <span className="ferry-panel__auto-toggle-state" aria-hidden="true">
+        {on ? "オン" : "オフ"}
+      </span>
+    </button>
   );
 }

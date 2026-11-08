@@ -78,6 +78,32 @@ export function ferryResultMessage(
   return `${opName}できませんでした。`;
 }
 
+// 自動航行（T-725）の船で、手での積み込み・出航を押したときの文。
+export const AUTO_FERRY_BUSY = "自動航行中です。";
+
+// 自動航行の切り替え（cmd.ferry.auto。プロトコル §4）の結果の文。enabled は送った値。
+// 知らない code・code なしは「切り替えできませんでした。」（プロトコル §8）。
+export function autoFerryResultMessage(enabled: boolean, result: Ack | "rejected"): string {
+  if (result === "rejected") {
+    return "サーバーにつながっていないため、切り替えできませんでした。";
+  }
+  if (result.ok) {
+    return enabled
+      ? "自動航行にしました。ボットが積み込みと出航をします。"
+      : "手で操作する船に戻しました。";
+  }
+  switch (result.code) {
+    case "feature_disabled":
+      return "いまは自動航行を使えません。";
+    case "phase_invalid":
+      return "ラウンドが終わったため、切り替えできません。";
+    case "rate_limited":
+      return "操作が多すぎます。少し待ってください。";
+    default:
+      return "切り替えできませんでした。";
+  }
+}
+
 export function blockerText(blocker: FerryBlocker, readyInMs: number): string {
   switch (blocker) {
     case "sailing":

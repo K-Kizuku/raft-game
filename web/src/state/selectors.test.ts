@@ -5,10 +5,12 @@ import { applyEvents, worldFromSnapshot } from "./applyEvent.ts";
 import { loadMiniRound } from "./fixtures/loadRecord.ts";
 import {
   estimateSimTime,
+  isAutoFerry,
   leaderId,
   lettersAtPort,
   lettersOnFerry,
   portPiles,
+  withAutoFerry,
 } from "./selectors.ts";
 import type { ClockView, World } from "./world.ts";
 
@@ -112,5 +114,23 @@ describe("leaderId", () => {
     ["同じ term なら小さい ID", [node(3, "leader", 2), node(2, "leader", 2)], 2],
   ])("SL-4 %s", (_, nodes, expected) => {
     expect(leaderId(worldWith({ nodes }))).toBe(expected);
+  });
+});
+
+describe("isAutoFerry・withAutoFerry（T-725）", () => {
+  it("SL-AUTO 一覧は ID の昇順、空ならキーを省き、変わらなければ同じ world", () => {
+    const world = worldWith({});
+    expect(isAutoFerry(world, "f2")).toBe(false);
+    const a = withAutoFerry(world, "f2", true);
+    const b = withAutoFerry(a, "f1", true);
+    expect(b.session.autoFerries).toEqual(["f1", "f2"]);
+    expect(isAutoFerry(b, "f1")).toBe(true);
+    expect(withAutoFerry(b, "f1", true)).toBe(b);
+    const c = withAutoFerry(b, "f2", false);
+    expect(c.session.autoFerries).toEqual(["f1"]);
+    const d = withAutoFerry(c, "f1", false);
+    expect(d.session).not.toHaveProperty("autoFerries");
+    expect(d.session.id).toBe(world.session.id);
+    expect(world.session).not.toHaveProperty("autoFerries"); // 元の world を書き換えない
   });
 });
