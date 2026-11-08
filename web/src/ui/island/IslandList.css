@@ -1,27 +1,27 @@
 /* 島の一覧（T-426）。島の詳細のパネルで何も選んでいないときに出す、紙のカードの列。
-   文字は --color-ink・--color-ink-muted（紙の地で 4.5:1 以上。NFR-10）。色はデザイントークンから取る。 */
+   文字は --color-ink・--color-ink-muted（紙の地で 4.5:1 以上。NFR-10）。色はデザイントークンから取る。
+   6 島（Stage 3）でも、マップの行が最も低いとき（45vh。基準の 1470×860）に巻き取らずに収まるよう、
+   1 枚を 1 行（色の丸・名前・港の手紙の数・満足度）にして詰める（T-439）。島が少ないステージでも間延びしない。 */
 .island-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* 紙のカード。左に島の色の丸、右に名前と数。 */
+/* 紙のカード。左から島の色の丸、名前、数（右寄せ）。名前は切らず、幅が足りないときだけ数が折り返す。 */
 .island-list__card {
   display: grid;
-  grid-template-areas:
-    "dot name"
-    "dot stats";
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "dot name stats";
+  grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
-  gap: 2px var(--space-3);
+  gap: 0 var(--space-2);
   box-sizing: border-box;
   width: 100%;
   min-height: 44px;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-3);
   color: var(--color-ink);
   text-align: left;
   background: var(--color-paper);
@@ -48,8 +48,8 @@
 /* 島の色の丸（飾り）。紙の色の縁と墨の細い輪で、明るい色でも暗い色でも見分けられる。 */
 .island-list__dot {
   grid-area: dot;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.25rem;
+  height: 1.25rem;
   border: 2px solid var(--color-paper);
   border-radius: 50%;
   box-shadow: 0 0 0 1.5px var(--color-ink);
@@ -57,19 +57,29 @@
 
 .island-list__name {
   grid-area: name;
-  font-size: var(--font-size-h3);
+  font-size: var(--font-size-body);
   font-weight: bold;
   line-height: 1.3;
+  white-space: nowrap;
 }
 
 .island-list__stats {
   grid-area: stats;
   display: flex;
   flex-wrap: wrap;
-  gap: 0 var(--space-3);
+  justify-content: flex-end;
+  gap: 0 var(--space-2);
   color: var(--color-ink-muted);
   font-family: var(--font-number);
+  font-size: calc(var(--font-size-body) * 0.9375);
   font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.island-list__letters,
+.island-list__satisfaction {
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

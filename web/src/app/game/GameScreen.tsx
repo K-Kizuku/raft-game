@@ -63,6 +63,9 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
           </h1>
           <section aria-label="状況" className="game-hud">
             <HudBar />
+            {/* エンジニアモードの切り替えは HUD の並びの右に置き、マップの内容に重ねない（T-439）。
+                パネル自体はアンカー配置でマップの左半分に重ねる（EngineerPanel.css）。 */}
+            <EngineerPanel />
           </section>
           <section aria-label="マップ" className="game-map">
             <MapView />
@@ -112,7 +115,6 @@ export function GameScreen({ round, onRoundEnd, connector }: GameScreenProps): R
               </button>
             </div>
           )}
-          <EngineerPanel />
           {!replaying && <DemoKeys />}
           <GameShortcuts />
           <OpeningCeremony />
