@@ -14,6 +14,15 @@ Modification: the election-timeout random source can be injected via
 Config.RandIntn for deterministic simulation.
 See server/third_party/etcd-raft/PATCHES.md and docs/adr/0005-deterministic-raft-rng-patch.md.
 
+fxamacker/cbor (github.com/fxamacker/cbor/v2 v2.10.0)
+Copyright (c) 2019-present Faye Amacker
+Licensed under the MIT License.
+Used by server/internal/dtn/bpv7 to encode and decode CBOR (DTN-06, ADR-D003).
+
+x448/float16 (github.com/x448/float16 v0.8.4, a dependency of fxamacker/cbor)
+Copyright (c) 2019 Montgomery Edwards⁴⁴⁸ and Faye Amacker
+Licensed under the MIT License.
+
 ------------------------------------------------------------------------
 Open data
 

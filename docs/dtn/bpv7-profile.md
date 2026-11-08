@@ -69,7 +69,7 @@ DTN-06（#163）の契約。判断は [ADR-D003](./adr/D003-bpv7-profile.md)。�
 | フラグが `0x0004` でない（断片・管理レコードを含む） | `bpv7_unsupported_flags` |
 | CRC の種類が 2 でない・CRC が合わない | `bpv7_crc` |
 | EID が §2 の形でない・送信元が島でない | `bpv7_eid` |
-| 作成時刻の DTN time が 0 でない・連番が 0 | `bpv7_timestamp` |
+| 作成時刻の DTN time が 0 でない・連番が 0 か 10^9 以上 | `bpv7_timestamp` |
 | Bundle Age がない・2 つ以上ある | `bpv7_age` |
 | Bundle Age・Payload 以外のブロックがある（フラグに関係なく） | `bpv7_unsupported_block` |
 | Payload が最後でない・ブロック番号が重複 | `bpv7_structure` |
@@ -78,8 +78,18 @@ DTN-06（#163）の契約。判断は [ADR-D003](./adr/D003-bpv7-profile.md)。�
 
 RFC 9171 では、処理できないブロックの扱いをフラグで決めてよい。このプロファイルは閉じた系なので、より厳しく「すべて断る」にする（黙って読み飛ばさない）。
 
+実装（DTN-06 #163）で決めた細部:
+
+- **検査の順**: `too_large` → `malformed` → `version` → `unsupported_flags` → `crc` → `eid` → `timestamp` → `age` → `unsupported_block` → `structure`。最初の失敗を返す。Lifetime を過ぎていても断らない（§3）
+- `malformed` には、各ブロックが Core Deterministic Encoding でない（最短でない整数・長さ不定・タグなど）・Primary の要素の数が CRC の有無と断片のフラグに合わない・Bundle Age の data が最短の CBOR の uint 1 つでない、を含む。だから正しい Bundle の bytes は一意で、`Encode(Decode(x)) = x`
+- `unsupported_flags` には、Bundle Age・Payload のブロックのフラグが 0 でないことを含む。それ以外の種類のブロックはフラグを見ずに `unsupported_block`
+- `eid`: 宛先も島の窓口（`ipn:<1..999>.<1|2>`）でなければならない。連番は 1〜999,999,999（`10^9` 以上は `timestamp`）
+- `structure`: Payload がない・2 つ以上・最後でない・ブロック番号が 1 でない、Bundle Age のブロック番号が 2 でない、ブロック番号の重複
+- `Encode` も、Decode が断る EID・作成時刻を同じコードで断り、16 KiB を超えたら `too_large` を返す
+
 ## 7. 試験
 
 - 手で検算した固定の Bundle（16 進）を `server/internal/dtn/bpv7/testdata/` に置き、符号化と読み込みの両方で一致を確かめる
 - 可能なら独立した実装（例: µD3TN の Python のツール。ライセンスを確かめて、リンクはせず fixture を作るのにだけ使う）で作った Bundle を fixture にする
 - Raft のメッセージの protobuf の往復・依頼のペイロードの往復・時刻の境界・§6 の各エラー・`go test -fuzz` で読み込みの fuzz を回す
+- fixture は `testdata/mkfixtures.py` が Go の実装と CBOR のライブラリを使わずに作る（手順は `testdata/README.md`）。独立した BPv7 の実装で作った fixture はまだない（DTN-06 の時点）
