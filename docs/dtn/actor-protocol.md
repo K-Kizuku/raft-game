@@ -68,7 +68,7 @@ DTN-02（#159）の契約。Coordinator・Session Front・Actor Host・Actor（C
 ```
 
 - `outputs` は §4。`(t, class, seq)` は島の中の順序（[simulation-time.md §3](./simulation-time.md#3-島の出力をまとめる順序)）
-- `stateDigest` は Actor の状態の要約（DTN-03・04 で中身を決める。台帳・港・Cargo の ID の列・Raft の HardState を正準に並べた SHA-256）。復元の後の照合に使う
+- `stateDigest` は Actor の状態の要約（DTN-03・04 で中身を決める。台帳・港・Cargo の ID の列・Raft の HardState を正準に並べた SHA-256。船は [§7.5](#75-ferry-actordtn-04)）。復元の後の照合に使う
 - Actor が作った Bundle の bytes は、Actor → Host の応答にだけ入れる（`outputs[].bundle`）。Host は bytes を保存し、Session Front と Coordinator への応答からは取り除く（digest と長さだけ残す）
 
 ## 3. 種類
@@ -206,3 +206,16 @@ Coordinator は、これらを CoordinatorCore に渡し、ブラウザ向けの
 
 - `server/internal/dtn/protocol/testdata/requests/*.json`: `{description, request | requestText, limits?, expect, digest?}`。`request` は電文（JSON の値。空白を除いて送る）、`requestText` は bytes をそのまま書いた電文（重複したキー・小数など）。`limits` は §6 の上限を部分的に上書きする（`maxMessageBytes` など）。`expect` は `"ok"` かエラーコード、`digest` は `ok` のときの要求の digest（§5）
 - `server/internal/dtn/protocol/testdata/canonical/*.json`: `{description, input, canonical, digest}` か `{description, input, error}`。`input` は JSON の文書の文字列
+
+### 7.5 Ferry Actor（DTN-04）
+
+実装は `server/internal/dtn/ferryactor`（`dtnactor` の `ROLE=ferry`。`DATA_DIR` か埋め込みのステージ定義をすべて読み、`init` の `stage` で引く）。
+
+- `init`: 未知の `stage`・`stageHash` の不一致・`plan` は `invalid`、ステージにない船は `unknown_actor`。Codec は `bpv7.LetterCodec`（Lifetime = `durationMs` ＋ 60,000）
+- `ferry.state` の `data` は `{state: "docked" | "sailing", at?, to?, arriveAt?, readyAt, cargo}`。`at` は Docked のとき、`to`・`arriveAt` は Sailing のときだけ書く。`readyAt` は出航しても前の停泊の値のまま（`ferry.Ferry` と同じ。スナップショットの航行中の `readyAt`（`arriveAt + dockMs`）とは違う）
+- `seq` は、状態を変えた要求の `ferry.state` にだけ 1 から振る。失敗した要求と `bundle.export` は進めない。`bundle.exported` は `t` = 要求の `t`・`class` 8・`seq` 0（journal に入らないので、再生の応答に影響させない）
+- 船が足した検査: `arrive`・`depart`・`cargo.add` の `t` が、直前に状態を変えた要求の `t` より前なら `invalid`（Coordinator は船ごとに仮想時刻の順で送る）。`depart` の `to` がステージの島でなければ `invalid`。`bundle.export` は航行中と、`t` が手紙の `createdAt` より前のときに `invalid`
+- `cursor.horizon` は、最後に状態を変えた要求の `(t, class)`（船に上限はない。`init` の後は `[0, 0]`）
+- `stateDigest` は `{id, state, at, from, to, departAt, arriveAt, readyAt, cargo, digests, createdAt}` の RFC 8785 の正準の JSON の SHA-256。`state` は `"docked"`・`"sailing"`、使わない欄は 0、`cargo`（手紙の ID）・`digests`・`createdAt` は Cargo の順の配列
+- `inspect` の `data` は `{id, capacity, state, at, from, to, departAt, arriveAt, readyAt, cargo: [{letterId, createdAt, digest, size}], stateDigest}`
+- Cargo の bytes は積んだときのまま持つ。`bundle.export` は毎回その bytes から、Bundle Age を `t − createdAt` にした bytes を作る
