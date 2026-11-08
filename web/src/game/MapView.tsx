@@ -48,7 +48,8 @@ function mapStoreOf(store: GameStore): GameStore {
 // world があるときだけ載せる。外れたら（reset()）アンマウントされ、PixiJS を壊す。
 function LoadedMap(): ReactElement {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [failed, setFailed] = useState(false);
+  // 描けなかったときの理由（null は描けている・描いている途中）。
+  const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -69,8 +70,10 @@ function LoadedMap(): ReactElement {
           if (disposed) mounted.destroy();
           else handle = mounted;
         },
-        () => {
-          if (!disposed) setFailed(true);
+        (error: unknown) => {
+          // 失敗の理由は console に出す（#386。開発のときは画面の文の下にも出す）。
+          console.error("[map] mountMap failed", error);
+          if (!disposed) setFailed(error instanceof Error ? error.message : String(error));
         },
       );
     return () => {
@@ -82,9 +85,15 @@ function LoadedMap(): ReactElement {
 
   return (
     <div className="map-view">
-      {failed ? (
+      {failed !== null ? (
         <p role="status" className="map-view__fallback">
           このブラウザではマップを描けませんでした。島はボタンで選べます。
+          {import.meta.env.DEV && (
+            <>
+              <br />
+              <small data-testid="map-failure-reason">理由: {failed}</small>
+            </>
+          )}
         </p>
       ) : (
         <div className="map-view__canvas" aria-hidden="true" ref={hostRef} />

@@ -156,12 +156,14 @@ describe("MapView", () => {
   });
 
   it("MV-5 mountMap が reject → 描けなかったことを出し、島のボタンは残る", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     mountMock.mockRejectedValue(new Error("WebGL が無い"));
     render(<MapView />);
     load();
     expect(
       await screen.findByText("このブラウザではマップを描けませんでした。島はボタンで選べます。"),
     ).toBeDefined();
+    error.mockRestore();
     expect(screen.getByRole("status").textContent).toContain(
       "このブラウザではマップを描けませんでした。",
     );
@@ -169,6 +171,41 @@ describe("MapView", () => {
     expect(document.querySelector(".map-view__canvas")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "三の島" }));
     expect(gameStore.getState().selection.islandId).toBe(3);
+  });
+
+  it("MV-5b reject のとき console.error に理由を出し、開発のときは画面の文の下にも理由を出す", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reason = new Error("app.init が 3 回とも失敗: webgl: context lost");
+    mountMock.mockRejectedValue(reason);
+    try {
+      render(<MapView />);
+      load();
+      await screen.findByRole("status");
+      expect(error).toHaveBeenCalledWith("[map] mountMap failed", reason);
+      expect(import.meta.env.DEV).toBe(true);
+      expect(screen.getByTestId("map-failure-reason").textContent).toBe(
+        "理由: app.init が 3 回とも失敗: webgl: context lost",
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("MV-5c 開発でないときは、理由を画面に出さない（console には出す）", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("DEV", false);
+    mountMock.mockRejectedValue(new Error("WebGL が無い"));
+    try {
+      render(<MapView />);
+      load();
+      await screen.findByRole("status");
+      expect(error).toHaveBeenCalledWith("[map] mountMap failed", expect.any(Error));
+      expect(screen.queryByTestId("map-failure-reason")).toBeNull();
+      expect(screen.getByRole("status").textContent).not.toContain("WebGL が無い");
+    } finally {
+      vi.unstubAllEnvs();
+      error.mockRestore();
+    }
   });
 
   it("MV-6 描いている途中で reset() → destroy を呼び、「マップ（準備中）」に戻る", async () => {
