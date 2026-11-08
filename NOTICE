@@ -23,6 +23,28 @@ x448/float16 (github.com/x448/float16 v0.8.4, a dependency of fxamacker/cbor)
 Copyright (c) 2019 Montgomery Edwards⁴⁴⁸ and Faye Amacker
 Licensed under the MIT License.
 
+modernc.org/sqlite (modernc.org/sqlite v1.62.0)
+Copyright (c) 2017 The Sqlite Authors
+Licensed under the BSD 3-Clause License.
+Used by server/internal/dtn/host/sqlitestore as the local Actor Host store (pure Go, no CGO; DTN-07).
+It contains SQLite 3.54.1 transpiled to Go; SQLite is in the public domain.
+Its third-party notices are in LICENSE-3RD-PARTY.md of the module.
+
+Dependencies of modernc.org/sqlite:
+- modernc.org/libc v1.80.1: Copyright (c) 2017 The Libc Authors. BSD 3-Clause License.
+  It contains code derived from musl libc (MIT License), Go (BSD 3-Clause License),
+  go-netdb (MIT License) and NixOS/nixpkgs (MIT License); see LICENSE-3RD-PARTY.md of the module.
+- modernc.org/mathutil v1.7.1: Copyright (c) 2014 The mathutil Authors. BSD 3-Clause License.
+- modernc.org/memory v1.12.1: Copyright (c) 2017 The Memory Authors. BSD 3-Clause License.
+  It contains code derived from Go (BSD 3-Clause License) and mmap-go
+  (Copyright (c) 2011, Evan Shaw. BSD 3-Clause License).
+- github.com/dustin/go-humanize v1.1.0: Copyright (c) 2005-2008 Dustin Sallings. MIT License.
+- github.com/google/uuid v1.6.0: Copyright (c) 2009,2014 Google Inc. BSD 3-Clause License.
+- github.com/mattn/go-isatty v0.0.24: Copyright (c) Yasuhiro MATSUMOTO. MIT License.
+- github.com/ncruces/go-strftime v1.1.0: Copyright (c) 2022 Nuno Cruces. MIT License.
+- github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec: Copyright (c) 2012 The Go Authors. BSD 3-Clause License.
+- golang.org/x/sys v0.49.0: Copyright 2009 The Go Authors. BSD 3-Clause License.
+
 ------------------------------------------------------------------------
 Open data
 
