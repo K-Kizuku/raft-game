@@ -19,7 +19,16 @@ import {
   type GuardsChangeRecord,
   type GuardsConfig,
   type GuardsView,
+  type UnitPartKey,
 } from "./guards.ts";
+
+// 内訳つきの予約の 1 行（DTN-12・docs/dtn/environment.md §3）。
+export type ReserveUnit =
+  | { readonly kind: "container"; readonly instance: ContainerInstance; readonly count: number }
+  | { readonly kind: "do"; readonly count: number };
+
+export const MAX_UNIT_ROWS = 8;
+export const MAX_UNIT_COUNT = 64;
 
 export type ReserveResult = "ok" | "budget_exhausted" | "sessions_disabled";
 
@@ -60,6 +69,61 @@ const SCHEMA: readonly string[] = [
 
 export function ensureSchema(sql: SqlStorageLike): void {
   for (const statement of SCHEMA) sql.exec(statement);
+  // 内訳つきの予約（DTN-12）の列。前の版で作った表にも足す（NULL = 今の {sessionId, instance} の予約）。
+  const columns = sql.exec("PRAGMA table_info(ledger)").toArray();
+  if (!columns.some((column) => column["name"] === "units")) {
+    sql.exec("ALTER TABLE ledger ADD COLUMN units TEXT");
+  }
+}
+
+function unitKey(unit: ReserveUnit): UnitPartKey {
+  return unit.kind === "do" ? "do" : `container.${unit.instance}`;
+}
+
+// 内訳の 30 分あたりの単価の合計（µUSD）。書いていない種類の単価があれば null。
+export function unitsRateMicro(
+  units: readonly ReserveUnit[],
+  partMicro: Readonly<Partial<Record<UnitPartKey, number>>>,
+): number | null {
+  let total = 0;
+  for (const unit of units) {
+    const rate = partMicro[unitKey(unit)];
+    if (rate === undefined) return null;
+    total += rate * unit.count;
+  }
+  return total;
+}
+
+// 内訳の形を確かめる（1〜8 行・count は 1〜64 の整数・container は instance が lite か standard-1）。不正なら null。
+export function parseReserveUnits(raw: unknown): ReserveUnit[] | null {
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_UNIT_ROWS) return null;
+  const units: ReserveUnit[] = [];
+  for (const item of raw as readonly unknown[]) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const obj = item as Readonly<Record<string, unknown>>;
+    const count = obj["count"];
+    if (
+      typeof count !== "number" ||
+      !Number.isInteger(count) ||
+      count < 1 ||
+      count > MAX_UNIT_COUNT
+    ) {
+      return null;
+    }
+    const keys = Object.keys(obj);
+    if (obj["kind"] === "do" && keys.length === 2) {
+      units.push({ kind: "do", count });
+    } else if (
+      obj["kind"] === "container" &&
+      keys.length === 3 &&
+      (obj["instance"] === "lite" || obj["instance"] === "standard-1")
+    ) {
+      units.push({ kind: "container", instance: obj["instance"], count });
+    } else {
+      return null;
+    }
+  }
+  return units;
 }
 
 function utcDayStart(now: number): number {
@@ -150,6 +214,23 @@ export class CostGuardCore {
   }
 
   reserve(sessionId: string, instance: ContainerInstance): ReserveResult {
+    return this.reserveRow(sessionId, instance, null, (guards) => guards.unitMicro[instance]);
+  }
+
+  // 内訳つきの予約（DTN-12）。予約額 = ceil(Σ count × 30 分あたりの単価 × maxMinutes / 30)。
+  // 内訳の単価が GUARDS にない種類があれば拒否する（sessions_disabled。安全側）。
+  reserveUnits(sessionId: string, units: readonly ReserveUnit[]): ReserveResult {
+    return this.reserveRow(sessionId, "units", JSON.stringify(units), (guards) =>
+      unitsRateMicro(units, guards.unitPartMicro),
+    );
+  }
+
+  private reserveRow(
+    sessionId: string,
+    instance: string,
+    unitsJson: string | null,
+    rateOf: (guards: EffectiveGuards) => number | null,
+  ): ReserveResult {
     return this.transactionSync(() => {
       // 1. 設定が不正なら拒否する側に倒す
       const guards = this.effective();
@@ -166,7 +247,8 @@ export class CostGuardCore {
 
       // 4. 予算（G1）。ちょうど上限に等しいのは通す
       const now = this.now();
-      const rateMicro = guards.unitMicro[instance];
+      const rateMicro = rateOf(guards);
+      if (rateMicro === null) return "sessions_disabled";
       const reservedMicro = reservationMicro(rateMicro, guards.gameTime.maxMinutes);
       if (guards.budget.enabled) {
         const today = this.totalSince(utcDayStart(now));
@@ -182,13 +264,14 @@ export class CostGuardCore {
       // 5. 行を足し、先月の 1 日（UTC）より前の行を片付ける
       this.sql.exec(
         `INSERT INTO ledger (session_id, instance, rate_micro, reserved_micro, settled_micro,
-           status, started_at, ended_at)
-         VALUES (?, ?, ?, ?, NULL, 'reserved', ?, NULL)`,
+           status, started_at, ended_at, units)
+         VALUES (?, ?, ?, ?, NULL, 'reserved', ?, NULL, ?)`,
         sessionId,
         instance,
         rateMicro,
         reservedMicro,
         now,
+        unitsJson,
       );
       this.sql.exec("DELETE FROM ledger WHERE started_at < ?", utcMonthStart(now, -1));
       return "ok";

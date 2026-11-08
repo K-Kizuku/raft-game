@@ -20,7 +20,17 @@
         }
       },
       "learning": [],
-      "demo": false
+      "demo": false,
+      "dtn": {
+        "actors": [
+          "island:1",
+          "island:2",
+          "island:3",
+          "ferry:f1"
+        ],
+        "eventKinds": [],
+        "unsupportedEvents": []
+      }
     },
     {
       "id": "beta",
@@ -39,7 +49,34 @@
         "log_replication",
         "commit"
       ],
-      "demo": true
+      "demo": true,
+      "dtn": {
+        "actors": [
+          "island:1",
+          "island:2",
+          "island:3",
+          "island:4",
+          "island:5",
+          "island:6",
+          "island:7",
+          "ferry:f1",
+          "ferry:f2"
+        ],
+        "eventKinds": [
+          "storm",
+          "cancellation",
+          "breakdown",
+          "rush",
+          "drift",
+          "demo.storm"
+        ],
+        "unsupportedEvents": [
+          "cancellation",
+          "breakdown",
+          "rush",
+          "drift"
+        ]
+      }
     }
   ]
 }

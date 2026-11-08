@@ -205,6 +205,7 @@ describe("C-3 上書きを重ねる", () => {
       cpuMs: 50,
       acceptGames: true,
       unitMicro: { lite: 6500, "standard-1": 40000 },
+      unitPartMicro: {},
     });
   });
 

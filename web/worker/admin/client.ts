@@ -14,10 +14,10 @@ import {
   type FlatGuardsChange,
   type GuardsView,
 } from "./guards.ts";
-import { isValidRunSeconds, type ReserveResult } from "./ledger.ts";
+import { isValidRunSeconds, type ReserveResult, type ReserveUnit } from "./ledger.ts";
 
 export type { ContainerInstance } from "./guards.ts";
-export type { ReserveResult } from "./ledger.ts";
+export type { ReserveResult, ReserveUnit } from "./ledger.ts";
 
 export type PatchResult =
   | { readonly ok: true; readonly view: GuardsView }
@@ -29,6 +29,11 @@ export type PatchResult =
 
 export interface CostGuardClient {
   reserve(sessionId: VerifiedSessionId, instance: ContainerInstance): Promise<ReserveResult>;
+  // 内訳つきの予約（DTN-12）。省略できるのは、内訳より前に作ったテストの偽物のため
+  reserveUnits?(
+    sessionId: VerifiedSessionId,
+    units: readonly ReserveUnit[],
+  ): Promise<ReserveResult>;
   cancel(sessionId: VerifiedSessionId): Promise<void>;
   settle(sessionId: string, runSeconds: number): Promise<void>; // T-308 がラウンドの終了で呼ぶ
   view(): Promise<GuardsView | "guards_invalid">; // T-308・T-310 は guards.* を読む
@@ -95,6 +100,13 @@ export function createCostGuardClient(namespace: DurableObjectNamespaceLike): Co
   return {
     async reserve(sessionId, instance) {
       const { status, body } = await call("POST", "reserve", { sessionId, instance });
+      const result = isPlainObject(body) ? body["result"] : undefined;
+      if (status !== 200 || !isReserveResult(result)) throw unexpected("reserve");
+      return result;
+    },
+
+    async reserveUnits(sessionId, units) {
+      const { status, body } = await call("POST", "reserve", { sessionId, units });
       const result = isPlainObject(body) ? body["result"] : undefined;
       if (status !== 200 || !isReserveResult(result)) throw unexpected("reserve");
       return result;

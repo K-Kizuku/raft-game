@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/K-Kizuku/raft-game/server/internal/protocol"
 )
 
 // テスト用の入力（読むだけ）。server/internal/stage/testdata の複製を小さくしたもの。
@@ -252,7 +250,7 @@ func TestRunDecodeStrict(t *testing.T) {
 	got := generateTo(t, fixtureData, out)
 	var c struct {
 		Format int
-		Stages []protocol.StageSummary
+		Stages []catalogStage
 	}
 	dec := json.NewDecoder(bytes.NewReader(got))
 	dec.DisallowUnknownFields()
